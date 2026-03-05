@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: net360-preparation
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npx vite preview --host 0.0.0.0 --port $PORT
+    autoDeploy: true
