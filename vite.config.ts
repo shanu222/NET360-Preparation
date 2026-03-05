@@ -17,6 +17,11 @@ export default defineConfig({
     },
   },
 
+  // Allow Render-assigned domains when serving the production build via `vite preview`.
+  preview: {
+    allowedHosts: ['.onrender.com'],
+  },
+
   // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
   assetsInclude: ['**/*.svg', '**/*.csv'],
 })
