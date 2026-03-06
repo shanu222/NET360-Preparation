@@ -135,13 +135,13 @@ export function Profile({ onNavigate }: ProfileProps) {
 
   if (!user) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-5">
         <div>
           <h1>Account Access</h1>
           <p className="text-muted-foreground">Login or register to enable server-backed sessions, auth, and report export</p>
         </div>
 
-        <Card>
+        <Card className="rounded-2xl border-indigo-100 bg-white/92">
           <CardHeader>
             <CardTitle>{isRegisterMode ? 'Create Account' : 'Login'}</CardTitle>
             <CardDescription>Authentication is required for persistent test sessions</CardDescription>
@@ -155,6 +155,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                     id="reg-first-name"
                     value={authForm.firstName}
                     onChange={(e) => setAuthForm((prev) => ({ ...prev, firstName: e.target.value }))}
+                    className="border-indigo-100"
                   />
                 </div>
                 <div className="space-y-2">
@@ -163,6 +164,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                     id="reg-last-name"
                     value={authForm.lastName}
                     onChange={(e) => setAuthForm((prev) => ({ ...prev, lastName: e.target.value }))}
+                    className="border-indigo-100"
                   />
                 </div>
               </div>
@@ -176,6 +178,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                 value={authForm.email}
                 onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
                 placeholder="student@example.com"
+                className="h-11 border-indigo-100"
               />
             </div>
 
@@ -187,14 +190,19 @@ export function Profile({ onNavigate }: ProfileProps) {
                 value={authForm.password}
                 onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
                 placeholder="Enter your password"
+                className="h-11 border-indigo-100"
               />
             </div>
 
             <div className="flex gap-2">
-              <Button className="flex-1" onClick={handleAuthSubmit}>
-                {isRegisterMode ? 'Register' : 'Login'}
+              <Button className="h-11 flex-1 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-500 text-white" onClick={handleAuthSubmit}>
+                {isRegisterMode ? 'Create Account' : 'Login'}
               </Button>
-              <Button variant="outline" onClick={() => setIsRegisterMode((prev) => !prev)}>
+              <Button
+                variant="outline"
+                className="h-11 rounded-lg border-indigo-200 bg-white text-indigo-700"
+                onClick={() => setIsRegisterMode((prev) => !prev)}
+              >
                 {isRegisterMode ? 'Use Login' : 'Create Account'}
               </Button>
             </div>
