@@ -17,7 +17,7 @@ interface ProfileProps {
 }
 
 export function Profile({ onNavigate }: ProfileProps) {
-  const { user, login, register, logout } = useAuth();
+  const { user, login, submitSignupRequest, registerWithToken, logout } = useAuth();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
   const [localProfile, setLocalProfile] = useState(profile);
   const [avatarPreview, setAvatarPreview] = useState('');
@@ -28,6 +28,9 @@ export function Profile({ onNavigate }: ProfileProps) {
     lastName: '',
     email: '',
     password: '',
+    paymentMethod: 'easypaisa' as 'easypaisa' | 'jazzcash' | 'hbl',
+    paymentTransactionId: '',
+    tokenCode: '',
   });
   const [forgotMode, setForgotMode] = useState(false);
   const [forgotToken, setForgotToken] = useState('');
@@ -57,21 +60,56 @@ export function Profile({ onNavigate }: ProfileProps) {
 
   const handleAuthSubmit = async () => {
     try {
-      if (!authForm.email || !authForm.password) {
-        toast.error('Email and password are required.');
+      if (!authForm.email) {
+        toast.error('Email is required.');
         return;
       }
 
       if (isRegisterMode) {
-        await register({
-          email: authForm.email,
-          password: authForm.password,
-          firstName: authForm.firstName,
-          lastName: authForm.lastName,
-        });
-        toast.success('Account created and logged in.');
+        if (authForm.tokenCode && authForm.password) {
+          await registerWithToken({
+            email: authForm.email,
+            password: authForm.password,
+            tokenCode: authForm.tokenCode,
+            firstName: authForm.firstName,
+            lastName: authForm.lastName,
+          });
+          toast.success('Signup completed successfully.');
+        } else {
+          if (!authForm.paymentTransactionId) {
+            toast.error('Payment transaction ID is required to submit signup request.');
+            return;
+          }
+
+          await submitSignupRequest({
+            email: authForm.email,
+            firstName: authForm.firstName,
+            lastName: authForm.lastName,
+            paymentMethod: authForm.paymentMethod,
+            paymentTransactionId: authForm.paymentTransactionId,
+          });
+          toast.success('Signup request submitted. Wait for admin approval, then use token to complete signup.');
+        }
       } else {
-        await login(authForm.email, authForm.password);
+        if (!authForm.password) {
+          toast.error('Password is required.');
+          return;
+        }
+
+        try {
+          await login(authForm.email, authForm.password);
+        } catch (error) {
+          const conflict = error as Error & { code?: string };
+          if (conflict?.code === 'active_session_exists') {
+            const shouldSwitch = window.confirm(
+              'This account is active on another device. Do you want to log out the previous device and continue here?',
+            );
+            if (!shouldSwitch) return;
+            await login(authForm.email, authForm.password, { forceLogoutOtherDevice: true });
+          } else {
+            throw error;
+          }
+        }
         toast.success('Logged in successfully.');
       }
     } catch (error) {
@@ -189,7 +227,11 @@ export function Profile({ onNavigate }: ProfileProps) {
           <Card className="rounded-2xl border-indigo-100 bg-white/92 shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
             <CardHeader className="pb-3">
               <CardTitle>{isRegisterMode ? 'Create Account' : 'Login'}</CardTitle>
-              <CardDescription>Authentication is required for persistent test sessions</CardDescription>
+              <CardDescription>
+                {isRegisterMode
+                  ? 'Pay via Easypaisa/JazzCash/HBL, submit transaction ID, then complete signup with admin-issued token.'
+                  : 'Users can only stay logged in on one device at a time.'}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               {isRegisterMode ? (
@@ -239,6 +281,50 @@ export function Profile({ onNavigate }: ProfileProps) {
                 />
               </div>
 
+              {isRegisterMode ? (
+                <>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="payment-method">Payment Method</Label>
+                      <Select
+                        value={authForm.paymentMethod}
+                        onValueChange={(value: 'easypaisa' | 'jazzcash' | 'hbl') => setAuthForm((prev) => ({ ...prev, paymentMethod: value }))}
+                      >
+                        <SelectTrigger id="payment-method" className="h-11 border-indigo-100">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="easypaisa">Easypaisa</SelectItem>
+                          <SelectItem value="jazzcash">JazzCash</SelectItem>
+                          <SelectItem value="hbl">HBL</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="payment-txid">Transaction ID</Label>
+                      <Input
+                        id="payment-txid"
+                        value={authForm.paymentTransactionId}
+                        onChange={(e) => setAuthForm((prev) => ({ ...prev, paymentTransactionId: e.target.value }))}
+                        placeholder="Payment reference"
+                        className="h-11 border-indigo-100"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="signup-token">Admin Approval Token (for final signup)</Label>
+                    <Input
+                      id="signup-token"
+                      value={authForm.tokenCode}
+                      onChange={(e) => setAuthForm((prev) => ({ ...prev, tokenCode: e.target.value.toUpperCase() }))}
+                      placeholder="NET-XXXX-XXXX-XXXX"
+                      className="h-11 border-indigo-100"
+                    />
+                  </div>
+                </>
+              ) : null}
+
               {forgotMode ? (
                 <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
                   <div className="space-y-1">
@@ -284,7 +370,15 @@ export function Profile({ onNavigate }: ProfileProps) {
                   variant="outline"
                   className="h-11 w-11 rounded-xl border-indigo-200 bg-white p-0 text-indigo-500"
                   onClick={() => {
-                    setAuthForm({ firstName: '', lastName: '', email: '', password: '' });
+                    setAuthForm({
+                      firstName: '',
+                      lastName: '',
+                      email: '',
+                      password: '',
+                      paymentMethod: 'easypaisa',
+                      paymentTransactionId: '',
+                      tokenCode: '',
+                    });
                     setForgotToken('');
                     setNewPassword('');
                     setForgotMode(false);

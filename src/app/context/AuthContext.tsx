@@ -9,24 +9,57 @@ interface AuthUser {
   role?: 'student' | 'admin';
 }
 
+interface ActiveSessionInfo {
+  deviceId: string;
+  lastSeenAt: string;
+}
+
+interface AuthApiError extends Error {
+  code?: string;
+  activeSession?: ActiveSessionInfo;
+}
+
 interface AuthContextValue {
   token: string | null;
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (params: { email: string; password: string; firstName?: string; lastName?: string }) => Promise<void>;
+  login: (email: string, password: string, opts?: { forceLogoutOtherDevice?: boolean }) => Promise<void>;
+  submitSignupRequest: (params: {
+    email: string;
+    firstName?: string;
+    lastName?: string;
+    paymentMethod: 'easypaisa' | 'jazzcash' | 'hbl';
+    paymentTransactionId: string;
+  }) => Promise<void>;
+  registerWithToken: (params: {
+    email: string;
+    password: string;
+    tokenCode: string;
+    firstName?: string;
+    lastName?: string;
+  }) => Promise<void>;
   logout: () => void;
 }
 
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
+const DEVICE_STORAGE_KEY = 'net360-device-id';
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+function getOrCreateDeviceId() {
+  const existing = localStorage.getItem(DEVICE_STORAGE_KEY);
+  if (existing) return existing;
+  const created = `device-${Date.now()}-${Math.round(Math.random() * 1000000)}`;
+  localStorage.setItem(DEVICE_STORAGE_KEY, created);
+  return created;
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_STORAGE_KEY));
   const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY));
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [deviceId] = useState<string>(() => getOrCreateDeviceId());
 
   useEffect(() => {
     if (!token) {
@@ -91,23 +124,73 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [token, refreshToken]);
 
-  const login = async (email: string, password: string) => {
-    const payload = await apiRequest<{ token: string; refreshToken: string; user: AuthUser }>('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-    setToken(payload.token);
-    setRefreshToken(payload.refreshToken);
-    setUser(payload.user);
-    localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
-    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
+  const login: AuthContextValue['login'] = async (email, password, opts) => {
+    try {
+      const payload = await apiRequest<{ token: string; refreshToken: string; user: AuthUser }>(
+        '/api/auth/login',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            email,
+            password,
+            deviceId,
+            forceLogoutOtherDevice: Boolean(opts?.forceLogoutOtherDevice),
+          }),
+        },
+      );
+
+      setToken(payload.token);
+      setRefreshToken(payload.refreshToken);
+      setUser(payload.user);
+      localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
+      localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
+    } catch (error) {
+      if (error && typeof error === 'object') {
+        const typed = error as AuthApiError;
+        if (typeof (error as any).code === 'string') {
+          typed.code = (error as any).code;
+          typed.activeSession = (error as any).activeSession;
+        }
+        throw typed;
+      }
+      throw error;
+    }
   };
 
-  const register = async ({ email, password, firstName = '', lastName = '' }: { email: string; password: string; firstName?: string; lastName?: string }) => {
-    const payload = await apiRequest<{ token: string; refreshToken: string; user: AuthUser }>('/api/auth/register', {
+  const submitSignupRequest: AuthContextValue['submitSignupRequest'] = async ({
+    email,
+    firstName = '',
+    lastName = '',
+    paymentMethod,
+    paymentTransactionId,
+  }) => {
+    await apiRequest('/api/auth/signup-request', {
       method: 'POST',
-      body: JSON.stringify({ email, password, firstName, lastName }),
+      body: JSON.stringify({
+        email,
+        firstName,
+        lastName,
+        paymentMethod,
+        paymentTransactionId,
+      }),
     });
+  };
+
+  const registerWithToken: AuthContextValue['registerWithToken'] = async ({
+    email,
+    password,
+    tokenCode,
+    firstName = '',
+    lastName = '',
+  }) => {
+    const payload = await apiRequest<{ token: string; refreshToken: string; user: AuthUser }>(
+      '/api/auth/register-with-token',
+      {
+        method: 'POST',
+        body: JSON.stringify({ email, password, tokenCode, firstName, lastName, deviceId }),
+      },
+    );
+
     setToken(payload.token);
     setRefreshToken(payload.refreshToken);
     setUser(payload.user);
@@ -130,7 +213,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const value = useMemo(
-    () => ({ token, user, loading, login, register, logout }),
+    () => ({ token, user, loading, login, submitSignupRequest, registerWithToken, logout }),
     [token, user, loading],
   );
 

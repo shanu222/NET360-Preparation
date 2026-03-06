@@ -16,6 +16,8 @@ import { MCQModel } from './models/MCQ.js';
 import { TestSessionModel } from './models/TestSession.js';
 import { AttemptModel } from './models/Attempt.js';
 import { AIUsageModel } from './models/AIUsage.js';
+import { SignupRequestModel } from './models/SignupRequest.js';
+import { SignupTokenModel } from './models/SignupToken.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -28,6 +30,7 @@ const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '15m';
 const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
 const AI_DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT || 50);
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+const SIGNUP_TOKEN_TTL_HOURS = Number(process.env.SIGNUP_TOKEN_TTL_HOURS || 24);
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .split(',')
   .map((item) => item.trim().toLowerCase())
@@ -83,26 +86,62 @@ function hashToken(value) {
 }
 
 function makeAccessToken(user) {
+  const payload = {
+    userId: String(user._id),
+    email: user.email,
+    role: user.role || 'student',
+  };
+
+  if ((user.role || 'student') === 'student' && user.activeSession?.sessionId) {
+    payload.sessionId = user.activeSession.sessionId;
+  }
+
   return jwt.sign(
-    {
-      userId: String(user._id),
-      email: user.email,
-      role: user.role || 'student',
-    },
+    payload,
     JWT_SECRET,
     { expiresIn: ACCESS_TOKEN_TTL },
   );
 }
 
 function makeRefreshToken(user) {
+  const payload = {
+    userId: String(user._id),
+    type: 'refresh',
+    role: user.role || 'student',
+  };
+
+  if ((user.role || 'student') === 'student' && user.activeSession?.sessionId) {
+    payload.sessionId = user.activeSession.sessionId;
+  }
+
   return jwt.sign(
-    {
-      userId: String(user._id),
-      type: 'refresh',
-    },
+    payload,
     JWT_REFRESH_SECRET,
     { expiresIn: `${REFRESH_TOKEN_TTL_DAYS}d` },
   );
+}
+
+function normalizeEmail(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function sanitizeDeviceId(value) {
+  const cleaned = String(value || '').trim();
+  if (cleaned) return cleaned.slice(0, 200);
+  return `ua:${hashToken(String(value || '')).slice(0, 16)}`;
+}
+
+function generateSignupTokenCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const parts = [];
+  for (let block = 0; block < 3; block += 1) {
+    let token = '';
+    for (let i = 0; i < 4; i += 1) {
+      token += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    parts.push(token);
+  }
+  return `NET-${parts.join('-')}`;
 }
 
 function defaultPreferences() {
@@ -278,6 +317,20 @@ async function authMiddleware(req, res, next) {
       return;
     }
 
+    const role = user.role || 'student';
+
+    if (role === 'student') {
+      const tokenSessionId = String(payload.sessionId || '');
+      const activeSessionId = String(user.activeSession?.sessionId || '');
+      if (!tokenSessionId || !activeSessionId || tokenSessionId !== activeSessionId) {
+        res.status(401).json({ error: 'Session is no longer active. Please log in again.' });
+        return;
+      }
+
+      user.activeSession.lastSeenAt = new Date();
+      await user.save();
+    }
+
     req.user = user;
     next();
   } catch {
@@ -409,38 +462,133 @@ app.get('/api/health', async (req, res) => {
   res.json({ status: 'ok', service: 'net360-api', mongo: 'connected' });
 });
 
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/signup-request', async (req, res) => {
   try {
-    const { email, password, firstName = '', lastName = '' } = req.body || {};
+    const email = normalizeEmail(req.body?.email);
+    const firstName = String(req.body?.firstName || '').trim();
+    const lastName = String(req.body?.lastName || '').trim();
+    const paymentMethod = String(req.body?.paymentMethod || '').trim().toLowerCase();
+    const paymentTransactionId = String(req.body?.paymentTransactionId || '').trim();
 
-    if (!email || !password) {
-      res.status(400).json({ error: 'Email and password are required.' });
+    if (!email || !paymentTransactionId || !paymentMethod) {
+      res.status(400).json({ error: 'Email, payment method, and transaction ID are required.' });
       return;
     }
 
-    if (String(password).length < 8) {
-      res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    if (!['easypaisa', 'jazzcash', 'hbl'].includes(paymentMethod)) {
+      res.status(400).json({ error: 'Payment method must be one of: easypaisa, jazzcash, hbl.' });
       return;
     }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
-    const existing = await UserModel.findOne({ email: normalizedEmail });
-    if (existing) {
+    const existingUser = await UserModel.findOne({ email }).lean();
+    if (existingUser) {
       res.status(409).json({ error: 'Email is already registered.' });
       return;
     }
 
-    const passwordHash = await bcrypt.hash(String(password), 12);
-    const role = ADMIN_EMAILS.includes(normalizedEmail) ? 'admin' : 'student';
+    const existingPending = await SignupRequestModel.findOne({ email, status: 'pending' }).lean();
+    if (existingPending) {
+      res.status(409).json({ error: 'A pending signup request already exists for this email.' });
+      return;
+    }
+
+    const request = await SignupRequestModel.create({
+      email,
+      firstName,
+      lastName,
+      paymentMethod,
+      paymentTransactionId,
+      status: 'pending',
+    });
+
+    res.status(201).json({
+      request: {
+        id: String(request._id),
+        email: request.email,
+        status: request.status,
+        createdAt: request.createdAt,
+      },
+      message: 'Signup request submitted. Wait for admin approval and token.',
+    });
+  } catch {
+    res.status(500).json({ error: 'Could not submit signup request.' });
+  }
+});
+
+app.post('/api/auth/register-with-token', async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body?.email);
+    const password = String(req.body?.password || '');
+    const tokenCode = String(req.body?.tokenCode || '').trim().toUpperCase();
+    const firstName = String(req.body?.firstName || '').trim();
+    const lastName = String(req.body?.lastName || '').trim();
+    const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
+
+    if (!email || !password || !tokenCode) {
+      res.status(400).json({ error: 'Email, password, and token code are required.' });
+      return;
+    }
+
+    if (password.length < 8) {
+      res.status(400).json({ error: 'Password must be at least 8 characters.' });
+      return;
+    }
+
+    const existingUser = await UserModel.findOne({ email }).lean();
+    if (existingUser) {
+      res.status(409).json({ error: 'Email is already registered.' });
+      return;
+    }
+
+    const signupToken = await SignupTokenModel.findOne({ code: tokenCode });
+    if (!signupToken) {
+      res.status(400).json({ error: 'Invalid token code.' });
+      return;
+    }
+
+    if (signupToken.status !== 'active') {
+      res.status(400).json({ error: 'This token is no longer active.' });
+      return;
+    }
+
+    if (new Date(signupToken.expiresAt).getTime() <= Date.now()) {
+      signupToken.status = 'expired';
+      await signupToken.save();
+      res.status(400).json({ error: 'Token expired. Ask admin for a new token.' });
+      return;
+    }
+
+    if (normalizeEmail(signupToken.email) !== email) {
+      res.status(400).json({ error: 'Token was issued for a different email.' });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const activeSession = {
+      sessionId: crypto.randomUUID(),
+      deviceId,
+      startedAt: new Date(),
+      lastSeenAt: new Date(),
+    };
 
     const user = await UserModel.create({
-      email: normalizedEmail,
+      email,
       passwordHash,
-      firstName: String(firstName),
-      lastName: String(lastName),
-      role,
+      firstName,
+      lastName,
+      role: ADMIN_EMAILS.includes(email) ? 'admin' : 'student',
+      activeSession,
       preferences: defaultPreferences(),
       progress: defaultProgress(),
+    });
+
+    signupToken.status = 'used';
+    signupToken.usedAt = new Date();
+    signupToken.usedByUserId = user._id;
+    await signupToken.save();
+
+    await SignupRequestModel.findByIdAndUpdate(signupToken.signupRequestId, {
+      $set: { status: 'completed' },
     });
 
     const payload = await issueAuthPayload(user, req);
@@ -450,15 +598,23 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
+app.post('/api/auth/register', async (req, res) => {
+  res.status(410).json({
+    error: 'Direct signup is disabled. Submit payment proof, get approval, then register using your token.',
+  });
+});
+
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body || {};
+    const forceLogoutOtherDevice = Boolean(req.body?.forceLogoutOtherDevice);
+    const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
     if (!email || !password) {
       res.status(400).json({ error: 'Email and password are required.' });
       return;
     }
 
-    const user = await UserModel.findOne({ email: String(email).trim().toLowerCase() });
+    const user = await UserModel.findOne({ email: normalizeEmail(email) });
     if (!user) {
       res.status(401).json({ error: 'Invalid credentials.' });
       return;
@@ -468,6 +624,29 @@ app.post('/api/auth/login', async (req, res) => {
     if (!isValid) {
       res.status(401).json({ error: 'Invalid credentials.' });
       return;
+    }
+
+    const role = user.role || 'student';
+    if (role === 'student') {
+      const activeSession = user.activeSession || null;
+      if (activeSession && activeSession.deviceId && activeSession.deviceId !== deviceId && !forceLogoutOtherDevice) {
+        res.status(409).json({
+          error: 'You are already logged in on another device. Logout there first or confirm switch.',
+          code: 'active_session_exists',
+          activeSession: {
+            deviceId: activeSession.deviceId,
+            lastSeenAt: activeSession.lastSeenAt,
+          },
+        });
+        return;
+      }
+
+      user.activeSession = {
+        sessionId: crypto.randomUUID(),
+        deviceId,
+        startedAt: new Date(),
+        lastSeenAt: new Date(),
+      };
     }
 
     const payload = await issueAuthPayload(user, req);
@@ -505,6 +684,17 @@ app.post('/api/auth/refresh', async (req, res) => {
       return;
     }
 
+    if ((user.role || 'student') === 'student') {
+      const tokenSessionId = String(payload.sessionId || '');
+      const activeSessionId = String(user.activeSession?.sessionId || '');
+      if (!tokenSessionId || !activeSessionId || tokenSessionId !== activeSessionId) {
+        user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
+        await user.save();
+        res.status(401).json({ error: 'Session ended. Please log in again.' });
+        return;
+      }
+    }
+
     user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
     await user.save();
 
@@ -529,6 +719,14 @@ app.post('/api/auth/logout', async (req, res) => {
     if (user) {
       const tokenHash = hashToken(refreshToken);
       user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
+
+      if ((user.role || 'student') === 'student') {
+        const tokenSessionId = String(payload.sessionId || '');
+        if (tokenSessionId && String(user.activeSession?.sessionId || '') === tokenSessionId) {
+          user.activeSession = null;
+        }
+      }
+
       await user.save();
     }
   } catch {
@@ -1027,11 +1225,12 @@ app.get('/api/reports/export', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) => {
-  const [usersCount, mcqCount, attemptsCount, latestAttempts] = await Promise.all([
+  const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingSignupRequests] = await Promise.all([
     UserModel.countDocuments(),
     MCQModel.countDocuments(),
     AttemptModel.countDocuments(),
     AttemptModel.find().sort({ attemptedAt: -1 }).limit(12).lean(),
+    SignupRequestModel.countDocuments({ status: 'pending' }),
   ]);
 
   const averageScore = latestAttempts.length
@@ -1042,9 +1241,119 @@ app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) =>
     usersCount,
     mcqCount,
     attemptsCount,
+    pendingSignupRequests,
     averageScore,
     recentAttempts: latestAttempts.map((item) => serializeAttempt(item)),
   });
+});
+
+app.get('/api/admin/signup-requests', authMiddleware, requireAdmin, async (req, res) => {
+  const status = String(req.query?.status || 'all').toLowerCase();
+  const filter = status === 'all' ? {} : { status };
+
+  const requests = await SignupRequestModel.find(filter).sort({ createdAt: -1 }).limit(300).lean();
+  res.json({
+    requests: requests.map((item) => ({
+      id: String(item._id),
+      email: item.email,
+      firstName: item.firstName || '',
+      lastName: item.lastName || '',
+      paymentMethod: item.paymentMethod,
+      paymentTransactionId: item.paymentTransactionId,
+      status: item.status,
+      notes: item.notes || '',
+      reviewedAt: item.reviewedAt ? new Date(item.reviewedAt).toISOString() : null,
+      reviewedByEmail: item.reviewedByEmail || '',
+      createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+    })),
+  });
+});
+
+app.post('/api/admin/signup-requests/:requestId/approve', authMiddleware, requireAdmin, async (req, res) => {
+  const request = await SignupRequestModel.findById(req.params.requestId);
+  if (!request) {
+    res.status(404).json({ error: 'Signup request not found.' });
+    return;
+  }
+
+  if (request.status !== 'pending') {
+    res.status(400).json({ error: 'Only pending requests can be approved.' });
+    return;
+  }
+
+  const existingUser = await UserModel.findOne({ email: request.email }).lean();
+  if (existingUser) {
+    request.status = 'rejected';
+    request.notes = 'Email already registered.';
+    request.reviewedByAdminId = req.user._id;
+    request.reviewedByEmail = req.user.email;
+    request.reviewedAt = new Date();
+    await request.save();
+    res.status(409).json({ error: 'Email already registered. Request auto-rejected.' });
+    return;
+  }
+
+  let code = '';
+  for (let i = 0; i < 5; i += 1) {
+    const candidate = generateSignupTokenCode();
+    const exists = await SignupTokenModel.findOne({ code: candidate }).lean();
+    if (!exists) {
+      code = candidate;
+      break;
+    }
+  }
+
+  if (!code) {
+    res.status(500).json({ error: 'Could not generate unique signup token. Try again.' });
+    return;
+  }
+
+  const expiresAt = new Date(Date.now() + SIGNUP_TOKEN_TTL_HOURS * 60 * 60 * 1000);
+  const tokenDoc = await SignupTokenModel.create({
+    code,
+    email: request.email,
+    signupRequestId: request._id,
+    status: 'active',
+    expiresAt,
+  });
+
+  request.status = 'approved';
+  request.signupTokenId = tokenDoc._id;
+  request.notes = String(req.body?.notes || '').trim();
+  request.reviewedByAdminId = req.user._id;
+  request.reviewedByEmail = req.user.email;
+  request.reviewedAt = new Date();
+  await request.save();
+
+  res.status(201).json({
+    requestId: String(request._id),
+    token: {
+      code,
+      expiresAt: expiresAt.toISOString(),
+    },
+  });
+});
+
+app.post('/api/admin/signup-requests/:requestId/reject', authMiddleware, requireAdmin, async (req, res) => {
+  const request = await SignupRequestModel.findById(req.params.requestId);
+  if (!request) {
+    res.status(404).json({ error: 'Signup request not found.' });
+    return;
+  }
+
+  if (request.status !== 'pending') {
+    res.status(400).json({ error: 'Only pending requests can be rejected.' });
+    return;
+  }
+
+  request.status = 'rejected';
+  request.notes = String(req.body?.notes || '').trim();
+  request.reviewedByAdminId = req.user._id;
+  request.reviewedByEmail = req.user.email;
+  request.reviewedAt = new Date();
+  await request.save();
+
+  res.json({ ok: true, requestId: String(request._id) });
 });
 
 app.get('/api/admin/users', authMiddleware, requireAdmin, async (req, res) => {

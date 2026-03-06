@@ -24,6 +24,21 @@ interface AdminOverview {
   mcqCount: number;
   attemptsCount: number;
   averageScore: number;
+  pendingSignupRequests?: number;
+}
+
+interface SignupRequest {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  paymentMethod: 'easypaisa' | 'jazzcash' | 'hbl';
+  paymentTransactionId: string;
+  status: 'pending' | 'approved' | 'rejected' | 'completed';
+  notes?: string;
+  reviewedAt: string | null;
+  reviewedByEmail: string;
+  createdAt: string | null;
 }
 
 interface AdminMCQ {
@@ -65,7 +80,9 @@ export default function AdminApp() {
   const [authForm, setAuthForm] = useState({ email: '', password: '' });
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [signupRequests, setSignupRequests] = useState<SignupRequest[]>([]);
   const [mcqs, setMcqs] = useState<AdminMCQ[]>([]);
+  const [issuedTokens, setIssuedTokens] = useState<Record<string, string>>({});
   const [query, setQuery] = useState('');
   const [form, setForm] = useState(emptyForm());
 
@@ -80,14 +97,16 @@ export default function AdminApp() {
   const authToken = token;
 
   const loadAdminData = async (activeToken: string) => {
-    const [overviewPayload, usersPayload, mcqPayload] = await Promise.all([
+    const [overviewPayload, usersPayload, requestPayload, mcqPayload] = await Promise.all([
       apiRequest<AdminOverview>('/api/admin/overview', {}, activeToken),
       apiRequest<{ users: AdminUser[] }>('/api/admin/users', {}, activeToken),
+      apiRequest<{ requests: SignupRequest[] }>('/api/admin/signup-requests?status=all', {}, activeToken),
       apiRequest<{ mcqs: AdminMCQ[] }>('/api/admin/mcqs', {}, activeToken),
     ]);
 
     setOverview(overviewPayload);
     setUsers(usersPayload.users || []);
+    setSignupRequests(requestPayload.requests || []);
     setMcqs(mcqPayload.mcqs || []);
   };
 
@@ -158,6 +177,10 @@ export default function AdminApp() {
 
   const removeUser = async (user: AdminUser) => {
     if (!authToken) return;
+    if (user.role === 'admin') {
+      toast.error('For safety, admin accounts cannot be removed from this panel.');
+      return;
+    }
     if (!window.confirm(`Remove ${user.email}? They will have to login/register again.`)) return;
 
     try {
@@ -166,6 +189,60 @@ export default function AdminApp() {
       await loadAdminData(authToken);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not remove user.');
+    }
+  };
+
+  const approveSignupRequest = async (request: SignupRequest) => {
+    if (!authToken) return;
+    try {
+      const payload = await apiRequest<{ requestId: string; token: { code: string; expiresAt: string } }>(
+        `/api/admin/signup-requests/${request.id}/approve`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ notes: 'Payment verified by admin.' }),
+        },
+        authToken,
+      );
+      setIssuedTokens((prev) => ({ ...prev, [request.id]: payload.token.code }));
+      toast.success(`Approved. Token: ${payload.token.code}`);
+      await loadAdminData(authToken);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not approve request.');
+    }
+  };
+
+  const rejectSignupRequest = async (request: SignupRequest) => {
+    if (!authToken) return;
+    try {
+      await apiRequest(`/api/admin/signup-requests/${request.id}/reject`, {
+        method: 'POST',
+        body: JSON.stringify({ notes: 'Payment could not be verified.' }),
+      }, authToken);
+      toast.success('Request rejected.');
+      await loadAdminData(authToken);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not reject request.');
+    }
+  };
+
+  const copyToken = async (tokenCode: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(tokenCode);
+      } else {
+        const temp = document.createElement('textarea');
+        temp.value = tokenCode;
+        temp.style.position = 'fixed';
+        temp.style.opacity = '0';
+        document.body.appendChild(temp);
+        temp.focus();
+        temp.select();
+        document.execCommand('copy');
+        document.body.removeChild(temp);
+      }
+      toast.success('Token copied to clipboard.');
+    } catch {
+      toast.error('Could not copy token.');
     }
   };
 
@@ -279,9 +356,16 @@ export default function AdminApp() {
         <Metric title="Average Score" value={`${overview?.averageScore || 0}%`} />
       </div>
 
+      <div className="grid gap-4 md:grid-cols-3">
+        <Metric title="Pending Signup Requests" value={String(overview?.pendingSignupRequests || 0)} />
+        <Metric title="Approved Requests" value={String(signupRequests.filter((item) => item.status === 'approved').length)} />
+        <Metric title="Completed Signups" value={String(signupRequests.filter((item) => item.status === 'completed').length)} />
+      </div>
+
       <Tabs defaultValue="users" className="space-y-4">
-        <TabsList className="grid grid-cols-2 w-full max-w-md">
+        <TabsList className="grid grid-cols-3 w-full max-w-xl">
           <TabsTrigger value="users">Users</TabsTrigger>
+          <TabsTrigger value="requests">Signup Requests</TabsTrigger>
           <TabsTrigger value="mcqs">MCQs</TabsTrigger>
         </TabsList>
 
@@ -306,6 +390,57 @@ export default function AdminApp() {
                   <Button variant="destructive" size="sm" onClick={() => void removeUser(user)}>
                     Remove
                   </Button>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="requests" className="space-y-3">
+          <Card>
+            <CardHeader>
+              <CardTitle>Payment Approval Requests</CardTitle>
+              <CardDescription>Verify transaction IDs and approve to generate signup token.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 max-h-[520px] overflow-auto">
+              {signupRequests.map((request) => (
+                <div key={request.id} className="rounded-lg border p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="text-sm">{request.email}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {request.paymentMethod.toUpperCase()} • Tx ID: {request.paymentTransactionId}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {request.createdAt ? new Date(request.createdAt).toLocaleString() : 'Unknown time'}
+                      </p>
+                    </div>
+                    <Badge variant={request.status === 'pending' ? 'default' : 'outline'}>{request.status}</Badge>
+                  </div>
+
+                  {issuedTokens[request.id] ? (
+                    <div className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-1 text-xs text-emerald-700 flex items-center justify-between gap-2">
+                      <span>
+                        Generated token: <strong>{issuedTokens[request.id]}</strong>
+                      </span>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => void copyToken(issuedTokens[request.id])}
+                      >
+                        Copy
+                      </Button>
+                    </div>
+                  ) : null}
+
+                  {request.status === 'pending' ? (
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => void approveSignupRequest(request)}>Approve + Generate Token</Button>
+                      <Button size="sm" variant="outline" onClick={() => void rejectSignupRequest(request)}>Reject</Button>
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </CardContent>

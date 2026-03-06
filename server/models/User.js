@@ -19,6 +19,16 @@ const refreshTokenSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const activeSessionSchema = new mongoose.Schema(
+  {
+    sessionId: { type: String, required: true },
+    deviceId: { type: String, required: true },
+    startedAt: { type: Date, required: true },
+    lastSeenAt: { type: Date, required: true },
+  },
+  { _id: false },
+);
+
 const progressSchema = new mongoose.Schema(
   {
     questionsSolved: { type: Number, default: 0 },
@@ -54,6 +64,7 @@ const userSchema = new mongoose.Schema(
     role: { type: String, enum: ['student', 'admin'], default: 'student', index: true },
     preferences: { type: preferencesSchema, default: () => ({}) },
     progress: { type: progressSchema, default: () => ({}) },
+    activeSession: { type: activeSessionSchema, default: null },
     refreshTokens: { type: [refreshTokenSchema], default: [] },
     resetPasswordTokenHash: { type: String, default: null },
     resetPasswordExpiresAt: { type: Date, default: null },
