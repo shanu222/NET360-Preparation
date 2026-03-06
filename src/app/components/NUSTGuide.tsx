@@ -1,11 +1,24 @@
-import { useState } from 'react';
+import { type ComponentType, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { Calendar, CheckCircle, AlertCircle, Trophy } from 'lucide-react';
+import {
+  AlertCircle,
+  ArrowRight,
+  CalendarDays,
+  CheckCircle,
+  CheckCircle2,
+  FileCheck,
+  Globe,
+  GraduationCap,
+  Scale,
+  ShieldCheck,
+  Sparkles,
+  Target,
+} from 'lucide-react';
 
 export function NUSTGuide() {
   const [sscMarks, setSscMarks] = useState('');
@@ -27,81 +40,187 @@ export function NUSTGuide() {
     setEligibilityResult(eligible);
   };
 
-  return (
-    <div className="space-y-6">
-      <div>
-        <h1>Complete NUST Admission Guide</h1>
-        <p className="text-muted-foreground">Everything you need to know about NUST admissions</p>
-      </div>
+  const routeCards = [
+    {
+      title: 'NET (NUST Entry Test)',
+      subtitle: 'Most Popular',
+      points: ['Computer-based test', 'Multiple attempts allowed', '4 series every year'],
+      action: 'View NET Details',
+      tone: 'from-violet-500 via-indigo-500 to-blue-500',
+      buttonTone: 'from-violet-500 to-indigo-500',
+      icon: GraduationCap,
+    },
+    {
+      title: 'SAT (International Students)',
+      subtitle: 'Alternative Route',
+      points: ['Accepted for overseas applicants', 'Minimum score requirement', 'Direct merit consideration'],
+      action: 'View SAT Requirements',
+      tone: 'from-cyan-400 via-sky-400 to-indigo-500',
+      buttonTone: 'from-blue-500 to-cyan-500',
+      icon: Globe,
+    },
+    {
+      title: 'ACT (Alternative Route)',
+      subtitle: 'Alternative Route',
+      points: ['International admission route', 'Minimum ACT score required', 'Accepted by NUST for certain programs'],
+      action: 'View ACT Requirements',
+      tone: 'from-orange-400 via-amber-400 to-rose-400',
+      buttonTone: 'from-amber-500 to-orange-500',
+      icon: Sparkles,
+    },
+  ];
 
-      <Tabs defaultValue="routes">
-        <TabsList className="grid w-full grid-cols-4">
-          <TabsTrigger value="routes">Entry Routes</TabsTrigger>
+  const timeline = [
+    { label: 'NET Series 1', month: 'December' },
+    { label: 'NET Series 2', month: 'February' },
+    { label: 'NET Series 3', month: 'April' },
+    { label: 'Merit Lists', month: 'July - August' },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <section className="relative overflow-hidden rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-[#edf2ff] via-[#e8e5ff] to-[#f8dff0] p-5 sm:p-6">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_24%,rgba(88,108,242,0.18),transparent_35%),radial-gradient(circle_at_84%_22%,rgba(247,180,214,0.28),transparent_32%)]" />
+        <div className="relative space-y-4">
+          <div>
+            <h1 className="text-3xl text-indigo-950">Complete NUST Admission Guide</h1>
+            <p className="text-base text-slate-600">Everything you need to know about NUST admissions</p>
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-3">
+            <GuidePill icon={GraduationCap} label="4 Admission Routes" />
+            <GuidePill icon={CalendarDays} label="NET Conducted 4 Times / Year" />
+            <GuidePill icon={Target} label="Merit Based Selection" />
+          </div>
+        </div>
+      </section>
+
+      <Tabs defaultValue="overview" className="space-y-4">
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 !bg-white/70 !border-indigo-100">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="policy">Admission Policy</TabsTrigger>
           <TabsTrigger value="dates">Important Dates</TabsTrigger>
           <TabsTrigger value="eligibility">Eligibility</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="routes" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Entry Routes to NUST</CardTitle>
-              <CardDescription>Multiple pathways to join NUST</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="p-4 border rounded-lg">
-                <div className="flex items-center justify-between mb-2">
-                  <h3>NET (NUST Entry Test)</h3>
-                  <Badge>Most Popular</Badge>
+        <TabsContent value="overview" className="space-y-4">
+          <div>
+            <h2 className="text-3xl text-indigo-950">Entry Routes to NUST</h2>
+            <p className="text-slate-600">Multiple pathways to join NUST</p>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-3">
+            {routeCards.map((route) => {
+              const Icon = route.icon;
+
+              return (
+                <article
+                  key={route.title}
+                  className="overflow-hidden rounded-2xl border border-indigo-100 bg-white shadow-[0_14px_30px_rgba(98,113,202,0.12)]"
+                >
+                  <div className={`flex items-center justify-between bg-gradient-to-r px-4 py-3 text-white ${route.tone}`}>
+                    <div className="inline-flex h-10 w-10 items-center justify-center rounded-full bg-white/20">
+                      <Icon className="h-5 w-5" />
+                    </div>
+                    {route.subtitle === 'Most Popular' ? <Badge className="bg-indigo-700/80">Most Popular</Badge> : null}
+                  </div>
+                  <div className="space-y-3 p-4">
+                    <h3 className="text-[30px] leading-tight text-indigo-950 sm:text-xl">{route.title}</h3>
+                    <ul className="space-y-2 text-sm text-slate-700">
+                      {route.points.map((item) => (
+                        <li key={item} className="flex items-center gap-2">
+                          <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                    <Button className={`h-10 bg-gradient-to-r ${route.buttonTone} text-white`}>
+                      {route.action}
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </Button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[2fr_1.3fr]">
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle>Admission Timeline</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="relative mb-5 mt-2 h-2 rounded-full bg-indigo-100">
+                  <div className="absolute left-0 top-0 h-2 w-full rounded-full bg-gradient-to-r from-violet-400 via-blue-400 to-orange-400" />
+                  <div className="absolute inset-0 grid grid-cols-4">
+                    {timeline.map((item, index) => (
+                      <div key={item.label} className="relative">
+                        <div
+                          className={`absolute -top-1.5 h-5 w-5 rounded-full border-4 border-white ${
+                            index === 3 ? 'bg-orange-400' : 'bg-violet-400'
+                          }`}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                <p className="text-sm text-muted-foreground">
-                  Computer-based test conducted by NUST. Available in multiple series throughout the year.
-                  Valid for the admission cycle in which it is taken.
-                </p>
-                <ul className="mt-3 space-y-1 text-sm">
-                  <li className="flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4 text-green-500" />
-                    Multiple attempts allowed
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4 text-green-500" />
-                    Computer-based test
-                  </li>
-                  <li className="flex items-center gap-2">
-                    <CheckCircle className="w-4 h-4 text-green-500" />
-                    4 test series per year
-                  </li>
-                </ul>
-              </div>
-
-              <div className="p-4 border rounded-lg">
-                <h3 className="mb-2">SAT (International)</h3>
-                <p className="text-sm text-muted-foreground">
-                  International students and Pakistani students can apply through SAT scores.
-                  Minimum score requirements apply.
-                </p>
-              </div>
-
-              <div className="p-4 border rounded-lg">
-                <h3 className="mb-2">ACT (International)</h3>
-                <p className="text-sm text-muted-foreground">
-                  Alternative international admission route. ACT scores accepted with minimum requirements.
-                </p>
-              </div>
+                <div className="grid grid-cols-2 gap-y-3 text-sm text-slate-700 sm:grid-cols-4">
+                  {timeline.map((item) => (
+                    <div key={item.label}>
+                      <p className="font-semibold text-indigo-950">{item.label}</p>
+                      <p className="text-slate-500">{item.month}</p>
+                    </div>
+                  ))}
+                </div>
             </CardContent>
           </Card>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="inline-flex items-center gap-2 text-xl">
+                    <ShieldCheck className="h-5 w-5 text-blue-500" /> Eligibility Requirements
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ul className="mb-4 space-y-2 text-sm text-slate-700">
+                    <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-blue-500" /> Minimum FSC / A-Level marks</li>
+                    <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-blue-500" /> NET score requirements</li>
+                    <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-blue-500" /> Subject combination criteria</li>
+                  </ul>
+                  <Button variant="outline" className="w-full justify-between">See Criteria <ArrowRight className="h-4 w-4" /></Button>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="inline-flex items-center gap-2 text-xl">
+                    <Scale className="h-5 w-5 text-indigo-500" /> Admission Policy
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <ul className="mb-4 space-y-2 text-sm text-slate-700">
+                    <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-indigo-500" /> Merit calculation policy</li>
+                    <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-indigo-500" /> Weightage formula</li>
+                    <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-indigo-500" /> Program specific quotas</li>
+                  </ul>
+                  <Button variant="outline" className="w-full justify-between">Learn More <ArrowRight className="h-4 w-4" /></Button>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </TabsContent>
 
         <TabsContent value="policy" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Admission Policy</CardTitle>
+              <CardTitle>Admission Policy and Merit Rules</CardTitle>
               <CardDescription>Understanding NUST admission criteria</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-3">
+            <CardContent className="space-y-5">
+              <div className="grid gap-4 md:grid-cols-2">
                 <div className="flex items-start gap-3">
-                  <Trophy className="w-5 h-5 text-blue-500 mt-1" />
+                  <Target className="w-5 h-5 text-blue-500 mt-1" />
                   <div>
                     <h4>Merit-Based Admission</h4>
                     <p className="text-sm text-muted-foreground">
@@ -112,7 +231,7 @@ export function NUSTGuide() {
                 </div>
 
                 <div className="flex items-start gap-3">
-                  <Calendar className="w-5 h-5 text-green-500 mt-1" />
+                  <CalendarDays className="w-5 h-5 text-green-500 mt-1" />
                   <div>
                     <h4>NET Validity</h4>
                     <p className="text-sm text-muted-foreground">
@@ -134,7 +253,7 @@ export function NUSTGuide() {
                 </div>
 
                 <div className="flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-orange-500 mt-1" />
+                  <FileCheck className="w-5 h-5 text-orange-500 mt-1" />
                   <div>
                     <h4>Computer-Based Test</h4>
                     <p className="text-sm text-muted-foreground">
@@ -145,7 +264,7 @@ export function NUSTGuide() {
                 </div>
               </div>
 
-              <div className="p-4 bg-blue-50 dark:bg-blue-950 rounded-lg">
+              <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
                 <h4 className="mb-2">Aggregate Formula</h4>
                 <div className="space-y-1 text-sm">
                   <p>Aggregate = (SSC% × 10) + (HSSC% × 15) + (NET Score × 75)</p>
@@ -164,7 +283,7 @@ export function NUSTGuide() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-4">
-                <div className="p-4 border-l-4 border-blue-500 bg-blue-50 dark:bg-blue-950">
+                <div className="p-4 border-l-4 border-blue-500 bg-blue-50 rounded-r-lg">
                   <div className="flex items-center justify-between mb-2">
                     <h4>NET Series 1</h4>
                     <Badge variant="secondary">Completed</Badge>
@@ -173,7 +292,7 @@ export function NUSTGuide() {
                   <p className="text-sm text-muted-foreground">Test Date: December 2025</p>
                 </div>
 
-                <div className="p-4 border-l-4 border-green-500 bg-green-50 dark:bg-green-950">
+                <div className="p-4 border-l-4 border-green-500 bg-green-50 rounded-r-lg">
                   <div className="flex items-center justify-between mb-2">
                     <h4>NET Series 2</h4>
                     <Badge className="bg-green-500">Open Soon</Badge>
@@ -182,7 +301,7 @@ export function NUSTGuide() {
                   <p className="text-sm text-muted-foreground">Test Date: February 2026</p>
                 </div>
 
-                <div className="p-4 border-l-4 border-purple-500 bg-purple-50 dark:bg-purple-950">
+                <div className="p-4 border-l-4 border-purple-500 bg-purple-50 rounded-r-lg">
                   <div className="flex items-center justify-between mb-2">
                     <h4>NET Series 3</h4>
                     <Badge variant="outline">Upcoming</Badge>
@@ -191,7 +310,7 @@ export function NUSTGuide() {
                   <p className="text-sm text-muted-foreground">Test Date: April 2026</p>
                 </div>
 
-                <div className="p-4 border-l-4 border-orange-500 bg-orange-50 dark:bg-orange-950">
+                <div className="p-4 border-l-4 border-orange-500 bg-orange-50 rounded-r-lg">
                   <div className="flex items-center justify-between mb-2">
                     <h4>NET Series 4</h4>
                     <Badge variant="outline">Upcoming</Badge>
@@ -237,7 +356,7 @@ export function NUSTGuide() {
                 <Button onClick={checkEligibility}>Check Eligibility</Button>
 
                 {eligibilityResult.length > 0 && (
-                  <div className="p-4 bg-green-50 dark:bg-green-950 rounded-lg">
+                  <div className="p-4 bg-green-50 rounded-lg border border-green-200">
                     <h4 className="mb-3 flex items-center gap-2">
                       <CheckCircle className="w-5 h-5 text-green-500" />
                       You are eligible for:
@@ -253,7 +372,7 @@ export function NUSTGuide() {
                 )}
 
                 {eligibilityResult.length === 0 && sscMarks && hsscMarks && (
-                  <div className="p-4 bg-orange-50 dark:bg-orange-950 rounded-lg">
+                  <div className="p-4 bg-orange-50 rounded-lg border border-orange-200">
                     <p className="flex items-center gap-2">
                       <AlertCircle className="w-5 h-5 text-orange-500" />
                       Minimum 50% marks required in both SSC and HSSC
@@ -275,6 +394,23 @@ export function NUSTGuide() {
           </Card>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function GuidePill({
+  icon: Icon,
+  label,
+}: {
+  icon: ComponentType<{ className?: string }>;
+  label: string;
+}) {
+  return (
+    <div className="inline-flex items-center gap-2 rounded-xl border border-white/70 bg-white/75 px-3 py-2 text-sm text-indigo-900 shadow-sm">
+      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+        <Icon className="h-4 w-4" />
+      </span>
+      <span className="font-medium">{label}</span>
     </div>
   );
 }
