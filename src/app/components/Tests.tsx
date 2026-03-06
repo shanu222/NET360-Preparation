@@ -1,94 +1,126 @@
+import { useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
 import { Progress } from './ui/progress';
 import { FileText, Clock, Target, TrendingUp, Play } from 'lucide-react';
+import { toast } from 'sonner';
+import { useAppData } from '../context/AppDataContext';
+import { Difficulty, SubjectKey, getSubjectLabel } from '../lib/mcq';
+
+const subjects: SubjectKey[] = ['mathematics', 'physics', 'english'];
+const difficulties: Difficulty[] = ['Easy', 'Medium', 'Hard'];
 
 export function Tests() {
-  const topicTests = [
-    {
-      subject: 'Mathematics',
-      topic: 'Calculus - Derivatives',
-      questions: 20,
-      duration: 20,
-      difficulty: 'Medium',
-      attempted: false
-    },
-    {
-      subject: 'Mathematics',
-      topic: 'Trigonometry',
-      questions: 25,
-      duration: 25,
-      difficulty: 'Easy',
-      attempted: true,
-      score: 85
-    },
-    {
-      subject: 'Physics',
-      topic: 'Electromagnetism',
-      questions: 20,
-      duration: 20,
-      difficulty: 'Hard',
-      attempted: false
-    },
-    {
-      subject: 'Physics',
-      topic: 'Mechanics',
-      questions: 30,
-      duration: 30,
-      difficulty: 'Medium',
-      attempted: true,
-      score: 78
-    },
-    {
-      subject: 'English',
-      topic: 'Grammar & Sentence Correction',
-      questions: 15,
-      duration: 15,
-      difficulty: 'Easy',
-      attempted: false
-    }
-  ];
+  const { mcqsBySubjectAndDifficulty, attempts, startPracticeTest } = useAppData();
 
-  const mockTests = [
-    {
-      name: 'Full NET Engineering Mock #1',
-      questions: 200,
-      duration: 180,
-      attempted: true,
-      score: 72,
-      subjects: ['Math: 100', 'Physics: 60', 'English: 40']
-    },
-    {
-      name: 'Full NET Engineering Mock #2',
-      questions: 200,
-      duration: 180,
-      attempted: true,
-      score: 76,
-      subjects: ['Math: 100', 'Physics: 60', 'English: 40']
-    },
-    {
-      name: 'Full NET Engineering Mock #3',
-      questions: 200,
-      duration: 180,
-      attempted: false,
-      subjects: ['Math: 100', 'Physics: 60', 'English: 40']
-    },
-    {
-      name: 'Full NET Engineering Mock #4',
-      questions: 200,
-      duration: 180,
-      attempted: false,
-      subjects: ['Math: 100', 'Physics: 60', 'English: 40']
+  const topicTests = useMemo(() => {
+    return subjects.flatMap((subject) => {
+      return difficulties.map((difficulty) => {
+        const subjectPool = mcqsBySubjectAndDifficulty[subject][difficulty];
+        const topic = subjectPool[0]?.topic ?? 'All Topics';
+        const topicPool = subjectPool.filter((item) => item.topic === topic);
+        const questions = Math.min(25, Math.max(10, topicPool.length || subjectPool.length));
+        const latest = attempts.find(
+          (attempt) =>
+            attempt.subject === subject &&
+            attempt.difficulty === difficulty &&
+            attempt.mode === 'topic' &&
+            attempt.topic === topic,
+        );
+
+        return {
+          id: `${subject}-${difficulty}-${topic}`,
+          subject,
+          topic,
+          difficulty,
+          questions,
+          duration: Math.max(10, Math.round(questions * 1.2)),
+          latest,
+        };
+      });
+    });
+  }, [attempts, mcqsBySubjectAndDifficulty]);
+
+  const mockTests = useMemo(() => {
+    return [1, 2, 3, 4].map((number) => {
+      const latest = attempts.find((attempt) => attempt.mode === 'mock' && attempt.topic === `Mock ${number}`);
+      return {
+        number,
+        name: `Full NET Engineering Mock #${number}`,
+        questions: 200,
+        duration: 180,
+        latest,
+        subjects: ['Math: 100', 'Physics: 60', 'English: 40'],
+      };
+    });
+  }, [attempts]);
+
+  const startTopicTest = async (subject: SubjectKey, difficulty: Difficulty, topic: string, questionCount: number) => {
+    try {
+      const attempt = await startPracticeTest({ subject, difficulty, topic, mode: 'topic', questionCount });
+      if (!attempt) {
+        toast.error('No questions available for this test configuration.');
+        return;
+      }
+      toast.success(`Topic test completed: ${attempt.score}%`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not start topic test.');
     }
-  ];
+  };
+
+  const startMockTest = async (mockNumber: number) => {
+    try {
+      const attempt = await startPracticeTest({
+        subject: 'mathematics',
+        difficulty: 'Medium',
+        topic: `Mock ${mockNumber}`,
+        mode: 'mock',
+        questionCount: 200,
+      });
+      if (!attempt) {
+        toast.error('Mock test could not be generated from available dataset.');
+        return;
+      }
+      toast.success(`Mock #${mockNumber} completed with ${attempt.score}%`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not start mock test.');
+    }
+  };
+
+  const startAdaptive = async (subject: SubjectKey) => {
+    const subjectAttempts = attempts.filter((attempt) => attempt.subject === subject);
+    const average = subjectAttempts.length
+      ? subjectAttempts.reduce((sum, attempt) => sum + attempt.score, 0) / subjectAttempts.length
+      : 60;
+
+    const targetDifficulty: Difficulty = average >= 80 ? 'Hard' : average >= 65 ? 'Medium' : 'Easy';
+    try {
+      const attempt = await startPracticeTest({
+        subject,
+        difficulty: targetDifficulty,
+        topic: 'All Topics',
+        mode: 'adaptive',
+        questionCount: 20,
+      });
+
+      if (!attempt) {
+        toast.error('No adaptive test can be generated yet for this subject.');
+        return;
+      }
+
+      toast.success(`${getSubjectLabel(subject)} adaptive test completed: ${attempt.score}%`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not start adaptive test.');
+    }
+  };
 
   return (
     <div className="space-y-6">
       <div>
         <h1>Practice & Mock Tests</h1>
-        <p className="text-muted-foreground">Test your preparation with topic-wise and full-length tests</p>
+        <p className="text-muted-foreground">Run tests from your real MCQ bank and track outcomes instantly</p>
       </div>
 
       <Tabs defaultValue="topic">
@@ -105,21 +137,19 @@ export function Tests() {
                 <Target className="w-5 h-5" />
                 Topic-Wise Tests
               </CardTitle>
-              <CardDescription>Practice specific topics with focused tests</CardDescription>
+              <CardDescription>Generated from your MCQ dataset by subject and difficulty</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {topicTests.map((test, index) => (
-                  <div key={index} className="p-4 border rounded-lg hover:bg-accent transition-colors">
+                {topicTests.map((test) => (
+                  <div key={test.id} className="p-4 border rounded-lg hover:bg-accent transition-colors">
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex-1">
                         <div className="flex items-center gap-2 mb-1">
                           <h4>{test.topic}</h4>
-                          {test.attempted && (
-                            <Badge variant="secondary" className="text-xs">Completed</Badge>
-                          )}
+                          {test.latest ? <Badge variant="secondary" className="text-xs">Completed</Badge> : null}
                         </div>
-                        <p className="text-sm text-muted-foreground">{test.subject}</p>
+                        <p className="text-sm text-muted-foreground">{getSubjectLabel(test.subject)}</p>
                       </div>
                       <Badge
                         variant={
@@ -145,19 +175,34 @@ export function Tests() {
                       </span>
                     </div>
 
-                    {test.attempted && test.score !== undefined ? (
+                    {test.latest ? (
                       <div className="space-y-2">
                         <div className="flex justify-between text-sm">
-                          <span>Your Score</span>
-                          <span>{test.score}%</span>
+                          <span>Latest Score</span>
+                          <span>{test.latest.score}%</span>
                         </div>
-                        <Progress value={test.score} />
-                        <Button variant="outline" className="w-full mt-2">
-                          Review Answers
-                        </Button>
+                        <Progress value={test.latest.score} />
+                        <div className="grid grid-cols-2 gap-2 mt-2">
+                          <Button
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => toast.message(`Review: ${test.latest?.score}% in ${test.topic}`)}
+                          >
+                            Review
+                          </Button>
+                          <Button
+                            className="w-full"
+                            onClick={() => void startTopicTest(test.subject, test.difficulty, test.topic, test.questions)}
+                          >
+                            Retake
+                          </Button>
+                        </div>
                       </div>
                     ) : (
-                      <Button className="w-full">
+                      <Button
+                        className="w-full"
+                        onClick={() => void startTopicTest(test.subject, test.difficulty, test.topic, test.questions)}
+                      >
                         <Play className="w-4 h-4 mr-2" />
                         Start Test
                       </Button>
@@ -176,29 +221,29 @@ export function Tests() {
                 <FileText className="w-5 h-5" />
                 Full-Length Mock Tests
               </CardTitle>
-              <CardDescription>Simulate the real NET experience</CardDescription>
+              <CardDescription>Simulate full exam pacing and track mock history</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {mockTests.map((test, index) => (
-                  <div key={index} className="p-4 border rounded-lg">
+                {mockTests.map((test) => (
+                  <div key={test.number} className="p-4 border rounded-lg">
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex-1">
                         <h4 className="mb-2">{test.name}</h4>
                         <div className="flex flex-wrap gap-2 mb-2">
-                          {test.subjects.map((subject, idx) => (
-                            <Badge key={idx} variant="outline" className="text-xs">
+                          {test.subjects.map((subject) => (
+                            <Badge key={subject} variant="outline" className="text-xs">
                               {subject}
                             </Badge>
                           ))}
                         </div>
                       </div>
-                      {test.attempted && test.score !== undefined && (
+                      {test.latest ? (
                         <div className="text-right">
-                          <div className="text-2xl mb-1">{test.score}%</div>
-                          <p className="text-xs text-muted-foreground">Your Score</p>
+                          <div className="text-2xl mb-1">{test.latest.score}%</div>
+                          <p className="text-xs text-muted-foreground">Latest Score</p>
                         </div>
-                      )}
+                      ) : null}
                     </div>
 
                     <div className="flex items-center gap-4 mb-3 text-sm text-muted-foreground">
@@ -212,13 +257,15 @@ export function Tests() {
                       </span>
                     </div>
 
-                    {test.attempted ? (
+                    {test.latest ? (
                       <div className="grid grid-cols-2 gap-2">
-                        <Button variant="outline">View Report</Button>
-                        <Button>Retake Test</Button>
+                        <Button variant="outline" onClick={() => toast.message(`${test.name} report shown in analytics.`)}>
+                          View Report
+                        </Button>
+                        <Button onClick={() => void startMockTest(test.number)}>Retake Test</Button>
                       </div>
                     ) : (
-                      <Button className="w-full">
+                      <Button className="w-full" onClick={() => void startMockTest(test.number)}>
                         <Play className="w-4 h-4 mr-2" />
                         Start Mock Test
                       </Button>
@@ -236,10 +283,9 @@ export function Tests() {
                 Mock Test Tips
               </h4>
               <ul className="space-y-1 text-sm text-muted-foreground">
-                <li>• Take tests in a quiet environment without distractions</li>
-                <li>• Use the full allocated time to review your answers</li>
-                <li>• Don't spend too much time on difficult questions</li>
-                <li>• Review your mistakes thoroughly after each test</li>
+                <li>• Keep a strict timer and complete all sections in one sitting.</li>
+                <li>• Mark uncertain questions and revisit them in the final 15 minutes.</li>
+                <li>• Use analytics after each mock to focus weak topics.</li>
               </ul>
             </CardContent>
           </Card>
@@ -252,81 +298,35 @@ export function Tests() {
                 <TrendingUp className="w-5 h-5" />
                 Adaptive Practice
               </CardTitle>
-              <CardDescription>AI-powered practice based on your weak areas</CardDescription>
+              <CardDescription>Difficulty adjusts based on your historical performance</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="p-4 bg-gradient-to-r from-purple-500 to-blue-600 text-white rounded-lg">
-                <h4 className="mb-2 text-white">How it works</h4>
-                <p className="text-sm text-purple-100">
-                  Our AI analyzes your performance and creates personalized practice sets
-                  focusing on topics where you need improvement. The difficulty adapts based
-                  on your answers.
-                </p>
-              </div>
-
               <div className="space-y-3">
-                <div className="p-4 border rounded-lg">
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <h4>Mathematics Weak Areas</h4>
-                      <p className="text-sm text-muted-foreground">25 Questions • Adaptive Difficulty</p>
-                    </div>
-                    <Badge className="bg-orange-500">Recommended</Badge>
-                  </div>
-                  <div className="mb-3 text-sm">
-                    <p className="text-muted-foreground">Focus areas:</p>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      <Badge variant="outline" className="text-xs">Integration</Badge>
-                      <Badge variant="outline" className="text-xs">Matrices</Badge>
-                      <Badge variant="outline" className="text-xs">Analytical Geometry</Badge>
-                    </div>
-                  </div>
-                  <Button className="w-full">
-                    <Play className="w-4 h-4 mr-2" />
-                    Start Adaptive Test
-                  </Button>
-                </div>
+                {subjects.map((subject) => {
+                  const subjectAttempts = attempts.filter((attempt) => attempt.subject === subject);
+                  const average = subjectAttempts.length
+                    ? Math.round(subjectAttempts.reduce((sum, attempt) => sum + attempt.score, 0) / subjectAttempts.length)
+                    : 0;
 
-                <div className="p-4 border rounded-lg">
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <h4>Physics Weak Areas</h4>
-                      <p className="text-sm text-muted-foreground">20 Questions • Adaptive Difficulty</p>
+                  return (
+                    <div key={subject} className="p-4 border rounded-lg">
+                      <div className="flex items-center justify-between mb-3">
+                        <div>
+                          <h4>{getSubjectLabel(subject)} Adaptive Set</h4>
+                          <p className="text-sm text-muted-foreground">20 Questions • Dynamic Difficulty</p>
+                        </div>
+                        <Badge className="bg-orange-500">Recommended</Badge>
+                      </div>
+                      <div className="mb-3 text-sm text-muted-foreground">
+                        Current average: {average ? `${average}%` : 'No attempts yet'}
+                      </div>
+                      <Button className="w-full" onClick={() => void startAdaptive(subject)}>
+                        <Play className="w-4 h-4 mr-2" />
+                        Start Adaptive Test
+                      </Button>
                     </div>
-                    <Badge className="bg-orange-500">Recommended</Badge>
-                  </div>
-                  <div className="mb-3 text-sm">
-                    <p className="text-muted-foreground">Focus areas:</p>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      <Badge variant="outline" className="text-xs">Electromagnetism</Badge>
-                      <Badge variant="outline" className="text-xs">Modern Physics</Badge>
-                    </div>
-                  </div>
-                  <Button className="w-full">
-                    <Play className="w-4 h-4 mr-2" />
-                    Start Adaptive Test
-                  </Button>
-                </div>
-
-                <div className="p-4 border rounded-lg">
-                  <div className="flex items-center justify-between mb-3">
-                    <div>
-                      <h4>English Practice</h4>
-                      <p className="text-sm text-muted-foreground">15 Questions • Adaptive Difficulty</p>
-                    </div>
-                  </div>
-                  <div className="mb-3 text-sm">
-                    <p className="text-muted-foreground">Focus areas:</p>
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      <Badge variant="outline" className="text-xs">Sentence Correction</Badge>
-                      <Badge variant="outline" className="text-xs">Comprehension</Badge>
-                    </div>
-                  </div>
-                  <Button className="w-full" variant="outline">
-                    <Play className="w-4 h-4 mr-2" />
-                    Start Adaptive Test
-                  </Button>
-                </div>
+                  );
+                })}
               </div>
             </CardContent>
           </Card>

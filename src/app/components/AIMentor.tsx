@@ -9,14 +9,31 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import { Brain, MessageSquare, FileQuestion, Calendar, Send } from 'lucide-react';
+import { toast } from 'sonner';
 
 export function AIMentor() {
   const [question, setQuestion] = useState('');
   const [studyDays, setStudyDays] = useState('60');
   const [currentLevel, setCurrentLevel] = useState('');
+  const [targetProgram, setTargetProgram] = useState('');
+  const [planGenerated, setPlanGenerated] = useState(false);
   const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'ai'; message: string }>>([
     { role: 'ai', message: 'Hi! I\'m your AI tutor for NET preparation. How can I help you today?' }
   ]);
+
+  const generateTutorResponse = (query: string) => {
+    const normalized = query.toLowerCase();
+    if (normalized.includes('integration')) {
+      return 'For integration, first identify the function type: substitution, parts, or partial fractions. Start by trying substitution when you see a composite function. If that fails, use integration by parts with the LIATE rule.';
+    }
+    if (normalized.includes('physics') || normalized.includes('force') || normalized.includes('newton')) {
+      return 'Use this sequence for Physics numericals: define knowns, write governing equation, isolate unknown, then check units. For Newton laws, always draw a free-body diagram first.';
+    }
+    if (normalized.includes('english') || normalized.includes('grammar')) {
+      return 'For English correction, scan tense consistency, subject-verb agreement, pronoun reference, and parallel structure. Eliminate choices with grammar breaks before checking style.';
+    }
+    return 'Break each problem into three passes: concept check, formula selection, and quick verification. If you share one specific question, I can walk you through it step by step.';
+  };
 
   const askQuestion = () => {
     if (!question.trim()) return;
@@ -24,7 +41,7 @@ export function AIMentor() {
     const userMessage = { role: 'user' as const, message: question };
     const aiResponse = {
       role: 'ai' as const,
-      message: 'Integration by parts is a technique used to integrate products of functions. The formula is: ∫u dv = uv - ∫v du. Let me break this down with an example: To solve ∫x·e^x dx, let u = x and dv = e^x dx. Then du = dx and v = e^x. Applying the formula: ∫x·e^x dx = x·e^x - ∫e^x dx = x·e^x - e^x + C = e^x(x - 1) + C.'
+      message: generateTutorResponse(question),
     };
 
     setChatMessages([...chatMessages, userMessage, aiResponse]);
@@ -32,8 +49,12 @@ export function AIMentor() {
   };
 
   const generateStudyPlan = () => {
-    // Mock study plan generation
-    return null;
+    if (!studyDays || !currentLevel || !targetProgram) {
+      toast.error('Please fill days, level, and target program first.');
+      return;
+    }
+    setPlanGenerated(true);
+    toast.success('Study plan generated successfully.');
   };
 
   return (
@@ -110,22 +131,22 @@ export function AIMentor() {
             </CardHeader>
             <CardContent>
               <div className="flex flex-wrap gap-2">
-                <Badge variant="outline" className="cursor-pointer hover:bg-accent">
+                <Badge variant="outline" className="cursor-pointer hover:bg-accent" onClick={() => setQuestion('Explain integration techniques for NET.') }>
                   Integration Techniques
                 </Badge>
-                <Badge variant="outline" className="cursor-pointer hover:bg-accent">
+                <Badge variant="outline" className="cursor-pointer hover:bg-accent" onClick={() => setQuestion('How do I solve electromagnetism MCQs faster?') }>
                   Electromagnetism
                 </Badge>
-                <Badge variant="outline" className="cursor-pointer hover:bg-accent">
+                <Badge variant="outline" className="cursor-pointer hover:bg-accent" onClick={() => setQuestion('Give me a quick organic chemistry revision strategy.') }>
                   Organic Chemistry
                 </Badge>
-                <Badge variant="outline" className="cursor-pointer hover:bg-accent">
+                <Badge variant="outline" className="cursor-pointer hover:bg-accent" onClick={() => setQuestion('Revise trigonometric identities with common mistakes.') }>
                   Trigonometric Identities
                 </Badge>
-                <Badge variant="outline" className="cursor-pointer hover:bg-accent">
+                <Badge variant="outline" className="cursor-pointer hover:bg-accent" onClick={() => setQuestion('How should I approach Newton laws questions?') }>
                   Newton's Laws
                 </Badge>
-                <Badge variant="outline" className="cursor-pointer hover:bg-accent">
+                <Badge variant="outline" className="cursor-pointer hover:bg-accent" onClick={() => setQuestion('Give me top grammar rules for sentence correction.') }>
                   Grammar Rules
                 </Badge>
               </div>
@@ -149,7 +170,9 @@ export function AIMentor() {
                 <p className="text-sm text-muted-foreground mb-4">
                   Supports JPG, PNG (Max 5MB)
                 </p>
-                <Button variant="outline">Choose File</Button>
+                <Button variant="outline" onClick={() => toast.message('Image upload parser will be connected in next backend step.')}>
+                  Choose File
+                </Button>
               </div>
 
               <div className="p-4 bg-muted rounded-lg">
@@ -170,7 +193,7 @@ export function AIMentor() {
               <p className="text-green-100 mb-4">
                 Upload unlimited questions and get detailed AI solutions. Upgrade to premium for instant access!
               </p>
-              <Button variant="secondary">Upgrade to Premium</Button>
+              <Button variant="secondary" onClick={() => toast.message('Premium upgrade flow is now linked from Profile plans section.')}>Upgrade to Premium</Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -213,7 +236,7 @@ export function AIMentor() {
 
               <div className="space-y-2">
                 <Label htmlFor="target-program">Target Program</Label>
-                <Select>
+                <Select value={targetProgram} onValueChange={setTargetProgram}>
                   <SelectTrigger id="target-program">
                     <SelectValue placeholder="Select program" />
                   </SelectTrigger>
@@ -232,10 +255,10 @@ export function AIMentor() {
             </CardContent>
           </Card>
 
-          {currentLevel && studyDays && (
+          {planGenerated && currentLevel && studyDays && (
             <Card>
               <CardHeader>
-                <CardTitle>Your 60-Day Study Plan</CardTitle>
+                <CardTitle>Your {studyDays}-Day Study Plan</CardTitle>
                 <CardDescription>Customized plan for {studyDays} days</CardDescription>
               </CardHeader>
               <CardContent>

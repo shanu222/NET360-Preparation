@@ -25,10 +25,12 @@ import {
   Calculator,
   User,
   Menu,
-  X
 } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from './components/ui/sheet';
+import { AppDataProvider } from './context/AppDataContext';
+import { AuthProvider } from './context/AuthContext';
+import { Toaster } from 'sonner';
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('home');
@@ -74,7 +76,9 @@ export default function App() {
   );
 
   return (
-    <div className="min-h-screen bg-background">
+    <AuthProvider>
+      <AppDataProvider>
+      <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="sticky top-0 z-50 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container flex h-16 items-center justify-between px-4">
@@ -178,6 +182,9 @@ export default function App() {
           <p className="mt-1">Your complete solution for NUST Entry Test preparation</p>
         </div>
       </footer>
+      <Toaster richColors position="top-right" />
     </div>
+    </AppDataProvider>
+    </AuthProvider>
   );
 }

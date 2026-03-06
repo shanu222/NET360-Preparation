@@ -27,7 +27,6 @@ export function MeritCalculator() {
     const calculatedAggregate = (ssc * 0.1) + (hssc * 0.15) + (net * 0.75);
     setAggregate(calculatedAggregate);
 
-    // Mock merit position calculation
     if (calculatedAggregate >= 85) {
       setMeritPosition('Excellent - Top 500');
     } else if (calculatedAggregate >= 75) {

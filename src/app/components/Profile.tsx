@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -5,14 +6,185 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { User, Mail, Calendar, Target, Award, Settings } from 'lucide-react';
+import { Target, Award, Settings, LogOut } from 'lucide-react';
+import { toast } from 'sonner';
+import { useAppData } from '../context/AppDataContext';
+import { useAuth } from '../context/AuthContext';
 
 export function Profile() {
+  const { user, login, register, logout } = useAuth();
+  const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
+  const [localProfile, setLocalProfile] = useState(profile);
+  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [authForm, setAuthForm] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    password: '',
+  });
+
+  useEffect(() => {
+    setLocalProfile(profile);
+  }, [profile]);
+
+  const avatarText = useMemo(() => {
+    const first = localProfile.firstName?.trim()[0] ?? 'S';
+    const last = localProfile.lastName?.trim()[0] ?? 'T';
+    return `${first}${last}`.toUpperCase();
+  }, [localProfile.firstName, localProfile.lastName]);
+
+  const updateField = (key: keyof typeof localProfile, value: string) => {
+    setLocalProfile((previous) => ({ ...previous, [key]: value }));
+  };
+
+  const handleAuthSubmit = async () => {
+    try {
+      if (!authForm.email || !authForm.password) {
+        toast.error('Email and password are required.');
+        return;
+      }
+
+      if (isRegisterMode) {
+        await register({
+          email: authForm.email,
+          password: authForm.password,
+          firstName: authForm.firstName,
+          lastName: authForm.lastName,
+        });
+        toast.success('Account created and logged in.');
+      } else {
+        await login(authForm.email, authForm.password);
+        toast.success('Logged in successfully.');
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Authentication failed.';
+      toast.error(message);
+    }
+  };
+
+  const savePersonalInfo = async () => {
+    try {
+      await saveProfile({
+        firstName: localProfile.firstName,
+        lastName: localProfile.lastName,
+        phone: localProfile.phone,
+        city: localProfile.city,
+      });
+      toast.success('Personal information saved to server.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save profile.');
+    }
+  };
+
+  const savePreparationDetails = async () => {
+    try {
+      await saveProfile({
+        targetProgram: localProfile.targetProgram,
+        testSeries: localProfile.testSeries,
+        sscPercentage: localProfile.sscPercentage,
+        hsscPercentage: localProfile.hsscPercentage,
+        testDate: localProfile.testDate,
+      });
+      toast.success('Preparation details updated on server.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update details.');
+    }
+  };
+
+  const togglePreference = async (key: keyof typeof preferences) => {
+    const nextValue = !preferences[key];
+    try {
+      await savePreferences({ [key]: nextValue });
+      toast.message(`${key} ${nextValue ? 'enabled' : 'disabled'}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save preference.');
+    }
+  };
+
+  if (!user) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1>Account Access</h1>
+          <p className="text-muted-foreground">Login or register to enable server-backed sessions, auth, and report export</p>
+        </div>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>{isRegisterMode ? 'Create Account' : 'Login'}</CardTitle>
+            <CardDescription>Authentication is required for persistent test sessions</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {isRegisterMode ? (
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="reg-first-name">First Name</Label>
+                  <Input
+                    id="reg-first-name"
+                    value={authForm.firstName}
+                    onChange={(e) => setAuthForm((prev) => ({ ...prev, firstName: e.target.value }))}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="reg-last-name">Last Name</Label>
+                  <Input
+                    id="reg-last-name"
+                    value={authForm.lastName}
+                    onChange={(e) => setAuthForm((prev) => ({ ...prev, lastName: e.target.value }))}
+                  />
+                </div>
+              </div>
+            ) : null}
+
+            <div className="space-y-2">
+              <Label htmlFor="auth-email">Email</Label>
+              <Input
+                id="auth-email"
+                type="email"
+                value={authForm.email}
+                onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
+                placeholder="student@example.com"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="auth-password">Password</Label>
+              <Input
+                id="auth-password"
+                type="password"
+                value={authForm.password}
+                onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
+                placeholder="Enter your password"
+              />
+            </div>
+
+            <div className="flex gap-2">
+              <Button className="flex-1" onClick={handleAuthSubmit}>
+                {isRegisterMode ? 'Register' : 'Login'}
+              </Button>
+              <Button variant="outline" onClick={() => setIsRegisterMode((prev) => !prev)}>
+                {isRegisterMode ? 'Use Login' : 'Create Account'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  const completedTests = attempts.length;
+
   return (
     <div className="space-y-6">
-      <div>
-        <h1>Profile & Settings</h1>
-        <p className="text-muted-foreground">Manage your account and preferences</p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1>Profile & Settings</h1>
+          <p className="text-muted-foreground">Manage your account and preferences</p>
+        </div>
+        <Button variant="outline" onClick={logout}>
+          <LogOut className="w-4 h-4 mr-2" />
+          Logout
+        </Button>
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">
@@ -24,11 +196,11 @@ export function Profile() {
             <div className="flex flex-col items-center text-center">
               <Avatar className="w-24 h-24 mb-4">
                 <AvatarImage src="" />
-                <AvatarFallback className="text-2xl">ST</AvatarFallback>
+                <AvatarFallback className="text-2xl">{avatarText}</AvatarFallback>
               </Avatar>
-              <h3>Student Name</h3>
-              <p className="text-sm text-muted-foreground">student@example.com</p>
-              <Button variant="outline" className="mt-4">Change Photo</Button>
+              <h3>{`${localProfile.firstName || 'Student'} ${localProfile.lastName || ''}`.trim()}</h3>
+              <p className="text-sm text-muted-foreground">{localProfile.email || user.email}</p>
+              <Button variant="outline" className="mt-4" onClick={() => toast.message('Photo upload API can be attached next.')}>Change Photo</Button>
             </div>
 
             <div className="pt-4 border-t space-y-3">
@@ -42,7 +214,7 @@ export function Profile() {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Tests Taken</span>
-                <span className="text-sm">12</span>
+                <span className="text-sm">{completedTests}</span>
               </div>
             </div>
           </CardContent>
@@ -57,27 +229,27 @@ export function Profile() {
             <div className="grid md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="first-name">First Name</Label>
-                <Input id="first-name" placeholder="John" />
+                <Input id="first-name" value={localProfile.firstName} onChange={(e) => updateField('firstName', e.target.value)} placeholder="John" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="last-name">Last Name</Label>
-                <Input id="last-name" placeholder="Doe" />
+                <Input id="last-name" value={localProfile.lastName} onChange={(e) => updateField('lastName', e.target.value)} placeholder="Doe" />
               </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="email">Email Address</Label>
-              <Input id="email" type="email" placeholder="student@example.com" />
+              <Input id="email" type="email" value={localProfile.email || user.email} disabled />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="phone">Phone Number</Label>
-              <Input id="phone" type="tel" placeholder="+92 300 1234567" />
+              <Input id="phone" type="tel" value={localProfile.phone} onChange={(e) => updateField('phone', e.target.value)} placeholder="+92 300 1234567" />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="city">City</Label>
-              <Select>
+              <Select value={localProfile.city} onValueChange={(value) => updateField('city', value)}>
                 <SelectTrigger id="city">
                   <SelectValue placeholder="Select city" />
                 </SelectTrigger>
@@ -92,7 +264,7 @@ export function Profile() {
               </Select>
             </div>
 
-            <Button>Save Changes</Button>
+            <Button onClick={savePersonalInfo}>Save Changes</Button>
           </CardContent>
         </Card>
       </div>
@@ -108,7 +280,7 @@ export function Profile() {
           <div className="grid md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="target-program">Target Program</Label>
-              <Select>
+              <Select value={localProfile.targetProgram} onValueChange={(value) => updateField('targetProgram', value)}>
                 <SelectTrigger id="target-program">
                   <SelectValue placeholder="Select program" />
                 </SelectTrigger>
@@ -124,7 +296,7 @@ export function Profile() {
 
             <div className="space-y-2">
               <Label htmlFor="test-series">Target Test Series</Label>
-              <Select>
+              <Select value={localProfile.testSeries} onValueChange={(value) => updateField('testSeries', value)}>
                 <SelectTrigger id="test-series">
                   <SelectValue placeholder="Select series" />
                 </SelectTrigger>
@@ -140,21 +312,21 @@ export function Profile() {
           <div className="grid md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="ssc-percentage">SSC/Matric Percentage</Label>
-              <Input id="ssc-percentage" type="number" placeholder="85" />
+              <Input id="ssc-percentage" type="number" value={localProfile.sscPercentage} onChange={(e) => updateField('sscPercentage', e.target.value)} placeholder="85" />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="hssc-percentage">HSSC/Intermediate Percentage</Label>
-              <Input id="hssc-percentage" type="number" placeholder="82" />
+              <Input id="hssc-percentage" type="number" value={localProfile.hsscPercentage} onChange={(e) => updateField('hsscPercentage', e.target.value)} placeholder="82" />
             </div>
           </div>
 
           <div className="space-y-2">
             <Label htmlFor="test-date">NET Test Date</Label>
-            <Input id="test-date" type="date" />
+            <Input id="test-date" type="date" value={localProfile.testDate} onChange={(e) => updateField('testDate', e.target.value)} />
           </div>
 
-          <Button>Update Details</Button>
+          <Button onClick={savePreparationDetails}>Update Details</Button>
         </CardContent>
       </Card>
 
@@ -169,18 +341,18 @@ export function Profile() {
           <div className="grid md:grid-cols-3 gap-4">
             <div className="p-4 border rounded-lg text-center">
               <div className="text-4xl mb-2">🏆</div>
-              <h4>First Mock Test</h4>
-              <p className="text-sm text-muted-foreground">Completed first full-length test</p>
+              <h4>First Test</h4>
+              <p className="text-sm text-muted-foreground">Unlocked when you complete your first test</p>
             </div>
             <div className="p-4 border rounded-lg text-center">
               <div className="text-4xl mb-2">⚡</div>
-              <h4>7 Day Streak</h4>
-              <p className="text-sm text-muted-foreground">Practiced for 7 consecutive days</p>
+              <h4>Consistency</h4>
+              <p className="text-sm text-muted-foreground">Keep practicing daily to build streaks</p>
             </div>
             <div className="p-4 border rounded-lg text-center">
               <div className="text-4xl mb-2">📚</div>
-              <h4>100 Questions</h4>
-              <p className="text-sm text-muted-foreground">Solved 100 practice questions</p>
+              <h4>Question Solver</h4>
+              <p className="text-sm text-muted-foreground">Solve 100+ questions to unlock next badge</p>
             </div>
           </div>
         </CardContent>
@@ -199,7 +371,9 @@ export function Profile() {
               <h4>Email Notifications</h4>
               <p className="text-sm text-muted-foreground">Receive updates about tests and deadlines</p>
             </div>
-            <Button variant="outline">Enabled</Button>
+            <Button variant={preferences.emailNotifications ? 'default' : 'outline'} onClick={() => void togglePreference('emailNotifications')}>
+              {preferences.emailNotifications ? 'Enabled' : 'Disabled'}
+            </Button>
           </div>
 
           <div className="flex items-center justify-between">
@@ -207,7 +381,9 @@ export function Profile() {
               <h4>Daily Reminders</h4>
               <p className="text-sm text-muted-foreground">Get reminded to practice daily</p>
             </div>
-            <Button variant="outline">Enabled</Button>
+            <Button variant={preferences.dailyReminders ? 'default' : 'outline'} onClick={() => void togglePreference('dailyReminders')}>
+              {preferences.dailyReminders ? 'Enabled' : 'Disabled'}
+            </Button>
           </div>
 
           <div className="flex items-center justify-between">
@@ -215,22 +391,9 @@ export function Profile() {
               <h4>Performance Reports</h4>
               <p className="text-sm text-muted-foreground">Weekly summary of your progress</p>
             </div>
-            <Button variant="outline">Enabled</Button>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="bg-gradient-to-r from-blue-500 to-purple-600 text-white border-0">
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="mb-2 text-white">Upgrade to Premium</h3>
-              <p className="text-blue-100 mb-4">
-                Get access to unlimited mock tests, AI tutor, and personalized study plans
-              </p>
-              <Button variant="secondary">View Plans</Button>
-            </div>
-            <div className="text-6xl opacity-50">👑</div>
+            <Button variant={preferences.performanceReports ? 'default' : 'outline'} onClick={() => void togglePreference('performanceReports')}>
+              {preferences.performanceReports ? 'Enabled' : 'Disabled'}
+            </Button>
           </div>
         </CardContent>
       </Card>

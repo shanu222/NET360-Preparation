@@ -4,6 +4,7 @@ import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { CheckCircle, XCircle, Lightbulb, Eraser } from 'lucide-react';
+import { toast } from 'sonner';
 
 export function PracticeBoard() {
   const [solution, setSolution] = useState('');
@@ -11,15 +12,33 @@ export function PracticeBoard() {
   const [showAnalysis, setShowAnalysis] = useState(false);
 
   const analyzeSolution = () => {
-    // Simulated AI analysis
-    const mockFeedback = [
-      { step: 1, correct: true, message: 'Correctly identified the equation and isolated the variable term' },
-      { step: 2, correct: true, message: 'Proper subtraction of 5 from both sides' },
-      { step: 3, correct: false, message: 'Division step has an error. You should divide both sides by 2' },
-      { step: 4, correct: true, message: 'Final answer is correct: x = 5' }
-    ];
-    
-    setFeedback(mockFeedback);
+    const lines = solution
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (!lines.length) {
+      toast.error('Please enter your solution steps first.');
+      return;
+    }
+
+    const parsedFeedback = lines.map((line, index) => {
+      const normalized = line.toLowerCase();
+      const mentionsEquation = normalized.includes('2x') || normalized.includes('x');
+      const hasOperation = /[=+\-*/]/.test(normalized);
+      const mentionsAnswer = normalized.includes('x = 5') || normalized.endsWith('5');
+      const correct = (mentionsEquation && hasOperation) || mentionsAnswer;
+
+      return {
+        step: index + 1,
+        correct,
+        message: correct
+          ? 'Good step structure and mathematical notation.'
+          : 'This step is unclear. Include the equation transformation explicitly.',
+      };
+    });
+
+    setFeedback(parsedFeedback);
     setShowAnalysis(true);
   };
 
@@ -137,8 +156,8 @@ export function PracticeBoard() {
                 <h4>Overall Performance</h4>
               </div>
               <p className="text-sm text-muted-foreground">
-                You got 3 out of 4 steps correct. Review the division step and try again.
-                Remember to clearly show all operations on both sides of the equation.
+                You got {feedback.filter((item) => item.correct).length} out of {feedback.length} steps marked as correct.
+                Keep each line explicit (equation, operation, resulting expression) for best feedback.
               </p>
             </div>
           </CardContent>
@@ -177,8 +196,7 @@ export function PracticeBoard() {
         <CardContent className="pt-6">
           <h3 className="mb-2 text-white">Pro Tip</h3>
           <p className="text-blue-100">
-            This Practice Board supports handwriting recognition (coming soon). You'll be able to
-            draw your solutions and equations directly on screen, just like writing on paper!
+            Write one transformation per line to receive better automated checks and cleaner revision notes.
           </p>
         </CardContent>
       </Card>

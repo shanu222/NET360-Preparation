@@ -1,32 +1,52 @@
-import { Calendar, Clock, Target, TrendingUp, BookOpen, Brain, Calculator, FileText } from 'lucide-react';
+import { useMemo } from 'react';
+import { Calendar, Clock, Target, TrendingUp, BookOpen, Brain, Calculator, FileText, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Progress } from './ui/progress';
+import { useAppData } from '../context/AppDataContext';
 
 interface DashboardProps {
   onNavigate: (section: string) => void;
 }
 
-export function Dashboard({ onNavigate }: DashboardProps) {
-  const daysUntilNET = 120;
-  const todayProgress = {
-    mathematics: { completed: 18, target: 20 },
-    physics: { completed: 15, target: 15 },
-    english: { completed: 7, target: 10 }
-  };
+const TEST_DATE = new Date('2026-06-30T00:00:00');
 
-  const overallProgress = 68;
+export function Dashboard({ onNavigate }: DashboardProps) {
+  const { loading, mcqsBySubject, attempts, profile } = useAppData();
+
+  const daysUntilNET = useMemo(() => {
+    const now = new Date();
+    const diffMs = TEST_DATE.getTime() - now.getTime();
+    return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
+  }, []);
+
+  const todayProgress = useMemo(() => {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const attemptedToday = attempts.filter((attempt) => new Date(attempt.attemptedAt) >= todayStart);
+
+    return {
+      mathematics: attemptedToday.filter((a) => a.subject === 'mathematics').length,
+      physics: attemptedToday.filter((a) => a.subject === 'physics').length,
+      english: attemptedToday.filter((a) => a.subject === 'english').length,
+    };
+  }, [attempts]);
+
+  const totalQuestions = mcqsBySubject.mathematics.length + mcqsBySubject.physics.length + mcqsBySubject.english.length;
+  const attemptedQuestions = attempts.reduce((sum, attempt) => sum + attempt.totalQuestions, 0);
+  const overallProgress = totalQuestions ? Math.min(100, Math.round((attemptedQuestions / totalQuestions) * 100)) : 0;
+
+  const firstName = profile.firstName?.trim() || 'Student';
 
   return (
     <div className="space-y-6">
-      {/* Welcome Header */}
       <div>
-        <h1>Welcome back, Student!</h1>
-        <p className="text-muted-foreground">Let's continue your NET preparation journey</p>
+        <h1>Welcome back, {firstName}!</h1>
+        <p className="text-muted-foreground">Let&apos;s continue your NET preparation journey</p>
       </div>
 
-      {/* Countdown Card */}
-      <Card className="bg-gradient-to-r from-blue-500 to-purple-600 text-white border-0">
+      <Card className="bg-gradient-to-r from-blue-500 to-indigo-600 text-white border-0">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-white">
             <Calendar className="w-5 h-5" />
@@ -39,47 +59,39 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         </CardContent>
       </Card>
 
-      {/* Today's Target */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Target className="w-5 h-5" />
-            Today's Target
+            Today&apos;s Activity
           </CardTitle>
-          <CardDescription>Complete your daily practice goals</CardDescription>
+          <CardDescription>Tests completed today by subject</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
             <div className="flex justify-between mb-2">
               <span>Mathematics</span>
-              <span className="text-sm text-muted-foreground">
-                {todayProgress.mathematics.completed}/{todayProgress.mathematics.target} Questions
-              </span>
+              <span className="text-sm text-muted-foreground">{todayProgress.mathematics} tests</span>
             </div>
-            <Progress value={(todayProgress.mathematics.completed / todayProgress.mathematics.target) * 100} />
+            <Progress value={Math.min(100, todayProgress.mathematics * 20)} />
           </div>
           <div>
             <div className="flex justify-between mb-2">
               <span>Physics</span>
-              <span className="text-sm text-muted-foreground">
-                {todayProgress.physics.completed}/{todayProgress.physics.target} Questions
-              </span>
+              <span className="text-sm text-muted-foreground">{todayProgress.physics} tests</span>
             </div>
-            <Progress value={(todayProgress.physics.completed / todayProgress.physics.target) * 100} />
+            <Progress value={Math.min(100, todayProgress.physics * 20)} />
           </div>
           <div>
             <div className="flex justify-between mb-2">
               <span>English</span>
-              <span className="text-sm text-muted-foreground">
-                {todayProgress.english.completed}/{todayProgress.english.target} Questions
-              </span>
+              <span className="text-sm text-muted-foreground">{todayProgress.english} tests</span>
             </div>
-            <Progress value={(todayProgress.english.completed / todayProgress.english.target) * 100} />
+            <Progress value={Math.min(100, todayProgress.english * 20)} />
           </div>
         </CardContent>
       </Card>
 
-      {/* Overall Progress */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -88,37 +100,35 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="mb-2 text-3xl">{overallProgress}%</div>
-          <Progress value={overallProgress} className="mb-2" />
-          <p className="text-sm text-muted-foreground">Great progress! Keep it up!</p>
+          {loading ? (
+            <div className="py-2 text-muted-foreground flex items-center gap-2">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Loading progress...
+            </div>
+          ) : (
+            <>
+              <div className="mb-2 text-3xl">{overallProgress}%</div>
+              <Progress value={overallProgress} className="mb-2" />
+              <p className="text-sm text-muted-foreground">
+                {attempts.length ? `${attempts.length} tests completed so far.` : 'Start your first test from the Tests tab.'}
+              </p>
+            </>
+          )}
         </CardContent>
       </Card>
 
-      {/* Quick Access */}
       <div>
         <h3 className="mb-4">Quick Access</h3>
         <div className="grid grid-cols-2 gap-4">
-          <Button
-            variant="outline"
-            className="h-24 flex flex-col gap-2"
-            onClick={() => onNavigate('preparation')}
-          >
+          <Button variant="outline" className="h-24 flex flex-col gap-2" onClick={() => onNavigate('preparation')}>
             <BookOpen className="w-6 h-6" />
             Start Practice
           </Button>
-          <Button
-            variant="outline"
-            className="h-24 flex flex-col gap-2"
-            onClick={() => onNavigate('tests')}
-          >
+          <Button variant="outline" className="h-24 flex flex-col gap-2" onClick={() => onNavigate('tests')}>
             <FileText className="w-6 h-6" />
             Mock Test
           </Button>
-          <Button
-            variant="outline"
-            className="h-24 flex flex-col gap-2"
-            onClick={() => onNavigate('ai-mentor')}
-          >
+          <Button variant="outline" className="h-24 flex flex-col gap-2" onClick={() => onNavigate('ai-mentor')}>
             <Brain className="w-6 h-6" />
             AI Tutor
           </Button>
@@ -133,7 +143,6 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         </div>
       </div>
 
-      {/* Latest Updates */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -146,22 +155,15 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             <li className="flex items-start gap-2">
               <div className="w-2 h-2 rounded-full bg-blue-500 mt-2" />
               <div>
-                <p>NET Series 2 registration opens on December 14</p>
-                <p className="text-sm text-muted-foreground">Deadline: February 1, 2026</p>
+                <p>MCQ dataset loaded from your folder and grouped by difficulty.</p>
+                <p className="text-sm text-muted-foreground">Easy, Medium, and Hard are now available per subject.</p>
               </div>
             </li>
             <li className="flex items-start gap-2">
               <div className="w-2 h-2 rounded-full bg-green-500 mt-2" />
               <div>
-                <p>New mock test available: Full NET Engineering</p>
-                <p className="text-sm text-muted-foreground">200 questions, 180 minutes</p>
-              </div>
-            </li>
-            <li className="flex items-start gap-2">
-              <div className="w-2 h-2 rounded-full bg-purple-500 mt-2" />
-              <div>
-                <p>AI Mentor updated with new solving techniques</p>
-                <p className="text-sm text-muted-foreground">Try it now!</p>
+                <p>All practice and test actions now update shared analytics instantly.</p>
+                <p className="text-sm text-muted-foreground">No static progress values are used.</p>
               </div>
             </li>
           </ul>

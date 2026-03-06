@@ -1,62 +1,151 @@
+import { useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Progress } from './ui/progress';
 import { Badge } from './ui/badge';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LineChart, Line, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar, Legend } from 'recharts';
-import { TrendingUp, TrendingDown, Target, Award, AlertCircle } from 'lucide-react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar } from 'recharts';
+import { TrendingUp, Target, Award, AlertCircle } from 'lucide-react';
+import { useAppData } from '../context/AppDataContext';
+import { useAuth } from '../context/AuthContext';
+import { SubjectKey, getSubjectLabel } from '../lib/mcq';
+import { Button } from './ui/button';
+import { downloadReport } from '../lib/api';
+import { toast } from 'sonner';
+
+const subjects: SubjectKey[] = ['mathematics', 'physics', 'english'];
 
 export function Analytics() {
-  const overallStats = {
-    testsAttempted: 12,
-    averageScore: 74,
-    timeSpent: 48,
-    questionsAttempted: 1840
+  const { attempts, mcqsBySubject } = useAppData();
+  const { token, user } = useAuth();
+
+  const exportReport = async (format: 'csv' | 'json') => {
+    if (!user) {
+      toast.error('Please login to export reports.');
+      return;
+    }
+
+    try {
+      const { blob, filename } = await downloadReport(`/api/reports/export?format=${format}`, token);
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = url;
+      anchor.download = filename;
+      anchor.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${filename}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Export failed.');
+    }
   };
 
-  const subjectPerformance = [
-    { subject: 'Math', accuracy: 72, attempted: 600, correct: 432 },
-    { subject: 'Physics', accuracy: 65, attempted: 480, correct: 312 },
-    { subject: 'English', accuracy: 81, attempted: 280, correct: 227 }
-  ];
+  const overallStats = useMemo(() => {
+    const testsAttempted = attempts.length;
+    const averageScore = testsAttempted
+      ? Math.round(attempts.reduce((sum, attempt) => sum + attempt.score, 0) / testsAttempted)
+      : 0;
+    const timeSpent = Math.round(attempts.reduce((sum, attempt) => sum + attempt.durationMinutes, 0) / 60);
+    const questionsAttempted = attempts.reduce((sum, attempt) => sum + attempt.totalQuestions, 0);
 
-  const progressData = [
-    { week: 'Week 1', score: 58 },
-    { week: 'Week 2', score: 62 },
-    { week: 'Week 3', score: 68 },
-    { week: 'Week 4', score: 72 },
-    { week: 'Week 5', score: 74 },
-    { week: 'Week 6', score: 76 }
-  ];
+    return { testsAttempted, averageScore, timeSpent, questionsAttempted };
+  }, [attempts]);
 
-  const radarData = [
-    { topic: 'Algebra', score: 85 },
-    { topic: 'Calculus', score: 65 },
-    { topic: 'Trigonometry', score: 78 },
-    { topic: 'Mechanics', score: 72 },
-    { topic: 'Electricity', score: 58 },
-    { topic: 'English', score: 81 }
-  ];
+  const subjectPerformance = useMemo(() => {
+    return subjects.map((subject) => {
+      const subjectAttempts = attempts.filter((attempt) => attempt.subject === subject);
+      const attempted = subjectAttempts.reduce((sum, attempt) => sum + attempt.totalQuestions, 0);
+      const correct = subjectAttempts.reduce(
+        (sum, attempt) => sum + Math.round((attempt.score / 100) * attempt.totalQuestions),
+        0,
+      );
+      const accuracy = attempted ? Math.round((correct / attempted) * 100) : 0;
 
-  const weakAreas = [
-    { topic: 'Electromagnetism', subject: 'Physics', accuracy: 45, improvement: 'High Priority' },
-    { topic: 'Integration', subject: 'Mathematics', accuracy: 52, improvement: 'High Priority' },
-    { topic: 'Matrices', subject: 'Mathematics', accuracy: 58, improvement: 'Medium Priority' },
-    { topic: 'Modern Physics', subject: 'Physics', accuracy: 61, improvement: 'Medium Priority' }
-  ];
+      return {
+        subject: getSubjectLabel(subject),
+        key: subject,
+        accuracy,
+        attempted,
+        correct,
+      };
+    });
+  }, [attempts]);
 
-  const strongAreas = [
-    { topic: 'Vocabulary', subject: 'English', accuracy: 92 },
-    { topic: 'Mechanics', subject: 'Physics', accuracy: 88 },
-    { topic: 'Algebra', subject: 'Mathematics', accuracy: 85 }
-  ];
+  const progressData = useMemo(() => {
+    const grouped = new Map<string, number[]>();
+
+    attempts.forEach((attempt) => {
+      const date = new Date(attempt.attemptedAt);
+      const weekLabel = `${date.getFullYear()}-W${Math.ceil((date.getDate() + 6 - date.getDay()) / 7)}`;
+      const existing = grouped.get(weekLabel) ?? [];
+      existing.push(attempt.score);
+      grouped.set(weekLabel, existing);
+    });
+
+    return Array.from(grouped.entries())
+      .map(([week, scores]) => ({
+        week,
+        score: Math.round(scores.reduce((sum, value) => sum + value, 0) / scores.length),
+      }))
+      .sort((a, b) => a.week.localeCompare(b.week))
+      .slice(-8);
+  }, [attempts]);
+
+  const radarData = useMemo(() => {
+    return subjectPerformance.map((item) => ({ topic: item.subject, score: item.accuracy }));
+  }, [subjectPerformance]);
+
+  const topicAccuracy = useMemo(() => {
+    const map = new Map<string, { subject: SubjectKey; total: number; weightedScore: number }>();
+
+    attempts.forEach((attempt) => {
+      const key = `${attempt.subject}::${attempt.topic}`;
+      const existing = map.get(key) ?? {
+        subject: attempt.subject,
+        total: 0,
+        weightedScore: 0,
+      };
+      existing.total += attempt.totalQuestions;
+      existing.weightedScore += Math.round((attempt.score / 100) * attempt.totalQuestions);
+      map.set(key, existing);
+    });
+
+    return Array.from(map.entries()).map(([key, value]) => {
+      const [, topic] = key.split('::');
+      const accuracy = value.total ? Math.round((value.weightedScore / value.total) * 100) : 0;
+      return { topic, subject: getSubjectLabel(value.subject), accuracy };
+    });
+  }, [attempts]);
+
+  const weakAreas = topicAccuracy
+    .filter((item) => item.accuracy > 0)
+    .sort((a, b) => a.accuracy - b.accuracy)
+    .slice(0, 4)
+    .map((item) => ({
+      ...item,
+      improvement: item.accuracy < 55 ? 'High Priority' : 'Medium Priority',
+    }));
+
+  const strongAreas = topicAccuracy
+    .filter((item) => item.accuracy > 0)
+    .sort((a, b) => b.accuracy - a.accuracy)
+    .slice(0, 4);
+
+  const questionBankSize = mcqsBySubject.mathematics.length + mcqsBySubject.physics.length + mcqsBySubject.english.length;
 
   return (
     <div className="space-y-6">
       <div>
         <h1>Performance Analytics</h1>
-        <p className="text-muted-foreground">Track your progress and identify areas for improvement</p>
+        <p className="text-muted-foreground">Live analytics based on your actual attempts</p>
       </div>
 
-      {/* Overall Stats */}
+      <div className="flex gap-2">
+        <Button variant="outline" onClick={() => void exportReport('csv')}>
+          Export CSV
+        </Button>
+        <Button variant="outline" onClick={() => void exportReport('json')}>
+          Export JSON
+        </Button>
+      </div>
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <CardHeader className="pb-3">
@@ -64,10 +153,7 @@ export function Analytics() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl">{overallStats.testsAttempted}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              <TrendingUp className="w-3 h-3 inline mr-1" />
-              +3 this week
-            </p>
+            <p className="text-xs text-muted-foreground mt-1">Real test records</p>
           </CardContent>
         </Card>
 
@@ -79,7 +165,7 @@ export function Analytics() {
             <div className="text-3xl">{overallStats.averageScore}%</div>
             <p className="text-xs text-muted-foreground mt-1">
               <TrendingUp className="w-3 h-3 inline mr-1 text-green-500" />
-              +4% improvement
+              Based on all attempts
             </p>
           </CardContent>
         </Card>
@@ -90,7 +176,7 @@ export function Analytics() {
           </CardHeader>
           <CardContent>
             <div className="text-3xl">{overallStats.timeSpent}h</div>
-            <p className="text-xs text-muted-foreground mt-1">Last 30 days</p>
+            <p className="text-xs text-muted-foreground mt-1">Computed from test duration</p>
           </CardContent>
         </Card>
 
@@ -102,22 +188,21 @@ export function Analytics() {
             <div className="text-3xl">{overallStats.questionsAttempted}</div>
             <p className="text-xs text-muted-foreground mt-1">
               <Target className="w-3 h-3 inline mr-1" />
-              Target: 2000
+              Bank size: {questionBankSize}
             </p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Subject Performance */}
       <Card>
         <CardHeader>
           <CardTitle>Subject-Wise Performance</CardTitle>
-          <CardDescription>Your accuracy in each subject</CardDescription>
+          <CardDescription>Your measured accuracy in each subject</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {subjectPerformance.map((subject, index) => (
-              <div key={index}>
+            {subjectPerformance.map((subject) => (
+              <div key={subject.key}>
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <h4>{subject.subject}</h4>
@@ -135,30 +220,28 @@ export function Analytics() {
       </Card>
 
       <div className="grid lg:grid-cols-2 gap-6">
-        {/* Progress Over Time */}
         <Card>
           <CardHeader>
             <CardTitle>Progress Over Time</CardTitle>
-            <CardDescription>Your score trend</CardDescription>
+            <CardDescription>Weekly average test scores</CardDescription>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={250}>
               <LineChart data={progressData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="week" />
-                <YAxis />
+                <YAxis domain={[0, 100]} />
                 <Tooltip />
-                <Line type="monotone" dataKey="score" stroke="#8b5cf6" strokeWidth={2} />
+                <Line type="monotone" dataKey="score" stroke="#2563eb" strokeWidth={2} />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
 
-        {/* Topic Performance Radar */}
         <Card>
           <CardHeader>
             <CardTitle>Topic Performance</CardTitle>
-            <CardDescription>Performance across different topics</CardDescription>
+            <CardDescription>Score distribution by subject</CardDescription>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={250}>
@@ -166,79 +249,76 @@ export function Analytics() {
                 <PolarGrid />
                 <PolarAngleAxis dataKey="topic" />
                 <PolarRadiusAxis angle={90} domain={[0, 100]} />
-                <Radar name="Score" dataKey="score" stroke="#8b5cf6" fill="#8b5cf6" fillOpacity={0.6} />
+                <Radar name="Score" dataKey="score" stroke="#2563eb" fill="#2563eb" fillOpacity={0.5} />
               </RadarChart>
             </ResponsiveContainer>
           </CardContent>
         </Card>
       </div>
 
-      {/* Weak Areas */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <AlertCircle className="w-5 h-5 text-orange-500" />
             Weak Areas
           </CardTitle>
-          <CardDescription>Topics that need more attention</CardDescription>
+          <CardDescription>Lowest-performing attempted topics</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
-            {weakAreas.map((area, index) => (
-              <div key={index} className="p-4 border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-950 rounded-lg">
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <h4>{area.topic}</h4>
-                    <p className="text-sm text-muted-foreground">{area.subject}</p>
+          {weakAreas.length ? (
+            <div className="space-y-3">
+              {weakAreas.map((area) => (
+                <div key={`${area.subject}-${area.topic}`} className="p-4 border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-950 rounded-lg">
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <h4>{area.topic}</h4>
+                      <p className="text-sm text-muted-foreground">{area.subject}</p>
+                    </div>
+                    <Badge variant="destructive">{area.improvement}</Badge>
                   </div>
-                  <Badge variant="destructive">{area.improvement}</Badge>
+                  <div className="flex items-center gap-2">
+                    <Progress value={area.accuracy} className="flex-1" />
+                    <span className="text-sm">{area.accuracy}%</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Progress value={area.accuracy} className="flex-1" />
-                  <span className="text-sm">{area.accuracy}%</span>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="mt-4 p-4 bg-blue-50 dark:bg-blue-950 rounded-lg">
-            <h4 className="mb-2">AI Recommendations</h4>
-            <ul className="text-sm space-y-1 text-muted-foreground">
-              <li>• Focus on Electromagnetism - Practice 30 questions daily</li>
-              <li>• Review Integration techniques - Complete theory section first</li>
-              <li>• Take adaptive tests for weak topics to track improvement</li>
-            </ul>
-          </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">No weak-area data yet. Complete a few tests to generate insights.</p>
+          )}
         </CardContent>
       </Card>
 
-      {/* Strong Areas */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Award className="w-5 h-5 text-green-500" />
             Strong Areas
           </CardTitle>
-          <CardDescription>Topics where you excel</CardDescription>
+          <CardDescription>Best-performing attempted topics</CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
-            {strongAreas.map((area, index) => (
-              <div key={index} className="p-4 border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950 rounded-lg">
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <h4>{area.topic}</h4>
-                    <p className="text-sm text-muted-foreground">{area.subject}</p>
+          {strongAreas.length ? (
+            <div className="space-y-3">
+              {strongAreas.map((area) => (
+                <div key={`${area.subject}-${area.topic}`} className="p-4 border border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950 rounded-lg">
+                  <div className="flex items-start justify-between mb-2">
+                    <div>
+                      <h4>{area.topic}</h4>
+                      <p className="text-sm text-muted-foreground">{area.subject}</p>
+                    </div>
+                    <Badge className="bg-green-500">Strong</Badge>
                   </div>
-                  <Badge className="bg-green-500">Strong</Badge>
+                  <div className="flex items-center gap-2">
+                    <Progress value={area.accuracy} className="flex-1" />
+                    <span className="text-sm">{area.accuracy}%</span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <Progress value={area.accuracy} className="flex-1" />
-                  <span className="text-sm">{area.accuracy}%</span>
-                </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">Strong areas will appear after first completed attempts.</p>
+          )}
         </CardContent>
       </Card>
     </div>
