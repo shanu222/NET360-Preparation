@@ -6,3 +6,14 @@ services:
     buildCommand: npm install && npm run build
     startCommand: npx vite preview --host 0.0.0.0 --port $PORT
     autoDeploy: true
+
+  - type: web
+    name: net360-admin
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npx vite preview --host 0.0.0.0 --port $PORT
+    autoDeploy: true
+    envVars:
+      - key: VITE_ADMIN_ONLY
+        value: "true"
