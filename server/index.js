@@ -131,6 +131,51 @@ function defaultProgress() {
   };
 }
 
+async function bootstrapAdminAccounts() {
+  if (!ADMIN_EMAILS.length) {
+    console.log('Admin bootstrap skipped: ADMIN_EMAILS is empty.');
+    return;
+  }
+
+  const now = new Date();
+  const bootstrapPassword = String(process.env.ADMIN_BOOTSTRAP_PASSWORD || '').trim();
+
+  // Always promote listed emails to admin if they already exist.
+  const promoteResult = await UserModel.updateMany(
+    { email: { $in: ADMIN_EMAILS } },
+    { $set: { role: 'admin', updatedAt: now } },
+  );
+
+  let createdCount = 0;
+  if (bootstrapPassword) {
+    // If enabled, create missing admin accounts so first login can happen immediately.
+    const passwordHash = await bcrypt.hash(bootstrapPassword, 12);
+    for (const email of ADMIN_EMAILS) {
+      const existing = await UserModel.findOne({ email }).lean();
+      if (existing) continue;
+
+      await UserModel.create({
+        email,
+        passwordHash,
+        firstName: 'Admin',
+        lastName: '',
+        role: 'admin',
+        preferences: defaultPreferences(),
+        progress: defaultProgress(),
+      });
+      createdCount += 1;
+    }
+  }
+
+  console.log(
+    `Admin bootstrap complete: promoted ${promoteResult.modifiedCount || 0}, created ${createdCount}.`,
+  );
+
+  if (!bootstrapPassword) {
+    console.log('Note: ADMIN_BOOTSTRAP_PASSWORD not set, so missing admin emails were not auto-created.');
+  }
+}
+
 function userPublic(user) {
   const progress = { ...defaultProgress(), ...(user.progress || {}) };
   return {
@@ -1143,6 +1188,7 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
 
 async function bootstrap() {
   await connectMongo(MONGODB_URI);
+  await bootstrapAdminAccounts();
 
   const mcqCount = await MCQModel.countDocuments();
   if (!mcqCount) {
