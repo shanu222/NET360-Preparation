@@ -3,8 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Button } from './ui/button';
 import { Badge } from './ui/badge';
-import { Progress } from './ui/progress';
-import { FileText, Clock, Target, TrendingUp, Play } from 'lucide-react';
+import { Clock, FileText, MapPin, Play, Target, TrendingUp } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { Difficulty, SubjectKey, getSubjectLabel } from '../lib/mcq';
@@ -18,6 +17,12 @@ interface TestsProps {
 
 export function Tests({ onNavigate }: TestsProps) {
   const { mcqsBySubjectAndDifficulty, attempts, startPracticeTest } = useAppData();
+
+  const difficultyTone: Record<Difficulty, string> = {
+    Easy: 'bg-indigo-100 text-indigo-700',
+    Medium: 'bg-slate-200 text-slate-700',
+    Hard: 'bg-rose-100 text-rose-700',
+  };
 
   const topicTests = useMemo(() => {
     return subjects.flatMap((subject) => {
@@ -121,99 +126,63 @@ export function Tests({ onNavigate }: TestsProps) {
   };
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div>
         <h1>Practice & Mock Tests</h1>
         <p className="text-muted-foreground">Run tests from your real MCQ bank and track outcomes instantly</p>
       </div>
 
-      <Tabs defaultValue="topic">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="topic">Topic Tests</TabsTrigger>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+        <TopMetaChip text="Topic-Wise Tests" tone="from-indigo-100 to-violet-100" />
+        <TopMetaChip text="Mock Tests" tone="from-indigo-100 to-violet-100" />
+        <TopMetaChip text="Adaptive" tone="from-indigo-100 to-violet-100" />
+        <TopMetaChip text="200 Questions" subtext="180 Minutes" icon={Clock} />
+        <TopMetaChip text="NUST Centers" subtext="Computer-Based" icon={MapPin} />
+      </div>
+
+      <Tabs defaultValue="topic" className="space-y-4">
+        <TabsList className="grid w-full grid-cols-3 !bg-white/80 !border-indigo-100">
+          <TabsTrigger value="topic">Topic-Wise Tests</TabsTrigger>
           <TabsTrigger value="mock">Mock Tests</TabsTrigger>
           <TabsTrigger value="adaptive">Adaptive</TabsTrigger>
         </TabsList>
 
         <TabsContent value="topic" className="space-y-4">
-          <Card>
+          <Card className="rounded-2xl border-indigo-100 bg-white/92">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Target className="w-5 h-5" />
                 Topic-Wise Tests
               </CardTitle>
-              <CardDescription>Generated from your MCQ dataset by subject and difficulty</CardDescription>
+              <CardDescription>Run tests from your personalized MCQs and receive outcomes instantly</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
+              <div className="grid gap-4 md:grid-cols-2">
                 {topicTests.map((test) => (
-                  <div key={test.id} className="p-4 border rounded-lg hover:bg-accent transition-colors">
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-1">
-                          <h4>{test.topic}</h4>
-                          {test.latest ? <Badge variant="secondary" className="text-xs">Completed</Badge> : null}
-                        </div>
-                        <p className="text-sm text-muted-foreground">{getSubjectLabel(test.subject)}</p>
+                  <div key={test.id} className="rounded-xl border border-indigo-100 bg-white p-4 shadow-sm">
+                    <div className="mb-3 flex items-start justify-between">
+                      <div>
+                        <h4 className="text-lg text-indigo-950">{test.topic}</h4>
+                        <p className="text-slate-500">{getSubjectLabel(test.subject)}</p>
                       </div>
-                      <Badge
-                        variant={
-                          test.difficulty === 'Easy'
-                            ? 'default'
-                            : test.difficulty === 'Medium'
-                            ? 'secondary'
-                            : 'destructive'
-                        }
-                      >
-                        {test.difficulty}
-                      </Badge>
+                      <div className="flex gap-1">
+                        <span className={`rounded-md px-2 py-0.5 text-xs ${difficultyTone[test.difficulty]}`}>{test.difficulty}</span>
+                        {test.latest ? <span className="rounded-md bg-emerald-100 px-2 py-0.5 text-xs text-emerald-700">Done</span> : null}
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-4 mb-3 text-sm text-muted-foreground">
-                      <span className="flex items-center gap-1">
-                        <FileText className="w-4 h-4" />
-                        {test.questions} Questions
-                      </span>
-                      <span className="flex items-center gap-1">
-                        <Clock className="w-4 h-4" />
-                        {test.duration} mins
-                      </span>
+                    <div className="mb-4 flex items-center gap-4 text-sm text-slate-500">
+                      <span className="inline-flex items-center gap-1"><FileText className="h-4 w-4" />{test.questions} Questions</span>
+                      <span className="inline-flex items-center gap-1"><Clock className="h-4 w-4" />{test.duration} minute</span>
                     </div>
 
-                    {test.latest ? (
-                      <div className="space-y-2">
-                        <div className="flex justify-between text-sm">
-                          <span>Latest Score</span>
-                          <span>{test.latest.score}%</span>
-                        </div>
-                        <Progress value={test.latest.score} />
-                        <div className="grid grid-cols-2 gap-2 mt-2">
-                          <Button
-                            variant="outline"
-                            className="w-full"
-                            onClick={() => {
-                              onNavigate?.('analytics');
-                              toast.message(`Opened Analytics for review: ${test.latest?.score}% in ${test.topic}`);
-                            }}
-                          >
-                            Review
-                          </Button>
-                          <Button
-                            className="w-full"
-                            onClick={() => void startTopicTest(test.subject, test.difficulty, test.topic, test.questions)}
-                          >
-                            Retake
-                          </Button>
-                        </div>
-                      </div>
-                    ) : (
-                      <Button
-                        className="w-full"
-                        onClick={() => void startTopicTest(test.subject, test.difficulty, test.topic, test.questions)}
-                      >
-                        <Play className="w-4 h-4 mr-2" />
-                        Start Test
-                      </Button>
-                    )}
+                    <Button
+                      className="w-full rounded-lg bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
+                      onClick={() => void startTopicTest(test.subject, test.difficulty, test.topic, test.questions)}
+                    >
+                      <Play className="w-4 h-4 mr-2" />
+                      Start Test
+                    </Button>
                   </div>
                 ))}
               </div>
@@ -222,7 +191,7 @@ export function Tests({ onNavigate }: TestsProps) {
         </TabsContent>
 
         <TabsContent value="mock" className="space-y-4">
-          <Card>
+          <Card className="rounded-2xl border-indigo-100 bg-white/92">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <FileText className="w-5 h-5" />
@@ -231,9 +200,9 @@ export function Tests({ onNavigate }: TestsProps) {
               <CardDescription>Simulate full exam pacing and track mock history</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
                 {mockTests.map((test) => (
-                  <div key={test.number} className="p-4 border rounded-lg">
+                  <div key={test.number} className="rounded-xl border border-indigo-100 bg-white p-4">
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex-1">
                         <h4 className="mb-2">{test.name}</h4>
@@ -278,7 +247,7 @@ export function Tests({ onNavigate }: TestsProps) {
                         <Button onClick={() => void startMockTest(test.number)}>Retake Test</Button>
                       </div>
                     ) : (
-                      <Button className="w-full" onClick={() => void startMockTest(test.number)}>
+                      <Button className="w-full bg-gradient-to-r from-indigo-600 to-violet-500 text-white" onClick={() => void startMockTest(test.number)}>
                         <Play className="w-4 h-4 mr-2" />
                         Start Mock Test
                       </Button>
@@ -289,7 +258,7 @@ export function Tests({ onNavigate }: TestsProps) {
             </CardContent>
           </Card>
 
-          <Card className="bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800">
+          <Card className="bg-blue-50 border-blue-200">
             <CardContent className="pt-6">
               <h4 className="mb-2 flex items-center gap-2">
                 <Clock className="w-5 h-5 text-blue-500" />
@@ -305,7 +274,7 @@ export function Tests({ onNavigate }: TestsProps) {
         </TabsContent>
 
         <TabsContent value="adaptive" className="space-y-4">
-          <Card>
+          <Card className="rounded-2xl border-indigo-100 bg-white/92">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <TrendingUp className="w-5 h-5" />
@@ -322,7 +291,7 @@ export function Tests({ onNavigate }: TestsProps) {
                     : 0;
 
                   return (
-                    <div key={subject} className="p-4 border rounded-lg">
+                    <div key={subject} className="p-4 border border-indigo-100 rounded-lg bg-white">
                       <div className="flex items-center justify-between mb-3">
                         <div>
                           <h4>{getSubjectLabel(subject)} Adaptive Set</h4>
@@ -333,7 +302,7 @@ export function Tests({ onNavigate }: TestsProps) {
                       <div className="mb-3 text-sm text-muted-foreground">
                         Current average: {average ? `${average}%` : 'No attempts yet'}
                       </div>
-                      <Button className="w-full" onClick={() => void startAdaptive(subject)}>
+                      <Button className="w-full bg-gradient-to-r from-indigo-600 to-violet-500 text-white" onClick={() => void startAdaptive(subject)}>
                         <Play className="w-4 h-4 mr-2" />
                         Start Adaptive Test
                       </Button>
@@ -345,6 +314,26 @@ export function Tests({ onNavigate }: TestsProps) {
           </Card>
         </TabsContent>
       </Tabs>
+    </div>
+  );
+}
+
+function TopMetaChip({
+  text,
+  subtext,
+  tone,
+  icon: Icon,
+}: {
+  text: string;
+  subtext?: string;
+  tone?: string;
+  icon?: typeof Clock;
+}) {
+  return (
+    <div className={`inline-flex h-11 items-center gap-2 rounded-xl border border-indigo-100 bg-gradient-to-r px-3 ${tone || 'from-white to-white'}`}>
+      {Icon ? <Icon className="h-4 w-4 text-indigo-500" /> : null}
+      <span className="text-sm font-medium text-slate-700">{text}</span>
+      {subtext ? <span className="text-xs text-slate-400">{subtext}</span> : null}
     </div>
   );
 }

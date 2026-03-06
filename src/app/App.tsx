@@ -67,8 +67,8 @@ export default function App() {
             }}
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 ${
               activeTab === item.id
-                ? 'bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-lg shadow-indigo-300/40'
-                : 'text-slate-700 hover:bg-white/80'
+                ? 'bg-white/22 text-white shadow-[0_8px_20px_rgba(26,24,89,0.38)]'
+                : 'text-indigo-100 hover:bg-white/12'
             }`}
           >
             <Icon className="w-4 h-4" />
@@ -85,19 +85,21 @@ export default function App() {
       <div className="min-h-screen p-2 sm:p-4 md:p-6">
         <div className="net360-shell mx-auto flex w-full max-w-[1320px] gap-3 rounded-[28px] border border-white/70 bg-white/65 p-2 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl">
           {/* Desktop Sidebar */}
-          <aside className="hidden xl:flex w-64 shrink-0 flex-col rounded-3xl border border-indigo-100/80 bg-white/85 p-4">
-            <div className="mb-5 rounded-2xl border border-indigo-100 bg-white px-3 py-3">
+          <aside className="relative hidden xl:flex w-64 shrink-0 flex-col overflow-hidden rounded-3xl border border-indigo-300/30 bg-gradient-to-b from-[#5f4ee6] via-[#5b40d7] to-[#5e3ae0] p-4">
+            <div className="pointer-events-none absolute -bottom-20 -left-16 h-56 w-72 rounded-full bg-fuchsia-400/25 blur-3xl" />
+            <div className="pointer-events-none absolute bottom-8 right-3 h-36 w-36 rounded-full bg-cyan-300/20 blur-3xl" />
+            <div className="mb-5 rounded-2xl border border-white/20 bg-white/12 px-3 py-3 backdrop-blur-sm">
               <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-600 to-violet-500 text-white">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/20 text-white">
                   <Sparkles className="w-4 h-4" />
                 </div>
                 <div>
-                  <p className="text-lg font-semibold leading-none tracking-tight text-indigo-950">NET360</p>
-                  <p className="text-[11px] text-slate-500">Your Smart NET Preparation</p>
+                  <p className="text-lg font-semibold leading-none tracking-tight text-white">NET360</p>
+                  <p className="text-[11px] text-indigo-100/90">Your Smart NET Preparation</p>
                 </div>
               </div>
             </div>
-            <ScrollArea className="h-[calc(100vh-170px)] pr-2">
+            <ScrollArea className="relative h-[calc(100vh-170px)] pr-2">
               <NavigationContent />
             </ScrollArea>
           </aside>
@@ -112,10 +114,10 @@ export default function App() {
                       <Menu className="w-5 h-5" />
                     </Button>
                   </SheetTrigger>
-                  <SheetContent side="left" className="w-[290px] p-0">
-                    <div className="p-5 border-b border-indigo-100">
-                      <h2 className="text-lg font-semibold text-indigo-950">NET360</h2>
-                      <p className="text-xs text-slate-500">Your Smart NET Preparation</p>
+                  <SheetContent side="left" className="w-[290px] p-0 border-white/20 bg-gradient-to-b from-[#5f4ee6] via-[#5b40d7] to-[#5e3ae0]">
+                    <div className="p-5 border-b border-white/20">
+                      <h2 className="text-lg font-semibold text-white">NET360</h2>
+                      <p className="text-xs text-indigo-100">Your Smart NET Preparation</p>
                     </div>
                     <ScrollArea className="h-[calc(100vh-100px)] p-4">
                       <NavigationContent />
