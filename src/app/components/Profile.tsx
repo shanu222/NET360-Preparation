@@ -6,7 +6,7 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { Target, Award, Settings, LogOut } from 'lucide-react';
+import { Apple, Bot, FlaskConical, GraduationCap, LogOut, RefreshCw, Settings, Target, UserRound, Award } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
@@ -141,73 +141,116 @@ export function Profile({ onNavigate }: ProfileProps) {
           <p className="text-muted-foreground">Login or register to enable server-backed sessions, auth, and report export</p>
         </div>
 
-        <Card className="rounded-2xl border-indigo-100 bg-white/92">
-          <CardHeader>
-            <CardTitle>{isRegisterMode ? 'Create Account' : 'Login'}</CardTitle>
-            <CardDescription>Authentication is required for persistent test sessions</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {isRegisterMode ? (
-              <div className="grid md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="reg-first-name">First Name</Label>
-                  <Input
-                    id="reg-first-name"
-                    value={authForm.firstName}
-                    onChange={(e) => setAuthForm((prev) => ({ ...prev, firstName: e.target.value }))}
-                    className="border-indigo-100"
-                  />
+        <div className="grid gap-4 xl:grid-cols-[1fr_1.65fr]">
+          <Card className="rounded-2xl border-indigo-100 bg-white/92 shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
+            <CardHeader className="pb-3">
+              <CardTitle>{isRegisterMode ? 'Create Account' : 'Login'}</CardTitle>
+              <CardDescription>Authentication is required for persistent test sessions</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {isRegisterMode ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reg-first-name">First Name</Label>
+                    <Input
+                      id="reg-first-name"
+                      value={authForm.firstName}
+                      onChange={(e) => setAuthForm((prev) => ({ ...prev, firstName: e.target.value }))}
+                      className="h-11 border-indigo-100"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reg-last-name">Last Name</Label>
+                    <Input
+                      id="reg-last-name"
+                      value={authForm.lastName}
+                      onChange={(e) => setAuthForm((prev) => ({ ...prev, lastName: e.target.value }))}
+                      className="h-11 border-indigo-100"
+                    />
+                  </div>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="reg-last-name">Last Name</Label>
-                  <Input
-                    id="reg-last-name"
-                    value={authForm.lastName}
-                    onChange={(e) => setAuthForm((prev) => ({ ...prev, lastName: e.target.value }))}
-                    className="border-indigo-100"
-                  />
-                </div>
+              ) : null}
+
+              <div className="space-y-1.5">
+                <Label htmlFor="auth-email">Email</Label>
+                <Input
+                  id="auth-email"
+                  type="email"
+                  value={authForm.email}
+                  onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
+                  placeholder="student@example.com"
+                  className="h-11 border-indigo-100"
+                />
               </div>
-            ) : null}
 
-            <div className="space-y-2">
-              <Label htmlFor="auth-email">Email</Label>
-              <Input
-                id="auth-email"
-                type="email"
-                value={authForm.email}
-                onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
-                placeholder="student@example.com"
-                className="h-11 border-indigo-100"
-              />
-            </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="auth-password">Password</Label>
+                <Input
+                  id="auth-password"
+                  type="password"
+                  value={authForm.password}
+                  onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
+                  placeholder="Enter your password"
+                  className="h-11 border-indigo-100"
+                />
+              </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="auth-password">Password</Label>
-              <Input
-                id="auth-password"
-                type="password"
-                value={authForm.password}
-                onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
-                placeholder="Enter your password"
-                className="h-11 border-indigo-100"
-              />
-            </div>
-
-            <div className="flex gap-2">
-              <Button className="h-11 flex-1 rounded-lg bg-gradient-to-r from-indigo-600 to-violet-500 text-white" onClick={handleAuthSubmit}>
+              <Button className="h-11 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white" onClick={handleAuthSubmit}>
                 {isRegisterMode ? 'Create Account' : 'Login'}
               </Button>
-              <Button
-                variant="outline"
-                className="h-11 rounded-lg border-indigo-200 bg-white text-indigo-700"
-                onClick={() => setIsRegisterMode((prev) => !prev)}
-              >
-                {isRegisterMode ? 'Use Login' : 'Create Account'}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+
+              <div className="grid grid-cols-[1fr_auto_auto] gap-2">
+                <Button
+                  variant="outline"
+                  className="h-11 rounded-xl border-indigo-200 bg-white text-indigo-700"
+                  onClick={() => setIsRegisterMode((prev) => !prev)}
+                >
+                  {isRegisterMode ? 'Use Login' : 'Create Account'}
+                </Button>
+                <Button variant="outline" className="h-11 w-11 rounded-xl border-indigo-200 bg-white p-0 text-indigo-500">
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+                <Button variant="outline" className="h-11 w-11 rounded-xl border-indigo-200 bg-white p-0 text-indigo-500">
+                  <UserRound className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="relative py-1 text-center text-sm text-slate-500">
+                <div className="absolute left-0 right-0 top-1/2 h-px bg-indigo-100" />
+                <span className="relative bg-white px-3">or continue with</span>
+              </div>
+
+              <div className="flex justify-center gap-3">
+                <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white text-lg text-slate-700">G</Button>
+                <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white text-slate-700">
+                  <Apple className="h-5 w-5" />
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="relative overflow-hidden rounded-2xl border-indigo-100 bg-gradient-to-br from-white to-[#eef1ff] shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
+            <div className="pointer-events-none absolute -left-24 -bottom-16 h-56 w-80 rounded-full bg-indigo-400/12 blur-3xl" />
+            <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-72 rounded-full bg-violet-300/14 blur-3xl" />
+            <CardHeader>
+              <CardTitle>Your Result</CardTitle>
+              <CardDescription>Login or register to sync your email, account access, and progress.</CardDescription>
+            </CardHeader>
+            <CardContent className="relative pb-7">
+              <div className="mx-auto mt-4 flex h-56 max-w-md items-end justify-center gap-3 rounded-2xl bg-gradient-to-b from-[#f9faff] to-[#edf1ff] p-4">
+                <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-indigo-500 shadow-sm">
+                  <Bot className="h-8 w-8" />
+                </div>
+                <div className="inline-flex h-20 w-28 items-center justify-center rounded-2xl bg-white text-indigo-600 shadow-sm">
+                  <GraduationCap className="h-10 w-10" />
+                </div>
+                <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-violet-500 shadow-sm">
+                  <FlaskConical className="h-8 w-8" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
