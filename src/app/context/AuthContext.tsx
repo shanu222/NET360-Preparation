@@ -6,27 +6,56 @@ interface AuthUser {
   email: string;
   firstName: string;
   lastName: string;
-  role?: 'student' | 'admin';
+  blocked?: boolean;
+}
+
+interface ActiveSessionError extends Error {
+  code?: string;
+  activeSession?: {
+    id: string;
+    deviceId: string;
+    lastSeenAt: string;
+  };
 }
 
 interface AuthContextValue {
   token: string | null;
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (params: { email: string; password: string; firstName?: string; lastName?: string }) => Promise<void>;
+  login: (email: string, password: string, opts?: { forceLogoutOtherDevice?: boolean }) => Promise<void>;
+  submitSignupRequest: (params: {
+    email: string;
+    firstName?: string;
+    lastName?: string;
+    paymentReference: string;
+  }) => Promise<void>;
+  registerWithToken: (params: {
+    email: string;
+    password: string;
+    tokenCode: string;
+    firstName?: string;
+    lastName?: string;
+  }) => Promise<void>;
   logout: () => void;
 }
 
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
-const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
+const DEVICE_STORAGE_KEY = 'net360-device-id';
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
+
+function getOrCreateDeviceId() {
+  const existing = localStorage.getItem(DEVICE_STORAGE_KEY);
+  if (existing) return existing;
+  const created = `device-${Date.now()}-${Math.round(Math.random() * 1000000)}`;
+  localStorage.setItem(DEVICE_STORAGE_KEY, created);
+  return created;
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_STORAGE_KEY));
-  const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY));
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [deviceId] = useState<string>(() => getOrCreateDeviceId());
 
   useEffect(() => {
     if (!token) {
@@ -45,37 +74,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(payload.user);
         }
       } catch {
-        if (cancelled) return;
-
-        if (!refreshToken) {
+        if (!cancelled) {
           setToken(null);
           setUser(null);
           localStorage.removeItem(TOKEN_STORAGE_KEY);
-          localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
-          return;
-        }
-
-        try {
-          const refreshed = await apiRequest<{ token: string; refreshToken: string; user: AuthUser }>('/api/auth/refresh', {
-            method: 'POST',
-            body: JSON.stringify({ refreshToken }),
-          });
-
-          if (!cancelled) {
-            setToken(refreshed.token);
-            setRefreshToken(refreshed.refreshToken);
-            setUser(refreshed.user);
-            localStorage.setItem(TOKEN_STORAGE_KEY, refreshed.token);
-            localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshed.refreshToken);
-          }
-        } catch {
-          if (!cancelled) {
-            setToken(null);
-            setRefreshToken(null);
-            setUser(null);
-            localStorage.removeItem(TOKEN_STORAGE_KEY);
-            localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
-          }
         }
       } finally {
         if (!cancelled) {
@@ -89,48 +91,79 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [token, refreshToken]);
+  }, [token]);
 
-  const login = async (email: string, password: string) => {
-    const payload = await apiRequest<{ token: string; refreshToken: string; user: AuthUser }>('/api/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-    setToken(payload.token);
-    setRefreshToken(payload.refreshToken);
-    setUser(payload.user);
-    localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
-    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
+  const login = async (email: string, password: string, opts?: { forceLogoutOtherDevice?: boolean }) => {
+    try {
+      const payload = await apiRequest<{ token: string; user: AuthUser }>(
+        '/api/auth/login',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            email,
+            password,
+            deviceId,
+            forceLogoutOtherDevice: Boolean(opts?.forceLogoutOtherDevice),
+          }),
+        },
+      );
+
+      setToken(payload.token);
+      setUser(payload.user);
+      localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
+    } catch (error) {
+      if (error && typeof error === 'object') {
+        const apiError = error as ActiveSessionError;
+        if (typeof (error as any).code === 'string') {
+          apiError.code = (error as any).code;
+          apiError.activeSession = (error as any).activeSession;
+        }
+        throw apiError;
+      }
+      throw error;
+    }
   };
 
-  const register = async ({ email, password, firstName = '', lastName = '' }: { email: string; password: string; firstName?: string; lastName?: string }) => {
-    const payload = await apiRequest<{ token: string; refreshToken: string; user: AuthUser }>('/api/auth/register', {
+  const submitSignupRequest: AuthContextValue['submitSignupRequest'] = async ({
+    email,
+    firstName = '',
+    lastName = '',
+    paymentReference,
+  }) => {
+    await apiRequest<{ request: { id: string } }>('/api/auth/signup-request', {
       method: 'POST',
-      body: JSON.stringify({ email, password, firstName, lastName }),
+      body: JSON.stringify({ email, firstName, lastName, paymentReference }),
     });
+  };
+
+  const registerWithToken: AuthContextValue['registerWithToken'] = async ({
+    email,
+    password,
+    tokenCode,
+    firstName = '',
+    lastName = '',
+  }) => {
+    const payload = await apiRequest<{ token: string; user: AuthUser }>('/api/auth/register-with-token', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, tokenCode, firstName, lastName, deviceId }),
+    });
+
     setToken(payload.token);
-    setRefreshToken(payload.refreshToken);
     setUser(payload.user);
     localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
-    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
   };
 
   const logout = () => {
-    if (refreshToken) {
-      void apiRequest('/api/auth/logout', {
-        method: 'POST',
-        body: JSON.stringify({ refreshToken }),
-      }).catch(() => undefined);
+    if (token) {
+      void apiRequest<{ ok: boolean }>('/api/auth/logout', { method: 'POST' }, token).catch(() => undefined);
     }
     setToken(null);
-    setRefreshToken(null);
     setUser(null);
     localStorage.removeItem(TOKEN_STORAGE_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
   };
 
   const value = useMemo(
-    () => ({ token, user, loading, login, register, logout }),
+    () => ({ token, user, loading, login, submitSignupRequest, registerWithToken, logout }),
     [token, user, loading],
   );
 

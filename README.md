@@ -1,69 +1,45 @@
 
-# NET360 Preparation App
+  # NET360 Preparation App
 
-This is the NET360 Preparation App codebase. The UI source design reference is available at:
-https://www.figma.com/design/y9bYMsJLVtoN2SMwfEKBLc/NET360-Preparation-App
+  This is a code bundle for NET360 Preparation App. The original project is available at https://www.figma.com/design/y9bYMsJLVtoN2SMwfEKBLc/NET360-Preparation-App.
 
-## Local Development
+  ## Running the code
 
-1. Install dependencies:
-`npm install`
+  Run `npm i` to install the dependencies.
 
-2. Start frontend:
-`npm run dev`
+  Run `npm run dev` to start the development server.
 
-3. Start backend API:
-`npm run dev:server`
+  Run `npm run dev:server` in a second terminal to start the backend API.
 
-Frontend runs on Vite, backend runs on Express.
+  Optional env for frontend:
+  - `VITE_API_BASE_URL=http://localhost:4000` (leave empty in local dev if Vite proxy is used)
 
-## Required External Setup (Production)
+  Optional env for backend:
+  - `DB_PATH` to override where user data is stored.
+  - `JWT_SECRET` to override the signing secret.
 
-These are required for the new production-grade features:
+  ## MCQ Organization
 
-1. MongoDB database (Atlas or self-hosted)
-2. OpenAI API key (for AI Mentor live responses)
-3. Separate backend deployment service (or a single service running both frontend and API via reverse proxy)
+  Place one or more CSV files inside `MCQS/` (or `public/MCQS/`).
 
-## Environment Variables
+  The API automatically:
+  - Loads all CSV files recursively from these folders.
+  - Organizes MCQs by subject (`mathematics`, `physics`, `english`, `biology`, `chemistry`).
+  - Categorizes each subject into `Easy`, `Medium`, and `Hard`.
+  - Uses explicit `difficulty` values from CSV/file names when provided; otherwise applies balanced automatic classification.
 
-Create environment variables for backend service:
+  Useful endpoints:
+  - `GET /api/mcqs` for filtered questions (`subject`, `difficulty`, `topic`, `limit`).
+  - `GET /api/mcqs/meta` for totals by subject and difficulty.
 
-- `MONGODB_URI` = your Mongo connection string
-- `JWT_SECRET` = strong random secret for access tokens
-- `JWT_REFRESH_SECRET` = strong random secret for refresh tokens
-- `ACCESS_TOKEN_TTL` = optional, default `15m`
-- `REFRESH_TOKEN_TTL_DAYS` = optional, default `30`
-- `OPENAI_API_KEY` = required for live AI Mentor
-- `OPENAI_MODEL` = optional, default `gpt-4o-mini`
-- `AI_DAILY_LIMIT` = optional, default `50`
-- `ADMIN_EMAILS` = comma-separated admin emails, for example `admin@net360.pk,ops@net360.pk`
-- `API_PORT` = optional, default `4000`
+  ## Deploy to Render (Web Service)
 
-Frontend environment variable:
+  Use `render.yaml` to provision both services:
 
-- `VITE_API_BASE_URL` = full backend URL in production, for example `https://net360-api.onrender.com`
+  - `net360-preparation` (frontend)
+  - `net360-api` (backend)
 
-## Render Deployment (Recommended Split)
+  This setup keeps user profile/test data synced across devices because all clients read/write through the same API.
 
-Deploy as two Render services:
-
-1. Backend API service
-- Build: `npm install`
-- Start: `npm run start:server`
-- Add all backend env vars above
-
-2. Frontend web service
-- Build: `npm install && npm run build`
-- Start: `npx vite preview --host 0.0.0.0 --port $PORT`
-- Add `VITE_API_BASE_URL` pointing to backend service URL
-
-## New Production Features Added
-
-- MongoDB model-based persistence with indexes
-- JWT access + refresh token auth flow
-- Rate limiting and helmet hardening
-- AI Mentor backend integration with daily usage limits
-- Study plan generation API with account persistence
-- Admin APIs + Admin Panel UI for MCQ and analytics oversight
+  If you rename the backend service, update `VITE_API_BASE_URL` accordingly.
   

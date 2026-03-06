@@ -6,44 +6,30 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { Apple, Bot, FlaskConical, GraduationCap, LogOut, RefreshCw, Settings, Target, UserRound, Award } from 'lucide-react';
+import { Target, Award, Settings, LogOut } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
-import { apiRequest } from '../lib/api';
 
-interface ProfileProps {
-  onNavigate?: (section: string) => void;
-}
-
-export function Profile({ onNavigate }: ProfileProps) {
-  const { user, login, register, logout } = useAuth();
+export function Profile() {
+  const { user, login, submitSignupRequest, registerWithToken, logout } = useAuth();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
   const [localProfile, setLocalProfile] = useState(profile);
-  const [avatarPreview, setAvatarPreview] = useState('');
-  const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [authForm, setAuthForm] = useState({
     firstName: '',
     lastName: '',
     email: '',
     password: '',
+    paymentReference: '',
+    tokenCode: '',
   });
-  const [forgotMode, setForgotMode] = useState(false);
-  const [forgotToken, setForgotToken] = useState('');
-  const [newPassword, setNewPassword] = useState('');
+  const [avatarPreview, setAvatarPreview] = useState<string>(() => localStorage.getItem('net360-avatar-preview') || '');
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     setLocalProfile(profile);
   }, [profile]);
-
-  useEffect(() => {
-    return () => {
-      if (avatarPreview) {
-        URL.revokeObjectURL(avatarPreview);
-      }
-    };
-  }, [avatarPreview]);
 
   const avatarText = useMemo(() => {
     const first = localProfile.firstName?.trim()[0] ?? 'S';
@@ -57,66 +43,62 @@ export function Profile({ onNavigate }: ProfileProps) {
 
   const handleAuthSubmit = async () => {
     try {
-      if (!authForm.email || !authForm.password) {
-        toast.error('Email and password are required.');
+      if (!authForm.email) {
+        toast.error('Email is required.');
         return;
       }
 
       if (isRegisterMode) {
-        await register({
-          email: authForm.email,
-          password: authForm.password,
-          firstName: authForm.firstName,
-          lastName: authForm.lastName,
-        });
-        toast.success('Account created and logged in.');
+        if (authForm.tokenCode && authForm.password) {
+          await registerWithToken({
+            email: authForm.email,
+            password: authForm.password,
+            tokenCode: authForm.tokenCode,
+            firstName: authForm.firstName,
+            lastName: authForm.lastName,
+          });
+          toast.success('Signup approved and account created.');
+        } else {
+          if (!authForm.paymentReference) {
+            toast.error('Payment reference is required to submit signup request.');
+            return;
+          }
+          await submitSignupRequest({
+            email: authForm.email,
+            firstName: authForm.firstName,
+            lastName: authForm.lastName,
+            paymentReference: authForm.paymentReference,
+          });
+          toast.success('Signup request submitted. Enter token code here after admin approval.');
+        }
       } else {
-        await login(authForm.email, authForm.password);
+        if (!authForm.password) {
+          toast.error('Password is required.');
+          return;
+        }
+
+        try {
+          await login(authForm.email, authForm.password);
+        } catch (error) {
+          const activeSessionError = error as Error & { code?: string };
+          if (activeSessionError?.code === 'active_session_exists') {
+            const shouldSwitch = window.confirm(
+              'This account is active on another device. Logout there and continue on this device?',
+            );
+            if (shouldSwitch) {
+              await login(authForm.email, authForm.password, { forceLogoutOtherDevice: true });
+            } else {
+              return;
+            }
+          } else {
+            throw error;
+          }
+        }
         toast.success('Logged in successfully.');
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Authentication failed.';
       toast.error(message);
-    }
-  };
-
-  const handleForgotPasswordRequest = async () => {
-    if (!authForm.email) {
-      toast.error('Enter your email to request a reset link.');
-      return;
-    }
-
-    try {
-      const payload = await apiRequest<{ message: string; resetToken?: string }>('/api/auth/forgot-password', {
-        method: 'POST',
-        body: JSON.stringify({ email: authForm.email }),
-      });
-
-      if (payload.resetToken) {
-        setForgotToken(payload.resetToken);
-      }
-      toast.success(payload.message || 'Reset link requested.');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not request password reset.');
-    }
-  };
-
-  const handleResetPassword = async () => {
-    if (!forgotToken || !newPassword) {
-      toast.error('Reset token and new password are required.');
-      return;
-    }
-
-    try {
-      await apiRequest<{ message: string }>('/api/auth/reset-password', {
-        method: 'POST',
-        body: JSON.stringify({ token: forgotToken, newPassword }),
-      });
-      toast.success('Password reset successful. You can now log in.');
-      setForgotMode(false);
-      setNewPassword('');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not reset password.');
     }
   };
 
@@ -159,7 +141,7 @@ export function Profile({ onNavigate }: ProfileProps) {
     }
   };
 
-  const triggerPhotoPicker = () => {
+  const openPhotoPicker = () => {
     photoInputRef.current?.click();
   };
 
@@ -167,187 +149,122 @@ export function Profile({ onNavigate }: ProfileProps) {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const nextUrl = URL.createObjectURL(file);
-    setAvatarPreview((previous) => {
-      if (previous) {
-        URL.revokeObjectURL(previous);
-      }
-      return nextUrl;
-    });
-    toast.success('Profile photo updated locally for this browser session.');
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please choose an image file.');
+      return;
+    }
+
+    const maxSizeBytes = 3 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
+      toast.error('Image must be 3MB or smaller.');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      setAvatarPreview(dataUrl);
+      localStorage.setItem('net360-avatar-preview', dataUrl);
+      toast.success('Profile photo updated.');
+    };
+    reader.readAsDataURL(file);
   };
 
   if (!user) {
     return (
-      <div className="space-y-5">
+      <div className="space-y-6">
         <div>
           <h1>Account Access</h1>
-          <p className="text-muted-foreground">Login or register to enable server-backed sessions, auth, and report export</p>
+          <p className="text-muted-foreground">Login or complete token-based signup after payment verification</p>
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-[1fr_1.65fr]">
-          <Card className="rounded-2xl border-indigo-100 bg-white/92 shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
-            <CardHeader className="pb-3">
-              <CardTitle>{isRegisterMode ? 'Create Account' : 'Login'}</CardTitle>
-              <CardDescription>Authentication is required for persistent test sessions</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {isRegisterMode ? (
-                <div className="grid grid-cols-2 gap-2">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="reg-first-name">First Name</Label>
-                    <Input
-                      id="reg-first-name"
-                      value={authForm.firstName}
-                      onChange={(e) => setAuthForm((prev) => ({ ...prev, firstName: e.target.value }))}
-                      className="h-11 border-indigo-100"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="reg-last-name">Last Name</Label>
-                    <Input
-                      id="reg-last-name"
-                      value={authForm.lastName}
-                      onChange={(e) => setAuthForm((prev) => ({ ...prev, lastName: e.target.value }))}
-                      className="h-11 border-indigo-100"
-                    />
-                  </div>
+        <Card>
+          <CardHeader>
+            <CardTitle>{isRegisterMode ? 'Token Signup' : 'Login'}</CardTitle>
+            <CardDescription>
+              {isRegisterMode
+                ? '1) Pay fee and submit request 2) after approval, enter token + password'
+                : 'Single-device session is enforced'}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {isRegisterMode ? (
+              <div className="grid md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="reg-first-name">First Name</Label>
+                  <Input
+                    id="reg-first-name"
+                    value={authForm.firstName}
+                    onChange={(e) => setAuthForm((prev) => ({ ...prev, firstName: e.target.value }))}
+                  />
                 </div>
-              ) : null}
-
-              <div className="space-y-1.5">
-                <Label htmlFor="auth-email">Email</Label>
-                <Input
-                  id="auth-email"
-                  type="email"
-                  value={authForm.email}
-                  onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
-                  placeholder="student@example.com"
-                  className="h-11 border-indigo-100"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label htmlFor="auth-password">Password</Label>
-                <Input
-                  id="auth-password"
-                  type="password"
-                  value={authForm.password}
-                  onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
-                  placeholder="Enter your password"
-                  className="h-11 border-indigo-100"
-                />
-              </div>
-
-              {forgotMode ? (
-                <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
-                  <div className="space-y-1">
-                    <Label htmlFor="reset-token">Reset Token</Label>
-                    <Input
-                      id="reset-token"
-                      value={forgotToken}
-                      onChange={(e) => setForgotToken(e.target.value)}
-                      placeholder="Paste reset token"
-                      className="h-10 border-indigo-100"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="new-password">New Password</Label>
-                    <Input
-                      id="new-password"
-                      type="password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Minimum 8 characters"
-                      className="h-10 border-indigo-100"
-                    />
-                  </div>
-                  <Button className="h-10 w-full rounded-lg bg-indigo-600 text-white" onClick={() => void handleResetPassword()}>
-                    Set New Password
-                  </Button>
+                <div className="space-y-2">
+                  <Label htmlFor="reg-last-name">Last Name</Label>
+                  <Input
+                    id="reg-last-name"
+                    value={authForm.lastName}
+                    onChange={(e) => setAuthForm((prev) => ({ ...prev, lastName: e.target.value }))}
+                  />
                 </div>
-              ) : null}
+              </div>
+            ) : null}
 
-              <Button className="h-11 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white" onClick={handleAuthSubmit}>
-                {isRegisterMode ? 'Create Account' : 'Login'}
+            <div className="space-y-2">
+              <Label htmlFor="auth-email">Email</Label>
+              <Input
+                id="auth-email"
+                type="email"
+                value={authForm.email}
+                onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
+                placeholder="student@example.com"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="auth-password">Password</Label>
+              <Input
+                id="auth-password"
+                type="password"
+                value={authForm.password}
+                onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
+                placeholder="Enter your password"
+              />
+            </div>
+
+            {isRegisterMode ? (
+              <>
+                <div className="space-y-2">
+                  <Label htmlFor="payment-reference">Payment Reference</Label>
+                  <Input
+                    id="payment-reference"
+                    value={authForm.paymentReference}
+                    onChange={(e) => setAuthForm((prev) => ({ ...prev, paymentReference: e.target.value }))}
+                    placeholder="Txn ID / Receipt Number"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="token-code">Approved Token Code</Label>
+                  <Input
+                    id="token-code"
+                    value={authForm.tokenCode}
+                    onChange={(e) => setAuthForm((prev) => ({ ...prev, tokenCode: e.target.value.toUpperCase() }))}
+                    placeholder="NET-XXXXX-XXXXX"
+                  />
+                </div>
+              </>
+            ) : null}
+
+            <div className="flex gap-2">
+              <Button className="flex-1" onClick={handleAuthSubmit}>
+                {isRegisterMode ? 'Request/Complete Signup' : 'Login'}
               </Button>
-
-              <div className="grid grid-cols-[1fr_auto_auto] gap-2">
-                <Button
-                  variant="outline"
-                  className="h-11 rounded-xl border-indigo-200 bg-white text-indigo-700"
-                  onClick={() => setIsRegisterMode((prev) => !prev)}
-                >
-                  {isRegisterMode ? 'Use Login' : 'Create Account'}
-                </Button>
-                <Button
-                  variant="outline"
-                  className="h-11 w-11 rounded-xl border-indigo-200 bg-white p-0 text-indigo-500"
-                  onClick={() => {
-                    setAuthForm({ firstName: '', lastName: '', email: '', password: '' });
-                    setForgotToken('');
-                    setNewPassword('');
-                    setForgotMode(false);
-                  }}
-                >
-                  <RefreshCw className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  className="h-11 w-11 rounded-xl border-indigo-200 bg-white p-0 text-indigo-500"
-                  onClick={() => setIsRegisterMode((prev) => !prev)}
-                >
-                  <UserRound className="h-4 w-4" />
-                </Button>
-              </div>
-
-              <div className="flex items-center justify-between text-xs text-slate-500">
-                <button type="button" className="underline-offset-2 hover:underline" onClick={() => setForgotMode((prev) => !prev)}>
-                  {forgotMode ? 'Hide reset panel' : 'Forgot password?'}
-                </button>
-                {!forgotMode ? (
-                  <button type="button" className="underline-offset-2 hover:underline" onClick={() => void handleForgotPasswordRequest()}>
-                    Request reset token
-                  </button>
-                ) : null}
-              </div>
-
-              <div className="relative py-1 text-center text-sm text-slate-500">
-                <div className="absolute left-0 right-0 top-1/2 h-px bg-indigo-100" />
-                <span className="relative bg-white px-3">or continue with</span>
-              </div>
-
-              <div className="flex justify-center gap-3">
-                <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white text-lg text-slate-700">G</Button>
-                <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white text-slate-700">
-                  <Apple className="h-5 w-5" />
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="relative overflow-hidden rounded-2xl border-indigo-100 bg-gradient-to-br from-white to-[#eef1ff] shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
-            <div className="pointer-events-none absolute -left-24 -bottom-16 h-56 w-80 rounded-full bg-indigo-400/12 blur-3xl" />
-            <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-72 rounded-full bg-violet-300/14 blur-3xl" />
-            <CardHeader>
-              <CardTitle>Your Result</CardTitle>
-              <CardDescription>Login or register to sync your email, account access, and progress.</CardDescription>
-            </CardHeader>
-            <CardContent className="relative pb-7">
-              <div className="mx-auto mt-4 flex h-56 max-w-md items-end justify-center gap-3 rounded-2xl bg-gradient-to-b from-[#f9faff] to-[#edf1ff] p-4">
-                <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-indigo-500 shadow-sm">
-                  <Bot className="h-8 w-8" />
-                </div>
-                <div className="inline-flex h-20 w-28 items-center justify-center rounded-2xl bg-white text-indigo-600 shadow-sm">
-                  <GraduationCap className="h-10 w-10" />
-                </div>
-                <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-violet-500 shadow-sm">
-                  <FlaskConical className="h-8 w-8" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+              <Button variant="outline" onClick={() => setIsRegisterMode((prev) => !prev)}>
+                {isRegisterMode ? 'Use Login' : 'Create Account'}
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       </div>
     );
   }
@@ -361,13 +278,10 @@ export function Profile({ onNavigate }: ProfileProps) {
           <h1>Profile & Settings</h1>
           <p className="text-muted-foreground">Manage your account and preferences</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => onNavigate?.('analytics')}>View Analytics</Button>
-          <Button variant="outline" onClick={logout}>
-            <LogOut className="w-4 h-4 mr-2" />
-            Logout
-          </Button>
-        </div>
+        <Button variant="outline" onClick={logout}>
+          <LogOut className="w-4 h-4 mr-2" />
+          Logout
+        </Button>
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">
@@ -377,20 +291,14 @@ export function Profile({ onNavigate }: ProfileProps) {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-col items-center text-center">
+              <input ref={photoInputRef} type="file" accept="image/*" className="hidden" onChange={handlePhotoSelected} />
               <Avatar className="w-24 h-24 mb-4">
                 <AvatarImage src={avatarPreview} />
                 <AvatarFallback className="text-2xl">{avatarText}</AvatarFallback>
               </Avatar>
               <h3>{`${localProfile.firstName || 'Student'} ${localProfile.lastName || ''}`.trim()}</h3>
               <p className="text-sm text-muted-foreground">{localProfile.email || user.email}</p>
-              <Button variant="outline" className="mt-4" onClick={triggerPhotoPicker}>Change Photo</Button>
-              <input
-                ref={photoInputRef}
-                type="file"
-                accept="image/png,image/jpeg,image/jpg"
-                className="hidden"
-                onChange={handlePhotoSelected}
-              />
+              <Button variant="outline" className="mt-4" onClick={openPhotoPicker}>Change Photo</Button>
             </div>
 
             <div className="pt-4 border-t space-y-3">

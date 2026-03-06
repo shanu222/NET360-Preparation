@@ -1,140 +1,325 @@
-import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
-import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
-import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import OpenAI from 'openai';
-import { connectMongo } from './lib/mongo.js';
-import { loadMcqsFromCsv } from './lib/mcqLoader.js';
-import { UserModel } from './models/User.js';
-import { MCQModel } from './models/MCQ.js';
-import { TestSessionModel } from './models/TestSession.js';
-import { AttemptModel } from './models/Attempt.js';
-import { AIUsageModel } from './models/AIUsage.js';
+import crypto from 'node:crypto';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT || process.env.API_PORT || 4000);
-const MONGODB_URI = process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO_URI || '';
+const PORT = process.env.API_PORT || 4000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || `${JWT_SECRET}-refresh`;
-const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '15m';
-const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
-const AI_DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT || 50);
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
-  .split(',')
-  .map((item) => item.trim().toLowerCase())
-  .filter(Boolean);
-const MCQ_CSV_PATH = path.join(__dirname, '..', 'public', 'MCQS', 'NET_10000_MCQs_Dataset.csv');
+const ADMIN_EMAIL = String(process.env.ADMIN_EMAIL || 'admin@net360.local').trim().toLowerCase();
+const ADMIN_PASSWORD = String(process.env.ADMIN_PASSWORD || 'admin123456');
+const ADMIN_COOKIE_NAME = 'net360_admin_token';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const DB_PATH = process.env.DB_PATH
+  ? path.resolve(process.env.DB_PATH)
+  : path.join(__dirname, 'data', 'db.json');
+const MCQ_DATA_DIRS = [
+  path.join(__dirname, '..', 'MCQS'),
+  path.join(__dirname, '..', 'public', 'MCQS'),
+];
 
-const openai = process.env.OPENAI_API_KEY
-  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  : null;
+const SUBJECTS = ['mathematics', 'physics', 'english', 'biology', 'chemistry'];
+const DIFFICULTIES = ['Easy', 'Medium', 'Hard'];
 
 const app = express();
-app.use(helmet());
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '1mb' }));
 
-app.use(
-  '/api',
-  rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 800,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too many requests. Please try again later.' },
-  }),
-);
+const publicSseClients = new Set();
+const adminSseClients = new Set();
 
-app.use(
-  '/api/auth',
-  rateLimit({
-    windowMs: 10 * 60 * 1000,
-    max: 80,
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: { error: 'Too many auth attempts. Please try again shortly.' },
-  }),
-);
+const subjectAliases = {
+  mathematics: 'mathematics',
+  math: 'mathematics',
+  maths: 'mathematics',
+  physics: 'physics',
+  english: 'english',
+  biology: 'biology',
+  chemistry: 'chemistry',
+};
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
+function splitCsvLine(line) {
+  const values = [];
+  let current = '';
+  let inQuotes = false;
 
-function shuffle(array) {
-  const copy = [...array];
-  for (let i = copy.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+
+    if (char === '"') {
+      const next = line[i + 1];
+      if (inQuotes && next === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === ',' && !inQuotes) {
+      values.push(current);
+      current = '';
+      continue;
+    }
+
+    current += char;
   }
-  return copy;
+
+  values.push(current);
+  return values;
 }
 
-function hashToken(value) {
-  return crypto.createHash('sha256').update(value).digest('hex');
+function classifyDifficulty(index, total) {
+  if (total <= 2) return index === 0 ? 'Easy' : index === 1 ? 'Medium' : 'Hard';
+  const ratio = (index + 1) / total;
+  if (ratio <= 0.34) return 'Easy';
+  if (ratio <= 0.67) return 'Medium';
+  return 'Hard';
 }
 
-function makeAccessToken(user) {
+function parseDifficulty(value) {
+  if (!value) return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === 'easy') return 'Easy';
+  if (normalized === 'medium' || normalized === 'moderate') return 'Medium';
+  if (normalized === 'hard' || normalized === 'difficult') return 'Hard';
+  return null;
+}
+
+function normalizeSubject(value) {
+  if (!value) return null;
+  const normalized = String(value).trim().toLowerCase();
+  return subjectAliases[normalized] || null;
+}
+
+function parseCsvRows(csvText) {
+  const lines = csvText
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .filter((line) => line.trim().length > 0);
+
+  if (!lines.length) return [];
+
+  const headers = splitCsvLine(lines[0]).map((h) => h.trim());
+  const rows = [];
+
+  for (let i = 1; i < lines.length; i += 1) {
+    const values = splitCsvLine(lines[i]);
+    const row = {};
+    headers.forEach((key, idx) => {
+      row[key] = (values[idx] ?? '').trim();
+    });
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+async function listCsvFilesRecursively(rootDir) {
+  try {
+    const stat = await fs.stat(rootDir);
+    if (!stat.isDirectory()) return [];
+  } catch {
+    return [];
+  }
+
+  const files = [];
+
+  async function walk(currentDir) {
+    const entries = await fs.readdir(currentDir, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(fullPath);
+      } else if (entry.isFile() && entry.name.toLowerCase().endsWith('.csv')) {
+        files.push(fullPath);
+      }
+    }
+  }
+
+  await walk(rootDir);
+  return files;
+}
+
+async function findMcqCsvFiles() {
+  const filesByName = new Map();
+
+  for (const dirPath of MCQ_DATA_DIRS) {
+    const files = await listCsvFilesRecursively(dirPath);
+    for (const filePath of files) {
+      const fileNameKey = path.basename(filePath).toLowerCase();
+      if (!filesByName.has(fileNameKey)) {
+        filesByName.set(fileNameKey, filePath);
+      }
+    }
+  }
+
+  return Array.from(filesByName.values());
+}
+
+function inferSubjectFromFilePath(filePath) {
+  const tokens = filePath
+    .split(/[\\/._\-\s]+/)
+    .map((token) => token.trim().toLowerCase())
+    .filter(Boolean);
+
+  for (const token of tokens) {
+    const candidate = subjectAliases[token];
+    if (candidate) return candidate;
+  }
+
+  return null;
+}
+
+function inferDifficultyFromFilePath(filePath) {
+  const tokens = filePath
+    .split(/[\\/._\-\s]+/)
+    .map((token) => token.trim().toLowerCase())
+    .filter(Boolean);
+
+  for (const token of tokens) {
+    const parsed = parseDifficulty(token);
+    if (parsed) return parsed;
+  }
+
+  return null;
+}
+
+async function loadMcqsFromCsv() {
+  const csvFiles = await findMcqCsvFiles();
+
+  if (!csvFiles.length) {
+    return [];
+  }
+
+  const grouped = {
+    mathematics: [],
+    physics: [],
+    english: [],
+    biology: [],
+    chemistry: [],
+  };
+
+  const explicitDifficulties = new Map();
+
+  for (const filePath of csvFiles) {
+    const csvText = await fs.readFile(filePath, 'utf-8');
+    const rows = parseCsvRows(csvText);
+    const fallbackSubject = inferSubjectFromFilePath(filePath);
+    const fallbackDifficulty = inferDifficultyFromFilePath(filePath);
+
+    rows.forEach((row, rowIndex) => {
+      const subject = normalizeSubject(row.subject) || fallbackSubject;
+      if (!subject) return;
+      const normalizedRow = {
+        ...row,
+        __sourceFile: filePath,
+        __rowIndex: rowIndex,
+      };
+
+      grouped[subject].push(normalizedRow);
+
+      const explicitDifficulty = parseDifficulty(row.difficulty) || fallbackDifficulty;
+      if (explicitDifficulty) {
+        const stableId = `${subject}-${row.id || rowIndex + 1}-${filePath}-${rowIndex}`;
+        explicitDifficulties.set(stableId, explicitDifficulty);
+      }
+    });
+  }
+
+  const mcqs = [];
+
+  SUBJECTS.forEach((subject) => {
+    const subjectRows = grouped[subject];
+    subjectRows.forEach((row, index) => {
+      const options = [row.optionA, row.optionB, row.optionC, row.optionD]
+        .map((value) => (value || '').trim())
+        .filter(Boolean);
+      if (!row.question || !options.length) return;
+
+      const stableId = `${subject}-${row.id || row.__rowIndex + 1}-${row.__sourceFile}-${row.__rowIndex}`;
+      const explicitDifficulty = explicitDifficulties.get(stableId);
+
+      mcqs.push({
+        id: `mcq-${crypto.randomUUID()}`,
+        subject,
+        topic: row.topic || 'General',
+        question: row.question,
+        options,
+        answer: row.answer || '',
+        tip: row.tip || '',
+        difficulty: explicitDifficulty || classifyDifficulty(index, subjectRows.length),
+        source: 'seed',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+    });
+  });
+
+  return mcqs;
+}
+
+function ensureDbShape(data) {
+  return {
+    users: Array.isArray(data?.users) ? data.users : [],
+    sessions: Array.isArray(data?.sessions) ? data.sessions : [],
+    attempts: Array.isArray(data?.attempts) ? data.attempts : [],
+    mcqs: Array.isArray(data?.mcqs) ? data.mcqs : [],
+    signupRequests: Array.isArray(data?.signupRequests) ? data.signupRequests : [],
+    signupTokens: Array.isArray(data?.signupTokens) ? data.signupTokens : [],
+    deviceSessions: Array.isArray(data?.deviceSessions) ? data.deviceSessions : [],
+    admins: Array.isArray(data?.admins) ? data.admins : [],
+  };
+}
+
+async function readDb() {
+  try {
+    const raw = await fs.readFile(DB_PATH, 'utf-8');
+    return ensureDbShape(JSON.parse(raw));
+  } catch {
+    return ensureDbShape({});
+  }
+}
+
+async function writeDb(data) {
+  await fs.mkdir(path.dirname(DB_PATH), { recursive: true });
+  await fs.writeFile(DB_PATH, JSON.stringify(ensureDbShape(data), null, 2));
+}
+
+function createUserToken(user, deviceSession) {
   return jwt.sign(
-    {
-      userId: String(user._id),
-      email: user.email,
-      role: user.role || 'student',
-    },
+    { userId: user.id, email: user.email, deviceSessionId: deviceSession.id, role: 'user' },
     JWT_SECRET,
-    { expiresIn: ACCESS_TOKEN_TTL },
+    { expiresIn: '7d' },
   );
 }
 
-function makeRefreshToken(user) {
+function createAdminToken(admin) {
   return jwt.sign(
-    {
-      userId: String(user._id),
-      type: 'refresh',
-    },
-    JWT_REFRESH_SECRET,
-    { expiresIn: `${REFRESH_TOKEN_TTL_DAYS}d` },
+    { adminId: admin.id, email: admin.email, role: 'admin' },
+    JWT_SECRET,
+    { expiresIn: '8h' },
   );
 }
 
-function defaultPreferences() {
+function userOrDefaultPreferences(preferences) {
   return {
-    emailNotifications: true,
-    dailyReminders: true,
-    performanceReports: true,
+    emailNotifications: preferences?.emailNotifications ?? true,
+    dailyReminders: preferences?.dailyReminders ?? true,
+    performanceReports: preferences?.performanceReports ?? true,
   };
 }
 
-function defaultProgress() {
+function publicUser(user) {
   return {
-    questionsSolved: 0,
-    testsCompleted: 0,
-    averageScore: 0,
-    completedTests: [],
-    scores: [],
-    studyHours: 0,
-    weakTopics: [],
-    practiceHistory: [],
-    analytics: {
-      weeklyProgress: [],
-      accuracyTrend: [],
-    },
-    studyPlan: null,
-  };
-}
-
-function userPublic(user) {
-  const progress = { ...defaultProgress(), ...(user.progress || {}) };
-  return {
-    id: String(user._id),
+    id: user.id,
     email: user.email,
     firstName: user.firstName || '',
     lastName: user.lastName || '',
@@ -145,75 +330,173 @@ function userPublic(user) {
     sscPercentage: user.sscPercentage || '',
     hsscPercentage: user.hsscPercentage || '',
     testDate: user.testDate || '',
-    role: user.role || 'student',
-    preferences: { ...defaultPreferences(), ...(user.preferences || {}) },
-    progress,
-    test_history: progress.completedTests || [],
-    scores: progress.scores || [],
-    study_hours: progress.studyHours || 0,
-    weak_topics: progress.weakTopics || [],
+    blocked: Boolean(user.blocked),
+    createdAt: user.createdAt || null,
+    lastSeenAt: user.lastSeenAt || null,
+    preferences: userOrDefaultPreferences(user.preferences),
   };
 }
 
-function serializeSession(session) {
+function publicMcq(mcq) {
   return {
-    id: String(session._id),
-    userId: String(session.userId),
-    subject: session.subject,
-    difficulty: session.difficulty,
-    topic: session.topic,
-    mode: session.mode,
-    questionCount: session.questionCount,
-    durationMinutes: session.durationMinutes,
-    startedAt: new Date(session.startedAt).toISOString(),
-    finishedAt: session.finishedAt ? new Date(session.finishedAt).toISOString() : null,
-    questions: session.questions || [],
+    id: mcq.id,
+    subject: mcq.subject,
+    topic: mcq.topic,
+    question: mcq.question,
+    options: Array.isArray(mcq.options) ? mcq.options : [],
+    answer: mcq.answer || '',
+    tip: mcq.tip || '',
+    difficulty: mcq.difficulty,
+    updatedAt: mcq.updatedAt || mcq.createdAt || null,
   };
 }
 
-function serializeAttempt(attempt) {
-  return {
-    id: String(attempt._id),
-    sessionId: String(attempt.sessionId),
-    userId: String(attempt.userId),
-    subject: attempt.subject,
-    topic: attempt.topic,
-    difficulty: attempt.difficulty,
-    mode: attempt.mode,
-    score: attempt.score,
-    totalQuestions: attempt.totalQuestions,
-    correctAnswers: attempt.correctAnswers,
-    wrongAnswers: attempt.wrongAnswers,
-    unanswered: attempt.unanswered,
-    submittedAnswers: attempt.submittedAnswers,
-    durationMinutes: attempt.durationMinutes,
-    attemptedAt: new Date(attempt.attemptedAt).toISOString(),
-    submittedAt: new Date(attempt.submittedAt).toISOString(),
-    metadata: attempt.metadata || {},
-  };
+function generateSignupTokenCode() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = 'NET-';
+  for (let i = 0; i < 10; i += 1) {
+    code += chars[Math.floor(Math.random() * chars.length)];
+    if (i === 4) code += '-';
+  }
+  return code;
 }
 
-async function issueAuthPayload(user, req) {
-  const accessToken = makeAccessToken(user);
-  const refreshToken = makeRefreshToken(user);
-  const refreshTokenHash = hashToken(refreshToken);
-  const expiresAt = new Date(Date.now() + REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000);
+function sanitizeEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
 
-  user.refreshTokens = (user.refreshTokens || []).filter((item) => new Date(item.expiresAt).getTime() > Date.now());
-  user.refreshTokens.unshift({
-    tokenHash: refreshTokenHash,
-    expiresAt,
-    userAgent: String(req.headers['user-agent'] || '').slice(0, 250),
-    ipAddress: String(req.ip || ''),
+function parseCookies(req) {
+  const cookieHeader = String(req.headers.cookie || '');
+  const pairs = cookieHeader
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const map = {};
+
+  pairs.forEach((pair) => {
+    const index = pair.indexOf('=');
+    if (index < 0) return;
+    const key = pair.slice(0, index).trim();
+    const value = pair.slice(index + 1).trim();
+    if (!key) return;
+    map[key] = decodeURIComponent(value);
   });
-  user.refreshTokens = user.refreshTokens.slice(0, 5);
-  await user.save();
+
+  return map;
+}
+
+function getAuthTokenFromRequest(req, options = {}) {
+  const allowCookie = options.allowCookie !== false;
+  const allowBearer = options.allowBearer !== false;
+  const authHeader = req.headers.authorization || '';
+  if (allowBearer && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice('Bearer '.length);
+  }
+
+  if (allowCookie) {
+    const cookies = parseCookies(req);
+    if (cookies[ADMIN_COOKIE_NAME]) {
+      return cookies[ADMIN_COOKIE_NAME];
+    }
+  }
+
+  return null;
+}
+
+function createAdminCookie(token) {
+  const attrs = [
+    `${ADMIN_COOKIE_NAME}=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    `Max-Age=${8 * 60 * 60}`,
+    IS_PRODUCTION ? 'SameSite=None' : 'SameSite=Lax',
+  ];
+
+  if (IS_PRODUCTION) {
+    attrs.push('Secure');
+  }
+
+  return attrs.join('; ');
+}
+
+function clearAdminCookie() {
+  const attrs = [
+    `${ADMIN_COOKIE_NAME}=`,
+    'Path=/',
+    'HttpOnly',
+    'Max-Age=0',
+    IS_PRODUCTION ? 'SameSite=None' : 'SameSite=Lax',
+  ];
+
+  if (IS_PRODUCTION) {
+    attrs.push('Secure');
+  }
+
+  return attrs.join('; ');
+}
+
+function normalizeMcqPayload(payload) {
+  const subject = normalizeSubject(payload?.subject);
+  const difficulty = parseDifficulty(payload?.difficulty);
+  const question = String(payload?.question || '').trim();
+  const answer = String(payload?.answer || '').trim();
+  const topic = String(payload?.topic || 'General').trim() || 'General';
+  const tip = String(payload?.tip || '').trim();
+  const options = Array.isArray(payload?.options)
+    ? payload.options.map((option) => String(option || '').trim()).filter(Boolean)
+    : [];
+
+  if (!subject) {
+    return { error: 'Valid subject is required.' };
+  }
+  if (!difficulty) {
+    return { error: 'Valid difficulty is required (Easy, Medium, Hard).' };
+  }
+  if (!question) {
+    return { error: 'Question is required.' };
+  }
+  if (options.length < 2) {
+    return { error: 'At least 2 options are required.' };
+  }
+  if (!answer) {
+    return { error: 'Answer is required.' };
+  }
 
   return {
-    token: accessToken,
-    refreshToken,
-    user: userPublic(user),
+    subject,
+    difficulty,
+    topic,
+    question,
+    options,
+    answer,
+    tip,
   };
+}
+
+async function ensureInitialized() {
+  const db = await readDb();
+  let changed = false;
+
+  if (!db.admins.length) {
+    const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 10);
+    db.admins.push({
+      id: 'admin-default',
+      email: ADMIN_EMAIL,
+      passwordHash,
+      name: 'NET360 Admin',
+      createdAt: new Date().toISOString(),
+    });
+    changed = true;
+  }
+
+  if (!db.mcqs.length) {
+    db.mcqs = await loadMcqsFromCsv();
+    changed = true;
+  }
+
+  if (changed) {
+    await writeDb(db);
+  }
 }
 
 async function authMiddleware(req, res, next) {
@@ -227,744 +510,628 @@ async function authMiddleware(req, res, next) {
 
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    const user = await UserModel.findById(payload.userId);
+    if (payload.role !== 'user') {
+      res.status(401).json({ error: 'Invalid user token.' });
+      return;
+    }
+
+    const db = await readDb();
+    const user = db.users.find((item) => item.id === payload.userId);
+
     if (!user) {
       res.status(401).json({ error: 'User not found.' });
       return;
     }
 
+    if (user.blocked) {
+      res.status(403).json({ error: 'Your account is blocked.' });
+      return;
+    }
+
+    const deviceSession = db.deviceSessions.find(
+      (item) => item.id === payload.deviceSessionId && item.userId === user.id && item.status === 'active',
+    );
+
+    if (!deviceSession) {
+      res.status(401).json({ error: 'Session is no longer active. Please login again.' });
+      return;
+    }
+
+    deviceSession.lastSeenAt = new Date().toISOString();
+    user.lastSeenAt = deviceSession.lastSeenAt;
+
     req.user = user;
+    req.db = db;
+    req.deviceSession = deviceSession;
     next();
   } catch {
     res.status(401).json({ error: 'Invalid or expired token.' });
   }
 }
 
-function requireAdmin(req, res, next) {
-  if (req.user?.role !== 'admin') {
-    res.status(403).json({ error: 'Admin access required.' });
+async function adminAuthMiddleware(req, res, next) {
+  const token = getAuthTokenFromRequest(req, { allowCookie: true, allowBearer: false });
+
+  if (!token) {
+    res.status(401).json({ error: 'Missing admin token.' });
     return;
   }
-  next();
+
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (payload.role !== 'admin') {
+      res.status(401).json({ error: 'Invalid admin token.' });
+      return;
+    }
+
+    const db = await readDb();
+    const admin = db.admins.find((item) => item.id === payload.adminId);
+
+    if (!admin) {
+      res.status(401).json({ error: 'Admin not found.' });
+      return;
+    }
+
+    req.admin = admin;
+    req.db = db;
+    next();
+  } catch {
+    res.status(401).json({ error: 'Invalid or expired admin token.' });
+  }
 }
 
-function buildMockQuestionSet(mcqs, requestedCount) {
-  const targets = [
-    { subject: 'mathematics', count: 100 },
-    { subject: 'physics', count: 60 },
-    { subject: 'english', count: 40 },
-  ];
+function getActiveSessionForUser(db, userId) {
+  return db.deviceSessions.find((item) => item.userId === userId && item.status === 'active');
+}
 
-  const desired = clamp(Number(requestedCount) || 200, 1, 200);
-  const picks = [];
-  const usedIds = new Set();
+function applyMcqFilters(mcqs, query) {
+  let results = [...mcqs];
 
-  targets.forEach((target) => {
-    const pool = shuffle(mcqs.filter((item) => item.subject === target.subject));
-    for (const question of pool) {
-      const key = String(question._id);
-      if (usedIds.has(key)) continue;
-      picks.push(question);
-      usedIds.add(key);
-      if (picks.length >= desired || picks.filter((q) => q.subject === target.subject).length >= target.count) {
-        break;
-      }
-    }
-  });
-
-  if (picks.length < desired) {
-    const remaining = shuffle(mcqs.filter((item) => !usedIds.has(String(item._id))));
-    for (const question of remaining) {
-      picks.push(question);
-      if (picks.length >= desired) break;
+  if (query?.subject) {
+    const subject = normalizeSubject(query.subject);
+    if (subject) {
+      results = results.filter((item) => item.subject === subject);
     }
   }
 
-  return picks;
-}
-
-function generateStudyPlan({ targetDate, preparationLevel, weakSubjects, dailyStudyHours }) {
-  const now = new Date();
-  const examDate = targetDate ? new Date(targetDate) : new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
-  const daysLeft = Math.max(1, Math.ceil((examDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)));
-  const weeks = Math.max(1, Math.ceil(daysLeft / 7));
-  const focusSubjects = weakSubjects.length ? weakSubjects : ['mathematics', 'physics', 'chemistry', 'english'];
-
-  const weeklyTargets = Array.from({ length: weeks }, (_, index) => {
-    const subject = focusSubjects[index % focusSubjects.length];
-    return {
-      week: index + 1,
-      focus: subject,
-      target: `Complete ${subject} modules and one timed test`,
-    };
-  });
-
-  const dailySchedule = [
-    { block: 'Session 1', durationHours: Math.max(1, Math.round(dailyStudyHours * 0.4)), activity: 'Concept learning + notes' },
-    { block: 'Session 2', durationHours: Math.max(1, Math.round(dailyStudyHours * 0.35)), activity: 'Topic MCQs + review' },
-    { block: 'Session 3', durationHours: Math.max(1, Math.round(dailyStudyHours * 0.25)), activity: 'Revision + weak topic drilling' },
-  ];
-
-  return {
-    generatedAt: new Date().toISOString(),
-    targetDate: examDate.toISOString().slice(0, 10),
-    daysLeft,
-    preparationLevel,
-    weakSubjects,
-    dailyStudyHours,
-    weeklyTargets,
-    dailySchedule,
-    roadmap: [
-      'Foundation and formula consolidation',
-      'Topic-wise practice and adaptive drills',
-      'Full mock tests and revision',
-    ],
-  };
-}
-
-async function refreshUserProgress(userId) {
-  const attempts = await AttemptModel.find({ userId }).sort({ attemptedAt: -1 }).lean();
-
-  const totalQuestions = attempts.reduce((sum, item) => sum + (Number(item.totalQuestions) || 0), 0);
-  const totalMinutes = attempts.reduce((sum, item) => sum + (Number(item.durationMinutes) || 0), 0);
-  const scores = attempts.map((item) => Number(item.score) || 0);
-  const averageScore = scores.length ? Math.round(scores.reduce((sum, v) => sum + v, 0) / scores.length) : 0;
-
-  const bySubject = new Map();
-  attempts.forEach((item) => {
-    const current = bySubject.get(item.subject) || { total: 0, count: 0 };
-    current.total += Number(item.score) || 0;
-    current.count += 1;
-    bySubject.set(item.subject, current);
-  });
-
-  const weakTopics = [];
-  for (const [subject, aggregate] of bySubject.entries()) {
-    const avg = aggregate.count ? aggregate.total / aggregate.count : 0;
-    if (avg < 60) weakTopics.push(subject);
+  if (query?.difficulty) {
+    const difficulty = parseDifficulty(query.difficulty);
+    if (difficulty) {
+      results = results.filter((item) => item.difficulty === difficulty);
+    }
   }
 
-  await UserModel.findByIdAndUpdate(userId, {
-    $set: {
-      'progress.questionsSolved': totalQuestions,
-      'progress.testsCompleted': attempts.length,
-      'progress.averageScore': averageScore,
-      'progress.completedTests': attempts.map((item) => String(item._id)),
-      'progress.scores': scores,
-      'progress.studyHours': Number((totalMinutes / 60).toFixed(1)),
-      'progress.weakTopics': weakTopics,
-      'progress.practiceHistory': attempts.slice(0, 200),
-      'progress.analytics.weeklyProgress': attempts.slice(0, 12).map((item) => ({ date: item.attemptedAt, score: item.score })),
-      'progress.analytics.accuracyTrend': attempts.slice(0, 12).map((item) => ({ date: item.attemptedAt, accuracy: item.score })),
-    },
-  });
+  if (query?.topic) {
+    const keyword = String(query.topic).toLowerCase();
+    results = results.filter((item) => String(item.topic || '').toLowerCase().includes(keyword));
+  }
+
+  return results;
 }
 
-app.get('/api/health', async (req, res) => {
-  res.json({ status: 'ok', service: 'net360-api', mongo: 'connected' });
+function initSse(res) {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders?.();
+}
+
+function sendSseEvent(client, eventName, payload) {
+  try {
+    client.write(`event: ${eventName}\n`);
+    client.write(`data: ${JSON.stringify(payload)}\n\n`);
+  } catch {
+    // Ignore write failures for disconnected clients.
+  }
+}
+
+function broadcastPublicEvent(eventName, payload = {}) {
+  for (const client of publicSseClients) {
+    sendSseEvent(client, eventName, payload);
+  }
+}
+
+function broadcastAdminEvent(eventName, payload = {}) {
+  for (const client of adminSseClients) {
+    sendSseEvent(client, eventName, payload);
+  }
+}
+
+app.get('/api/events', (req, res) => {
+  initSse(res);
+  publicSseClients.add(res);
+  sendSseEvent(res, 'connected', { stream: 'public', connectedAt: new Date().toISOString() });
+
+  const keepAlive = setInterval(() => {
+    sendSseEvent(res, 'keepalive', { ts: Date.now() });
+  }, 25000);
+
+  req.on('close', () => {
+    clearInterval(keepAlive);
+    publicSseClients.delete(res);
+    res.end();
+  });
 });
 
-app.post('/api/auth/register', async (req, res) => {
+app.get('/api/admin/events', (req, res) => {
+  const token = getAuthTokenFromRequest(req, { allowCookie: true, allowBearer: false });
+  if (!token) {
+    res.status(401).json({ error: 'Missing admin token.' });
+    return;
+  }
+
   try {
-    const { email, password, firstName = '', lastName = '' } = req.body || {};
-
-    if (!email || !password) {
-      res.status(400).json({ error: 'Email and password are required.' });
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (payload.role !== 'admin') {
+      res.status(401).json({ error: 'Invalid admin token.' });
       return;
     }
 
-    if (String(password).length < 8) {
-      res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    initSse(res);
+    adminSseClients.add(res);
+    sendSseEvent(res, 'connected', { stream: 'admin', connectedAt: new Date().toISOString() });
+
+    const keepAlive = setInterval(() => {
+      sendSseEvent(res, 'keepalive', { ts: Date.now() });
+    }, 25000);
+
+    req.on('close', () => {
+      clearInterval(keepAlive);
+      adminSseClients.delete(res);
+      res.end();
+    });
+  } catch {
+    res.status(401).json({ error: 'Invalid or expired admin token.' });
+  }
+});
+
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', service: 'net360-api' });
+});
+
+app.post('/api/auth/signup-request', async (req, res) => {
+  try {
+    const email = sanitizeEmail(req.body?.email);
+    const firstName = String(req.body?.firstName || '').trim();
+    const lastName = String(req.body?.lastName || '').trim();
+    const paymentReference = String(req.body?.paymentReference || '').trim();
+
+    if (!email || !paymentReference) {
+      res.status(400).json({ error: 'Email and payment reference are required.' });
       return;
     }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
-    const existing = await UserModel.findOne({ email: normalizedEmail });
+    const db = await readDb();
+
+    const existingUser = db.users.find((item) => item.email === email);
+    if (existingUser) {
+      res.status(409).json({ error: 'Email is already registered.' });
+      return;
+    }
+
+    const existingPending = db.signupRequests.find(
+      (item) => item.email === email && item.status === 'pending',
+    );
+
+    if (existingPending) {
+      res.status(409).json({ error: 'A pending signup request already exists for this email.' });
+      return;
+    }
+
+    const request = {
+      id: `req-${Date.now()}-${Math.round(Math.random() * 1000)}`,
+      email,
+      firstName,
+      lastName,
+      paymentReference,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+      reviewedAt: null,
+      reviewedBy: null,
+      notes: '',
+      signupTokenId: null,
+    };
+
+    db.signupRequests.unshift(request);
+    await writeDb(db);
+    broadcastAdminEvent('signup.updated', { scope: 'admin' });
+
+    res.status(201).json({
+      request: {
+        id: request.id,
+        status: request.status,
+        createdAt: request.createdAt,
+      },
+      message: 'Signup request submitted. Wait for admin approval to receive your token code.',
+    });
+  } catch {
+    res.status(500).json({ error: 'Could not submit signup request.' });
+  }
+});
+
+app.post('/api/auth/register-with-token', async (req, res) => {
+  try {
+    const email = sanitizeEmail(req.body?.email);
+    const password = String(req.body?.password || '');
+    const tokenCode = String(req.body?.tokenCode || '').trim().toUpperCase();
+    const deviceId = String(req.body?.deviceId || '').trim();
+    const firstName = String(req.body?.firstName || '').trim();
+    const lastName = String(req.body?.lastName || '').trim();
+
+    if (!email || !password || !tokenCode || !deviceId) {
+      res.status(400).json({ error: 'Email, password, token code, and deviceId are required.' });
+      return;
+    }
+
+    const db = await readDb();
+
+    const existing = db.users.find((item) => item.email === email);
     if (existing) {
       res.status(409).json({ error: 'Email is already registered.' });
       return;
     }
 
-    const passwordHash = await bcrypt.hash(String(password), 12);
-    const role = ADMIN_EMAILS.includes(normalizedEmail) ? 'admin' : 'student';
+    const signupToken = db.signupTokens.find((item) => item.code === tokenCode);
+    if (!signupToken) {
+      res.status(400).json({ error: 'Invalid token code.' });
+      return;
+    }
 
-    const user = await UserModel.create({
-      email: normalizedEmail,
+    if (signupToken.status !== 'active') {
+      res.status(400).json({ error: 'This token is no longer active.' });
+      return;
+    }
+
+    if (signupToken.email && signupToken.email !== email) {
+      res.status(400).json({ error: 'This token was issued for a different email.' });
+      return;
+    }
+
+    if (signupToken.expiresAt && new Date(signupToken.expiresAt).getTime() < Date.now()) {
+      signupToken.status = 'expired';
+      await writeDb(db);
+      res.status(400).json({ error: 'Token has expired. Contact admin for a new token.' });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const user = {
+      id: `user-${Date.now()}`,
+      email,
       passwordHash,
-      firstName: String(firstName),
-      lastName: String(lastName),
-      role,
-      preferences: defaultPreferences(),
-      progress: defaultProgress(),
-    });
+      firstName: firstName || signupToken.firstName || '',
+      lastName: lastName || signupToken.lastName || '',
+      phone: '',
+      city: '',
+      targetProgram: '',
+      testSeries: '',
+      sscPercentage: '',
+      hsscPercentage: '',
+      testDate: '',
+      blocked: false,
+      preferences: userOrDefaultPreferences(null),
+      createdAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString(),
+    };
 
-    const payload = await issueAuthPayload(user, req);
-    res.status(201).json(payload);
+    const deviceSession = {
+      id: `devsess-${Date.now()}-${Math.round(Math.random() * 1000)}`,
+      userId: user.id,
+      deviceId,
+      status: 'active',
+      createdAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString(),
+      endedAt: null,
+      endReason: null,
+    };
+
+    signupToken.status = 'used';
+    signupToken.usedAt = new Date().toISOString();
+    signupToken.usedByUserId = user.id;
+
+    const request = db.signupRequests.find((item) => item.id === signupToken.signupRequestId);
+    if (request) {
+      request.status = 'completed';
+      request.notes = request.notes || 'Signup completed successfully';
+    }
+
+    db.users.push(user);
+    db.deviceSessions.push(deviceSession);
+
+    await writeDb(db);
+    broadcastAdminEvent('users.updated', { scope: 'admin' });
+    broadcastAdminEvent('signup.updated', { scope: 'admin' });
+
+    const authToken = createUserToken(user, deviceSession);
+    res.status(201).json({ token: authToken, user: publicUser(user) });
   } catch {
     res.status(500).json({ error: 'Registration failed.' });
   }
 });
 
+app.post('/api/auth/register', async (req, res) => {
+  res.status(410).json({
+    error: 'Direct registration is disabled. Submit a signup request and use an approved token code.',
+  });
+});
+
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body || {};
-    if (!email || !password) {
-      res.status(400).json({ error: 'Email and password are required.' });
+    const email = sanitizeEmail(req.body?.email);
+    const password = String(req.body?.password || '');
+    const deviceId = String(req.body?.deviceId || '').trim();
+    const forceLogoutOtherDevice = Boolean(req.body?.forceLogoutOtherDevice);
+
+    if (!email || !password || !deviceId) {
+      res.status(400).json({ error: 'Email, password, and deviceId are required.' });
       return;
     }
 
-    const user = await UserModel.findOne({ email: String(email).trim().toLowerCase() });
+    const db = await readDb();
+    const user = db.users.find((item) => item.email === email);
     if (!user) {
       res.status(401).json({ error: 'Invalid credentials.' });
       return;
     }
 
-    const isValid = await bcrypt.compare(String(password), user.passwordHash || '');
+    if (user.blocked) {
+      res.status(403).json({ error: 'Your account is blocked by admin.' });
+      return;
+    }
+
+    const isValid = await bcrypt.compare(password, user.passwordHash || '');
     if (!isValid) {
       res.status(401).json({ error: 'Invalid credentials.' });
       return;
     }
 
-    const payload = await issueAuthPayload(user, req);
-    res.json(payload);
+    const activeSession = getActiveSessionForUser(db, user.id);
+
+    if (activeSession && activeSession.deviceId !== deviceId && !forceLogoutOtherDevice) {
+      res.status(409).json({
+        error: 'You are already logged in on another device. Logout there first or confirm switch.',
+        code: 'active_session_exists',
+        activeSession: {
+          id: activeSession.id,
+          deviceId: activeSession.deviceId,
+          lastSeenAt: activeSession.lastSeenAt,
+        },
+      });
+      return;
+    }
+
+    if (activeSession && activeSession.deviceId !== deviceId && forceLogoutOtherDevice) {
+      activeSession.status = 'terminated';
+      activeSession.endedAt = new Date().toISOString();
+      activeSession.endReason = 'switched-device';
+    }
+
+    let session = getActiveSessionForUser(db, user.id);
+
+    if (!session || session.deviceId !== deviceId) {
+      session = {
+        id: `devsess-${Date.now()}-${Math.round(Math.random() * 1000)}`,
+        userId: user.id,
+        deviceId,
+        status: 'active',
+        createdAt: new Date().toISOString(),
+        lastSeenAt: new Date().toISOString(),
+        endedAt: null,
+        endReason: null,
+      };
+      db.deviceSessions.push(session);
+    } else {
+      session.lastSeenAt = new Date().toISOString();
+    }
+
+    user.lastSeenAt = session.lastSeenAt;
+
+    await writeDb(db);
+    broadcastAdminEvent('users.updated', { scope: 'admin' });
+
+    const token = createUserToken(user, session);
+    res.json({ token, user: publicUser(user) });
   } catch {
     res.status(500).json({ error: 'Login failed.' });
   }
 });
 
-app.post('/api/auth/refresh', async (req, res) => {
-  const refreshToken = String(req.body?.refreshToken || '').trim();
-  if (!refreshToken) {
-    res.status(400).json({ error: 'Refresh token is required.' });
-    return;
-  }
-
-  try {
-    const payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
-    if (payload?.type !== 'refresh') {
-      res.status(401).json({ error: 'Invalid refresh token.' });
-      return;
-    }
-
-    const user = await UserModel.findById(payload.userId);
-    if (!user) {
-      res.status(401).json({ error: 'User not found.' });
-      return;
-    }
-
-    const tokenHash = hashToken(refreshToken);
-    const found = (user.refreshTokens || []).find((item) => item.tokenHash === tokenHash && new Date(item.expiresAt).getTime() > Date.now());
-
-    if (!found) {
-      res.status(401).json({ error: 'Refresh token revoked or expired.' });
-      return;
-    }
-
-    user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
-    await user.save();
-
-    const newPayload = await issueAuthPayload(user, req);
-    res.json(newPayload);
-  } catch {
-    res.status(401).json({ error: 'Invalid or expired refresh token.' });
-  }
-});
-
-app.post('/api/auth/logout', async (req, res) => {
-  const refreshToken = String(req.body?.refreshToken || '').trim();
-
-  if (!refreshToken) {
-    res.json({ message: 'Logged out.' });
-    return;
-  }
-
-  try {
-    const payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
-    const user = await UserModel.findById(payload.userId);
-    if (user) {
-      const tokenHash = hashToken(refreshToken);
-      user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
-      await user.save();
-    }
-  } catch {
-    // Ignore invalid token on logout.
-  }
-
-  res.json({ message: 'Logged out.' });
-});
-
-app.post('/api/auth/forgot-password', async (req, res) => {
-  const email = String(req.body?.email || '').trim().toLowerCase();
-  if (!email) {
-    res.status(400).json({ error: 'Email is required.' });
-    return;
-  }
-
-  const user = await UserModel.findOne({ email });
-  if (user) {
-    const resetToken = crypto.randomBytes(24).toString('hex');
-    user.resetPasswordTokenHash = hashToken(resetToken);
-    user.resetPasswordExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
-    await user.save();
-
-    if (process.env.NODE_ENV !== 'production') {
-      res.json({ message: 'Reset link generated.', resetToken });
-      return;
-    }
-  }
-
-  res.json({ message: 'If this email exists, a password reset link has been sent.' });
-});
-
-app.post('/api/auth/reset-password', async (req, res) => {
-  const token = String(req.body?.token || '').trim();
-  const newPassword = String(req.body?.newPassword || '');
-
-  if (!token || !newPassword) {
-    res.status(400).json({ error: 'Token and new password are required.' });
-    return;
-  }
-
-  if (newPassword.length < 8) {
-    res.status(400).json({ error: 'Password must be at least 8 characters.' });
-    return;
-  }
-
-  const tokenHash = hashToken(token);
-  const user = await UserModel.findOne({
-    resetPasswordTokenHash: tokenHash,
-    resetPasswordExpiresAt: { $gt: new Date() },
-  });
-
-  if (!user) {
-    res.status(400).json({ error: 'Invalid or expired reset token.' });
-    return;
-  }
-
-  user.passwordHash = await bcrypt.hash(newPassword, 12);
-  user.resetPasswordTokenHash = null;
-  user.resetPasswordExpiresAt = null;
-  user.refreshTokens = [];
-  await user.save();
-
-  res.json({ message: 'Password reset successful.' });
+app.post('/api/auth/logout', authMiddleware, async (req, res) => {
+  req.deviceSession.status = 'terminated';
+  req.deviceSession.endedAt = new Date().toISOString();
+  req.deviceSession.endReason = 'user-logout';
+  await writeDb(req.db);
+  broadcastAdminEvent('users.updated', { scope: 'admin' });
+  res.json({ ok: true });
 });
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
-  res.json({ user: userPublic(req.user) });
+  await writeDb(req.db);
+  broadcastAdminEvent('users.updated', { scope: 'admin' });
+  res.json({ user: publicUser(req.user) });
 });
 
 app.put('/api/auth/profile', authMiddleware, async (req, res) => {
   const allowed = ['firstName', 'lastName', 'phone', 'city', 'targetProgram', 'testSeries', 'sscPercentage', 'hsscPercentage', 'testDate'];
+
   allowed.forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(req.body, field)) {
       req.user[field] = String(req.body[field] ?? '');
     }
   });
 
-  await req.user.save();
-  res.json({ user: userPublic(req.user) });
+  await writeDb(req.db);
+  broadcastAdminEvent('users.updated', { scope: 'admin' });
+  res.json({ user: publicUser(req.user) });
 });
 
 app.put('/api/auth/preferences', authMiddleware, async (req, res) => {
-  const current = req.user.preferences || defaultPreferences();
+  const current = userOrDefaultPreferences(req.user.preferences);
   req.user.preferences = {
     emailNotifications: typeof req.body?.emailNotifications === 'boolean' ? req.body.emailNotifications : current.emailNotifications,
     dailyReminders: typeof req.body?.dailyReminders === 'boolean' ? req.body.dailyReminders : current.dailyReminders,
     performanceReports: typeof req.body?.performanceReports === 'boolean' ? req.body.performanceReports : current.performanceReports,
   };
 
-  await req.user.save();
-  res.json({ user: userPublic(req.user) });
+  await writeDb(req.db);
+  res.json({ user: publicUser(req.user) });
 });
 
 app.get('/api/mcqs', async (req, res) => {
   try {
-    const { subject, difficulty, topic, limit = '10000' } = req.query;
-    const filter = {};
-
-    if (subject) {
-      filter.subject = String(subject).toLowerCase();
-    }
-    if (difficulty) {
-      const normalized = String(difficulty).toLowerCase();
-      const title = normalized.charAt(0).toUpperCase() + normalized.slice(1);
-      filter.difficulty = title;
-    }
-    if (topic) {
-      filter.topic = { $regex: String(topic), $options: 'i' };
-    }
-
-    const max = clamp(Number(limit) || 10000, 1, 10000);
-    const mcqs = await MCQModel.find(filter).limit(max).lean();
-
-    res.json({
-      mcqs: mcqs.map((item) => ({
-        id: String(item._id),
-        subject: item.subject,
-        topic: item.topic,
-        question: item.question,
-        options: item.options,
-        answer: item.answer,
-        tip: item.tip,
-        difficulty: item.difficulty,
-      })),
-      total: mcqs.length,
-    });
+    const db = await readDb();
+    const filtered = applyMcqFilters(db.mcqs, req.query);
+    const max = Math.max(1, Math.min(Number(req.query?.limit) || 10000, 10000));
+    res.json({ mcqs: filtered.slice(0, max).map(publicMcq), total: filtered.length });
   } catch {
     res.status(500).json({ error: 'Failed to load MCQs.' });
   }
 });
 
-app.post('/api/practice/analyze', authMiddleware, async (req, res) => {
-  const questionText = String(req.body?.question || '').trim();
-  const stepsRaw = String(req.body?.steps || '').trim();
-  const subject = String(req.body?.subject || '').toLowerCase();
+app.get('/api/mcqs/meta', async (req, res) => {
+  try {
+    const db = await readDb();
 
-  if (!stepsRaw) {
-    res.status(400).json({ error: 'Solution steps are required.' });
-    return;
-  }
-
-  const steps = stepsRaw
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  const analysis = steps.map((step, index) => {
-    const normalized = step.toLowerCase();
-    const hasEquationToken = /[a-z0-9]/i.test(step) && /[=+\-*/]/.test(step);
-    const maybeFinal = /(^|\s)x\s*=/.test(normalized) || normalized.includes('answer');
-
-    const correct = hasEquationToken || maybeFinal;
-    return {
-      step: index + 1,
-      correct,
-      message: correct
-        ? 'Step is structurally valid. Keep equations explicit for maximum accuracy.'
-        : 'Step seems incomplete. Add the transformed equation and operation used.',
+    const summary = {
+      total: db.mcqs.length,
+      bySubject: {
+        mathematics: { total: 0, Easy: 0, Medium: 0, Hard: 0 },
+        physics: { total: 0, Easy: 0, Medium: 0, Hard: 0 },
+        english: { total: 0, Easy: 0, Medium: 0, Hard: 0 },
+        biology: { total: 0, Easy: 0, Medium: 0, Hard: 0 },
+        chemistry: { total: 0, Easy: 0, Medium: 0, Hard: 0 },
+      },
     };
-  });
 
-  const similarFilter = {};
-  if (subject) similarFilter.subject = subject;
-  if (questionText) similarFilter.question = { $regex: questionText.slice(0, 40), $options: 'i' };
+    db.mcqs.forEach((mcq) => {
+      if (!summary.bySubject[mcq.subject]) return;
+      const bucket = summary.bySubject[mcq.subject];
+      bucket.total += 1;
+      if (bucket[mcq.difficulty] !== undefined) {
+        bucket[mcq.difficulty] += 1;
+      }
+    });
 
-  let similar = await MCQModel.find(similarFilter).limit(5).lean();
-  if (!similar.length) {
-    similar = await MCQModel.find(subject ? { subject } : {}).limit(5).lean();
+    res.json(summary);
+  } catch {
+    res.status(500).json({ error: 'Failed to load MCQ metadata.' });
   }
-
-  res.json({
-    analysis,
-    correctSteps: analysis.filter((item) => item.correct).length,
-    totalSteps: analysis.length,
-    suggestedSolution: [
-      'Isolate variable terms on one side of the equation.',
-      'Simplify constants step-by-step.',
-      'Apply inverse operation to solve for the unknown.',
-      'Substitute result into original equation to verify.',
-    ],
-    similarQuestions: similar.map((item) => ({
-      id: String(item._id),
-      subject: item.subject,
-      topic: item.topic,
-      question: item.question,
-      difficulty: item.difficulty,
-    })),
-  });
-});
-
-app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
-  const message = String(req.body?.message || '').trim();
-  const context = String(req.body?.context || '').trim();
-
-  if (!message) {
-    res.status(400).json({ error: 'Message is required.' });
-    return;
-  }
-
-  const day = new Date().toISOString().slice(0, 10);
-  const usage = await AIUsageModel.findOneAndUpdate(
-    { userId: req.user._id, day },
-    { $inc: { chatCount: 1 } },
-    { upsert: true, new: true },
-  );
-
-  if ((usage.chatCount || 0) > AI_DAILY_LIMIT) {
-    res.status(429).json({ error: `Daily AI limit reached (${AI_DAILY_LIMIT}). Please continue tomorrow.` });
-    return;
-  }
-
-  let answer = '';
-
-  if (openai) {
-    try {
-      const completion = await openai.chat.completions.create({
-        model: OPENAI_MODEL,
-        temperature: 0.3,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are NET360 AI Mentor. Provide concise, accurate educational guidance for NET prep in mathematics, physics, chemistry, english, intelligence and GK. If uncertain, state assumptions and suggest next steps.',
-          },
-          {
-            role: 'user',
-            content: context ? `Context: ${context}\n\nQuestion: ${message}` : message,
-          },
-        ],
-      });
-      answer = completion.choices?.[0]?.message?.content?.trim() || '';
-    } catch {
-      answer = '';
-    }
-  }
-
-  if (!answer) {
-    const normalized = message.toLowerCase();
-    if (normalized.includes('integration')) {
-      answer = 'Try LIATE for integration by parts, and test substitution first when an inner derivative appears. Solve 2 timed examples and compare with answer key steps.';
-    } else if (normalized.includes('physics') || normalized.includes('newton') || normalized.includes('force')) {
-      answer = 'For numericals: draw FBD, define knowns, select equation, solve, then unit-check. In NET, free-body setup usually decides the correct option fastest.';
-    } else if (normalized.includes('chemistry')) {
-      answer = 'Use concept buckets: periodic trends, bonding, stoichiometry, and equilibrium. Solve 15 topic MCQs, then review incorrect options to find recurring mistakes.';
-    } else {
-      answer = 'Break the topic into concept summary, solved examples, and timed MCQs. Share one exact question and I will provide a step-by-step solution path.';
-    }
-  }
-
-  res.json({
-    answer,
-    usage: {
-      usedToday: usage.chatCount,
-      remainingToday: Math.max(0, AI_DAILY_LIMIT - usage.chatCount),
-    },
-  });
-});
-
-app.post('/api/study-plans/generate', authMiddleware, async (req, res) => {
-  const targetDate = String(req.body?.targetDate || '').trim();
-  const preparationLevel = String(req.body?.preparationLevel || '').trim() || 'intermediate';
-  const weakSubjects = Array.isArray(req.body?.weakSubjects)
-    ? req.body.weakSubjects.map((item) => String(item).toLowerCase().trim()).filter(Boolean)
-    : [];
-  const dailyStudyHours = clamp(Number(req.body?.dailyStudyHours) || 3, 1, 14);
-
-  const plan = generateStudyPlan({
-    targetDate,
-    preparationLevel,
-    weakSubjects,
-    dailyStudyHours,
-  });
-
-  req.user.progress = { ...defaultProgress(), ...(req.user.progress || {}), studyPlan: plan };
-  await req.user.save();
-
-  res.status(201).json({ studyPlan: plan });
-});
-
-app.get('/api/study-plans/latest', authMiddleware, async (req, res) => {
-  const studyPlan = req.user.progress?.studyPlan || null;
-  res.json({ studyPlan });
 });
 
 app.post('/api/tests/start', authMiddleware, async (req, res) => {
-  const { subject, difficulty, topic, mode, questionCount = 20 } = req.body || {};
+  const {
+    subject,
+    difficulty,
+    topic,
+    mode,
+    questionCount = 20,
+  } = req.body || {};
 
-  if (!mode) {
-    res.status(400).json({ error: 'mode is required.' });
+  if (!subject || !difficulty || !mode) {
+    res.status(400).json({ error: 'subject, difficulty, and mode are required.' });
     return;
   }
 
-  const normalizedMode = String(mode);
-  const normalizedSubject = String(subject || 'mathematics').toLowerCase();
-  const normalizedDifficulty = String(difficulty || 'Medium');
-  const desiredQuestions = clamp(Number(questionCount) || (normalizedMode === 'mock' ? 200 : 20), 1, 200);
+  let pool = req.db.mcqs.filter(
+    (item) =>
+      item.subject === String(subject).toLowerCase() &&
+      String(item.difficulty).toLowerCase() === String(difficulty).toLowerCase(),
+  );
 
-  let selected = [];
-
-  if (normalizedMode === 'mock') {
-    const all = await MCQModel.find({ subject: { $in: ['mathematics', 'physics', 'english'] } }).lean();
-    selected = buildMockQuestionSet(all, desiredQuestions);
-  } else {
-    const filter = {
-      subject: normalizedSubject,
-      difficulty: normalizedDifficulty,
-    };
-
-    if (topic && topic !== 'All Topics') {
-      filter.topic = { $regex: String(topic), $options: 'i' };
+  if (topic && topic !== 'All Topics') {
+    const byTopic = pool.filter((item) => String(item.topic).toLowerCase().includes(String(topic).toLowerCase()));
+    if (byTopic.length) {
+      pool = byTopic;
     }
-
-    const pool = await MCQModel.find(filter).lean();
-    selected = shuffle(pool).slice(0, Math.min(desiredQuestions, pool.length));
   }
 
-  if (!selected.length) {
+  if (!pool.length) {
     res.status(404).json({ error: 'No questions available for this configuration.' });
     return;
   }
 
-  const questions = selected.map((question) => ({
-    id: String(question._id),
-    subject: question.subject,
-    topic: question.topic,
-    question: question.question,
-    options: question.options,
-    difficulty: question.difficulty,
-    explanation: question.tip || '',
-  }));
-
-  const answerKey = {};
-  selected.forEach((question) => {
-    answerKey[String(question._id)] = String(question.answer || '').trim();
-  });
-
-  const session = await TestSessionModel.create({
-    userId: req.user._id,
-    subject: normalizedMode === 'mock' ? 'mathematics' : normalizedSubject,
-    difficulty: normalizedDifficulty,
-    topic: String(topic || (normalizedMode === 'mock' ? 'Full Mock' : 'All Topics')),
-    mode: normalizedMode,
-    questions,
-    answerKey,
-    questionIds: questions.map((item) => item.id),
-    questionCount: questions.length,
-    durationMinutes: normalizedMode === 'mock' ? 180 : Math.max(10, Math.round(questions.length * 1.2)),
-    startedAt: new Date(),
+  const selected = pool.slice(0, Math.min(Number(questionCount) || 20, pool.length));
+  const session = {
+    id: `session-${Date.now()}`,
+    userId: req.user.id,
+    subject: String(subject).toLowerCase(),
+    difficulty,
+    topic: topic || 'All Topics',
+    mode,
+    questionIds: selected.map((item) => item.id),
+    questionCount: selected.length,
+    startedAt: new Date().toISOString(),
     finishedAt: null,
-  });
+  };
 
-  res.status(201).json({ session: serializeSession(session) });
-});
+  req.db.sessions.push(session);
+  await writeDb(req.db);
+  broadcastAdminEvent('tests.updated', { scope: 'admin' });
 
-app.get('/api/tests/:sessionId', authMiddleware, async (req, res) => {
-  const session = await TestSessionModel.findOne({ _id: req.params.sessionId, userId: req.user._id });
-  if (!session) {
-    res.status(404).json({ error: 'Session not found.' });
-    return;
-  }
-
-  res.json({ session: serializeSession(session) });
+  res.status(201).json({ session });
 });
 
 app.post('/api/tests/:sessionId/finish', authMiddleware, async (req, res) => {
-  const answers = Array.isArray(req.body?.answers) ? req.body.answers : [];
-  const elapsedSeconds = Math.max(1, Number(req.body?.elapsedSeconds) || 60);
+  const { sessionId } = req.params;
+  const { score = 0, durationMinutes = 0 } = req.body || {};
 
-  const session = await TestSessionModel.findOne({ _id: req.params.sessionId, userId: req.user._id });
+  const session = req.db.sessions.find((item) => item.id === sessionId && item.userId === req.user.id);
   if (!session) {
     res.status(404).json({ error: 'Session not found.' });
     return;
   }
 
-  const existingAttempt = await AttemptModel.findOne({ sessionId: session._id, userId: req.user._id });
-  if (existingAttempt) {
-    res.json({ attempt: serializeAttempt(existingAttempt) });
+  if (session.finishedAt) {
+    const existing = req.db.attempts.find((item) => item.sessionId === session.id && item.userId === req.user.id);
+    res.json({ attempt: existing });
     return;
   }
 
-  const answerMap = new Map();
-  answers.forEach((entry) => {
-    if (!entry || !entry.questionId) return;
-    answerMap.set(String(entry.questionId), entry.selectedOption == null ? null : String(entry.selectedOption));
-  });
+  session.finishedAt = new Date().toISOString();
 
-  let correctAnswers = 0;
-  let wrongAnswers = 0;
-  let unanswered = 0;
-
-  const questionIds = Array.isArray(session.questionIds) ? session.questionIds : [];
-  questionIds.forEach((questionId) => {
-    const selectedOption = answerMap.has(questionId) ? answerMap.get(questionId) : null;
-    const expected = String(session.answerKey?.get?.(questionId) || session.answerKey?.[questionId] || '').trim().toLowerCase();
-
-    if (!selectedOption || String(selectedOption).trim().length === 0) {
-      unanswered += 1;
-      return;
-    }
-
-    if (String(selectedOption).trim().toLowerCase() === expected) {
-      correctAnswers += 1;
-    } else {
-      wrongAnswers += 1;
-    }
-  });
-
-  const totalQuestions = questionIds.length || session.questionCount || 0;
-  const score = totalQuestions > 0 ? Math.round((correctAnswers / totalQuestions) * 100) : 0;
-  const submittedAt = new Date();
-
-  session.finishedAt = submittedAt;
-  await session.save();
-
-  const attempt = await AttemptModel.create({
-    sessionId: session._id,
-    userId: req.user._id,
+  const attempt = {
+    id: `attempt-${Date.now()}`,
+    sessionId: session.id,
+    userId: req.user.id,
     subject: session.subject,
     topic: session.topic,
     difficulty: session.difficulty,
     mode: session.mode,
-    score,
-    totalQuestions,
-    correctAnswers,
-    wrongAnswers,
-    unanswered,
-    submittedAnswers: totalQuestions - unanswered,
-    durationMinutes: Math.max(1, Math.round(elapsedSeconds / 60)),
-    attemptedAt: submittedAt,
-    submittedAt,
-    metadata: {
-      elapsedSeconds,
-    },
-  });
+    score: Math.max(0, Math.min(100, Number(score) || 0)),
+    totalQuestions: session.questionCount,
+    durationMinutes: Math.max(1, Number(durationMinutes) || Math.round(session.questionCount * 1.2)),
+    attemptedAt: session.finishedAt,
+  };
 
-  await refreshUserProgress(req.user._id);
-  res.status(201).json({ attempt: serializeAttempt(attempt) });
+  req.db.attempts.unshift(attempt);
+  await writeDb(req.db);
+  broadcastAdminEvent('tests.updated', { scope: 'admin' });
+
+  res.status(201).json({ attempt });
 });
 
 app.get('/api/tests/attempts', authMiddleware, async (req, res) => {
-  const attempts = await AttemptModel.find({ userId: req.user._id }).sort({ attemptedAt: -1 }).lean();
-  res.json({ attempts: attempts.map((item) => serializeAttempt(item)) });
-});
-
-app.get('/api/analytics/summary', authMiddleware, async (req, res) => {
-  const attempts = await AttemptModel.find({ userId: req.user._id }).lean();
-  const testsAttempted = attempts.length;
-  const averageScore = testsAttempted
-    ? Math.round(attempts.reduce((sum, item) => sum + (Number(item.score) || 0), 0) / testsAttempted)
-    : 0;
-  const studyHours = Number((attempts.reduce((sum, item) => sum + (Number(item.durationMinutes) || 0), 0) / 60).toFixed(1));
-  const questionsSolved = attempts.reduce((sum, item) => sum + (Number(item.totalQuestions) || 0), 0);
-
-  res.json({
-    testsAttempted,
-    averageScore,
-    studyHours,
-    questionsSolved,
-    weakTopics: req.user.progress?.weakTopics || [],
-  });
+  const attempts = req.db.attempts.filter((item) => item.userId === req.user.id);
+  await writeDb(req.db);
+  res.json({ attempts });
 });
 
 app.get('/api/reports/export', authMiddleware, async (req, res) => {
   const format = String(req.query.format || 'json').toLowerCase();
-  const attempts = await AttemptModel.find({ userId: req.user._id }).sort({ attemptedAt: -1 }).lean();
+  const attempts = req.db.attempts.filter((item) => item.userId === req.user.id);
 
   if (format === 'csv') {
-    const header = 'id,subject,topic,difficulty,mode,score,totalQuestions,correctAnswers,wrongAnswers,unanswered,durationMinutes,attemptedAt';
+    const header = 'id,subject,topic,difficulty,mode,score,totalQuestions,durationMinutes,attemptedAt';
     const lines = attempts.map((item) => {
       const escapedTopic = `"${String(item.topic).replace(/"/g, '""')}"`;
       return [
-        String(item._id),
+        item.id,
         item.subject,
         escapedTopic,
         item.difficulty,
         item.mode,
         item.score,
         item.totalQuestions,
-        item.correctAnswers ?? '',
-        item.wrongAnswers ?? '',
-        item.unanswered ?? '',
         item.durationMinutes,
         item.attemptedAt,
       ].join(',');
@@ -978,155 +1145,284 @@ app.get('/api/reports/export', authMiddleware, async (req, res) => {
 
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="net360-report.json"');
-  res.send(JSON.stringify({ exportedAt: new Date().toISOString(), attempts: attempts.map((item) => serializeAttempt(item)) }, null, 2));
+  res.send(JSON.stringify({ exportedAt: new Date().toISOString(), attempts }, null, 2));
 });
 
-app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) => {
-  const [usersCount, mcqCount, attemptsCount, latestAttempts] = await Promise.all([
-    UserModel.countDocuments(),
-    MCQModel.countDocuments(),
-    AttemptModel.countDocuments(),
-    AttemptModel.find().sort({ attemptedAt: -1 }).limit(12).lean(),
-  ]);
+app.post('/api/admin/auth/login', async (req, res) => {
+  try {
+    const email = sanitizeEmail(req.body?.email);
+    const password = String(req.body?.password || '');
 
-  const averageScore = latestAttempts.length
-    ? Math.round(latestAttempts.reduce((sum, item) => sum + (Number(item.score) || 0), 0) / latestAttempts.length)
-    : 0;
+    if (!email || !password) {
+      res.status(400).json({ error: 'Email and password are required.' });
+      return;
+    }
+
+    const db = await readDb();
+    const admin = db.admins.find((item) => item.email === email);
+
+    if (!admin) {
+      res.status(401).json({ error: 'Invalid admin credentials.' });
+      return;
+    }
+
+    const valid = await bcrypt.compare(password, admin.passwordHash || '');
+    if (!valid) {
+      res.status(401).json({ error: 'Invalid admin credentials.' });
+      return;
+    }
+
+    const token = createAdminToken(admin);
+    res.setHeader('Set-Cookie', createAdminCookie(token));
+    res.json({
+      token,
+      admin: { id: admin.id, email: admin.email, name: admin.name || 'Admin' },
+    });
+  } catch {
+    res.status(500).json({ error: 'Admin login failed.' });
+  }
+});
+
+app.post('/api/admin/auth/logout', (req, res) => {
+  res.setHeader('Set-Cookie', clearAdminCookie());
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/auth/me', adminAuthMiddleware, async (req, res) => {
+  res.json({ admin: { id: req.admin.id, email: req.admin.email, name: req.admin.name || 'Admin' } });
+});
+
+app.get('/api/admin/overview', adminAuthMiddleware, async (req, res) => {
+  const activeUserIds = new Set(
+    req.db.deviceSessions.filter((item) => item.status === 'active').map((item) => item.userId),
+  );
+
+  const usersTotal = req.db.users.length;
+  const blockedUsers = req.db.users.filter((item) => item.blocked).length;
+  const activeUsers = req.db.users.filter((item) => activeUserIds.has(item.id) && !item.blocked).length;
+  const pendingSignupRequests = req.db.signupRequests.filter((item) => item.status === 'pending').length;
 
   res.json({
-    usersCount,
-    mcqCount,
-    attemptsCount,
-    averageScore,
-    recentAttempts: latestAttempts.map((item) => serializeAttempt(item)),
+    usersTotal,
+    activeUsers,
+    blockedUsers,
+    pendingSignupRequests,
+    mcqTotal: req.db.mcqs.length,
   });
 });
 
-app.get('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
-  const subject = String(req.query.subject || '').trim().toLowerCase();
-  const topic = String(req.query.topic || '').trim();
-  const difficulty = String(req.query.difficulty || '').trim();
+app.get('/api/admin/users', adminAuthMiddleware, async (req, res) => {
+  const activeSessionsByUser = new Map();
+  req.db.deviceSessions
+    .filter((item) => item.status === 'active')
+    .forEach((item) => {
+      activeSessionsByUser.set(item.userId, item);
+    });
 
-  const filter = {};
-  if (subject) filter.subject = subject;
-  if (topic) filter.topic = { $regex: topic, $options: 'i' };
-  if (difficulty) filter.difficulty = difficulty;
-
-  const mcqs = await MCQModel.find(filter).sort({ createdAt: -1 }).limit(200).lean();
-  res.json({
-    mcqs: mcqs.map((item) => ({
-      id: String(item._id),
-      subject: item.subject,
-      topic: item.topic,
-      question: item.question,
-      options: item.options,
-      answer: item.answer,
-      tip: item.tip,
-      difficulty: item.difficulty,
-    })),
+  const users = req.db.users.map((user) => {
+    const activeSession = activeSessionsByUser.get(user.id) || null;
+    return {
+      ...publicUser(user),
+      activeSession,
+      attemptsCount: req.db.attempts.filter((attempt) => attempt.userId === user.id).length,
+    };
   });
+
+  res.json({ users });
 });
 
-app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
-  const { question, options, answer, subject, topic, difficulty = 'Medium', tip = '' } = req.body || {};
-  if (!question || !Array.isArray(options) || options.length < 2 || !answer || !subject || !topic) {
-    res.status(400).json({ error: 'question, options, answer, subject, and topic are required.' });
+app.patch('/api/admin/users/:userId', adminAuthMiddleware, async (req, res) => {
+  const user = req.db.users.find((item) => item.id === req.params.userId);
+  if (!user) {
+    res.status(404).json({ error: 'User not found.' });
     return;
   }
 
-  const mcq = await MCQModel.create({
-    question: String(question),
-    options: options.map((item) => String(item)),
-    answer: String(answer),
-    subject: String(subject).toLowerCase(),
-    topic: String(topic),
-    difficulty: String(difficulty),
-    tip: String(tip),
-    source: 'Admin',
-  });
-
-  res.status(201).json({
-    mcq: {
-      id: String(mcq._id),
-      subject: mcq.subject,
-      topic: mcq.topic,
-      question: mcq.question,
-      options: mcq.options,
-      answer: mcq.answer,
-      tip: mcq.tip,
-      difficulty: mcq.difficulty,
-    },
-  });
-});
-
-app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res) => {
-  const payload = {};
-  ['question', 'answer', 'subject', 'topic', 'difficulty', 'tip'].forEach((field) => {
-    if (Object.prototype.hasOwnProperty.call(req.body, field)) {
-      payload[field] = String(req.body[field] ?? '');
-    }
-  });
-  if (Array.isArray(req.body?.options)) {
-    payload.options = req.body.options.map((item) => String(item));
+  if (typeof req.body?.blocked === 'boolean') {
+    user.blocked = req.body.blocked;
   }
 
-  const mcq = await MCQModel.findByIdAndUpdate(req.params.mcqId, { $set: payload }, { new: true });
+  if (user.blocked) {
+    req.db.deviceSessions
+      .filter((item) => item.userId === user.id && item.status === 'active')
+      .forEach((item) => {
+        item.status = 'terminated';
+        item.endedAt = new Date().toISOString();
+        item.endReason = 'blocked-by-admin';
+      });
+  }
+
+  await writeDb(req.db);
+  broadcastAdminEvent('users.updated', { scope: 'admin' });
+  res.json({ user: publicUser(user) });
+});
+
+app.delete('/api/admin/users/:userId', adminAuthMiddleware, async (req, res) => {
+  const userId = req.params.userId;
+  const exists = req.db.users.some((item) => item.id === userId);
+  if (!exists) {
+    res.status(404).json({ error: 'User not found.' });
+    return;
+  }
+
+  req.db.users = req.db.users.filter((item) => item.id !== userId);
+  req.db.attempts = req.db.attempts.filter((item) => item.userId !== userId);
+  req.db.sessions = req.db.sessions.filter((item) => item.userId !== userId);
+  req.db.deviceSessions = req.db.deviceSessions.filter((item) => item.userId !== userId);
+
+  await writeDb(req.db);
+  broadcastAdminEvent('users.updated', { scope: 'admin' });
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/mcqs', adminAuthMiddleware, async (req, res) => {
+  const filtered = applyMcqFilters(req.db.mcqs, req.query);
+  res.json({ mcqs: filtered.map(publicMcq), total: filtered.length });
+});
+
+app.post('/api/admin/mcqs', adminAuthMiddleware, async (req, res) => {
+  const normalized = normalizeMcqPayload(req.body);
+  if (normalized.error) {
+    res.status(400).json({ error: normalized.error });
+    return;
+  }
+
+  const mcq = {
+    id: `mcq-${Date.now()}-${Math.round(Math.random() * 1000)}`,
+    ...normalized,
+    source: 'admin',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  req.db.mcqs.unshift(mcq);
+  await writeDb(req.db);
+  broadcastPublicEvent('mcqs.updated', { scope: 'public' });
+  broadcastAdminEvent('mcqs.updated', { scope: 'admin' });
+  res.status(201).json({ mcq: publicMcq(mcq) });
+});
+
+app.put('/api/admin/mcqs/:mcqId', adminAuthMiddleware, async (req, res) => {
+  const mcq = req.db.mcqs.find((item) => item.id === req.params.mcqId);
   if (!mcq) {
     res.status(404).json({ error: 'MCQ not found.' });
     return;
   }
 
-  res.json({
-    mcq: {
-      id: String(mcq._id),
-      subject: mcq.subject,
-      topic: mcq.topic,
-      question: mcq.question,
-      options: mcq.options,
-      answer: mcq.answer,
-      tip: mcq.tip,
-      difficulty: mcq.difficulty,
+  const normalized = normalizeMcqPayload(req.body);
+  if (normalized.error) {
+    res.status(400).json({ error: normalized.error });
+    return;
+  }
+
+  Object.assign(mcq, normalized, { updatedAt: new Date().toISOString() });
+
+  await writeDb(req.db);
+  broadcastPublicEvent('mcqs.updated', { scope: 'public' });
+  broadcastAdminEvent('mcqs.updated', { scope: 'admin' });
+  res.json({ mcq: publicMcq(mcq) });
+});
+
+app.delete('/api/admin/mcqs/:mcqId', adminAuthMiddleware, async (req, res) => {
+  const before = req.db.mcqs.length;
+  req.db.mcqs = req.db.mcqs.filter((item) => item.id !== req.params.mcqId);
+
+  if (before === req.db.mcqs.length) {
+    res.status(404).json({ error: 'MCQ not found.' });
+    return;
+  }
+
+  await writeDb(req.db);
+  broadcastPublicEvent('mcqs.updated', { scope: 'public' });
+  broadcastAdminEvent('mcqs.updated', { scope: 'admin' });
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/signup-requests', adminAuthMiddleware, async (req, res) => {
+  const status = String(req.query?.status || '').trim().toLowerCase();
+  const filtered = req.db.signupRequests.filter((item) => {
+    if (!status || status === 'all') return true;
+    return String(item.status).toLowerCase() === status;
+  });
+
+  res.json({ requests: filtered });
+});
+
+app.post('/api/admin/signup-requests/:requestId/approve', adminAuthMiddleware, async (req, res) => {
+  const request = req.db.signupRequests.find((item) => item.id === req.params.requestId);
+  if (!request) {
+    res.status(404).json({ error: 'Signup request not found.' });
+    return;
+  }
+
+  if (request.status !== 'pending') {
+    res.status(400).json({ error: 'Only pending requests can be approved.' });
+    return;
+  }
+
+  const expiresInDays = Math.max(1, Math.min(Number(req.body?.expiresInDays) || 7, 30));
+  const expiresAt = new Date(Date.now() + expiresInDays * 24 * 60 * 60 * 1000).toISOString();
+
+  const code = generateSignupTokenCode();
+  const signupToken = {
+    id: `suptok-${Date.now()}-${Math.round(Math.random() * 1000)}`,
+    code,
+    email: request.email,
+    firstName: request.firstName,
+    lastName: request.lastName,
+    signupRequestId: request.id,
+    status: 'active',
+    createdAt: new Date().toISOString(),
+    expiresAt,
+    usedAt: null,
+    usedByUserId: null,
+  };
+
+  request.status = 'approved';
+  request.reviewedAt = new Date().toISOString();
+  request.reviewedBy = req.admin.email;
+  request.signupTokenId = signupToken.id;
+  request.notes = String(req.body?.notes || '').trim();
+
+  req.db.signupTokens.unshift(signupToken);
+
+  await writeDb(req.db);
+  broadcastAdminEvent('signup.updated', { scope: 'admin' });
+
+  res.status(201).json({
+    token: {
+      id: signupToken.id,
+      code: signupToken.code,
+      expiresAt: signupToken.expiresAt,
     },
+    request,
   });
 });
 
-async function bootstrap() {
-  await connectMongo(MONGODB_URI);
-
-  const mcqCount = await MCQModel.countDocuments();
-  if (!mcqCount) {
-    const rows = await loadMcqsFromCsv(MCQ_CSV_PATH);
-    if (rows.length) {
-      await MCQModel.insertMany(rows, { ordered: false });
-      console.log(`Seeded ${rows.length} MCQs into MongoDB.`);
-    }
+app.post('/api/admin/signup-requests/:requestId/reject', adminAuthMiddleware, async (req, res) => {
+  const request = req.db.signupRequests.find((item) => item.id === req.params.requestId);
+  if (!request) {
+    res.status(404).json({ error: 'Signup request not found.' });
+    return;
   }
 
-  app.listen(PORT, () => {
-    console.log(`NET360 API running on http://localhost:${PORT}`);
-  });
-}
-
-bootstrap().catch((error) => {
-  console.error('Failed to start server:', error?.message || error);
-  console.error('Startup error details:', {
-    name: error?.name,
-    code: error?.code,
-  });
-
-  const message = String(error?.message || '').toLowerCase();
-  if (message.includes('authentication failed')) {
-    console.error('Hint: MongoDB credentials are invalid. Check DB username/password and URL-encoding of special password characters.');
-  }
-  if (message.includes('querysrv') || message.includes('enotfound') || message.includes('econnrefused')) {
-    console.error('Hint: Atlas SRV/network resolution failed. Verify cluster hostname, Atlas network access (allowlist), and connection string format.');
-  }
-  if (message.includes('bad auth') || message.includes('not authorized')) {
-    console.error('Hint: MongoDB user lacks required permissions. Ensure readWrite access on the target database.');
+  if (request.status !== 'pending') {
+    res.status(400).json({ error: 'Only pending requests can be rejected.' });
+    return;
   }
 
-  if (!MONGODB_URI) {
-    console.error('Missing required env var: MONGODB_URI (or DATABASE_URL / MONGO_URI)');
-  }
-  process.exit(1);
+  request.status = 'rejected';
+  request.reviewedAt = new Date().toISOString();
+  request.reviewedBy = req.admin.email;
+  request.notes = String(req.body?.notes || '').trim();
+
+  await writeDb(req.db);
+  broadcastAdminEvent('signup.updated', { scope: 'admin' });
+  res.json({ request });
+});
+
+app.listen(PORT, async () => {
+  await ensureInitialized();
+  console.log(`NET360 API running on http://localhost:${PORT}`);
+  console.log(`Default admin login: ${ADMIN_EMAIL}`);
 });
