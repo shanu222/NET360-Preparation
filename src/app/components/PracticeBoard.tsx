@@ -1,13 +1,13 @@
-import { useState } from 'react';
+import { type ComponentType, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
-import { BookOpen, CheckCircle, Eraser, FileText, Lightbulb, MessageSquare, XCircle } from 'lucide-react';
+import { BookOpen, CheckCircle, FileText, Lightbulb, MessageSquare, RotateCcw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 export function PracticeBoard() {
-  const [solution, setSolution] = useState('');
+  const [solution, setSolution] = useState('Step 1: 2x + 5 = 15\nStep 2: 2x = 15 - 5\nStep 3: 2x = 10\nStep 4: x = 10/2\nStep 5: x = 5');
   const [feedback, setFeedback] = useState<Array<{ step: number; correct: boolean; message: string }>>([]);
   const [showAnalysis, setShowAnalysis] = useState(false);
 
@@ -56,7 +56,7 @@ export function PracticeBoard() {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
-        <Card className="border-indigo-100 bg-white/90">
+        <Card className="rounded-[26px] border border-indigo-100 bg-white/92 shadow-[0_14px_28px_rgba(98,113,202,0.10)]">
           <CardHeader className="pb-3">
             <CardTitle className="text-2xl text-indigo-950">Problem</CardTitle>
             <CardDescription className="text-base">Example problem to solve</CardDescription>
@@ -74,16 +74,16 @@ export function PracticeBoard() {
             <div className="space-y-3">
               <h4 className="text-indigo-950">Instructions</h4>
               <ul className="space-y-1.5 text-sm text-slate-500">
-                <li>Write each step of your solution in the workspace</li>
-                <li>Show your work clearly</li>
-                <li>Click "Analyze Solution" when done</li>
-                <li>AI will check each step and provide feedback</li>
+                <li className="flex items-start gap-2"><span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-slate-400" />Write each step of your solution in the workspace</li>
+                <li className="flex items-start gap-2"><span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-slate-400" />Show your work clearly.</li>
+                <li className="flex items-start gap-2"><span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-slate-400" />Click "Analyze Solution" when done</li>
+                <li className="flex items-start gap-2"><span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-slate-400" />AI will check each step and provide feedback</li>
               </ul>
             </div>
           </CardContent>
         </Card>
 
-        <Card className="border-indigo-100 bg-white/90">
+        <Card className="rounded-[26px] border border-indigo-100 bg-white/92 shadow-[0_14px_28px_rgba(98,113,202,0.10)]">
           <CardHeader className="pb-3">
             <CardTitle className="text-2xl text-indigo-950">Your Solution</CardTitle>
             <CardDescription className="text-base">Write your step-by-step solution here</CardDescription>
@@ -93,17 +93,20 @@ export function PracticeBoard() {
               placeholder="Step 1: 2x + 5 = 15&#10;Step 2: 2x = 15 - 5&#10;Step 3: 2x = 10&#10;Step 4: x = 10/2&#10;Step 5: x = 5"
               value={solution}
               onChange={(e) => setSolution(e.target.value)}
-              className="min-h-[228px] rounded-xl border-indigo-100 bg-white/90 font-mono text-base"
+              className="min-h-[228px] rounded-xl border-indigo-100 bg-white/95 font-mono text-base text-slate-600"
             />
 
             <div className="flex gap-2">
-              <Button onClick={analyzeSolution} className="h-11 flex-1 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white">
+              <Button onClick={analyzeSolution} className="h-11 flex-1 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-[0_8px_18px_rgba(107,95,230,0.32)]">
                 <Lightbulb className="w-4 h-4 mr-2" />
                 Analyze Solution
               </Button>
               <Button variant="outline" onClick={clearBoard} className="h-11 rounded-xl border-indigo-200 bg-white/90 text-slate-700">
-                <Eraser className="w-4 h-4 mr-2" />
+                <RotateCcw className="w-4 h-4 mr-2" />
                 Clear
+              </Button>
+              <Button variant="outline" className="h-11 w-11 rounded-xl border-indigo-200 bg-white/90 text-slate-600 px-0">
+                <FileText className="w-4 h-4" />
               </Button>
             </div>
           </CardContent>
@@ -182,7 +185,7 @@ export function PracticeBoard() {
         />
       </div>
 
-      <Card className="border-indigo-100 bg-gradient-to-r from-[#f6f2ff] via-[#f3f4ff] to-[#edf3ff]">
+      <Card className="border-indigo-100 bg-gradient-to-r from-[#f6f2ff] via-[#f3f4ff] to-[#edf3ff] shadow-[0_10px_24px_rgba(98,113,202,0.10)]">
         <CardContent className="pt-5">
           <h3 className="mb-2 flex items-center gap-2 text-indigo-950">
             <Lightbulb className="h-5 w-5 text-amber-500" />
@@ -207,7 +210,7 @@ function FeatureTile({
   description: string;
 }) {
   return (
-    <Card className="border-indigo-100 bg-white/90">
+    <Card className="border-indigo-100 bg-white/90 shadow-[0_8px_18px_rgba(98,113,202,0.10)]">
       <CardContent className="pt-5">
         <h4 className="mb-1 inline-flex items-center gap-2 text-indigo-950">
           <Icon className="h-4 w-4 text-indigo-400" />
