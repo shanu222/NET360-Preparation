@@ -1002,6 +1002,57 @@ app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) =>
   });
 });
 
+app.get('/api/admin/users', authMiddleware, requireAdmin, async (req, res) => {
+  const users = await UserModel.find({}, {
+    email: 1,
+    firstName: 1,
+    lastName: 1,
+    role: 1,
+    createdAt: 1,
+  })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  res.json({
+    users: users.map((item) => ({
+      id: String(item._id),
+      email: item.email,
+      firstName: item.firstName || '',
+      lastName: item.lastName || '',
+      role: item.role || 'student',
+      createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+    })),
+  });
+});
+
+app.delete('/api/admin/users/:userId', authMiddleware, requireAdmin, async (req, res) => {
+  const userId = String(req.params.userId || '').trim();
+  if (!userId) {
+    res.status(400).json({ error: 'User id is required.' });
+    return;
+  }
+
+  if (String(req.user._id) === userId) {
+    res.status(400).json({ error: 'You cannot delete your own admin account.' });
+    return;
+  }
+
+  const user = await UserModel.findById(userId).lean();
+  if (!user) {
+    res.status(404).json({ error: 'User not found.' });
+    return;
+  }
+
+  await Promise.all([
+    UserModel.findByIdAndDelete(userId),
+    AttemptModel.deleteMany({ userId }),
+    TestSessionModel.deleteMany({ userId }),
+    AIUsageModel.deleteMany({ userId }),
+  ]);
+
+  res.json({ ok: true, removedUserId: userId });
+});
+
 app.get('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const subject = String(req.query.subject || '').trim().toLowerCase();
   const topic = String(req.query.topic || '').trim();
