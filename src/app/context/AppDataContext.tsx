@@ -1,6 +1,6 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
 import { Difficulty, MCQ, SubjectKey } from '../lib/mcq';
-import { apiRequest, resolveApiUrl } from '../lib/api';
+import { apiRequest } from '../lib/api';
 import { useAuth } from './AuthContext';
 
 interface TestAttempt {
@@ -149,16 +149,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
     void loadMcqData();
 
-    const stream = new EventSource(resolveApiUrl('/api/events'));
-    const refreshOnUpdate = () => {
-      void loadMcqData();
-    };
-    stream.addEventListener('mcqs.updated', refreshOnUpdate);
-
     return () => {
       cancelled = true;
-      stream.removeEventListener('mcqs.updated', refreshOnUpdate);
-      stream.close();
     };
   }, []);
 
