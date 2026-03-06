@@ -1109,6 +1109,22 @@ async function bootstrap() {
 
 bootstrap().catch((error) => {
   console.error('Failed to start server:', error?.message || error);
+  console.error('Startup error details:', {
+    name: error?.name,
+    code: error?.code,
+  });
+
+  const message = String(error?.message || '').toLowerCase();
+  if (message.includes('authentication failed')) {
+    console.error('Hint: MongoDB credentials are invalid. Check DB username/password and URL-encoding of special password characters.');
+  }
+  if (message.includes('querysrv') || message.includes('enotfound') || message.includes('econnrefused')) {
+    console.error('Hint: Atlas SRV/network resolution failed. Verify cluster hostname, Atlas network access (allowlist), and connection string format.');
+  }
+  if (message.includes('bad auth') || message.includes('not authorized')) {
+    console.error('Hint: MongoDB user lacks required permissions. Ensure readWrite access on the target database.');
+  }
+
   if (!MONGODB_URI) {
     console.error('Missing required env var: MONGODB_URI');
   }
