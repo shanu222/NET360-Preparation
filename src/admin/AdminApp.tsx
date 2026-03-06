@@ -32,6 +32,7 @@ interface SignupRequest {
   email: string;
   firstName: string;
   lastName: string;
+  mobileNumber: string;
   paymentMethod: 'easypaisa' | 'jazzcash' | 'hbl';
   paymentTransactionId: string;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
@@ -58,6 +59,7 @@ interface LoginUser {
 }
 
 const TOKEN_KEY = 'net360-admin-access-token';
+const REFRESH_TOKEN_KEY = 'net360-admin-refresh-token';
 
 function emptyForm() {
   return {
@@ -74,6 +76,7 @@ function emptyForm() {
 
 export default function AdminApp() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
+  const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_KEY));
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
 
@@ -96,6 +99,13 @@ export default function AdminApp() {
 
   const authToken = token;
 
+  const clearAdminSession = () => {
+    setToken(null);
+    setRefreshToken(null);
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(REFRESH_TOKEN_KEY);
+  };
+
   const loadAdminData = async (activeToken: string) => {
     const [overviewPayload, usersPayload, requestPayload, mcqPayload] = await Promise.all([
       apiRequest<AdminOverview>('/api/admin/overview', {}, activeToken),
@@ -116,16 +126,47 @@ export default function AdminApp() {
       return;
     }
     const currentToken: string = authToken;
+    const currentRefreshToken: string | null = refreshToken;
 
     let cancelled = false;
 
     async function bootstrap() {
       try {
         await loadAdminData(currentToken);
-      } catch {
+      } catch (error) {
         if (!cancelled) {
-          setToken(null);
-          localStorage.removeItem(TOKEN_KEY);
+          const status = Number((error as { status?: number } | null)?.status || 0);
+          const shouldTryRefresh = Boolean(currentRefreshToken) && (status === 401 || status === 403);
+
+          if (shouldTryRefresh && currentRefreshToken) {
+            try {
+              const refreshed = await apiRequest<{ token: string; refreshToken: string; user: LoginUser }>('/api/auth/refresh', {
+                method: 'POST',
+                body: JSON.stringify({ refreshToken: currentRefreshToken }),
+              });
+
+              if (refreshed.user?.role !== 'admin') {
+                clearAdminSession();
+                return;
+              }
+
+              setToken(refreshed.token);
+              setRefreshToken(refreshed.refreshToken);
+              localStorage.setItem(TOKEN_KEY, refreshed.token);
+              localStorage.setItem(REFRESH_TOKEN_KEY, refreshed.refreshToken);
+              await loadAdminData(refreshed.token);
+              return;
+            } catch {
+              clearAdminSession();
+              return;
+            }
+          }
+
+          if (status === 401 || status === 403) {
+            clearAdminSession();
+          } else {
+            toast.error('Could not load admin data. Please try refreshing again.');
+          }
         }
       } finally {
         if (!cancelled) {
@@ -139,7 +180,7 @@ export default function AdminApp() {
     return () => {
       cancelled = true;
     };
-  }, [authToken]);
+  }, [authToken, refreshToken]);
 
   const login = async () => {
     if (!authForm.email || !authForm.password) {
@@ -149,7 +190,7 @@ export default function AdminApp() {
 
     try {
       setLoading(true);
-      const payload = await apiRequest<{ token: string; user: LoginUser }>('/api/auth/login', {
+      const payload = await apiRequest<{ token: string; refreshToken: string; user: LoginUser }>('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify(authForm),
       });
@@ -160,7 +201,9 @@ export default function AdminApp() {
       }
 
       localStorage.setItem(TOKEN_KEY, payload.token);
+      localStorage.setItem(REFRESH_TOKEN_KEY, payload.refreshToken);
       setToken(payload.token);
+      setRefreshToken(payload.refreshToken);
       await loadAdminData(payload.token);
       toast.success('Admin login successful.');
     } catch (error) {
@@ -171,8 +214,13 @@ export default function AdminApp() {
   };
 
   const logout = () => {
-    setToken(null);
-    localStorage.removeItem(TOKEN_KEY);
+    if (refreshToken) {
+      void apiRequest('/api/auth/logout', {
+        method: 'POST',
+        body: JSON.stringify({ refreshToken }),
+      }).catch(() => undefined);
+    }
+    clearAdminSession();
   };
 
   const removeUser = async (user: AdminUser) => {
@@ -244,6 +292,18 @@ export default function AdminApp() {
     } catch {
       toast.error('Could not copy token.');
     }
+  };
+
+  const sendTokenBySms = (mobileNumber: string, tokenCode: string, email: string) => {
+    const target = String(mobileNumber || '').trim();
+    if (!target) {
+      toast.error('Mobile number is missing for this request.');
+      return;
+    }
+
+    const message = `NET360 approval token for ${email}: ${tokenCode}. Use this token to complete signup.`;
+    const smsUrl = `sms:${encodeURIComponent(target)}?body=${encodeURIComponent(message)}`;
+    window.location.href = smsUrl;
   };
 
   const resetForm = () => setForm(emptyForm());
@@ -409,6 +469,9 @@ export default function AdminApp() {
                     <div>
                       <p className="text-sm">{request.email}</p>
                       <p className="text-xs text-muted-foreground">
+                        Mobile: {request.mobileNumber || 'N/A'}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
                         {request.paymentMethod.toUpperCase()} • Tx ID: {request.paymentTransactionId}
                       </p>
                       <p className="text-xs text-muted-foreground">
@@ -431,6 +494,15 @@ export default function AdminApp() {
                         onClick={() => void copyToken(issuedTokens[request.id])}
                       >
                         Copy
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-6 px-2 text-[11px]"
+                        onClick={() => sendTokenBySms(request.mobileNumber, issuedTokens[request.id], request.email)}
+                      >
+                        Send SMS
                       </Button>
                     </div>
                   ) : null}

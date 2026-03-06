@@ -28,6 +28,7 @@ export function Profile({ onNavigate }: ProfileProps) {
     lastName: '',
     email: '',
     password: '',
+    mobileNumber: '',
     paymentMethod: 'easypaisa' as 'easypaisa' | 'jazzcash' | 'hbl',
     paymentTransactionId: '',
     tokenCode: '',
@@ -76,6 +77,11 @@ export function Profile({ onNavigate }: ProfileProps) {
           });
           toast.success('Signup completed successfully.');
         } else {
+          if (!authForm.mobileNumber) {
+            toast.error('Mobile number is required to submit signup request.');
+            return;
+          }
+
           if (!authForm.paymentTransactionId) {
             toast.error('Payment transaction ID is required to submit signup request.');
             return;
@@ -85,6 +91,7 @@ export function Profile({ onNavigate }: ProfileProps) {
             email: authForm.email,
             firstName: authForm.firstName,
             lastName: authForm.lastName,
+            mobileNumber: authForm.mobileNumber,
             paymentMethod: authForm.paymentMethod,
             paymentTransactionId: authForm.paymentTransactionId,
           });
@@ -269,6 +276,19 @@ export function Profile({ onNavigate }: ProfileProps) {
                 />
               </div>
 
+              {isRegisterMode ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="mobile-number">Mobile Number</Label>
+                  <Input
+                    id="mobile-number"
+                    value={authForm.mobileNumber}
+                    onChange={(e) => setAuthForm((prev) => ({ ...prev, mobileNumber: e.target.value }))}
+                    placeholder="e.g. +923001234567"
+                    className="h-11 border-indigo-100"
+                  />
+                </div>
+              ) : null}
+
               <div className="space-y-1.5">
                 <Label htmlFor="auth-password">Password</Label>
                 <Input
@@ -375,6 +395,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                       lastName: '',
                       email: '',
                       password: '',
+                      mobileNumber: '',
                       paymentMethod: 'easypaisa',
                       paymentTransactionId: '',
                       tokenCode: '',

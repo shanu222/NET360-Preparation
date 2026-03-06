@@ -5,6 +5,7 @@ const signupRequestSchema = new mongoose.Schema(
     email: { type: String, required: true, lowercase: true, trim: true, index: true },
     firstName: { type: String, default: '' },
     lastName: { type: String, default: '' },
+    mobileNumber: { type: String, required: true, trim: true, index: true },
     paymentMethod: {
       type: String,
       enum: ['easypaisa', 'jazzcash', 'hbl'],

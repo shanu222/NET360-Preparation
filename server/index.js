@@ -125,6 +125,15 @@ function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
 }
 
+function normalizeMobileNumber(value) {
+  return String(value || '').trim();
+}
+
+function isValidMobileNumber(value) {
+  const cleaned = String(value || '').replace(/[\s()-]/g, '');
+  return /^\+?[0-9]{8,18}$/.test(cleaned);
+}
+
 function sanitizeDeviceId(value) {
   const cleaned = String(value || '').trim();
   if (cleaned) return cleaned.slice(0, 200);
@@ -467,11 +476,17 @@ app.post('/api/auth/signup-request', async (req, res) => {
     const email = normalizeEmail(req.body?.email);
     const firstName = String(req.body?.firstName || '').trim();
     const lastName = String(req.body?.lastName || '').trim();
+    const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber);
     const paymentMethod = String(req.body?.paymentMethod || '').trim().toLowerCase();
     const paymentTransactionId = String(req.body?.paymentTransactionId || '').trim();
 
-    if (!email || !paymentTransactionId || !paymentMethod) {
-      res.status(400).json({ error: 'Email, payment method, and transaction ID are required.' });
+    if (!email || !mobileNumber || !paymentTransactionId || !paymentMethod) {
+      res.status(400).json({ error: 'Email, mobile number, payment method, and transaction ID are required.' });
+      return;
+    }
+
+    if (!isValidMobileNumber(mobileNumber)) {
+      res.status(400).json({ error: 'Enter a valid mobile number.' });
       return;
     }
 
@@ -496,6 +511,7 @@ app.post('/api/auth/signup-request', async (req, res) => {
       email,
       firstName,
       lastName,
+      mobileNumber,
       paymentMethod,
       paymentTransactionId,
       status: 'pending',
@@ -563,6 +579,23 @@ app.post('/api/auth/register-with-token', async (req, res) => {
       return;
     }
 
+    const signupRequest = await SignupRequestModel.findById(signupToken.signupRequestId);
+    if (!signupRequest) {
+      res.status(400).json({ error: 'Signup request not found for this token.' });
+      return;
+    }
+
+    if (normalizeEmail(signupRequest.email) !== email) {
+      res.status(400).json({ error: 'Signup request email mismatch for this token.' });
+      return;
+    }
+
+    const mobileNumber = normalizeMobileNumber(signupRequest.mobileNumber);
+    if (!mobileNumber) {
+      res.status(400).json({ error: 'Mobile number is missing on signup request. Contact admin.' });
+      return;
+    }
+
     const passwordHash = await bcrypt.hash(password, 12);
     const activeSession = {
       sessionId: crypto.randomUUID(),
@@ -576,6 +609,7 @@ app.post('/api/auth/register-with-token', async (req, res) => {
       passwordHash,
       firstName,
       lastName,
+      phone: mobileNumber,
       role: ADMIN_EMAILS.includes(email) ? 'admin' : 'student',
       activeSession,
       preferences: defaultPreferences(),
@@ -587,9 +621,8 @@ app.post('/api/auth/register-with-token', async (req, res) => {
     signupToken.usedByUserId = user._id;
     await signupToken.save();
 
-    await SignupRequestModel.findByIdAndUpdate(signupToken.signupRequestId, {
-      $set: { status: 'completed' },
-    });
+    signupRequest.status = 'completed';
+    await signupRequest.save();
 
     const payload = await issueAuthPayload(user, req);
     res.status(201).json(payload);
@@ -1258,6 +1291,7 @@ app.get('/api/admin/signup-requests', authMiddleware, requireAdmin, async (req, 
       email: item.email,
       firstName: item.firstName || '',
       lastName: item.lastName || '',
+      mobileNumber: item.mobileNumber || '',
       paymentMethod: item.paymentMethod,
       paymentTransactionId: item.paymentTransactionId,
       status: item.status,

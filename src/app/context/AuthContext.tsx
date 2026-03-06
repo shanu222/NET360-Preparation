@@ -28,6 +28,7 @@ interface AuthContextValue {
     email: string;
     firstName?: string;
     lastName?: string;
+    mobileNumber: string;
     paymentMethod: 'easypaisa' | 'jazzcash' | 'hbl';
     paymentTransactionId: string;
   }) => Promise<void>;
@@ -161,6 +162,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     email,
     firstName = '',
     lastName = '',
+    mobileNumber,
     paymentMethod,
     paymentTransactionId,
   }) => {
@@ -170,6 +172,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         email,
         firstName,
         lastName,
+        mobileNumber,
         paymentMethod,
         paymentTransactionId,
       }),

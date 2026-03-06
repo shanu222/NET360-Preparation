@@ -60,13 +60,32 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
     }
 
     let errorMessage = `Request failed (${response.status})`;
+    let payload: any = null;
     try {
-      const payload = await response.json();
+      payload = await response.json();
       errorMessage = payload?.error || errorMessage;
     } catch {
       // Keep fallback message.
     }
-    throw new Error(errorMessage);
+
+    const error = new Error(errorMessage) as Error & {
+      status?: number;
+      code?: string;
+      payload?: any;
+      activeSession?: any;
+    };
+    error.status = response.status;
+    if (payload && typeof payload === 'object') {
+      if (typeof payload.code === 'string') {
+        error.code = payload.code;
+      }
+      if (payload.activeSession) {
+        error.activeSession = payload.activeSession;
+      }
+      error.payload = payload;
+    }
+
+    throw error;
   }
 
   return response.json() as Promise<T>;
