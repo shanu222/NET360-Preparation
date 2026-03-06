@@ -16,6 +16,20 @@ function shouldUseForcedLocalMode() {
   return import.meta.env.VITE_FORCE_LOCAL_API === 'true';
 }
 
+function shouldFallbackFromHttpError(path: string, status: number) {
+  // 5xx usually means upstream/proxy/backend is unavailable.
+  if (status >= 500) {
+    return true;
+  }
+
+  // If no explicit backend URL is configured, /api 404 indicates frontend-only hosting.
+  if (!API_BASE_URL && status === 404 && path.startsWith('/api/')) {
+    return true;
+  }
+
+  return false;
+}
+
 export async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
   if (shouldUseForcedLocalMode()) {
     return localApiRequest<T>(path, options, token);
@@ -41,6 +55,10 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
   }
 
   if (!response.ok) {
+    if (shouldFallbackFromHttpError(path, response.status)) {
+      return localApiRequest<T>(path, options, token);
+    }
+
     let errorMessage = `Request failed (${response.status})`;
     try {
       const payload = await response.json();
@@ -74,6 +92,13 @@ export async function downloadReport(path: string, token?: string | null): Promi
     const format = (url.searchParams.get('format') || 'json') as 'csv' | 'json';
     return localDownloadReport(format, token);
   }
+
+  if (!response.ok && shouldFallbackFromHttpError(path, response.status)) {
+    const url = new URL(path, window.location.origin);
+    const format = (url.searchParams.get('format') || 'json') as 'csv' | 'json';
+    return localDownloadReport(format, token);
+  }
+
   if (!response.ok) {
     throw new Error(`Export failed (${response.status})`);
   }
