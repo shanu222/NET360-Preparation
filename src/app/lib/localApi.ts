@@ -2,6 +2,45 @@ import { parseMcqs, type Difficulty, type MCQ, type SubjectKey } from './mcq';
 
 type TestMode = 'topic' | 'mock' | 'adaptive';
 
+type PublicUser = {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  city: string;
+  targetProgram: string;
+  testSeries: string;
+  sscPercentage: string;
+  hsscPercentage: string;
+  testDate: string;
+  role: 'student' | 'admin';
+  preferences: {
+    emailNotifications: boolean;
+    dailyReminders: boolean;
+    performanceReports: boolean;
+  };
+  progress: {
+    questionsSolved: number;
+    testsCompleted: number;
+    averageScore: number;
+    completedTests: string[];
+    scores: number[];
+    studyHours: number;
+    weakTopics: string[];
+    practiceHistory: LocalAttempt[];
+    analytics: {
+      weeklyProgress: Array<Record<string, unknown>>;
+      accuracyTrend: Array<Record<string, unknown>>;
+    };
+    studyPlan: Record<string, unknown> | null;
+  };
+  test_history: string[];
+  scores: number[];
+  study_hours: number;
+  weak_topics: string[];
+};
+
 interface LocalUser {
   id: string;
   email: string;
@@ -15,11 +54,22 @@ interface LocalUser {
   sscPercentage: string;
   hsscPercentage: string;
   testDate: string;
-  preferences: {
-    emailNotifications: boolean;
-    dailyReminders: boolean;
-    performanceReports: boolean;
-  };
+  role: 'student' | 'admin';
+  preferences: PublicUser['preferences'];
+  progress: PublicUser['progress'];
+  refreshTokens: string[];
+  resetPasswordToken: string | null;
+  resetPasswordExpiresAt: string | null;
+}
+
+interface SessionQuestion {
+  id: string;
+  subject: SubjectKey;
+  topic: string;
+  question: string;
+  options: string[];
+  difficulty: Difficulty;
+  explanation?: string;
 }
 
 interface LocalSession {
@@ -29,8 +79,11 @@ interface LocalSession {
   difficulty: Difficulty;
   topic: string;
   mode: TestMode;
+  questions: SessionQuestion[];
+  answerKey: Record<string, string>;
   questionIds: string[];
   questionCount: number;
+  durationMinutes: number;
   startedAt: string;
   finishedAt: string | null;
 }
@@ -45,21 +98,34 @@ interface LocalAttempt {
   mode: TestMode;
   score: number;
   totalQuestions: number;
+  correctAnswers: number;
+  wrongAnswers: number;
+  unanswered: number;
+  submittedAnswers: number;
   durationMinutes: number;
   attemptedAt: string;
+  submittedAt: string;
+  metadata: Record<string, unknown>;
+}
+
+interface LocalAIUsage {
+  userId: string;
+  day: string;
+  chatCount: number;
 }
 
 interface LocalDb {
   users: LocalUser[];
   sessions: LocalSession[];
   attempts: LocalAttempt[];
+  aiUsage: LocalAIUsage[];
 }
 
-const DB_STORAGE_KEY = 'net360-local-db-v1';
+const DB_STORAGE_KEY = 'net360-local-db-v3';
 const MCQ_DATA_PATH = '/MCQS/NET_10000_MCQs_Dataset.csv';
 let cachedMcqs: MCQ[] = [];
 
-function defaultPreferences() {
+function defaultPreferences(): PublicUser['preferences'] {
   return {
     emailNotifications: true,
     dailyReminders: true,
@@ -67,29 +133,52 @@ function defaultPreferences() {
   };
 }
 
-function readDb(): LocalDb {
-  const raw = localStorage.getItem(DB_STORAGE_KEY);
-  if (!raw) {
-    return { users: [], sessions: [], attempts: [] };
-  }
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<LocalDb>;
-    return {
-      users: parsed.users || [],
-      sessions: parsed.sessions || [],
-      attempts: parsed.attempts || [],
-    };
-  } catch {
-    return { users: [], sessions: [], attempts: [] };
-  }
+function defaultProgress(): PublicUser['progress'] {
+  return {
+    questionsSolved: 0,
+    testsCompleted: 0,
+    averageScore: 0,
+    completedTests: [],
+    scores: [],
+    studyHours: 0,
+    weakTopics: [],
+    practiceHistory: [],
+    analytics: {
+      weeklyProgress: [],
+      accuracyTrend: [],
+    },
+    studyPlan: null,
+  };
 }
 
-function writeDb(db: LocalDb) {
-  localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(db));
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function toPublicUser(user: LocalUser) {
+function shuffle<T>(arr: T[]) {
+  const copy = [...arr];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j], copy[i]];
+  }
+  return copy;
+}
+
+function normalizeAnswer(answer: string, options: string[]) {
+  const trimmed = String(answer || '').trim();
+  if (!trimmed) return '';
+  const labels = ['A', 'B', 'C', 'D'];
+  const upper = trimmed.toUpperCase();
+  const index = labels.indexOf(upper);
+  if (index >= 0 && options[index]) {
+    return options[index];
+  }
+  const exact = options.find((option) => option.trim().toLowerCase() === trimmed.toLowerCase());
+  return exact || trimmed;
+}
+
+function toPublicUser(user: LocalUser): PublicUser {
+  const progress = user.progress || defaultProgress();
   return {
     id: user.id,
     email: user.email,
@@ -102,18 +191,63 @@ function toPublicUser(user: LocalUser) {
     sscPercentage: user.sscPercentage,
     hsscPercentage: user.hsscPercentage,
     testDate: user.testDate,
+    role: user.role || 'student',
     preferences: user.preferences || defaultPreferences(),
+    progress,
+    test_history: progress.completedTests,
+    scores: progress.scores,
+    study_hours: progress.studyHours,
+    weak_topics: progress.weakTopics,
   };
 }
 
-function parseToken(token?: string | null) {
+function toPublicSession(session: LocalSession) {
+  return {
+    id: session.id,
+    userId: session.userId,
+    subject: session.subject,
+    difficulty: session.difficulty,
+    topic: session.topic,
+    mode: session.mode,
+    questionCount: session.questionCount,
+    durationMinutes: session.durationMinutes,
+    startedAt: session.startedAt,
+    finishedAt: session.finishedAt,
+    questions: session.questions,
+  };
+}
+
+function readDb(): LocalDb {
+  const raw = localStorage.getItem(DB_STORAGE_KEY);
+  if (!raw) {
+    return { users: [], sessions: [], attempts: [], aiUsage: [] };
+  }
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<LocalDb>;
+    return {
+      users: parsed.users || [],
+      sessions: parsed.sessions || [],
+      attempts: parsed.attempts || [],
+      aiUsage: parsed.aiUsage || [],
+    };
+  } catch {
+    return { users: [], sessions: [], attempts: [], aiUsage: [] };
+  }
+}
+
+function writeDb(db: LocalDb) {
+  localStorage.setItem(DB_STORAGE_KEY, JSON.stringify(db));
+}
+
+function parseAccessToken(token?: string | null) {
   if (!token) return null;
   if (!token.startsWith('local:')) return null;
   return token.slice('local:'.length);
 }
 
 function requireAuth(token?: string | null) {
-  const userId = parseToken(token);
+  const userId = parseAccessToken(token);
   if (!userId) {
     throw new Error('Missing authentication token.');
   }
@@ -127,6 +261,14 @@ function requireAuth(token?: string | null) {
   return { db, user };
 }
 
+function requireAdmin(token?: string | null) {
+  const { db, user } = requireAuth(token);
+  if (user.role !== 'admin') {
+    throw new Error('Admin access required.');
+  }
+  return { db, user };
+}
+
 async function loadMcqs() {
   if (cachedMcqs.length) return cachedMcqs;
 
@@ -136,7 +278,10 @@ async function loadMcqs() {
   }
 
   const csvText = await response.text();
-  cachedMcqs = parseMcqs(csvText);
+  cachedMcqs = parseMcqs(csvText).map((item) => ({
+    ...item,
+    answer: normalizeAnswer(item.answer, item.options),
+  }));
   return cachedMcqs;
 }
 
@@ -150,6 +295,125 @@ function parseBody(options: RequestInit) {
     }
   }
   return {};
+}
+
+function updateProgress(db: LocalDb, user: LocalUser) {
+  const attempts = db.attempts.filter((item) => item.userId === user.id);
+  const scores = attempts.map((item) => item.score);
+  const totalQuestions = attempts.reduce((sum, item) => sum + item.totalQuestions, 0);
+  const totalMinutes = attempts.reduce((sum, item) => sum + item.durationMinutes, 0);
+  const averageScore = scores.length
+    ? Math.round(scores.reduce((sum, value) => sum + value, 0) / scores.length)
+    : 0;
+
+  const subjectStats = new Map<string, { total: number; count: number }>();
+  attempts.forEach((item) => {
+    const current = subjectStats.get(item.subject) || { total: 0, count: 0 };
+    current.total += item.score;
+    current.count += 1;
+    subjectStats.set(item.subject, current);
+  });
+
+  const weakTopics = Array.from(subjectStats.entries())
+    .filter(([, value]) => value.count > 0 && value.total / value.count < 60)
+    .map(([subject]) => subject);
+
+  user.progress = {
+    ...defaultProgress(),
+    ...user.progress,
+    questionsSolved: totalQuestions,
+    testsCompleted: attempts.length,
+    averageScore,
+    completedTests: attempts.map((item) => item.id),
+    scores,
+    studyHours: Number((totalMinutes / 60).toFixed(1)),
+    weakTopics,
+    practiceHistory: attempts.slice(0, 200),
+    analytics: {
+      weeklyProgress: attempts.slice(0, 12).map((item) => ({ date: item.attemptedAt, score: item.score })),
+      accuracyTrend: attempts.slice(0, 12).map((item) => ({ date: item.attemptedAt, accuracy: item.score })),
+    },
+  };
+}
+
+function buildMockQuestionSet(mcqs: MCQ[], desiredCount: number) {
+  const targets: Array<{ subject: SubjectKey; count: number }> = [
+    { subject: 'mathematics', count: 100 },
+    { subject: 'physics', count: 60 },
+    { subject: 'english', count: 40 },
+  ];
+
+  const selected: MCQ[] = [];
+  const usedIds = new Set<string>();
+
+  targets.forEach((target) => {
+    const pool = shuffle(mcqs.filter((item) => item.subject === target.subject));
+    for (const question of pool) {
+      if (usedIds.has(question.id)) continue;
+      selected.push(question);
+      usedIds.add(question.id);
+      if (selected.length >= desiredCount || selected.filter((item) => item.subject === target.subject).length >= target.count) {
+        break;
+      }
+    }
+  });
+
+  if (selected.length < desiredCount) {
+    const remainder = shuffle(mcqs.filter((item) => !usedIds.has(item.id)));
+    for (const question of remainder) {
+      selected.push(question);
+      if (selected.length >= desiredCount) break;
+    }
+  }
+
+  return selected;
+}
+
+function generateStudyPlan(params: {
+  targetDate: string;
+  preparationLevel: string;
+  weakSubjects: string[];
+  dailyStudyHours: number;
+}) {
+  const { targetDate, preparationLevel, weakSubjects, dailyStudyHours } = params;
+  const now = new Date();
+  const examDate = targetDate ? new Date(targetDate) : new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000);
+  const daysLeft = Math.max(1, Math.ceil((examDate.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)));
+  const weeks = Math.max(1, Math.ceil(daysLeft / 7));
+  const focusSubjects = weakSubjects.length ? weakSubjects : ['mathematics', 'physics', 'chemistry', 'english'];
+
+  const weeklyTargets = Array.from({ length: weeks }, (_, index) => {
+    const subject = focusSubjects[index % focusSubjects.length];
+    return {
+      week: index + 1,
+      focus: subject,
+      target: `Complete ${subject} modules and one timed test`,
+    };
+  });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    targetDate: examDate.toISOString().slice(0, 10),
+    daysLeft,
+    preparationLevel,
+    weakSubjects,
+    dailyStudyHours,
+    weeklyTargets,
+    dailySchedule: [
+      { block: 'Session 1', durationHours: Math.max(1, Math.round(dailyStudyHours * 0.4)), activity: 'Concept learning + notes' },
+      { block: 'Session 2', durationHours: Math.max(1, Math.round(dailyStudyHours * 0.35)), activity: 'Topic MCQs + review' },
+      { block: 'Session 3', durationHours: Math.max(1, Math.round(dailyStudyHours * 0.25)), activity: 'Revision + weak topic drilling' },
+    ],
+    roadmap: [
+      'Foundation and formula consolidation',
+      'Topic-wise practice and adaptive drills',
+      'Full mock tests and revision',
+    ],
+  };
+}
+
+function createRefreshToken(userId: string) {
+  return `localr:${userId}:${Math.random().toString(36).slice(2)}`;
 }
 
 export async function localApiRequest<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
@@ -168,12 +432,17 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       throw new Error('Email and password are required.');
     }
 
+    if (password.length < 8) {
+      throw new Error('Password must be at least 8 characters.');
+    }
+
     const db = readDb();
     const exists = db.users.some((user) => user.email === email);
     if (exists) {
       throw new Error('Email is already registered.');
     }
 
+    const role: 'student' | 'admin' = email.includes('admin') ? 'admin' : 'student';
     const user: LocalUser = {
       id: `user-${Date.now()}`,
       email,
@@ -187,14 +456,23 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       sscPercentage: '',
       hsscPercentage: '',
       testDate: '',
+      role,
       preferences: defaultPreferences(),
+      progress: defaultProgress(),
+      refreshTokens: [],
+      resetPasswordToken: null,
+      resetPasswordExpiresAt: null,
     };
+
+    const refreshToken = createRefreshToken(user.id);
+    user.refreshTokens.push(refreshToken);
 
     db.users.push(user);
     writeDb(db);
 
     return {
       token: `local:${user.id}`,
+      refreshToken,
       user: toPublicUser(user),
     } as T;
   }
@@ -212,10 +490,105 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       throw new Error('Invalid credentials.');
     }
 
+    const refreshToken = createRefreshToken(user.id);
+    user.refreshTokens.unshift(refreshToken);
+    user.refreshTokens = user.refreshTokens.slice(0, 5);
+    writeDb(db);
+
     return {
       token: `local:${user.id}`,
+      refreshToken,
       user: toPublicUser(user),
     } as T;
+  }
+
+  if (url.pathname === '/api/auth/refresh' && method === 'POST') {
+    const refreshToken = String(body.refreshToken || '').trim();
+    if (!refreshToken) {
+      throw new Error('Refresh token is required.');
+    }
+
+    const db = readDb();
+    const user = db.users.find((item) => item.refreshTokens.includes(refreshToken));
+    if (!user) {
+      throw new Error('Refresh token revoked or expired.');
+    }
+
+    user.refreshTokens = user.refreshTokens.filter((item) => item !== refreshToken);
+    const nextRefreshToken = createRefreshToken(user.id);
+    user.refreshTokens.unshift(nextRefreshToken);
+    writeDb(db);
+
+    return {
+      token: `local:${user.id}`,
+      refreshToken: nextRefreshToken,
+      user: toPublicUser(user),
+    } as T;
+  }
+
+  if (url.pathname === '/api/auth/logout' && method === 'POST') {
+    const refreshToken = String(body.refreshToken || '').trim();
+    if (!refreshToken) {
+      return { message: 'Logged out.' } as T;
+    }
+
+    const db = readDb();
+    const user = db.users.find((item) => item.refreshTokens.includes(refreshToken));
+    if (user) {
+      user.refreshTokens = user.refreshTokens.filter((item) => item !== refreshToken);
+      writeDb(db);
+    }
+
+    return { message: 'Logged out.' } as T;
+  }
+
+  if (url.pathname === '/api/auth/forgot-password' && method === 'POST') {
+    const email = String(body.email || '').trim().toLowerCase();
+    if (!email) {
+      throw new Error('Email is required.');
+    }
+
+    const db = readDb();
+    const user = db.users.find((item) => item.email === email);
+    if (user) {
+      user.resetPasswordToken = `local-reset-${Date.now()}`;
+      user.resetPasswordExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+      writeDb(db);
+      return { message: 'Reset link generated.', resetToken: user.resetPasswordToken } as T;
+    }
+
+    return { message: 'If this email exists, a password reset link has been sent.' } as T;
+  }
+
+  if (url.pathname === '/api/auth/reset-password' && method === 'POST') {
+    const tokenValue = String(body.token || '').trim();
+    const newPassword = String(body.newPassword || '');
+    if (!tokenValue || !newPassword) {
+      throw new Error('Token and new password are required.');
+    }
+
+    if (newPassword.length < 8) {
+      throw new Error('Password must be at least 8 characters.');
+    }
+
+    const db = readDb();
+    const user = db.users.find(
+      (item) =>
+        item.resetPasswordToken === tokenValue &&
+        item.resetPasswordExpiresAt &&
+        new Date(item.resetPasswordExpiresAt).getTime() > Date.now(),
+    );
+
+    if (!user) {
+      throw new Error('Invalid or expired reset token.');
+    }
+
+    user.password = newPassword;
+    user.resetPasswordToken = null;
+    user.resetPasswordExpiresAt = null;
+    user.refreshTokens = [];
+    writeDb(db);
+    return { message: 'Password reset successful.' } as T;
   }
 
   if (url.pathname === '/api/auth/me' && method === 'GET') {
@@ -267,59 +640,211 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       results = results.filter((item) => item.topic.toLowerCase().includes(expected));
     }
 
-    const max = Math.max(1, Math.min(Number.isFinite(limit) ? limit : 10000, 10000));
+    const max = clamp(Number.isFinite(limit) ? limit : 10000, 1, 10000);
     return {
       mcqs: results.slice(0, max),
       total: results.length,
     } as T;
   }
 
+  if (url.pathname === '/api/practice/analyze' && method === 'POST') {
+    requireAuth(token);
+
+    const stepsRaw = String(body.steps || '').trim();
+    if (!stepsRaw) {
+      throw new Error('Solution steps are required.');
+    }
+
+    const steps = stepsRaw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const analysis = steps.map((step, index) => {
+      const lower = step.toLowerCase();
+      const correct = (/[=+\-*/]/.test(step) && /[a-z0-9]/i.test(step)) || lower.includes('answer');
+      return {
+        step: index + 1,
+        correct,
+        message: correct
+          ? 'Step is structurally valid. Keep equations explicit for maximum accuracy.'
+          : 'Step seems incomplete. Add the transformed equation and operation used.',
+      };
+    });
+
+    const mcqs = await loadMcqs();
+    const similarQuestions = mcqs.slice(0, 5).map((item) => ({
+      id: item.id,
+      subject: item.subject,
+      topic: item.topic,
+      question: item.question,
+      difficulty: item.difficulty,
+    }));
+
+    return {
+      analysis,
+      correctSteps: analysis.filter((item) => item.correct).length,
+      totalSteps: analysis.length,
+      suggestedSolution: [
+        'Isolate variable terms on one side of the equation.',
+        'Simplify constants step-by-step.',
+        'Apply inverse operation to solve for the unknown.',
+        'Substitute result into original equation to verify.',
+      ],
+      similarQuestions,
+    } as T;
+  }
+
+  if (url.pathname === '/api/ai/mentor/chat' && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const message = String(body.message || '').trim();
+    if (!message) {
+      throw new Error('Message is required.');
+    }
+
+    const day = new Date().toISOString().slice(0, 10);
+    const key = `${user.id}-${day}`;
+    const usage = db.aiUsage.find((item) => `${item.userId}-${item.day}` === key);
+    if (!usage) {
+      db.aiUsage.push({ userId: user.id, day, chatCount: 1 });
+    } else {
+      usage.chatCount += 1;
+    }
+
+    const currentUsage = db.aiUsage.find((item) => `${item.userId}-${item.day}` === key)!;
+    const dailyLimit = 50;
+    if (currentUsage.chatCount > dailyLimit) {
+      throw new Error(`Daily AI limit reached (${dailyLimit}). Please continue tomorrow.`);
+    }
+
+    let answer = 'Break the topic into concept summary, solved examples, and timed MCQs. Share one exact question and I will provide a step-by-step solution path.';
+    const normalized = message.toLowerCase();
+    if (normalized.includes('integration')) {
+      answer = 'Try LIATE for integration by parts, and test substitution first when an inner derivative appears. Solve 2 timed examples and compare with answer key steps.';
+    } else if (normalized.includes('physics') || normalized.includes('newton')) {
+      answer = 'For numericals: draw FBD, define knowns, select equation, solve, then unit-check. In NET, free-body setup usually decides the correct option fastest.';
+    } else if (normalized.includes('chemistry')) {
+      answer = 'Use concept buckets: periodic trends, bonding, stoichiometry, and equilibrium. Solve 15 topic MCQs, then review incorrect options to find recurring mistakes.';
+    }
+
+    writeDb(db);
+
+    return {
+      answer,
+      usage: {
+        usedToday: currentUsage.chatCount,
+        remainingToday: Math.max(0, dailyLimit - currentUsage.chatCount),
+      },
+    } as T;
+  }
+
+  if (url.pathname === '/api/study-plans/generate' && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const targetDate = String(body.targetDate || '');
+    const preparationLevel = String(body.preparationLevel || 'intermediate');
+    const weakSubjects = Array.isArray(body.weakSubjects) ? body.weakSubjects.map((item: unknown) => String(item)) : [];
+    const dailyStudyHours = clamp(Number(body.dailyStudyHours) || 3, 1, 14);
+
+    const plan = generateStudyPlan({
+      targetDate,
+      preparationLevel,
+      weakSubjects,
+      dailyStudyHours,
+    });
+
+    user.progress = {
+      ...defaultProgress(),
+      ...user.progress,
+      studyPlan: plan,
+    };
+
+    writeDb(db);
+    return { studyPlan: plan } as T;
+  }
+
+  if (url.pathname === '/api/study-plans/latest' && method === 'GET') {
+    const { user } = requireAuth(token);
+    return { studyPlan: user.progress?.studyPlan || null } as T;
+  }
+
   if (url.pathname === '/api/tests/start' && method === 'POST') {
     const { db, user } = requireAuth(token);
-    const subject = String(body.subject || '').toLowerCase() as SubjectKey;
-    const difficulty = String(body.difficulty || '') as Difficulty;
+    const subject = String(body.subject || 'mathematics').toLowerCase() as SubjectKey;
+    const difficulty = String(body.difficulty || 'Medium') as Difficulty;
     const topic = String(body.topic || 'All Topics');
     const mode = String(body.mode || '') as TestMode;
-    const questionCount = Math.max(1, Number(body.questionCount) || 20);
+    const requested = Number(body.questionCount) || (mode === 'mock' ? 200 : 20);
+    const questionCount = clamp(requested, 1, 200);
 
-    if (!subject || !difficulty || !mode) {
-      throw new Error('subject, difficulty, and mode are required.');
+    if (!mode) {
+      throw new Error('mode is required.');
     }
 
     const mcqs = await loadMcqs();
-    let pool = mcqs.filter(
-      (item) => item.subject === subject && item.difficulty.toLowerCase() === difficulty.toLowerCase(),
-    );
+    let selected: MCQ[] = [];
 
-    if (topic && topic !== 'All Topics') {
-      const byTopic = pool.filter((item) => item.topic.toLowerCase().includes(topic.toLowerCase()));
-      if (byTopic.length) {
-        pool = byTopic;
+    if (mode === 'mock') {
+      selected = buildMockQuestionSet(mcqs, questionCount);
+    } else {
+      let pool = mcqs.filter(
+        (item) => item.subject === subject && item.difficulty.toLowerCase() === difficulty.toLowerCase(),
+      );
+
+      if (topic && topic !== 'All Topics') {
+        const byTopic = pool.filter((item) => item.topic.toLowerCase().includes(topic.toLowerCase()));
+        if (byTopic.length) {
+          pool = byTopic;
+        }
       }
+
+      selected = shuffle(pool).slice(0, Math.min(questionCount, pool.length));
     }
 
-    if (!pool.length) {
+    if (!selected.length) {
       throw new Error('No questions available for this configuration.');
     }
 
-    const selected = pool.slice(0, Math.min(questionCount, pool.length));
+    const questions: SessionQuestion[] = selected.map((item) => ({
+      id: item.id,
+      subject: item.subject,
+      topic: item.topic,
+      question: item.question,
+      options: item.options,
+      difficulty: item.difficulty,
+      explanation: item.tip,
+    }));
+
+    const answerKey: Record<string, string> = {};
+    selected.forEach((item) => {
+      answerKey[item.id] = item.answer;
+    });
+
     const session: LocalSession = {
       id: `session-${Date.now()}`,
       userId: user.id,
-      subject,
+      subject: mode === 'mock' ? 'mathematics' : subject,
       difficulty,
-      topic,
+      topic: mode === 'mock' ? 'Full Mock' : topic,
       mode,
-      questionIds: selected.map((item) => item.id),
-      questionCount: selected.length,
+      questions,
+      answerKey,
+      questionIds: questions.map((item) => item.id),
+      questionCount: questions.length,
+      durationMinutes: mode === 'mock' ? 180 : Math.max(10, Math.round(questions.length * 1.2)),
       startedAt: new Date().toISOString(),
       finishedAt: null,
     };
 
     db.sessions.push(session);
     writeDb(db);
+    return { session: toPublicSession(session) } as T;
+  }
 
-    return { session } as T;
+  if (/^\/api\/tests\/[^/]+$/.test(url.pathname) && method === 'GET') {
+    const { db, user } = requireAuth(token);
+    const sessionId = url.pathname.split('/')[3];
+    const session = db.sessions.find((item) => item.id === sessionId && item.userId === user.id);
+    if (!session) {
+      throw new Error('Session not found.');
+    }
+
+    return { session: toPublicSession(session) } as T;
   }
 
   if (/^\/api\/tests\/[^/]+\/finish$/.test(url.pathname) && method === 'POST') {
@@ -335,7 +860,39 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       return { attempt: existingAttempt } as T;
     }
 
-    session.finishedAt = new Date().toISOString();
+    const answers = Array.isArray(body.answers) ? body.answers : [];
+    const answerMap = new Map<string, string | null>();
+    answers.forEach((entry: { questionId?: string; selectedOption?: string | null } | null) => {
+      if (!entry || !entry.questionId) return;
+      answerMap.set(String(entry.questionId), entry.selectedOption == null ? null : String(entry.selectedOption));
+    });
+
+    let correctAnswers = 0;
+    let wrongAnswers = 0;
+    let unanswered = 0;
+
+    session.questionIds.forEach((questionId) => {
+      const selectedOption = answerMap.has(questionId) ? answerMap.get(questionId) : null;
+      const expected = String(session.answerKey[questionId] || '').trim().toLowerCase();
+
+      if (!selectedOption || String(selectedOption).trim().length === 0) {
+        unanswered += 1;
+        return;
+      }
+
+      if (String(selectedOption).trim().toLowerCase() === expected) {
+        correctAnswers += 1;
+      } else {
+        wrongAnswers += 1;
+      }
+    });
+
+    const totalQuestions = session.questionCount;
+    const score = totalQuestions > 0 ? Math.round((correctAnswers / totalQuestions) * 100) : 0;
+    const elapsedSeconds = Math.max(1, Number(body.elapsedSeconds) || 60);
+    const submittedAt = new Date().toISOString();
+
+    session.finishedAt = submittedAt;
 
     const attempt: LocalAttempt = {
       id: `attempt-${Date.now()}`,
@@ -345,14 +902,24 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       topic: session.topic,
       difficulty: session.difficulty,
       mode: session.mode,
-      score: Math.max(0, Math.min(100, Number(body.score) || 0)),
-      totalQuestions: session.questionCount,
-      durationMinutes: Math.max(1, Number(body.durationMinutes) || Math.round(session.questionCount * 1.2)),
-      attemptedAt: session.finishedAt,
+      score,
+      totalQuestions,
+      correctAnswers,
+      wrongAnswers,
+      unanswered,
+      submittedAnswers: totalQuestions - unanswered,
+      durationMinutes: Math.max(1, Math.round(elapsedSeconds / 60)),
+      attemptedAt: submittedAt,
+      submittedAt,
+      metadata: {
+        elapsedSeconds,
+      },
     };
 
     db.attempts.unshift(attempt);
+    updateProgress(db, user);
     writeDb(db);
+
     return { attempt } as T;
   }
 
@@ -363,6 +930,122 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     } as T;
   }
 
+  if (url.pathname === '/api/analytics/summary' && method === 'GET') {
+    const { db, user } = requireAuth(token);
+    const attempts = db.attempts.filter((item) => item.userId === user.id);
+    const testsAttempted = attempts.length;
+    const averageScore = testsAttempted
+      ? Math.round(attempts.reduce((sum, item) => sum + item.score, 0) / testsAttempted)
+      : 0;
+    const studyHours = Number((attempts.reduce((sum, item) => sum + item.durationMinutes, 0) / 60).toFixed(1));
+    const questionsSolved = attempts.reduce((sum, item) => sum + item.totalQuestions, 0);
+
+    return {
+      testsAttempted,
+      averageScore,
+      studyHours,
+      questionsSolved,
+      weakTopics: user.progress?.weakTopics || [],
+    } as T;
+  }
+
+  if (url.pathname === '/api/admin/overview' && method === 'GET') {
+    const { db } = requireAdmin(token);
+    const usersCount = db.users.length;
+    const mcqs = await loadMcqs();
+    const mcqCount = mcqs.length;
+    const attemptsCount = db.attempts.length;
+    const recentAttempts = db.attempts.slice(0, 12);
+    const averageScore = recentAttempts.length
+      ? Math.round(recentAttempts.reduce((sum, item) => sum + item.score, 0) / recentAttempts.length)
+      : 0;
+
+    return {
+      usersCount,
+      mcqCount,
+      attemptsCount,
+      averageScore,
+      recentAttempts,
+    } as T;
+  }
+
+  if (url.pathname === '/api/admin/mcqs' && method === 'GET') {
+    requireAdmin(token);
+    const subject = String(url.searchParams.get('subject') || '').toLowerCase();
+    const topic = String(url.searchParams.get('topic') || '').toLowerCase();
+    const difficulty = String(url.searchParams.get('difficulty') || '');
+
+    const mcqs = await loadMcqs();
+    const filtered = mcqs.filter((item) => {
+      if (subject && item.subject !== subject) return false;
+      if (topic && !item.topic.toLowerCase().includes(topic)) return false;
+      if (difficulty && item.difficulty !== difficulty) return false;
+      return true;
+    });
+
+    return {
+      mcqs: filtered.slice(0, 200).map((item) => ({
+        id: item.id,
+        subject: item.subject,
+        topic: item.topic,
+        question: item.question,
+        options: item.options,
+        answer: item.answer,
+        tip: item.tip,
+        difficulty: item.difficulty,
+      })),
+    } as T;
+  }
+
+  if (url.pathname === '/api/admin/mcqs' && method === 'POST') {
+    requireAdmin(token);
+    const mcqs = await loadMcqs();
+    const payload = {
+      id: `admin-${Date.now()}`,
+      subject: String(body.subject || 'mathematics') as SubjectKey,
+      topic: String(body.topic || 'General'),
+      question: String(body.question || ''),
+      options: Array.isArray(body.options) ? body.options.map((item: unknown) => String(item)) : [],
+      answer: String(body.answer || ''),
+      tip: String(body.tip || ''),
+      difficulty: String(body.difficulty || 'Medium') as Difficulty,
+    };
+
+    if (!payload.question || payload.options.length < 2 || !payload.answer) {
+      throw new Error('question, options, and answer are required.');
+    }
+
+    cachedMcqs = [payload as MCQ, ...mcqs];
+
+    return { mcq: payload } as T;
+  }
+
+  if (/^\/api\/admin\/mcqs\/[^/]+$/.test(url.pathname) && method === 'PUT') {
+    requireAdmin(token);
+    const mcqId = url.pathname.split('/')[4];
+    const mcqs = await loadMcqs();
+    const index = mcqs.findIndex((item) => item.id === mcqId);
+    if (index < 0) {
+      throw new Error('MCQ not found.');
+    }
+
+    const target = mcqs[index];
+    const updated: MCQ = {
+      ...target,
+      subject: Object.prototype.hasOwnProperty.call(body, 'subject') ? String(body.subject) as SubjectKey : target.subject,
+      topic: Object.prototype.hasOwnProperty.call(body, 'topic') ? String(body.topic) : target.topic,
+      question: Object.prototype.hasOwnProperty.call(body, 'question') ? String(body.question) : target.question,
+      answer: Object.prototype.hasOwnProperty.call(body, 'answer') ? String(body.answer) : target.answer,
+      tip: Object.prototype.hasOwnProperty.call(body, 'tip') ? String(body.tip) : target.tip,
+      difficulty: Object.prototype.hasOwnProperty.call(body, 'difficulty') ? String(body.difficulty) as Difficulty : target.difficulty,
+      options: Array.isArray(body.options) ? body.options.map((item: unknown) => String(item)) : target.options,
+    };
+
+    mcqs[index] = updated;
+    cachedMcqs = [...mcqs];
+    return { mcq: updated } as T;
+  }
+
   throw new Error('Endpoint not available in local mode.');
 }
 
@@ -371,7 +1054,7 @@ export async function localDownloadReport(format: 'csv' | 'json', token?: string
   const attempts = db.attempts.filter((item) => item.userId === user.id);
 
   if (format === 'csv') {
-    const header = 'id,subject,topic,difficulty,mode,score,totalQuestions,durationMinutes,attemptedAt';
+    const header = 'id,subject,topic,difficulty,mode,score,totalQuestions,correctAnswers,wrongAnswers,unanswered,durationMinutes,attemptedAt';
     const lines = attempts.map((item) => {
       const escapedTopic = `"${String(item.topic).replace(/"/g, '""')}"`;
       return [
@@ -382,6 +1065,9 @@ export async function localDownloadReport(format: 'csv' | 'json', token?: string
         item.mode,
         item.score,
         item.totalQuestions,
+        item.correctAnswers,
+        item.wrongAnswers,
+        item.unanswered,
         item.durationMinutes,
         item.attemptedAt,
       ].join(',');

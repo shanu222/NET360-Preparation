@@ -12,6 +12,7 @@ import { Tests } from './components/Tests';
 import { Analytics } from './components/Analytics';
 import { MeritCalculator } from './components/MeritCalculator';
 import { Profile } from './components/Profile';
+import { AdminPanel } from './components/AdminPanel';
 import { 
   Home, 
   BookOpen, 
@@ -24,6 +25,7 @@ import {
   TrendingUp,
   Calculator,
   User,
+  Shield,
   Menu,
   Bell,
   MessageSquare,
@@ -51,7 +53,8 @@ export default function App() {
     { id: 'tests', label: 'Tests', icon: FileText },
     { id: 'analytics', label: 'Analytics', icon: TrendingUp },
     { id: 'merit-calculator', label: 'Merit Calculator', icon: Calculator },
-    { id: 'profile', label: 'Profile', icon: User }
+    { id: 'profile', label: 'Profile', icon: User },
+    { id: 'admin', label: 'Admin', icon: Shield }
   ];
 
   const NavigationContent = () => (
@@ -193,6 +196,10 @@ export default function App() {
 
                 <TabsContent value="profile" className="mt-0 net360-page">
                   <Profile onNavigate={setActiveTab} />
+                </TabsContent>
+
+                <TabsContent value="admin" className="mt-0 net360-page">
+                  <AdminPanel />
                 </TabsContent>
               </Tabs>
             </main>

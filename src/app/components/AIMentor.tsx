@@ -1,5 +1,4 @@
-import { type ChangeEvent } from 'react';
-import { useRef, useState } from 'react';
+import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Button } from './ui/button';
@@ -7,7 +6,6 @@ import { Textarea } from './ui/textarea';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
 import {
   Brain,
@@ -22,6 +20,8 @@ import {
   Wand2,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useAuth } from '../context/AuthContext';
+import { apiRequest } from '../lib/api';
 
 interface AIMentorProps {
   onNavigate?: (section: string) => void;
@@ -36,43 +36,107 @@ const quickPrompts = [
   'Give me top grammar rules for sentence correction.',
 ];
 
+interface StudyPlan {
+  generatedAt: string;
+  targetDate: string;
+  daysLeft: number;
+  preparationLevel: string;
+  weakSubjects: string[];
+  dailyStudyHours: number;
+  weeklyTargets: Array<{ week: number; focus: string; target: string }>;
+  dailySchedule: Array<{ block: string; durationHours: number; activity: string }>;
+  roadmap: string[];
+}
+
 export function AIMentor({ onNavigate }: AIMentorProps) {
+  const { token, user } = useAuth();
   const [question, setQuestion] = useState('');
-  const [studyDays, setStudyDays] = useState('60');
+  const [targetDate, setTargetDate] = useState('');
+  const [dailyHours, setDailyHours] = useState('4');
   const [currentLevel, setCurrentLevel] = useState('');
-  const [targetProgram, setTargetProgram] = useState('');
-  const [planGenerated, setPlanGenerated] = useState(false);
+  const [weakSubjectsText, setWeakSubjectsText] = useState('mathematics, physics');
+  const [planData, setPlanData] = useState<StudyPlan | null>(null);
+  const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
+  const [isAskingAI, setIsAskingAI] = useState(false);
   const [uploadedFileName, setUploadedFileName] = useState('');
+  const [aiUsage, setAiUsage] = useState<{ usedToday: number; remainingToday: number } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'ai'; message: string }>>([
-    { role: 'ai', message: "Hi! I'm your AI tutor for NET preparation. How can I help you today?" },
+    { role: 'ai', message: "Hi! I'm your AI tutor for NET preparation. Ask me any concept or past-paper question." },
   ]);
 
-  const generateTutorResponse = (query: string) => {
-    const normalized = query.toLowerCase();
-    if (normalized.includes('integration')) {
-      return 'For integration, first identify the function type: substitution, parts, or partial fractions. Start by trying substitution when you see a composite function. If that fails, use integration by parts with the LIATE rule.';
+  useEffect(() => {
+    if (!token || !user) {
+      setPlanData(null);
+      return;
     }
-    if (normalized.includes('physics') || normalized.includes('force') || normalized.includes('newton')) {
-      return 'Use this sequence for Physics numericals: define knowns, write governing equation, isolate unknown, then check units. For Newton laws, always draw a free-body diagram first.';
-    }
-    if (normalized.includes('english') || normalized.includes('grammar')) {
-      return 'For English correction, scan tense consistency, subject-verb agreement, pronoun reference, and parallel structure. Eliminate choices with grammar breaks before checking style.';
-    }
-    return 'Break each problem into three passes: concept check, formula selection, and quick verification. If you share one specific question, I can walk you through it step by step.';
-  };
 
-  const askQuestion = () => {
+    let cancelled = false;
+
+    async function loadLatestPlan() {
+      try {
+        const payload = await apiRequest<{ studyPlan: StudyPlan | null }>('/api/study-plans/latest', {}, token);
+        if (!cancelled && payload.studyPlan) {
+          setPlanData(payload.studyPlan);
+          setTargetDate(payload.studyPlan.targetDate || '');
+          setCurrentLevel(payload.studyPlan.preparationLevel || '');
+          setDailyHours(String(payload.studyPlan.dailyStudyHours || 4));
+          setWeakSubjectsText((payload.studyPlan.weakSubjects || []).join(', '));
+        }
+      } catch {
+        // Ignore fetch errors for planner bootstrapping.
+      }
+    }
+
+    void loadLatestPlan();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, user]);
+
+  const askQuestion = async () => {
     if (!question.trim()) return;
 
-    const userMessage = { role: 'user' as const, message: question };
-    const aiResponse = {
-      role: 'ai' as const,
-      message: generateTutorResponse(question),
-    };
+    if (!token || !user) {
+      toast.error('Login required to use AI Mentor.');
+      return;
+    }
 
-    setChatMessages((previous) => [...previous, userMessage, aiResponse]);
+    const userMessage = { role: 'user' as const, message: question.trim() };
+    setChatMessages((previous) => [...previous, userMessage]);
     setQuestion('');
+    setIsAskingAI(true);
+
+    try {
+      const payload = await apiRequest<{ answer: string; usage?: { usedToday: number; remainingToday: number } }>(
+        '/api/ai/mentor/chat',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            message: userMessage.message,
+            context: 'NET prep assistant mode',
+          }),
+        },
+        token,
+      );
+
+      setChatMessages((previous) => [...previous, { role: 'ai', message: payload.answer }]);
+      if (payload.usage) {
+        setAiUsage(payload.usage);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not reach AI mentor.');
+      setChatMessages((previous) => [
+        ...previous,
+        {
+          role: 'ai',
+          message: 'AI response failed right now. Please retry or simplify your query.',
+        },
+      ]);
+    } finally {
+      setIsAskingAI(false);
+    }
   };
 
   const handleChooseFile = () => {
@@ -88,19 +152,51 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       ...previous,
       {
         role: 'ai',
-        message: `I received "${file.name}". OCR solving is not yet wired, but you can paste the question in Ask Doubt and I will solve it step by step.`,
+        message: `I received "${file.name}". OCR upload solving can be added with external vision API if you want; for now paste the extracted text for full solving.`,
       },
     ]);
     toast.success(`Selected file: ${file.name}`);
   };
 
-  const generateStudyPlan = () => {
-    if (!studyDays || !currentLevel || !targetProgram) {
-      toast.error('Please fill days, level, and target program first.');
+  const generateStudyPlan = async () => {
+    if (!token || !user) {
+      toast.error('Login required to save a study plan.');
       return;
     }
-    setPlanGenerated(true);
-    toast.success('Study plan generated successfully.');
+
+    if (!targetDate || !currentLevel || !dailyHours) {
+      toast.error('Please set target date, level, and daily hours first.');
+      return;
+    }
+
+    setIsGeneratingPlan(true);
+    try {
+      const weakSubjects = weakSubjectsText
+        .split(',')
+        .map((item) => item.trim().toLowerCase())
+        .filter(Boolean);
+
+      const payload = await apiRequest<{ studyPlan: StudyPlan }>(
+        '/api/study-plans/generate',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            targetDate,
+            preparationLevel: currentLevel,
+            dailyStudyHours: Number(dailyHours),
+            weakSubjects,
+          }),
+        },
+        token,
+      );
+
+      setPlanData(payload.studyPlan);
+      toast.success('Study plan generated and saved to your account.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not generate study plan.');
+    } finally {
+      setIsGeneratingPlan(false);
+    }
   };
 
   return (
@@ -112,12 +208,12 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
             <Brain className="h-7 w-7" />
             AI Mentor
           </h1>
-          <p className="text-slate-600">Your personal AI tutor for NET preparation</p>
+          <p className="text-slate-600">AI tutoring, planner generation, and focused NET guidance</p>
 
           <div className="mt-3 grid gap-2 sm:grid-cols-3">
-            <StatPill icon={MessageSquare} label="Smart Doubt Support" />
-            <StatPill icon={Upload} label="Question Image Solver" />
-            <StatPill icon={Calendar} label="Personal Study Planner" />
+            <StatPill icon={MessageSquare} label="Live AI Tutor" />
+            <StatPill icon={Upload} label="Question Image Intake" />
+            <StatPill icon={Calendar} label="Persistent Study Planner" />
           </div>
         </div>
       </section>
@@ -134,17 +230,23 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
             <Card className="rounded-2xl border-indigo-100 bg-white/92">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-2xl text-indigo-950">
-                  <MessageSquare className="w-5 h-5 text-indigo-500" />
+                  <MessageSquare className="h-5 w-5 text-indigo-500" />
                   Chat with AI Tutor
                 </CardTitle>
-                <CardDescription>Ask any question about your preparation</CardDescription>
+                <CardDescription>Backed by server AI endpoint with daily usage limit</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
+                {aiUsage ? (
+                  <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs text-slate-600">
+                    AI usage today: {aiUsage.usedToday} used • {aiUsage.remainingToday} remaining
+                  </div>
+                ) : null}
+
                 <ScrollArea className="h-[360px] rounded-xl border border-indigo-100 bg-[#fafbff] p-3 pr-4">
                   <div className="space-y-4">
                     {chatMessages.map((msg, index) => (
                       <div
-                        key={index}
+                        key={`${msg.role}-${index}`}
                         className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
                       >
                         <div
@@ -170,12 +272,16 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
-                        askQuestion();
+                        void askQuestion();
                       }
                     }}
                   />
-                  <Button onClick={askQuestion} className="h-[70px] w-14 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white">
-                    <Send className="w-4 h-4" />
+                  <Button
+                    onClick={() => void askQuestion()}
+                    disabled={isAskingAI}
+                    className="h-[70px] w-14 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
+                  >
+                    <Send className="h-4 w-4" />
                   </Button>
                 </div>
               </CardContent>
@@ -209,16 +315,16 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
             <Card className="rounded-2xl border-indigo-100 bg-white/92">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-2xl text-indigo-950">
-                  <FileQuestion className="w-5 h-5 text-indigo-500" />
+                  <FileQuestion className="h-5 w-5 text-indigo-500" />
                   Question Solver
                 </CardTitle>
-                <CardDescription>Upload a question image and get step-by-step solution</CardDescription>
+                <CardDescription>Image upload intake for manual or OCR-assisted solving</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="rounded-xl border-2 border-dashed border-indigo-200 bg-gradient-to-r from-[#f8f9ff] to-[#eef3ff] p-8 text-center">
-                  <Upload className="w-11 h-11 mx-auto mb-3 text-indigo-400" />
+                  <Upload className="mx-auto mb-3 h-11 w-11 text-indigo-400" />
                   <p className="mb-1 text-indigo-950">Upload a question image</p>
-                  <p className="text-sm text-slate-500 mb-4">Supports JPG, PNG (Max 5MB)</p>
+                  <p className="mb-4 text-sm text-slate-500">Supports JPG, PNG (Max 5MB)</p>
                   <Button variant="outline" onClick={handleChooseFile} className="rounded-xl border-indigo-200 bg-white">
                     Choose File
                   </Button>
@@ -229,7 +335,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                     className="hidden"
                     onChange={handleFileChange}
                   />
-                  {uploadedFileName ? <p className="text-xs text-slate-500 mt-3">Selected: {uploadedFileName}</p> : null}
+                  {uploadedFileName ? <p className="mt-3 text-xs text-slate-500">Selected: {uploadedFileName}</p> : null}
                 </div>
 
                 <div className="grid gap-2 sm:grid-cols-2">
@@ -243,9 +349,9 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
             <Card className="rounded-2xl border-0 bg-gradient-to-r from-emerald-500 to-teal-500 text-white shadow-[0_14px_28px_rgba(56,164,140,0.32)]">
               <CardContent className="pt-6">
-                <h3 className="mb-2 text-white">Premium Feature</h3>
+                <h3 className="mb-2 text-white">Premium OCR Add-on</h3>
                 <p className="mb-4 text-emerald-100">
-                  Upload unlimited questions and get detailed AI solutions. Upgrade to premium for instant access.
+                  OCR solving requires a vision service integration key. Backend endpoint is ready for extension.
                 </p>
                 <Button
                   variant="secondary"
@@ -254,7 +360,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                     toast.message('Opened Profile so you can manage your plan and account settings.');
                   }}
                 >
-                  Upgrade to Premium
+                  Manage Plan
                 </Button>
               </CardContent>
             </Card>
@@ -266,20 +372,32 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
             <Card className="rounded-2xl border-indigo-100 bg-white/92">
               <CardHeader className="pb-3">
                 <CardTitle className="flex items-center gap-2 text-2xl text-indigo-950">
-                  <Calendar className="w-5 h-5 text-indigo-500" />
+                  <Calendar className="h-5 w-5 text-indigo-500" />
                   Smart Study Planner
                 </CardTitle>
-                <CardDescription>Generate a personalized plan from your current level</CardDescription>
+                <CardDescription>Generate and persist your personalized plan</CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="test-date">Days Until NET</Label>
+                  <Label htmlFor="planner-target-date">Target NET Date</Label>
                   <Input
-                    id="test-date"
+                    id="planner-target-date"
+                    type="date"
+                    value={targetDate}
+                    onChange={(e) => setTargetDate(e.target.value)}
+                    className="border-indigo-100"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="planner-daily-hours">Daily Study Hours</Label>
+                  <Input
+                    id="planner-daily-hours"
                     type="number"
-                    placeholder="60"
-                    value={studyDays}
-                    onChange={(e) => setStudyDays(e.target.value)}
+                    min={1}
+                    max={14}
+                    value={dailyHours}
+                    onChange={(e) => setDailyHours(e.target.value)}
                     className="border-indigo-100"
                   />
                 </div>
@@ -300,55 +418,41 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="target-program">Target Program</Label>
-                  <Select value={targetProgram} onValueChange={setTargetProgram}>
-                    <SelectTrigger id="target-program" className="border-indigo-100">
-                      <SelectValue placeholder="Select program" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="engineering">Engineering</SelectItem>
-                      <SelectItem value="computing">Computing</SelectItem>
-                      <SelectItem value="business">Business Studies</SelectItem>
-                      <SelectItem value="applied">Applied Sciences</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <Label htmlFor="weak-subjects">Weak Subjects (comma separated)</Label>
+                  <Input
+                    id="weak-subjects"
+                    value={weakSubjectsText}
+                    onChange={(e) => setWeakSubjectsText(e.target.value)}
+                    placeholder="mathematics, physics"
+                    className="border-indigo-100"
+                  />
                 </div>
 
-                <Button onClick={generateStudyPlan} className="w-full bg-gradient-to-r from-indigo-600 to-violet-500 text-white">
-                  Generate Study Plan
+                <Button
+                  onClick={() => void generateStudyPlan()}
+                  disabled={isGeneratingPlan}
+                  className="w-full bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
+                >
+                  {isGeneratingPlan ? 'Generating...' : 'Generate Study Plan'}
                 </Button>
               </CardContent>
             </Card>
 
-            {planGenerated && currentLevel && studyDays ? (
+            {planData ? (
               <Card className="rounded-2xl border-indigo-100 bg-white/92">
                 <CardHeader className="pb-3">
-                  <CardTitle className="text-2xl text-indigo-950">Your {studyDays}-Day Study Plan</CardTitle>
-                  <CardDescription>Customized plan based on your selected level and target</CardDescription>
+                  <CardTitle className="text-2xl text-indigo-950">Your Study Plan ({planData.daysLeft} Days Left)</CardTitle>
+                  <CardDescription>Saved to your account and synced across sessions</CardDescription>
                 </CardHeader>
-                <CardContent>
-                  <div className="space-y-3">
-                    <PlanBlock title="Week 1-2: Foundation" days="Days 1-14" lines={[
-                      'Mathematics: Algebra & Functions (4 hours/day)',
-                      'Physics: Mechanics (3 hours/day)',
-                      'English: Vocabulary building (1 hour/day)',
-                    ]} />
-                    <PlanBlock title="Week 3-4: Core Topics" days="Days 15-28" lines={[
-                      'Mathematics: Calculus & Trigonometry (4 hours/day)',
-                      'Physics: Electricity & Waves (3 hours/day)',
-                      'English: Grammar & Comprehension (1 hour/day)',
-                    ]} />
-                    <PlanBlock title="Week 5-6: Advanced & Practice" days="Days 29-42" lines={[
-                      'Complete remaining topics (3 hours/day)',
-                      'Start topic-wise tests (3 hours/day)',
-                      'Review weak areas (2 hours/day)',
-                    ]} />
-                    <PlanBlock title="Week 7-8: Mock Tests & Revision" days="Days 43-60" lines={[
-                      'Full-length mock tests (2 per week)',
-                      'Formula revision (2 hours/day)',
-                      'Solve previous papers (3 hours/day)',
-                    ]} />
-                  </div>
+                <CardContent className="space-y-3">
+                  {planData.weeklyTargets.map((item) => (
+                    <PlanBlock
+                      key={`${item.week}-${item.focus}`}
+                      title={`Week ${item.week}: ${item.focus}`}
+                      days={item.target}
+                      lines={planData.roadmap}
+                    />
+                  ))}
                 </CardContent>
               </Card>
             ) : (
@@ -356,8 +460,8 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                 <CardContent className="flex h-full min-h-[290px] items-center justify-center text-center">
                   <div>
                     <Clock3 className="mx-auto mb-3 h-8 w-8 text-indigo-400" />
-                    <p className="text-indigo-950">Complete the form and generate your study plan.</p>
-                    <p className="text-sm text-slate-500">Your week-wise roadmap will appear here.</p>
+                    <p className="text-indigo-950">Generate your study plan to see roadmap here.</p>
+                    <p className="text-sm text-slate-500">Planner is persisted per account.</p>
                   </div>
                 </CardContent>
               </Card>
@@ -419,11 +523,11 @@ function PlanBlock({
     <div className="rounded-xl border border-indigo-100 bg-white p-4">
       <div className="mb-2 flex items-center justify-between">
         <h4 className="text-indigo-950">{title}</h4>
-        <Badge variant="secondary">{days}</Badge>
+        <span className="text-xs text-slate-500">{days}</span>
       </div>
-      <ul className="space-y-1 text-sm text-slate-500">
-        {lines.map((line) => (
-          <li key={line}>• {line}</li>
+      <ul className="space-y-1 text-sm text-slate-600">
+        {lines.map((line, index) => (
+          <li key={`${line}-${index}`}>• {line}</li>
         ))}
       </ul>
     </div>

@@ -1,5 +1,17 @@
 import { localApiRequest, localDownloadReport } from './localApi';
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+
+function resolveApiPath(path: string) {
+  if (/^https?:\/\//i.test(path)) {
+    return path;
+  }
+  if (!API_BASE_URL) {
+    return path;
+  }
+  return `${API_BASE_URL.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
 function shouldUseForcedLocalMode() {
   return import.meta.env.VITE_FORCE_LOCAL_API === 'true';
 }
@@ -19,7 +31,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
 
   let response: Response;
   try {
-    response = await fetch(path, {
+    response = await fetch(resolveApiPath(path), {
       ...options,
       headers,
     });
@@ -56,7 +68,7 @@ export async function downloadReport(path: string, token?: string | null): Promi
 
   let response: Response;
   try {
-    response = await fetch(path, { headers });
+    response = await fetch(resolveApiPath(path), { headers });
   } catch {
     const url = new URL(path, window.location.origin);
     const format = (url.searchParams.get('format') || 'json') as 'csv' | 'json';

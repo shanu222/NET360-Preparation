@@ -5,13 +5,24 @@ import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { BookOpen, CheckCircle, FileText, Lightbulb, MessageSquare, RotateCcw, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
+import { apiRequest } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
 
 export function PracticeBoard() {
+  const { token, user } = useAuth();
   const [solution, setSolution] = useState('Step 1: 2x + 5 = 15\nStep 2: 2x = 15 - 5\nStep 3: 2x = 10\nStep 4: x = 10/2\nStep 5: x = 5');
   const [feedback, setFeedback] = useState<Array<{ step: number; correct: boolean; message: string }>>([]);
+  const [suggestedSolution, setSuggestedSolution] = useState<string[]>([]);
+  const [similarQuestions, setSimilarQuestions] = useState<Array<{ id: string; subject: string; topic: string; question: string; difficulty: string }>>([]);
   const [showAnalysis, setShowAnalysis] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  const analyzeSolution = () => {
+  const analyzeSolution = async () => {
+    if (!user || !token) {
+      toast.error('Login required to analyze and save practice feedback.');
+      return;
+    }
+
     const lines = solution
       .split(/\r?\n/)
       .map((line) => line.trim())
@@ -22,29 +33,41 @@ export function PracticeBoard() {
       return;
     }
 
-    const parsedFeedback = lines.map((line, index) => {
-      const normalized = line.toLowerCase();
-      const mentionsEquation = normalized.includes('2x') || normalized.includes('x');
-      const hasOperation = /[=+\-*/]/.test(normalized);
-      const mentionsAnswer = normalized.includes('x = 5') || normalized.endsWith('5');
-      const correct = (mentionsEquation && hasOperation) || mentionsAnswer;
+    setIsAnalyzing(true);
+    try {
+      const payload = await apiRequest<{
+        analysis: Array<{ step: number; correct: boolean; message: string }>;
+        suggestedSolution: string[];
+        similarQuestions: Array<{ id: string; subject: string; topic: string; question: string; difficulty: string }>;
+      }>(
+        '/api/practice/analyze',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            question: '2x + 5 = 15',
+            subject: 'mathematics',
+            steps: solution,
+          }),
+        },
+        token,
+      );
 
-      return {
-        step: index + 1,
-        correct,
-        message: correct
-          ? 'Good step structure and mathematical notation.'
-          : 'This step is unclear. Include the equation transformation explicitly.',
-      };
-    });
-
-    setFeedback(parsedFeedback);
-    setShowAnalysis(true);
+      setFeedback(payload.analysis || []);
+      setSuggestedSolution(payload.suggestedSolution || []);
+      setSimilarQuestions(payload.similarQuestions || []);
+      setShowAnalysis(true);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not analyze your solution.');
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   const clearBoard = () => {
     setSolution('');
     setFeedback([]);
+    setSuggestedSolution([]);
+    setSimilarQuestions([]);
     setShowAnalysis(false);
   };
 
@@ -97,9 +120,9 @@ export function PracticeBoard() {
             />
 
             <div className="flex gap-2">
-              <Button onClick={analyzeSolution} className="h-11 flex-1 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-[0_8px_18px_rgba(107,95,230,0.32)]">
+              <Button disabled={isAnalyzing} onClick={() => void analyzeSolution()} className="h-11 flex-1 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-[0_8px_18px_rgba(107,95,230,0.32)]">
                 <Lightbulb className="w-4 h-4 mr-2" />
-                Analyze Solution
+                {isAnalyzing ? 'Analyzing...' : 'Analyze Solution'}
               </Button>
               <Button variant="outline" onClick={clearBoard} className="h-11 rounded-xl border-indigo-200 bg-white/90 text-slate-700">
                 <RotateCcw className="w-4 h-4 mr-2" />
@@ -163,6 +186,31 @@ export function PracticeBoard() {
                 Keep each line explicit (equation, operation, resulting expression) for best feedback.
               </p>
             </div>
+
+            {suggestedSolution.length ? (
+              <div className="pt-3 border-t space-y-2">
+                <h4 className="text-sm text-indigo-900">Suggested Correct Method</h4>
+                <ul className="space-y-1 text-sm text-slate-600">
+                  {suggestedSolution.map((line, index) => (
+                    <li key={`${line}-${index}`}>• {line}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+
+            {similarQuestions.length ? (
+              <div className="pt-3 border-t space-y-2">
+                <h4 className="text-sm text-indigo-900">Similar Practice Questions</h4>
+                <div className="space-y-2">
+                  {similarQuestions.map((question) => (
+                    <div key={question.id} className="rounded-md border border-indigo-100 bg-indigo-50/40 px-3 py-2 text-sm">
+                      <p className="text-slate-700">{question.question}</p>
+                      <p className="mt-1 text-xs text-slate-500">{question.subject} • {question.topic} • {question.difficulty}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
       )}

@@ -10,6 +10,7 @@ import { Apple, Bot, FlaskConical, GraduationCap, LogOut, RefreshCw, Settings, T
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
+import { apiRequest } from '../lib/api';
 
 interface ProfileProps {
   onNavigate?: (section: string) => void;
@@ -28,6 +29,9 @@ export function Profile({ onNavigate }: ProfileProps) {
     email: '',
     password: '',
   });
+  const [forgotMode, setForgotMode] = useState(false);
+  const [forgotToken, setForgotToken] = useState('');
+  const [newPassword, setNewPassword] = useState('');
 
   useEffect(() => {
     setLocalProfile(profile);
@@ -73,6 +77,46 @@ export function Profile({ onNavigate }: ProfileProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Authentication failed.';
       toast.error(message);
+    }
+  };
+
+  const handleForgotPasswordRequest = async () => {
+    if (!authForm.email) {
+      toast.error('Enter your email to request a reset link.');
+      return;
+    }
+
+    try {
+      const payload = await apiRequest<{ message: string; resetToken?: string }>('/api/auth/forgot-password', {
+        method: 'POST',
+        body: JSON.stringify({ email: authForm.email }),
+      });
+
+      if (payload.resetToken) {
+        setForgotToken(payload.resetToken);
+      }
+      toast.success(payload.message || 'Reset link requested.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not request password reset.');
+    }
+  };
+
+  const handleResetPassword = async () => {
+    if (!forgotToken || !newPassword) {
+      toast.error('Reset token and new password are required.');
+      return;
+    }
+
+    try {
+      await apiRequest<{ message: string }>('/api/auth/reset-password', {
+        method: 'POST',
+        body: JSON.stringify({ token: forgotToken, newPassword }),
+      });
+      toast.success('Password reset successful. You can now log in.');
+      setForgotMode(false);
+      setNewPassword('');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not reset password.');
     }
   };
 
@@ -195,6 +239,35 @@ export function Profile({ onNavigate }: ProfileProps) {
                 />
               </div>
 
+              {forgotMode ? (
+                <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="reset-token">Reset Token</Label>
+                    <Input
+                      id="reset-token"
+                      value={forgotToken}
+                      onChange={(e) => setForgotToken(e.target.value)}
+                      placeholder="Paste reset token"
+                      className="h-10 border-indigo-100"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="new-password">New Password</Label>
+                    <Input
+                      id="new-password"
+                      type="password"
+                      value={newPassword}
+                      onChange={(e) => setNewPassword(e.target.value)}
+                      placeholder="Minimum 8 characters"
+                      className="h-10 border-indigo-100"
+                    />
+                  </div>
+                  <Button className="h-10 w-full rounded-lg bg-indigo-600 text-white" onClick={() => void handleResetPassword()}>
+                    Set New Password
+                  </Button>
+                </div>
+              ) : null}
+
               <Button className="h-11 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white" onClick={handleAuthSubmit}>
                 {isRegisterMode ? 'Create Account' : 'Login'}
               </Button>
@@ -207,12 +280,36 @@ export function Profile({ onNavigate }: ProfileProps) {
                 >
                   {isRegisterMode ? 'Use Login' : 'Create Account'}
                 </Button>
-                <Button variant="outline" className="h-11 w-11 rounded-xl border-indigo-200 bg-white p-0 text-indigo-500">
+                <Button
+                  variant="outline"
+                  className="h-11 w-11 rounded-xl border-indigo-200 bg-white p-0 text-indigo-500"
+                  onClick={() => {
+                    setAuthForm({ firstName: '', lastName: '', email: '', password: '' });
+                    setForgotToken('');
+                    setNewPassword('');
+                    setForgotMode(false);
+                  }}
+                >
                   <RefreshCw className="h-4 w-4" />
                 </Button>
-                <Button variant="outline" className="h-11 w-11 rounded-xl border-indigo-200 bg-white p-0 text-indigo-500">
+                <Button
+                  variant="outline"
+                  className="h-11 w-11 rounded-xl border-indigo-200 bg-white p-0 text-indigo-500"
+                  onClick={() => setIsRegisterMode((prev) => !prev)}
+                >
                   <UserRound className="h-4 w-4" />
                 </Button>
+              </div>
+
+              <div className="flex items-center justify-between text-xs text-slate-500">
+                <button type="button" className="underline-offset-2 hover:underline" onClick={() => setForgotMode((prev) => !prev)}>
+                  {forgotMode ? 'Hide reset panel' : 'Forgot password?'}
+                </button>
+                {!forgotMode ? (
+                  <button type="button" className="underline-offset-2 hover:underline" onClick={() => void handleForgotPasswordRequest()}>
+                    Request reset token
+                  </button>
+                ) : null}
               </div>
 
               <div className="relative py-1 text-center text-sm text-slate-500">

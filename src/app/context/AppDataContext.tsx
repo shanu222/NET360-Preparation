@@ -14,6 +14,36 @@ interface TestAttempt {
   durationMinutes: number;
   attemptedAt: string;
   mode: 'topic' | 'mock' | 'adaptive';
+  correctAnswers?: number;
+  wrongAnswers?: number;
+  unanswered?: number;
+  submittedAnswers?: number;
+  submittedAt?: string;
+  metadata?: Record<string, unknown>;
+}
+
+interface SessionQuestion {
+  id: string;
+  subject: SubjectKey;
+  topic: string;
+  question: string;
+  options: string[];
+  difficulty: Difficulty;
+  explanation?: string;
+}
+
+interface TestSession {
+  id: string;
+  userId?: string;
+  subject: SubjectKey;
+  difficulty: Difficulty;
+  topic: string;
+  mode: 'topic' | 'mock' | 'adaptive';
+  questionCount: number;
+  durationMinutes: number;
+  startedAt: string;
+  finishedAt: string | null;
+  questions: SessionQuestion[];
 }
 
 interface ProfileState {
@@ -51,6 +81,19 @@ interface AppDataContextValue {
     mode: 'topic' | 'mock' | 'adaptive';
     questionCount?: number;
   }) => Promise<TestAttempt | null>;
+  startTestSession: (params: {
+    subject: SubjectKey;
+    difficulty: Difficulty;
+    topic: string;
+    mode: 'topic' | 'mock' | 'adaptive';
+    questionCount?: number;
+  }) => Promise<TestSession>;
+  getTestSession: (sessionId: string) => Promise<TestSession>;
+  submitTestSession: (params: {
+    sessionId: string;
+    answers: Array<{ questionId: string; selectedOption: string | null }>;
+    elapsedSeconds: number;
+  }) => Promise<TestAttempt>;
   saveProfile: (partial: Partial<ProfileState>) => Promise<void>;
   savePreferences: (partial: Partial<PreferencesState>) => Promise<void>;
   refreshAttempts: () => Promise<void>;
@@ -202,7 +245,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     setAttempts((payload.attempts || []) as TestAttempt[]);
   };
 
-  const startPracticeTest: AppDataContextValue['startPracticeTest'] = async ({
+  const startTestSession: AppDataContextValue['startTestSession'] = async ({
     subject,
     difficulty,
     topic,
@@ -213,7 +256,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       throw new Error('Please login first to start a server-backed test session.');
     }
 
-    const startPayload = await apiRequest<{ session: { id: string; questionCount: number } }>(
+    const startPayload = await apiRequest<{ session: TestSession }>(
       '/api/tests/start',
       {
         method: 'POST',
@@ -222,33 +265,61 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       token,
     );
 
-    const previousSubjectAttempts = attempts.filter((attempt) => attempt.subject === subject);
-    const previousAverage = previousSubjectAttempts.length
-      ? previousSubjectAttempts.reduce((sum, attempt) => sum + attempt.score, 0) / previousSubjectAttempts.length
-      : 65;
+    return startPayload.session;
+  };
 
-    const difficultyPenalty: Record<Difficulty, number> = {
-      Easy: 8,
-      Medium: 0,
-      Hard: -8,
-    };
+  const getTestSession: AppDataContextValue['getTestSession'] = async (sessionId) => {
+    if (!token || !user) {
+      throw new Error('Please login first to load a test session.');
+    }
 
-    const calibratedScore = Math.max(35, Math.min(95, Math.round(previousAverage + difficultyPenalty[difficulty])));
+    const payload = await apiRequest<{ session: TestSession }>(`/api/tests/${sessionId}`, {}, token);
+    return payload.session;
+  };
 
-    const finishPayload = await apiRequest<{ attempt: TestAttempt }>(
-      `/api/tests/${startPayload.session.id}/finish`,
+  const submitTestSession: AppDataContextValue['submitTestSession'] = async ({ sessionId, answers, elapsedSeconds }) => {
+    if (!token || !user) {
+      throw new Error('Please login first to submit a test session.');
+    }
+
+    const payload = await apiRequest<{ attempt: TestAttempt }>(
+      `/api/tests/${sessionId}/finish`,
       {
         method: 'POST',
-        body: JSON.stringify({
-          score: calibratedScore,
-          durationMinutes: Math.max(10, Math.round(startPayload.session.questionCount * 1.2)),
-        }),
+        body: JSON.stringify({ answers, elapsedSeconds }),
       },
       token,
     );
 
-    const attempt = finishPayload.attempt;
-    setAttempts((previous) => [attempt, ...previous]);
+    const attempt = payload.attempt;
+    setAttempts((previous) => {
+      const withoutSame = previous.filter((item) => item.id !== attempt.id);
+      return [attempt, ...withoutSame];
+    });
+    return attempt;
+  };
+
+  const startPracticeTest: AppDataContextValue['startPracticeTest'] = async ({
+    subject,
+    difficulty,
+    topic,
+    mode,
+    questionCount = 20,
+  }) => {
+    const session = await startTestSession({ subject, difficulty, topic, mode, questionCount });
+
+    // Backward-compatible quick mode for existing topic/adaptive cards: select first option per question.
+    const answers = session.questions.map((question) => ({
+      questionId: question.id,
+      selectedOption: question.options[0] || null,
+    }));
+
+    const attempt = await submitTestSession({
+      sessionId: session.id,
+      answers,
+      elapsedSeconds: Math.max(60, Math.round(session.durationMinutes * 60 * 0.6)),
+    });
+
     return attempt;
   };
 
@@ -309,6 +380,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         profile,
         preferences,
         startPracticeTest,
+        startTestSession,
+        getTestSession,
+        submitTestSession,
         saveProfile,
         savePreferences,
         refreshAttempts,
