@@ -21,7 +21,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const PORT = Number(process.env.PORT || process.env.API_PORT || 4000);
-const MONGODB_URI = process.env.MONGODB_URI || '';
+const MONGODB_URI = process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO_URI || '';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || `${JWT_SECRET}-refresh`;
 const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '15m';
@@ -1126,7 +1126,7 @@ bootstrap().catch((error) => {
   }
 
   if (!MONGODB_URI) {
-    console.error('Missing required env var: MONGODB_URI');
+    console.error('Missing required env var: MONGODB_URI (or DATABASE_URL / MONGO_URI)');
   }
   process.exit(1);
 });
