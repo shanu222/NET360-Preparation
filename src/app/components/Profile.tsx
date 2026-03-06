@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -11,10 +11,16 @@ import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 
-export function Profile() {
+interface ProfileProps {
+  onNavigate?: (section: string) => void;
+}
+
+export function Profile({ onNavigate }: ProfileProps) {
   const { user, login, register, logout } = useAuth();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
   const [localProfile, setLocalProfile] = useState(profile);
+  const [avatarPreview, setAvatarPreview] = useState('');
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [authForm, setAuthForm] = useState({
     firstName: '',
@@ -26,6 +32,14 @@ export function Profile() {
   useEffect(() => {
     setLocalProfile(profile);
   }, [profile]);
+
+  useEffect(() => {
+    return () => {
+      if (avatarPreview) {
+        URL.revokeObjectURL(avatarPreview);
+      }
+    };
+  }, [avatarPreview]);
 
   const avatarText = useMemo(() => {
     const first = localProfile.firstName?.trim()[0] ?? 'S';
@@ -99,6 +113,24 @@ export function Profile() {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not save preference.');
     }
+  };
+
+  const triggerPhotoPicker = () => {
+    photoInputRef.current?.click();
+  };
+
+  const handlePhotoSelected = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const nextUrl = URL.createObjectURL(file);
+    setAvatarPreview((previous) => {
+      if (previous) {
+        URL.revokeObjectURL(previous);
+      }
+      return nextUrl;
+    });
+    toast.success('Profile photo updated locally for this browser session.');
   };
 
   if (!user) {
@@ -181,10 +213,13 @@ export function Profile() {
           <h1>Profile & Settings</h1>
           <p className="text-muted-foreground">Manage your account and preferences</p>
         </div>
-        <Button variant="outline" onClick={logout}>
-          <LogOut className="w-4 h-4 mr-2" />
-          Logout
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => onNavigate?.('analytics')}>View Analytics</Button>
+          <Button variant="outline" onClick={logout}>
+            <LogOut className="w-4 h-4 mr-2" />
+            Logout
+          </Button>
+        </div>
       </div>
 
       <div className="grid lg:grid-cols-3 gap-6">
@@ -195,12 +230,19 @@ export function Profile() {
           <CardContent className="space-y-4">
             <div className="flex flex-col items-center text-center">
               <Avatar className="w-24 h-24 mb-4">
-                <AvatarImage src="" />
+                <AvatarImage src={avatarPreview} />
                 <AvatarFallback className="text-2xl">{avatarText}</AvatarFallback>
               </Avatar>
               <h3>{`${localProfile.firstName || 'Student'} ${localProfile.lastName || ''}`.trim()}</h3>
               <p className="text-sm text-muted-foreground">{localProfile.email || user.email}</p>
-              <Button variant="outline" className="mt-4" onClick={() => toast.message('Photo upload API can be attached next.')}>Change Photo</Button>
+              <Button variant="outline" className="mt-4" onClick={triggerPhotoPicker}>Change Photo</Button>
+              <input
+                ref={photoInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/jpg"
+                className="hidden"
+                onChange={handlePhotoSelected}
+              />
             </div>
 
             <div className="pt-4 border-t space-y-3">

@@ -12,7 +12,11 @@ import { Difficulty, SubjectKey, getSubjectLabel } from '../lib/mcq';
 const subjects: SubjectKey[] = ['mathematics', 'physics', 'english'];
 const difficulties: Difficulty[] = ['Easy', 'Medium', 'Hard'];
 
-export function Tests() {
+interface TestsProps {
+  onNavigate?: (section: string) => void;
+}
+
+export function Tests({ onNavigate }: TestsProps) {
   const { mcqsBySubjectAndDifficulty, attempts, startPracticeTest } = useAppData();
 
   const topicTests = useMemo(() => {
@@ -186,7 +190,10 @@ export function Tests() {
                           <Button
                             variant="outline"
                             className="w-full"
-                            onClick={() => toast.message(`Review: ${test.latest?.score}% in ${test.topic}`)}
+                            onClick={() => {
+                              onNavigate?.('analytics');
+                              toast.message(`Opened Analytics for review: ${test.latest?.score}% in ${test.topic}`);
+                            }}
                           >
                             Review
                           </Button>
@@ -259,7 +266,13 @@ export function Tests() {
 
                     {test.latest ? (
                       <div className="grid grid-cols-2 gap-2">
-                        <Button variant="outline" onClick={() => toast.message(`${test.name} report shown in analytics.`)}>
+                        <Button
+                          variant="outline"
+                          onClick={() => {
+                            onNavigate?.('analytics');
+                            toast.message(`${test.name} report opened in Analytics.`);
+                          }}
+                        >
                           View Report
                         </Button>
                         <Button onClick={() => void startMockTest(test.number)}>Retake Test</Button>

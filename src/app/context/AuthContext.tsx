@@ -1,4 +1,5 @@
 import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
+import { apiRequest } from '../lib/api';
 
 interface AuthUser {
   id: string;
@@ -19,15 +20,6 @@ interface AuthContextValue {
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
-async function parseError(response: Response) {
-  try {
-    const payload = await response.json();
-    return payload?.error || 'Request failed';
-  } catch {
-    return 'Request failed';
-  }
-}
-
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_STORAGE_KEY));
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -45,15 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async function loadMe() {
       setLoading(true);
       try {
-        const response = await fetch('/api/auth/me', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-
-        if (!response.ok) {
-          throw new Error(await parseError(response));
-        }
-
-        const payload = await response.json();
+        const payload = await apiRequest<{ user: AuthUser }>('/api/auth/me', {}, token);
         if (!cancelled) {
           setUser(payload.user);
         }
@@ -78,34 +62,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [token]);
 
   const login = async (email: string, password: string) => {
-    const response = await fetch('/api/auth/login', {
+    const payload = await apiRequest<{ token: string; user: AuthUser }>('/api/auth/login', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
     });
-
-    if (!response.ok) {
-      throw new Error(await parseError(response));
-    }
-
-    const payload = await response.json();
     setToken(payload.token);
     setUser(payload.user);
     localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
   };
 
   const register = async ({ email, password, firstName = '', lastName = '' }: { email: string; password: string; firstName?: string; lastName?: string }) => {
-    const response = await fetch('/api/auth/register', {
+    const payload = await apiRequest<{ token: string; user: AuthUser }>('/api/auth/register', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, firstName, lastName }),
     });
-
-    if (!response.ok) {
-      throw new Error(await parseError(response));
-    }
-
-    const payload = await response.json();
     setToken(payload.token);
     setUser(payload.user);
     localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);

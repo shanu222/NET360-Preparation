@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { type ChangeEvent, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Button } from './ui/button';
@@ -11,12 +11,18 @@ import { ScrollArea } from './ui/scroll-area';
 import { Brain, MessageSquare, FileQuestion, Calendar, Send } from 'lucide-react';
 import { toast } from 'sonner';
 
-export function AIMentor() {
+interface AIMentorProps {
+  onNavigate?: (section: string) => void;
+}
+
+export function AIMentor({ onNavigate }: AIMentorProps) {
   const [question, setQuestion] = useState('');
   const [studyDays, setStudyDays] = useState('60');
   const [currentLevel, setCurrentLevel] = useState('');
   const [targetProgram, setTargetProgram] = useState('');
   const [planGenerated, setPlanGenerated] = useState(false);
+  const [uploadedFileName, setUploadedFileName] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'ai'; message: string }>>([
     { role: 'ai', message: 'Hi! I\'m your AI tutor for NET preparation. How can I help you today?' }
   ]);
@@ -46,6 +52,25 @@ export function AIMentor() {
 
     setChatMessages([...chatMessages, userMessage, aiResponse]);
     setQuestion('');
+  };
+
+  const handleChooseFile = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setUploadedFileName(file.name);
+    setChatMessages((previous) => [
+      ...previous,
+      {
+        role: 'ai',
+        message: `I received \"${file.name}\". OCR solving is not yet wired, but you can paste the question in Ask Doubt and I will solve it step by step.`,
+      },
+    ]);
+    toast.success(`Selected file: ${file.name}`);
   };
 
   const generateStudyPlan = () => {
@@ -170,9 +195,17 @@ export function AIMentor() {
                 <p className="text-sm text-muted-foreground mb-4">
                   Supports JPG, PNG (Max 5MB)
                 </p>
-                <Button variant="outline" onClick={() => toast.message('Image upload parser will be connected in next backend step.')}>
+                <Button variant="outline" onClick={handleChooseFile}>
                   Choose File
                 </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/png,image/jpeg,image/jpg"
+                  className="hidden"
+                  onChange={handleFileChange}
+                />
+                {uploadedFileName ? <p className="text-xs text-muted-foreground mt-3">Selected: {uploadedFileName}</p> : null}
               </div>
 
               <div className="p-4 bg-muted rounded-lg">
@@ -193,7 +226,15 @@ export function AIMentor() {
               <p className="text-green-100 mb-4">
                 Upload unlimited questions and get detailed AI solutions. Upgrade to premium for instant access!
               </p>
-              <Button variant="secondary" onClick={() => toast.message('Premium upgrade flow is now linked from Profile plans section.')}>Upgrade to Premium</Button>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  onNavigate?.('profile');
+                  toast.message('Opened Profile so you can manage your plan and account settings.');
+                }}
+              >
+                Upgrade to Premium
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>

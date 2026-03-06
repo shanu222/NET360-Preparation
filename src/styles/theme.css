@@ -1,6 +1,8 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
+  --font-sans: 'Plus Jakarta Sans', 'Segoe UI', sans-serif;
+  --font-display: 'Sora', 'Plus Jakarta Sans', 'Segoe UI', sans-serif;
   --font-size: 16px;
   --background: #ffffff;
   --foreground: oklch(0.145 0 0);
@@ -126,6 +128,12 @@
 
   body {
     @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    background-image:
+      radial-gradient(circle at 20% 15%, rgba(158, 171, 255, 0.5), transparent 35%),
+      radial-gradient(circle at 90% 8%, rgba(252, 214, 178, 0.35), transparent 28%),
+      linear-gradient(180deg, #eeedf9 0%, #e8eaf8 100%);
+    background-attachment: fixed;
   }
 
   /**
@@ -138,24 +146,28 @@
   }
 
   h1 {
+    font-family: var(--font-display);
     font-size: var(--text-2xl);
     font-weight: var(--font-weight-medium);
     line-height: 1.5;
   }
 
   h2 {
+    font-family: var(--font-display);
     font-size: var(--text-xl);
     font-weight: var(--font-weight-medium);
     line-height: 1.5;
   }
 
   h3 {
+    font-family: var(--font-display);
     font-size: var(--text-lg);
     font-weight: var(--font-weight-medium);
     line-height: 1.5;
   }
 
   h4 {
+    font-family: var(--font-display);
     font-size: var(--text-base);
     font-weight: var(--font-weight-medium);
     line-height: 1.5;
@@ -177,5 +189,99 @@
     font-size: var(--text-base);
     font-weight: var(--font-weight-normal);
     line-height: 1.5;
+  }
+}
+
+@layer utilities {
+  @keyframes net360-fade-in {
+    from {
+      opacity: 0;
+      transform: translateY(12px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  .net360-shell {
+    animation: net360-fade-in 420ms ease-out;
+  }
+
+  .net360-page {
+    padding-top: 0.25rem;
+  }
+
+  .net360-page h1 {
+    color: #1f2a63;
+    font-size: clamp(1.5rem, 1.2rem + 1.2vw, 1.95rem);
+  }
+
+  .net360-page [data-slot='tabs-list'] {
+    height: auto;
+    border: 1px solid rgba(138, 152, 235, 0.28);
+    background: linear-gradient(180deg, rgba(243, 246, 255, 0.9), rgba(235, 239, 255, 0.9));
+    border-radius: 0.95rem;
+    padding: 0.35rem;
+    gap: 0.2rem;
+  }
+
+  .net360-page [data-slot='tabs-trigger'] {
+    color: #556188;
+    border-radius: 0.75rem;
+  }
+
+  .net360-page [data-slot='tabs-trigger'][data-state='active'] {
+    background: linear-gradient(135deg, #586eff, #7c62ff);
+    color: #ffffff;
+    box-shadow: 0 7px 20px rgba(96, 93, 219, 0.25);
+  }
+
+  .net360-page [data-slot='card'] {
+    border: 1px solid rgba(129, 145, 230, 0.2);
+    border-radius: 1rem;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(248, 250, 255, 0.88));
+    box-shadow: 0 12px 28px rgba(98, 113, 202, 0.11);
+  }
+
+  .net360-page [data-slot='card'] h3,
+  .net360-page [data-slot='card'] h4 {
+    color: #263372;
+  }
+
+  .net360-page [data-slot='button'][class*='variant-outline'],
+  .net360-page [data-slot='button'].border {
+    border-color: rgba(121, 138, 231, 0.35);
+    background: rgba(255, 255, 255, 0.86);
+    color: #3d4f99;
+  }
+
+  .net360-page [data-slot='button'][class*='variant-outline']:hover,
+  .net360-page [data-slot='button'].border:hover {
+    border-color: rgba(98, 120, 230, 0.5);
+    background: rgba(238, 243, 255, 0.92);
+  }
+
+  .net360-page [data-slot='button']:not([class*='variant-outline']) {
+    background: linear-gradient(135deg, #556dff, #775eff);
+    color: #ffffff;
+    border: none;
+  }
+
+  .net360-page [data-slot='button']:not([class*='variant-outline']):hover {
+    filter: brightness(0.97);
+  }
+
+  .net360-page input,
+  .net360-page textarea,
+  .net360-page select {
+    background: rgba(255, 255, 255, 0.92);
+    border-color: rgba(130, 148, 229, 0.32);
+  }
+
+  .net360-page .border.rounded-lg,
+  .net360-page .border.rounded-xl {
+    border-color: rgba(129, 145, 230, 0.24);
+    background: rgba(255, 255, 255, 0.82);
   }
 }

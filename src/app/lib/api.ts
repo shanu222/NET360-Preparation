@@ -1,4 +1,14 @@
+import { localApiRequest, localDownloadReport } from './localApi';
+
+function shouldUseForcedLocalMode() {
+  return import.meta.env.VITE_FORCE_LOCAL_API === 'true';
+}
+
 export async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
+  if (shouldUseForcedLocalMode()) {
+    return localApiRequest<T>(path, options, token);
+  }
+
   const headers = new Headers(options.headers || {});
   if (!headers.has('Content-Type') && options.body) {
     headers.set('Content-Type', 'application/json');
@@ -7,10 +17,16 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(path, {
-    ...options,
-    headers,
-  });
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      ...options,
+      headers,
+    });
+  } catch (error) {
+    // If backend is unreachable, transparently fall back to browser-local mode.
+    return localApiRequest<T>(path, options, token);
+  }
 
   if (!response.ok) {
     let errorMessage = `Request failed (${response.status})`;
@@ -27,12 +43,25 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
 }
 
 export async function downloadReport(path: string, token?: string | null): Promise<{ blob: Blob; filename: string }> {
+  if (shouldUseForcedLocalMode()) {
+    const url = new URL(path, window.location.origin);
+    const format = (url.searchParams.get('format') || 'json') as 'csv' | 'json';
+    return localDownloadReport(format, token);
+  }
+
   const headers = new Headers();
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(path, { headers });
+  let response: Response;
+  try {
+    response = await fetch(path, { headers });
+  } catch {
+    const url = new URL(path, window.location.origin);
+    const format = (url.searchParams.get('format') || 'json') as 'csv' | 'json';
+    return localDownloadReport(format, token);
+  }
   if (!response.ok) {
     throw new Error(`Export failed (${response.status})`);
   }
