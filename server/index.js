@@ -20,7 +20,7 @@ import { AIUsageModel } from './models/AIUsage.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.API_PORT || 4000);
+const PORT = Number(process.env.PORT || process.env.API_PORT || 4000);
 const MONGODB_URI = process.env.MONGODB_URI || '';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || `${JWT_SECRET}-refresh`;
@@ -1109,5 +1109,8 @@ async function bootstrap() {
 
 bootstrap().catch((error) => {
   console.error('Failed to start server:', error?.message || error);
+  if (!MONGODB_URI) {
+    console.error('Missing required env var: MONGODB_URI');
+  }
   process.exit(1);
 });
