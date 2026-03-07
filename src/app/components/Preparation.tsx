@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { BookOpen, ChevronRight } from 'lucide-react';
+import { ChevronRight } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 
 type AcademicPart = 'part1' | 'part2';
+type TabKey = SubjectKey | 'quantitative-mathematics' | 'design-aptitude';
 
 interface ChapterItem {
   id: string;
@@ -18,6 +19,26 @@ interface PartItem {
 }
 
 const subjectTabs: SubjectKey[] = ['mathematics', 'physics', 'english', 'biology', 'chemistry'];
+const tabItems: Array<{ key: TabKey; label: string }> = [
+  { key: 'mathematics', label: 'Mathematics' },
+  { key: 'physics', label: 'Physics' },
+  { key: 'english', label: 'English' },
+  { key: 'biology', label: 'Biology' },
+  { key: 'chemistry', label: 'Chemistry' },
+  { key: 'quantitative-mathematics', label: 'Quantitative Mathematics' },
+  { key: 'design-aptitude', label: 'Design Aptitude' },
+];
+
+const FLAT_TOPIC_TABS: Record<'quantitative-mathematics' | 'design-aptitude', { title: string; topics: string[] }> = {
+  'quantitative-mathematics': {
+    title: 'Quantitative Mathematics',
+    topics: ['Algebra', 'Ratios & proportions', 'Arithmetic', 'Graphs', 'Functions'],
+  },
+  'design-aptitude': {
+    title: 'Design Aptitude',
+    topics: ['Spatial reasoning', 'Visual perception', 'Pattern recognition', 'Sketching basics', 'Creativity and design thinking', 'Basic statistics'],
+  },
+};
 
 const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
   mathematics: {
@@ -192,20 +213,42 @@ export function Preparation() {
       </div>
 
       <Tabs defaultValue="mathematics">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
-          <TabsTrigger value="mathematics">Mathematics</TabsTrigger>
-          <TabsTrigger value="physics">Physics</TabsTrigger>
-          <TabsTrigger value="english">English</TabsTrigger>
-          <TabsTrigger value="biology">Biology</TabsTrigger>
-          <TabsTrigger value="chemistry">Chemistry</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
+          {tabItems.map((tab) => (
+            <TabsTrigger key={tab.key} value={tab.key} className="text-[12px] sm:text-sm">
+              {tab.label}
+            </TabsTrigger>
+          ))}
         </TabsList>
 
-        {subjectTabs.map((subject) => {
+        {tabItems.map((tab) => {
+          if (tab.key === 'quantitative-mathematics' || tab.key === 'design-aptitude') {
+            const content = FLAT_TOPIC_TABS[tab.key];
+            return (
+              <TabsContent key={tab.key} value={tab.key} className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>{content.title}</CardTitle>
+                    <CardDescription>Topic list (no chapter structure for this section)</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <ul className="space-y-2 text-sm">
+                      {content.topics.map((topic) => (
+                        <li key={topic} className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-slate-700">
+                          {topic}
+                        </li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            );
+          }
+
+          const subject = tab.key;
           const selectedPart = selectedPartBySubject[subject];
           const currentPart = selectedPart ? SYLLABUS[subject][selectedPart] : null;
           const selectedChapterId = selectedChapterBySubject[subject];
-          const selectedChapter = currentPart?.chapters.find((chapter) => chapter.id === selectedChapterId) || null;
-
           return (
             <TabsContent key={subject} value={subject} className="space-y-4">
               <Card>
@@ -244,49 +287,47 @@ export function Preparation() {
                       {currentPart.chapters.map((chapter) => {
                         const active = selectedChapterId === chapter.id;
                         return (
-                          <button
+                          <div
                             key={chapter.id}
-                            type="button"
-                            className={`w-full rounded-xl border p-3 text-left transition ${active ? 'border-indigo-300 bg-indigo-50/55' : 'border-indigo-100 bg-white hover:bg-indigo-50/30'}`}
-                            onClick={() => {
-                              setSelectedChapterBySubject((prev) => ({ ...prev, [subject]: chapter.id }));
-                            }}
+                            className={`rounded-xl border transition ${active ? 'border-indigo-300 bg-indigo-50/55' : 'border-indigo-100 bg-white hover:bg-indigo-50/30'}`}
                           >
-                            <div className="flex items-start justify-between gap-3">
-                              <div>
-                                <p className="font-medium text-indigo-950">{chapter.title}</p>
-                                <p className="mt-1 text-xs text-slate-500">{chapter.sections.length} sections</p>
+                            <button
+                              type="button"
+                              className="w-full p-3 text-left"
+                              onClick={() => {
+                                setSelectedChapterBySubject((prev) => ({
+                                  ...prev,
+                                  [subject]: prev[subject] === chapter.id ? null : chapter.id,
+                                }));
+                              }}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="font-medium text-indigo-950">{chapter.title}</p>
+                                  <p className="mt-1 text-xs text-slate-500">{chapter.sections.length} sections</p>
+                                </div>
+                                <ChevronRight className={`h-4 w-4 text-slate-500 transition-transform ${active ? 'rotate-90' : ''}`} />
                               </div>
-                              <ChevronRight className="h-4 w-4 text-slate-500" />
-                            </div>
-                          </button>
+                            </button>
+
+                            {active ? (
+                              <div className="border-t border-indigo-100 px-3 pb-3 pt-2">
+                                <ul className="space-y-2 text-sm">
+                                  {chapter.sections.map((section) => (
+                                    <li key={section} className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-slate-700">
+                                      {section}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            ) : null}
+                          </div>
                         );
                       })}
                     </div>
                   )}
                 </CardContent>
               </Card>
-
-              {selectedChapter ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <BookOpen className="h-5 w-5" />
-                      {selectedChapter.title}
-                    </CardTitle>
-                    <CardDescription>Sections</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <ul className="space-y-2 text-sm">
-                      {selectedChapter.sections.map((section) => (
-                        <li key={section} className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-slate-700">
-                          {section}
-                        </li>
-                      ))}
-                    </ul>
-                  </CardContent>
-                </Card>
-              ) : null}
             </TabsContent>
           );
         })}
