@@ -43,6 +43,8 @@ const openai = process.env.OPENAI_API_KEY
   : null;
 
 const app = express();
+// Render sits behind a proxy and forwards client IP in X-Forwarded-For.
+app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({ origin: true, credentials: true }));
 app.use(express.json({ limit: '2mb' }));
@@ -89,6 +91,10 @@ function shuffle(array) {
 
 function hashToken(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function isValidObjectId(value) {
+  return /^[a-f\d]{24}$/i.test(String(value || ''));
 }
 
 function makeAccessToken(user) {
@@ -1595,7 +1601,17 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
   res.status(201).json({ session: serialized });
 });
 
+app.get('/api/tests/attempts', authMiddleware, async (req, res) => {
+  const attempts = await AttemptModel.find({ userId: req.user._id }).sort({ attemptedAt: -1 }).lean();
+  res.json({ attempts: attempts.map((item) => serializeAttempt(item)) });
+});
+
 app.get('/api/tests/:sessionId', authMiddleware, async (req, res) => {
+  if (!isValidObjectId(req.params.sessionId)) {
+    res.status(400).json({ error: 'Invalid session id.' });
+    return;
+  }
+
   const session = await TestSessionModel.findOne({ _id: req.params.sessionId, userId: req.user._id });
   if (!session) {
     res.status(404).json({ error: 'Session not found.' });
@@ -1606,6 +1622,11 @@ app.get('/api/tests/:sessionId', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/tests/:sessionId/finish', authMiddleware, async (req, res) => {
+  if (!isValidObjectId(req.params.sessionId)) {
+    res.status(400).json({ error: 'Invalid session id.' });
+    return;
+  }
+
   const answers = Array.isArray(req.body?.answers) ? req.body.answers : [];
   const elapsedSeconds = Math.max(1, Number(req.body?.elapsedSeconds) || 60);
 
@@ -1678,11 +1699,6 @@ app.post('/api/tests/:sessionId/finish', authMiddleware, async (req, res) => {
 
   await refreshUserProgress(req.user._id);
   res.status(201).json({ attempt: serializeAttempt(attempt) });
-});
-
-app.get('/api/tests/attempts', authMiddleware, async (req, res) => {
-  const attempts = await AttemptModel.find({ userId: req.user._id }).sort({ attemptedAt: -1 }).lean();
-  res.json({ attempts: attempts.map((item) => serializeAttempt(item)) });
 });
 
 app.get('/api/analytics/summary', authMiddleware, async (req, res) => {
