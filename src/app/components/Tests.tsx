@@ -170,7 +170,7 @@ const TEST_TYPE_CARDS: Array<{
 
 export function Tests({ onNavigate }: TestsProps) {
   const { attempts, startTestSession } = useAppData();
-  const { user, token } = useAuth();
+  const { token } = useAuth();
 
   const [selectedNetTypeId, setSelectedNetTypeId] = useState<string | null>(null);
   const [selectedTestKind, setSelectedTestKind] = useState<TestKind | null>(null);
@@ -221,7 +221,8 @@ export function Tests({ onNavigate }: TestsProps) {
       return;
     }
 
-    if (!user || !token) {
+    const authToken = token || localStorage.getItem('net360-auth-token');
+    if (!authToken) {
       toast.error('Please login first to start a test. Redirecting to login...');
       onNavigate?.('profile');
       return;
@@ -264,7 +265,7 @@ export function Tests({ onNavigate }: TestsProps) {
         selectedSubject,
       });
 
-      openExamWindow({ sessionId: session.id, testType: kind, token, examWindow });
+      openExamWindow({ sessionId: session.id, testType: kind, token: authToken, examWindow });
       toast.success('Test launched in a new window.');
     } catch (error) {
       examWindow.close();

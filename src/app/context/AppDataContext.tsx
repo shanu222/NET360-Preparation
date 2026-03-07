@@ -246,8 +246,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [mcqs]);
 
   const refreshAttempts = async () => {
-    if (!token || !user) return;
-    const payload = await apiRequest<{ attempts: TestAttempt[] }>('/api/tests/attempts', {}, token);
+    const authToken = token || localStorage.getItem('net360-auth-token');
+    if (!authToken) return;
+    const payload = await apiRequest<{ attempts: TestAttempt[] }>('/api/tests/attempts', {}, authToken);
     setAttempts((payload.attempts || []) as TestAttempt[]);
   };
 
@@ -261,7 +262,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     testType,
     selectedSubject,
   }) => {
-    if (!token || !user) {
+    const authToken = token || localStorage.getItem('net360-auth-token');
+    if (!authToken) {
       throw new Error('Please login first to start a server-backed test session.');
     }
 
@@ -271,23 +273,25 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         method: 'POST',
         body: JSON.stringify({ subject, difficulty, topic, mode, questionCount, netType, testType, selectedSubject }),
       },
-      token,
+      authToken,
     );
 
     return startPayload.session;
   };
 
   const getTestSession: AppDataContextValue['getTestSession'] = async (sessionId) => {
-    if (!token || !user) {
+    const authToken = token || localStorage.getItem('net360-auth-token');
+    if (!authToken) {
       throw new Error('Please login first to load a test session.');
     }
 
-    const payload = await apiRequest<{ session: TestSession }>(`/api/tests/${sessionId}`, {}, token);
+    const payload = await apiRequest<{ session: TestSession }>(`/api/tests/${sessionId}`, {}, authToken);
     return payload.session;
   };
 
   const submitTestSession: AppDataContextValue['submitTestSession'] = async ({ sessionId, answers, elapsedSeconds }) => {
-    if (!token || !user) {
+    const authToken = token || localStorage.getItem('net360-auth-token');
+    if (!authToken) {
       throw new Error('Please login first to submit a test session.');
     }
 
@@ -297,7 +301,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         method: 'POST',
         body: JSON.stringify({ answers, elapsedSeconds }),
       },
-      token,
+      authToken,
     );
 
     const attempt = payload.attempt;
