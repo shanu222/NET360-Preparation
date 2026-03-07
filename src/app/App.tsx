@@ -4,6 +4,7 @@ import { ScrollArea } from './components/ui/scroll-area';
 import { Dashboard } from './components/Dashboard';
 import { NUSTGuide } from './components/NUSTGuide';
 import { ProgramExplorer } from './components/ProgramExplorer';
+import { NUSTSchoolsCampuses } from './components/NUSTSchoolsCampuses';
 import { NETTypes } from './components/NETTypes';
 import { PracticeBoard } from './components/PracticeBoard';
 import { QuestionContribution } from './components/QuestionContribution';
@@ -16,6 +17,7 @@ import {
   Home, 
   BookOpen, 
   GraduationCap, 
+  Building2,
   FlaskConical,
   Pencil,
   Upload,
@@ -43,6 +45,7 @@ export default function App() {
       'home',
       'guide',
       'programs',
+      'schools-campuses',
       'net-types',
       'practice-board',
       'question-contribution',
@@ -60,6 +63,7 @@ export default function App() {
     { id: 'home', label: 'Dashboard', icon: Home },
     { id: 'guide', label: 'NUST Guide', icon: BookOpen },
     { id: 'programs', label: 'Programs', icon: GraduationCap },
+    { id: 'schools-campuses', label: 'NUST Schools & Campuses', icon: Building2 },
     { id: 'net-types', label: 'NET Types', icon: FlaskConical },
     { id: 'practice-board', label: 'Practice Board', icon: Pencil },
     { id: 'question-contribution', label: 'Question Contribution', icon: Upload },
@@ -177,6 +181,10 @@ export default function App() {
 
                 <TabsContent value="programs" className="mt-0 net360-page">
                   <ProgramExplorer />
+                </TabsContent>
+
+                <TabsContent value="schools-campuses" className="mt-0 net360-page">
+                  <NUSTSchoolsCampuses />
                 </TabsContent>
 
                 <TabsContent value="net-types" className="mt-0 net360-page">
