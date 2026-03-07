@@ -127,14 +127,30 @@ interface LocalAIUsage {
   chatCount: number;
 }
 
+interface LocalPracticeBoardQuestion {
+  id: string;
+  subject: string;
+  chapter: string;
+  section: string;
+  difficulty: string;
+  questionText: string;
+  questionImageUrl: string;
+  solutionText: string;
+  solutionImageUrl: string;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface LocalDb {
   users: LocalUser[];
   sessions: LocalSession[];
   attempts: LocalAttempt[];
   aiUsage: LocalAIUsage[];
+  practiceBoardQuestions: LocalPracticeBoardQuestion[];
 }
 
-const DB_STORAGE_KEY = 'net360-local-db-v4';
+const DB_STORAGE_KEY = 'net360-local-db-v5';
 let cachedMcqs: MCQ[] = [];
 
 function defaultPreferences(): PublicUser['preferences'] {
@@ -438,7 +454,7 @@ function generateAdaptiveSet(params: {
 function readDb(): LocalDb {
   const raw = localStorage.getItem(DB_STORAGE_KEY);
   if (!raw) {
-    return { users: [], sessions: [], attempts: [], aiUsage: [] };
+    return { users: [], sessions: [], attempts: [], aiUsage: [], practiceBoardQuestions: [] };
   }
 
   try {
@@ -448,9 +464,10 @@ function readDb(): LocalDb {
       sessions: parsed.sessions || [],
       attempts: parsed.attempts || [],
       aiUsage: parsed.aiUsage || [],
+      practiceBoardQuestions: parsed.practiceBoardQuestions || [],
     };
   } catch {
-    return { users: [], sessions: [], attempts: [], aiUsage: [] };
+    return { users: [], sessions: [], attempts: [], aiUsage: [], practiceBoardQuestions: [] };
   }
 }
 
@@ -623,6 +640,20 @@ function generateStudyPlan(params: {
 
 function createRefreshToken(userId: string) {
   return `localr:${userId}:${Math.random().toString(36).slice(2)}`;
+}
+
+function serializePracticeBoardQuestion(item: LocalPracticeBoardQuestion) {
+  return {
+    id: item.id,
+    subject: item.subject,
+    chapter: item.chapter,
+    section: item.section,
+    difficulty: item.difficulty,
+    questionText: item.questionText,
+    questionImageUrl: item.questionImageUrl,
+    solutionText: item.solutionText,
+    solutionImageUrl: item.solutionImageUrl,
+  };
 }
 
 export async function localApiRequest<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
@@ -866,6 +897,54 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       mcqs: results.slice(0, max),
       total: results.length,
     } as T;
+  }
+
+  if (url.pathname === '/api/practice-board/questions' && method === 'GET') {
+    const db = readDb();
+    const subject = String(url.searchParams.get('subject') || '').trim().toLowerCase();
+    const chapter = String(url.searchParams.get('chapter') || '').trim().toLowerCase();
+    const section = String(url.searchParams.get('section') || '').trim().toLowerCase();
+    const difficulty = String(url.searchParams.get('difficulty') || '').trim().toLowerCase();
+    const limit = clamp(Number(url.searchParams.get('limit') || '100'), 1, 500);
+
+    const filtered = db.practiceBoardQuestions.filter((item) => {
+      if (subject && item.subject !== subject) return false;
+      if (chapter && !item.chapter.toLowerCase().includes(chapter)) return false;
+      if (section && !item.section.toLowerCase().includes(section)) return false;
+      if (difficulty && item.difficulty.toLowerCase() !== difficulty) return false;
+      return true;
+    });
+
+    return {
+      questions: filtered.slice(0, limit).map(serializePracticeBoardQuestion),
+      total: filtered.length,
+    } as T;
+  }
+
+  if (url.pathname === '/api/practice-board/questions/random' && method === 'GET') {
+    const db = readDb();
+    const subject = String(url.searchParams.get('subject') || '').trim().toLowerCase();
+    const chapter = String(url.searchParams.get('chapter') || '').trim().toLowerCase();
+    const section = String(url.searchParams.get('section') || '').trim().toLowerCase();
+    const difficulty = String(url.searchParams.get('difficulty') || '').trim().toLowerCase();
+    const excludeId = String(url.searchParams.get('excludeId') || '').trim();
+
+    const filtered = db.practiceBoardQuestions.filter((item) => {
+      if (subject && item.subject !== subject) return false;
+      if (chapter && !item.chapter.toLowerCase().includes(chapter)) return false;
+      if (section && !item.section.toLowerCase().includes(section)) return false;
+      if (difficulty && item.difficulty.toLowerCase() !== difficulty) return false;
+      if (excludeId && item.id === excludeId) return false;
+      return true;
+    });
+
+    if (!filtered.length) {
+      throw new Error('No practice board questions found for this selection.');
+    }
+
+    const randomIndex = Math.floor(Math.random() * filtered.length);
+    const picked = filtered[randomIndex];
+    return { question: serializePracticeBoardQuestion(picked) } as T;
   }
 
   if (url.pathname === '/api/practice/analyze' && method === 'POST') {
@@ -1363,6 +1442,122 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     cachedMcqs = [payload as MCQ, ...mcqs];
 
     return { mcq: payload } as T;
+  }
+
+  if (url.pathname === '/api/admin/practice-board/questions' && method === 'GET') {
+    const { db } = requireAdmin(token);
+    const subject = String(url.searchParams.get('subject') || '').trim().toLowerCase();
+    const chapter = String(url.searchParams.get('chapter') || '').trim().toLowerCase();
+    const section = String(url.searchParams.get('section') || '').trim().toLowerCase();
+    const difficulty = String(url.searchParams.get('difficulty') || '').trim().toLowerCase();
+    const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
+
+    const questions = db.practiceBoardQuestions
+      .filter((item) => {
+        if (subject && item.subject !== subject) return false;
+        if (chapter && !item.chapter.toLowerCase().includes(chapter)) return false;
+        if (section && !item.section.toLowerCase().includes(section)) return false;
+        if (difficulty && item.difficulty.toLowerCase() !== difficulty) return false;
+        if (search) {
+          const haystack = [item.questionText, item.solutionText, item.chapter, item.section].join(' ').toLowerCase();
+          if (!haystack.includes(search)) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return { questions: questions.map(serializePracticeBoardQuestion) } as T;
+  }
+
+  if (url.pathname === '/api/admin/practice-board/questions' && method === 'POST') {
+    const { db } = requireAdmin(token);
+    const subject = String(body.subject || '').trim().toLowerCase();
+    const chapter = String(body.chapter || '').trim();
+    const section = String(body.section || '').trim();
+    const difficulty = String(body.difficulty || 'Medium').trim() || 'Medium';
+    const questionText = String(body.questionText || '').trim();
+    const questionImageUrl = String(body.questionImageUrl || '').trim();
+    const solutionText = String(body.solutionText || '').trim();
+    const solutionImageUrl = String(body.solutionImageUrl || '').trim();
+
+    if (!subject || !chapter || !section) {
+      throw new Error('subject, chapter, and section are required.');
+    }
+    if (!questionText && !questionImageUrl) {
+      throw new Error('Provide question text or question image.');
+    }
+    if (!solutionText && !solutionImageUrl) {
+      throw new Error('Provide solution text or solution image.');
+    }
+
+    const now = new Date().toISOString();
+    const question: LocalPracticeBoardQuestion = {
+      id: `pbq-${Date.now()}`,
+      subject,
+      chapter,
+      section,
+      difficulty,
+      questionText,
+      questionImageUrl,
+      solutionText,
+      solutionImageUrl,
+      source: 'Admin',
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    db.practiceBoardQuestions.unshift(question);
+    writeDb(db);
+    return { question: serializePracticeBoardQuestion(question) } as T;
+  }
+
+  if (/^\/api\/admin\/practice-board\/questions\/[^/]+$/.test(url.pathname) && method === 'PUT') {
+    const { db } = requireAdmin(token);
+    const questionId = url.pathname.split('/')[5];
+    const index = db.practiceBoardQuestions.findIndex((item) => item.id === questionId);
+    if (index < 0) {
+      throw new Error('Practice board question not found.');
+    }
+
+    const target = db.practiceBoardQuestions[index];
+    const updated: LocalPracticeBoardQuestion = {
+      ...target,
+      subject: Object.prototype.hasOwnProperty.call(body, 'subject') ? String(body.subject || '').trim().toLowerCase() : target.subject,
+      chapter: Object.prototype.hasOwnProperty.call(body, 'chapter') ? String(body.chapter || '').trim() : target.chapter,
+      section: Object.prototype.hasOwnProperty.call(body, 'section') ? String(body.section || '').trim() : target.section,
+      difficulty: Object.prototype.hasOwnProperty.call(body, 'difficulty') ? String(body.difficulty || '').trim() : target.difficulty,
+      questionText: Object.prototype.hasOwnProperty.call(body, 'questionText') ? String(body.questionText || '').trim() : target.questionText,
+      questionImageUrl: Object.prototype.hasOwnProperty.call(body, 'questionImageUrl') ? String(body.questionImageUrl || '').trim() : target.questionImageUrl,
+      solutionText: Object.prototype.hasOwnProperty.call(body, 'solutionText') ? String(body.solutionText || '').trim() : target.solutionText,
+      solutionImageUrl: Object.prototype.hasOwnProperty.call(body, 'solutionImageUrl') ? String(body.solutionImageUrl || '').trim() : target.solutionImageUrl,
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (!updated.subject || !updated.chapter || !updated.section) {
+      throw new Error('subject, chapter, and section are required.');
+    }
+    if (!updated.questionText && !updated.questionImageUrl) {
+      throw new Error('Provide question text or question image.');
+    }
+    if (!updated.solutionText && !updated.solutionImageUrl) {
+      throw new Error('Provide solution text or solution image.');
+    }
+
+    db.practiceBoardQuestions[index] = updated;
+    writeDb(db);
+    return { question: serializePracticeBoardQuestion(updated) } as T;
+  }
+
+  if (/^\/api\/admin\/practice-board\/questions\/[^/]+$/.test(url.pathname) && method === 'DELETE') {
+    const { db } = requireAdmin(token);
+    const questionId = url.pathname.split('/')[5];
+    const exists = db.practiceBoardQuestions.some((item) => item.id === questionId);
+    if (!exists) {
+      throw new Error('Practice board question not found.');
+    }
+    db.practiceBoardQuestions = db.practiceBoardQuestions.filter((item) => item.id !== questionId);
+    writeDb(db);
+    return { ok: true, removedQuestionId: questionId } as T;
   }
 
   if (/^\/api\/admin\/mcqs\/[^/]+$/.test(url.pathname) && method === 'PUT') {

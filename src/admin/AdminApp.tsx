@@ -59,6 +59,18 @@ interface AdminMCQ {
   difficulty: string;
 }
 
+interface AdminPracticeBoardQuestion {
+  id: string;
+  subject: string;
+  chapter: string;
+  section: string;
+  difficulty: string;
+  questionText: string;
+  questionImageUrl?: string;
+  solutionText: string;
+  solutionImageUrl?: string;
+}
+
 interface AdminSubscriptionPlan {
   id: string;
   name: string;
@@ -123,6 +135,20 @@ function emptyForm() {
   };
 }
 
+function emptyPracticeForm() {
+  return {
+    id: '',
+    subject: 'mathematics',
+    chapter: '',
+    section: '',
+    difficulty: 'Medium',
+    questionText: '',
+    questionImageUrl: '',
+    solutionText: '',
+    solutionImageUrl: '',
+  };
+}
+
 export default function AdminApp() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_KEY));
@@ -146,6 +172,9 @@ export default function AdminApp() {
   const [subscriptionOverview, setSubscriptionOverview] = useState<AdminSubscriptionOverview | null>(null);
   const [subscriptionUsers, setSubscriptionUsers] = useState<AdminSubscriptionUser[]>([]);
   const [subscriptionFilter, setSubscriptionFilter] = useState('all');
+  const [practiceQuestions, setPracticeQuestions] = useState<AdminPracticeBoardQuestion[]>([]);
+  const [practiceQuery, setPracticeQuery] = useState('');
+  const [practiceForm, setPracticeForm] = useState(emptyPracticeForm());
 
   const filteredMcqs = useMemo(() => {
     if (!query.trim()) return mcqs;
@@ -158,6 +187,17 @@ export default function AdminApp() {
     );
   }, [mcqs, query]);
 
+  const filteredPracticeQuestions = useMemo(() => {
+    if (!practiceQuery.trim()) return practiceQuestions;
+    const needle = practiceQuery.toLowerCase();
+    return practiceQuestions.filter((item) =>
+      [item.subject, item.chapter, item.section, item.difficulty, item.questionText, item.solutionText]
+        .join(' ')
+        .toLowerCase()
+        .includes(needle),
+    );
+  }, [practiceQuestions, practiceQuery]);
+
   const authToken = token;
 
   const clearAdminSession = () => {
@@ -168,11 +208,20 @@ export default function AdminApp() {
   };
 
   const loadAdminData = async (activeToken: string) => {
-    const [overviewPayload, usersPayload, requestPayload, mcqPayload, subscriptionOverviewPayload, subscriptionUsersPayload] = await Promise.all([
+    const [
+      overviewPayload,
+      usersPayload,
+      requestPayload,
+      mcqPayload,
+      practicePayload,
+      subscriptionOverviewPayload,
+      subscriptionUsersPayload,
+    ] = await Promise.all([
       apiRequest<AdminOverview>('/api/admin/overview', {}, activeToken),
       apiRequest<{ users: AdminUser[] }>('/api/admin/users', {}, activeToken),
       apiRequest<{ requests: SignupRequest[] }>('/api/admin/signup-requests?status=all', {}, activeToken),
       apiRequest<{ mcqs: AdminMCQ[] }>('/api/admin/mcqs', {}, activeToken),
+      apiRequest<{ questions: AdminPracticeBoardQuestion[] }>('/api/admin/practice-board/questions', {}, activeToken).catch(() => ({ questions: [] })),
       apiRequest<AdminSubscriptionOverview>('/api/admin/subscriptions/overview', {}, activeToken).catch(() => ({
         totalUsers: 0,
         activeUsers: 0,
@@ -187,6 +236,7 @@ export default function AdminApp() {
     setUsers(usersPayload.users || []);
     setSignupRequests(requestPayload.requests || []);
     setMcqs(mcqPayload.mcqs || []);
+    setPracticeQuestions(practicePayload.questions || []);
     setSubscriptionOverview(subscriptionOverviewPayload);
     setSubscriptionUsers(subscriptionUsersPayload.users || []);
   };
@@ -501,6 +551,77 @@ export default function AdminApp() {
     }
   };
 
+  const resetPracticeForm = () => {
+    setPracticeForm(emptyPracticeForm());
+  };
+
+  const savePracticeQuestion = async () => {
+    if (!authToken) return;
+
+    if (!practiceForm.subject.trim() || !practiceForm.chapter.trim() || !practiceForm.section.trim()) {
+      toast.error('Subject, chapter, and section are required.');
+      return;
+    }
+
+    if (!practiceForm.questionText.trim() && !practiceForm.questionImageUrl.trim()) {
+      toast.error('Provide question text or question image URL.');
+      return;
+    }
+
+    if (!practiceForm.solutionText.trim() && !practiceForm.solutionImageUrl.trim()) {
+      toast.error('Provide solution text or solution image URL.');
+      return;
+    }
+
+    const payload = {
+      subject: practiceForm.subject.toLowerCase().trim(),
+      chapter: practiceForm.chapter.trim(),
+      section: practiceForm.section.trim(),
+      difficulty: practiceForm.difficulty,
+      questionText: practiceForm.questionText.trim(),
+      questionImageUrl: practiceForm.questionImageUrl.trim(),
+      solutionText: practiceForm.solutionText.trim(),
+      solutionImageUrl: practiceForm.solutionImageUrl.trim(),
+    };
+
+    try {
+      if (practiceForm.id) {
+        await apiRequest(`/api/admin/practice-board/questions/${practiceForm.id}`, {
+          method: 'PUT',
+          body: JSON.stringify(payload),
+        }, authToken);
+        toast.success('Practice board question updated.');
+      } else {
+        await apiRequest('/api/admin/practice-board/questions', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        }, authToken);
+        toast.success('Practice board question added.');
+      }
+
+      resetPracticeForm();
+      await loadAdminData(authToken);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save practice board question.');
+    }
+  };
+
+  const deletePracticeQuestion = async (questionId: string) => {
+    if (!authToken) return;
+    if (!window.confirm('Delete this practice board question?')) return;
+
+    try {
+      await apiRequest(`/api/admin/practice-board/questions/${questionId}`, { method: 'DELETE' }, authToken);
+      toast.success('Practice board question removed.');
+      if (practiceForm.id === questionId) {
+        resetPracticeForm();
+      }
+      await loadAdminData(authToken);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not delete practice board question.');
+    }
+  };
+
   const handleSectionSelection = async (selection: {
     subject: SubjectKey;
     part: 'part1' | 'part2';
@@ -602,10 +723,11 @@ export default function AdminApp() {
       </div>
 
       <Tabs defaultValue="users" className="space-y-4">
-        <TabsList className="grid grid-cols-4 w-full max-w-3xl">
+        <TabsList className="grid grid-cols-5 w-full max-w-4xl">
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="requests">Signup Requests</TabsTrigger>
           <TabsTrigger value="mcqs">MCQs</TabsTrigger>
+          <TabsTrigger value="practice-board">Practice Board</TabsTrigger>
           <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
         </TabsList>
 
@@ -955,6 +1077,170 @@ export default function AdminApp() {
               ))}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="practice-board" className="space-y-4">
+          <div className="grid gap-4 xl:grid-cols-[1.1fr_1.9fr]">
+            <Card>
+              <CardHeader>
+                <CardTitle>Practice Board Question Editor</CardTitle>
+                <CardDescription>
+                  Add long-form conceptual questions with text/image combinations for both prompt and solution.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Subject</Label>
+                    <Select
+                      value={practiceForm.subject}
+                      onValueChange={(value) => setPracticeForm((prev) => ({ ...prev, subject: value }))}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="mathematics">Mathematics</SelectItem>
+                        <SelectItem value="physics">Physics</SelectItem>
+                        <SelectItem value="chemistry">Chemistry</SelectItem>
+                        <SelectItem value="biology">Biology</SelectItem>
+                        <SelectItem value="english">English</SelectItem>
+                        <SelectItem value="general">General</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Difficulty</Label>
+                    <Select
+                      value={practiceForm.difficulty}
+                      onValueChange={(value) => setPracticeForm((prev) => ({ ...prev, difficulty: value }))}
+                    >
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Easy">Easy</SelectItem>
+                        <SelectItem value="Medium">Medium</SelectItem>
+                        <SelectItem value="Hard">Hard</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="grid gap-3 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label>Chapter</Label>
+                    <Input
+                      value={practiceForm.chapter}
+                      onChange={(e) => setPracticeForm((prev) => ({ ...prev, chapter: e.target.value }))}
+                      placeholder="e.g. Thermodynamics"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Section</Label>
+                    <Input
+                      value={practiceForm.section}
+                      onChange={(e) => setPracticeForm((prev) => ({ ...prev, section: e.target.value }))}
+                      placeholder="e.g. First Law Applications"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Question Text</Label>
+                  <Textarea
+                    value={practiceForm.questionText}
+                    onChange={(e) => setPracticeForm((prev) => ({ ...prev, questionText: e.target.value }))}
+                    className="min-h-[120px]"
+                    placeholder="Type the conceptual problem statement..."
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Question Image URL (optional)</Label>
+                  <Input
+                    value={practiceForm.questionImageUrl}
+                    onChange={(e) => setPracticeForm((prev) => ({ ...prev, questionImageUrl: e.target.value }))}
+                    placeholder="https://..."
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Solution Text</Label>
+                  <Textarea
+                    value={practiceForm.solutionText}
+                    onChange={(e) => setPracticeForm((prev) => ({ ...prev, solutionText: e.target.value }))}
+                    className="min-h-[120px]"
+                    placeholder="Type the complete answer/explanation..."
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Solution Image URL (optional)</Label>
+                  <Input
+                    value={practiceForm.solutionImageUrl}
+                    onChange={(e) => setPracticeForm((prev) => ({ ...prev, solutionImageUrl: e.target.value }))}
+                    placeholder="https://..."
+                  />
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => void savePracticeQuestion()}>
+                    {practiceForm.id ? 'Update' : 'Add'} Practice Question
+                  </Button>
+                  <Button variant="outline" onClick={resetPracticeForm}>Clear</Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Practice Board Question Bank</CardTitle>
+                <CardDescription>Edit or remove existing conceptual questions.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <Input
+                  placeholder="Search by subject/chapter/section/question..."
+                  value={practiceQuery}
+                  onChange={(e) => setPracticeQuery(e.target.value)}
+                />
+                <div className="space-y-2 max-h-[760px] overflow-auto">
+                  {filteredPracticeQuestions.map((item) => (
+                    <div key={item.id} className="rounded-lg border p-3">
+                      <button
+                        type="button"
+                        className="w-full text-left"
+                        onClick={() => {
+                          setPracticeForm({
+                            id: item.id,
+                            subject: item.subject,
+                            chapter: item.chapter || '',
+                            section: item.section || '',
+                            difficulty: item.difficulty || 'Medium',
+                            questionText: item.questionText || '',
+                            questionImageUrl: item.questionImageUrl || '',
+                            solutionText: item.solutionText || '',
+                            solutionImageUrl: item.solutionImageUrl || '',
+                          });
+                        }}
+                      >
+                        <p className="line-clamp-2 text-sm">{item.questionText || '(Image-only question)'}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {item.subject} • {item.chapter || '-'} • {item.section || '-'} • {item.difficulty}
+                        </p>
+                      </button>
+                      <div className="mt-2 flex justify-end">
+                        <Button variant="destructive" size="sm" onClick={() => void deletePracticeQuestion(item.id)}>
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                  {!filteredPracticeQuestions.length ? (
+                    <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
+                      No practice board questions found.
+                    </div>
+                  ) : null}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
     </div>

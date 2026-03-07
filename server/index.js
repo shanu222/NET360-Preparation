@@ -15,6 +15,7 @@ import { MCQModel } from './models/MCQ.js';
 import { TestSessionModel } from './models/TestSession.js';
 import { AttemptModel } from './models/Attempt.js';
 import { AIUsageModel } from './models/AIUsage.js';
+import { PracticeBoardQuestionModel } from './models/PracticeBoardQuestion.js';
 import { SignupRequestModel } from './models/SignupRequest.js';
 import { SignupTokenModel } from './models/SignupToken.js';
 
@@ -489,6 +490,20 @@ function serializeMcq(item) {
     answer: item.answer,
     tip: item.tip,
     difficulty: item.difficulty,
+  };
+}
+
+function serializePracticeBoardQuestion(item) {
+  return {
+    id: String(item._id),
+    subject: String(item.subject || '').toLowerCase(),
+    chapter: String(item.chapter || '').trim(),
+    section: String(item.section || '').trim(),
+    difficulty: String(item.difficulty || 'Medium'),
+    questionText: String(item.questionText || '').trim(),
+    questionImageUrl: String(item.questionImageUrl || '').trim(),
+    solutionText: String(item.solutionText || '').trim(),
+    solutionImageUrl: String(item.solutionImageUrl || '').trim(),
   };
 }
 
@@ -1586,6 +1601,63 @@ app.post('/api/practice/analyze', authMiddleware, async (req, res) => {
   });
 });
 
+app.get('/api/practice-board/questions', async (req, res) => {
+  try {
+    const subject = String(req.query.subject || '').trim().toLowerCase();
+    const chapter = String(req.query.chapter || '').trim();
+    const section = String(req.query.section || '').trim();
+    const difficulty = String(req.query.difficulty || '').trim();
+    const limit = clamp(Number(req.query.limit) || 100, 1, 500);
+
+    const filter = {};
+    if (subject) filter.subject = subject;
+    if (chapter) filter.chapter = { $regex: chapter, $options: 'i' };
+    if (section) filter.section = { $regex: section, $options: 'i' };
+    if (difficulty) filter.difficulty = difficulty;
+
+    const questions = await PracticeBoardQuestionModel.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
+    res.json({ questions: questions.map((item) => serializePracticeBoardQuestion(item)), total: questions.length });
+  } catch {
+    res.status(500).json({ error: 'Failed to load practice board questions.' });
+  }
+});
+
+app.get('/api/practice-board/questions/random', async (req, res) => {
+  try {
+    const subject = String(req.query.subject || '').trim().toLowerCase();
+    const chapter = String(req.query.chapter || '').trim();
+    const section = String(req.query.section || '').trim();
+    const difficulty = String(req.query.difficulty || '').trim();
+    const excludeId = String(req.query.excludeId || '').trim();
+
+    const filter = {};
+    if (subject) filter.subject = subject;
+    if (chapter) filter.chapter = { $regex: chapter, $options: 'i' };
+    if (section) filter.section = { $regex: section, $options: 'i' };
+    if (difficulty) filter.difficulty = difficulty;
+    if (excludeId && isValidObjectId(excludeId)) {
+      filter._id = { $ne: excludeId };
+    }
+
+    const count = await PracticeBoardQuestionModel.countDocuments(filter);
+    if (!count) {
+      res.status(404).json({ error: 'No practice board questions found for this selection.' });
+      return;
+    }
+
+    const randomIndex = Math.floor(Math.random() * count);
+    const item = await PracticeBoardQuestionModel.findOne(filter).skip(randomIndex).lean();
+    if (!item) {
+      res.status(404).json({ error: 'No practice board question available.' });
+      return;
+    }
+
+    res.json({ question: serializePracticeBoardQuestion(item) });
+  } catch {
+    res.status(500).json({ error: 'Failed to load random practice board question.' });
+  }
+});
+
 app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
   const message = String(req.body?.message || '').trim();
   const context = String(req.body?.context || '').trim();
@@ -2629,6 +2701,143 @@ app.delete('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, r
   }
 
   res.json({ ok: true, removedMcqId: mcqId });
+});
+
+app.get('/api/admin/practice-board/questions', authMiddleware, requireAdmin, async (req, res) => {
+  const subject = String(req.query.subject || '').trim().toLowerCase();
+  const chapter = String(req.query.chapter || '').trim();
+  const section = String(req.query.section || '').trim();
+  const difficulty = String(req.query.difficulty || '').trim();
+  const search = String(req.query.search || '').trim();
+
+  const filter = {};
+  if (subject) filter.subject = subject;
+  if (chapter) filter.chapter = { $regex: chapter, $options: 'i' };
+  if (section) filter.section = { $regex: section, $options: 'i' };
+  if (difficulty) filter.difficulty = difficulty;
+  if (search) {
+    filter.$or = [
+      { questionText: { $regex: search, $options: 'i' } },
+      { solutionText: { $regex: search, $options: 'i' } },
+    ];
+  }
+
+  const questions = await PracticeBoardQuestionModel.find(filter).sort({ createdAt: -1 }).limit(500).lean();
+  res.json({ questions: questions.map((item) => serializePracticeBoardQuestion(item)) });
+});
+
+app.post('/api/admin/practice-board/questions', authMiddleware, requireAdmin, async (req, res) => {
+  const {
+    subject,
+    chapter,
+    section,
+    difficulty = 'Medium',
+    questionText = '',
+    questionImageUrl = '',
+    solutionText = '',
+    solutionImageUrl = '',
+  } = req.body || {};
+
+  const normalizedSubject = String(subject || '').trim().toLowerCase();
+  if (!normalizedSubject || !chapter || !section) {
+    res.status(400).json({ error: 'subject, chapter, and section are required.' });
+    return;
+  }
+
+  if (!String(questionText || '').trim() && !String(questionImageUrl || '').trim()) {
+    res.status(400).json({ error: 'Provide question text or question image.' });
+    return;
+  }
+
+  if (!String(solutionText || '').trim() && !String(solutionImageUrl || '').trim()) {
+    res.status(400).json({ error: 'Provide solution text or solution image.' });
+    return;
+  }
+
+  const created = await PracticeBoardQuestionModel.create({
+    subject: normalizedSubject,
+    chapter: String(chapter).trim(),
+    section: String(section).trim(),
+    difficulty: String(difficulty || 'Medium').trim() || 'Medium',
+    questionText: String(questionText || '').trim(),
+    questionImageUrl: String(questionImageUrl || '').trim(),
+    solutionText: String(solutionText || '').trim(),
+    solutionImageUrl: String(solutionImageUrl || '').trim(),
+    source: 'Admin',
+  });
+
+  res.status(201).json({ question: serializePracticeBoardQuestion(created) });
+});
+
+app.put('/api/admin/practice-board/questions/:questionId', authMiddleware, requireAdmin, async (req, res) => {
+  const existing = await PracticeBoardQuestionModel.findById(req.params.questionId);
+  if (!existing) {
+    res.status(404).json({ error: 'Practice board question not found.' });
+    return;
+  }
+
+  const next = {
+    subject: Object.prototype.hasOwnProperty.call(req.body, 'subject')
+      ? String(req.body.subject ?? '').trim().toLowerCase()
+      : String(existing.subject || '').trim().toLowerCase(),
+    chapter: Object.prototype.hasOwnProperty.call(req.body, 'chapter')
+      ? String(req.body.chapter ?? '').trim()
+      : String(existing.chapter || '').trim(),
+    section: Object.prototype.hasOwnProperty.call(req.body, 'section')
+      ? String(req.body.section ?? '').trim()
+      : String(existing.section || '').trim(),
+    difficulty: Object.prototype.hasOwnProperty.call(req.body, 'difficulty')
+      ? String(req.body.difficulty ?? '').trim()
+      : String(existing.difficulty || '').trim(),
+    questionText: Object.prototype.hasOwnProperty.call(req.body, 'questionText')
+      ? String(req.body.questionText ?? '').trim()
+      : String(existing.questionText || '').trim(),
+    questionImageUrl: Object.prototype.hasOwnProperty.call(req.body, 'questionImageUrl')
+      ? String(req.body.questionImageUrl ?? '').trim()
+      : String(existing.questionImageUrl || '').trim(),
+    solutionText: Object.prototype.hasOwnProperty.call(req.body, 'solutionText')
+      ? String(req.body.solutionText ?? '').trim()
+      : String(existing.solutionText || '').trim(),
+    solutionImageUrl: Object.prototype.hasOwnProperty.call(req.body, 'solutionImageUrl')
+      ? String(req.body.solutionImageUrl ?? '').trim()
+      : String(existing.solutionImageUrl || '').trim(),
+  };
+
+  if (!next.subject || !next.chapter || !next.section) {
+    res.status(400).json({ error: 'subject, chapter, and section are required.' });
+    return;
+  }
+
+  if (!next.questionText && !next.questionImageUrl) {
+    res.status(400).json({ error: 'Provide question text or question image.' });
+    return;
+  }
+
+  if (!next.solutionText && !next.solutionImageUrl) {
+    res.status(400).json({ error: 'Provide solution text or solution image.' });
+    return;
+  }
+
+  Object.assign(existing, next);
+  const updated = await existing.save();
+
+  res.json({ question: serializePracticeBoardQuestion(updated) });
+});
+
+app.delete('/api/admin/practice-board/questions/:questionId', authMiddleware, requireAdmin, async (req, res) => {
+  const questionId = String(req.params.questionId || '').trim();
+  if (!questionId) {
+    res.status(400).json({ error: 'Question id is required.' });
+    return;
+  }
+
+  const removed = await PracticeBoardQuestionModel.findByIdAndDelete(questionId).lean();
+  if (!removed) {
+    res.status(404).json({ error: 'Practice board question not found.' });
+    return;
+  }
+
+  res.json({ ok: true, removedQuestionId: questionId });
 });
 
 async function bootstrap() {

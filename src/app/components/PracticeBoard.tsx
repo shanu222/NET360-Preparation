@@ -4,7 +4,6 @@ import { toast } from 'sonner';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { apiRequest } from '../lib/api';
-import { MCQ, getSubjectLabel } from '../lib/mcq';
 
 type Tool = 'pen' | 'eraser';
 
@@ -19,10 +18,17 @@ interface Stroke {
   color: string;
 }
 
-type BoardQuestion = MCQ & {
-  imageUrl?: string;
-  diagramUrl?: string;
-};
+interface BoardQuestion {
+  id: string;
+  subject: string;
+  chapter: string;
+  section: string;
+  difficulty: string;
+  questionText: string;
+  questionImageUrl?: string;
+  solutionText: string;
+  solutionImageUrl?: string;
+}
 
 const PEN_COLORS = [
   { name: 'Black', value: '#111827' },
@@ -33,8 +39,8 @@ const PEN_COLORS = [
 ];
 
 export function PracticeBoard() {
-  const [questionPool, setQuestionPool] = useState<BoardQuestion[]>([]);
   const [activeQuestion, setActiveQuestion] = useState<BoardQuestion | null>(null);
+  const [showAnswer, setShowAnswer] = useState(false);
   const [loadingQuestion, setLoadingQuestion] = useState(false);
   const [tool, setTool] = useState<Tool>('pen');
   const [penColor, setPenColor] = useState(PEN_COLORS[0].value);
@@ -45,13 +51,10 @@ export function PracticeBoard() {
   const currentStrokeRef = useRef<Stroke | null>(null);
   const isDrawingRef = useRef(false);
 
-  const randomQuestion = useCallback((pool: BoardQuestion[], currentId?: string | null) => {
-    if (!pool.length) return null;
-    if (pool.length === 1) return pool[0];
-
-    const candidates = pool.filter((item) => item.id !== currentId);
-    const source = candidates.length ? candidates : pool;
-    return source[Math.floor(Math.random() * source.length)] || source[0] || null;
+  const formatSubjectLabel = useCallback((subject: string) => {
+    const normalized = String(subject || '').trim().toLowerCase();
+    if (!normalized) return 'General';
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1);
   }, []);
 
   const redrawCanvas = useCallback(() => {
@@ -157,25 +160,24 @@ export function PracticeBoard() {
     redrawCanvas();
   }, [redrawCanvas]);
 
-  const loadQuestionPool = useCallback(async () => {
+  const fetchRandomQuestion = useCallback(async (excludeId?: string) => {
     setLoadingQuestion(true);
     try {
-      const payload = await apiRequest<{ mcqs: BoardQuestion[] }>('/api/mcqs?limit=500');
-      const pool = Array.isArray(payload?.mcqs) ? payload.mcqs : [];
-      setQuestionPool(pool);
-      setActiveQuestion(randomQuestion(pool, null));
+      const query = excludeId ? `?excludeId=${encodeURIComponent(excludeId)}` : '';
+      const payload = await apiRequest<{ question: BoardQuestion }>(`/api/practice-board/questions/random${query}`);
+      setActiveQuestion(payload?.question || null);
+      setShowAnswer(false);
     } catch {
-      setQuestionPool([]);
       setActiveQuestion(null);
-      toast.error('Could not load questions from the database.');
+      toast.error('Could not load a practice board question from the database.');
     } finally {
       setLoadingQuestion(false);
     }
-  }, [randomQuestion]);
+  }, []);
 
   useEffect(() => {
-    void loadQuestionPool();
-  }, [loadQuestionPool]);
+    void fetchRandomQuestion();
+  }, [fetchRandomQuestion]);
 
   useEffect(() => {
     resizeCanvas();
@@ -186,7 +188,12 @@ export function PracticeBoard() {
 
   const questionImage = useMemo(() => {
     if (!activeQuestion) return '';
-    return activeQuestion.imageUrl || activeQuestion.diagramUrl || '';
+    return activeQuestion.questionImageUrl || '';
+  }, [activeQuestion]);
+
+  const solutionImage = useMemo(() => {
+    if (!activeQuestion) return '';
+    return activeQuestion.solutionImageUrl || '';
   }, [activeQuestion]);
 
   return (
@@ -203,31 +210,54 @@ export function PracticeBoard() {
               <CardTitle className="text-indigo-950">Question</CardTitle>
               <CardDescription>
                 {activeQuestion
-                  ? `${getSubjectLabel(activeQuestion.subject)} • ${activeQuestion.topic} • ${activeQuestion.difficulty}`
+                  ? `${formatSubjectLabel(activeQuestion.subject)} • ${activeQuestion.chapter || 'General'} • ${activeQuestion.section || 'General'} • ${activeQuestion.difficulty}`
                   : 'No question available. Import a new dataset to begin practice.'}
               </CardDescription>
             </div>
-            <Button
-              className="w-full bg-gradient-to-r from-indigo-600 to-violet-500 text-white sm:w-auto"
-              onClick={() => {
-                const next = randomQuestion(questionPool, activeQuestion?.id || null);
-                setActiveQuestion(next);
-              }}
-              disabled={loadingQuestion || !questionPool.length}
-            >
-              {loadingQuestion ? 'Loading...' : 'Next Question'}
-            </Button>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+              <Button
+                className="w-full border-indigo-300 bg-white text-indigo-700 hover:bg-indigo-50 sm:w-auto"
+                variant="outline"
+                onClick={() => setShowAnswer((prev) => !prev)}
+                disabled={!activeQuestion}
+              >
+                {showAnswer ? 'Hide Answer' : 'View Answer'}
+              </Button>
+              <Button
+                className="w-full bg-gradient-to-r from-indigo-600 to-violet-500 text-white sm:w-auto"
+                onClick={() => void fetchRandomQuestion(activeQuestion?.id)}
+                disabled={loadingQuestion}
+              >
+                {loadingQuestion ? 'Loading...' : 'Next Question'}
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent>
           <div className="rounded-xl border border-indigo-100 bg-slate-50/60 p-4">
             <p className="text-base text-slate-800 sm:text-lg">
-              {activeQuestion?.question || 'Question bank is empty right now.'}
+              {activeQuestion?.questionText || 'Question bank is empty right now.'}
             </p>
             {questionImage ? (
               <img src={questionImage} alt="Question diagram" className="mt-3 max-h-56 w-auto rounded-lg border border-indigo-100 bg-white object-contain" />
             ) : null}
           </div>
+
+          {showAnswer && activeQuestion ? (
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4">
+              <p className="text-xs uppercase tracking-wide text-emerald-700">Answer</p>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">
+                {activeQuestion.solutionText || 'No text answer provided for this question.'}
+              </p>
+              {solutionImage ? (
+                <img
+                  src={solutionImage}
+                  alt="Solution diagram"
+                  className="mt-3 max-h-56 w-auto rounded-lg border border-emerald-200 bg-white object-contain"
+                />
+              ) : null}
+            </div>
+          ) : null}
         </CardContent>
       </Card>
 
