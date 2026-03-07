@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRight, Bookmark, CircleHelp, FastForward, Rewind, Save, Send, SkipBack, SkipForward } from 'lucide-react';
 import { toast } from 'sonner';
-import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
+import { apiRequest } from '../lib/api';
 
 type Difficulty = 'Easy' | 'Medium' | 'Hard';
 type SubjectKey = 'mathematics' | 'physics' | 'english' | 'biology' | 'chemistry';
@@ -43,7 +43,6 @@ function formatTime(totalSeconds: number) {
 }
 
 export function TestInterfacePage() {
-  const { getTestSession, submitTestSession } = useAppData();
   const { user } = useAuth();
 
   const [session, setSession] = useState<TestSession | null>(null);
@@ -57,6 +56,30 @@ export function TestInterfacePage() {
   const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [result, setResult] = useState<ResultState | null>(null);
 
+  const [resolvedToken, setResolvedToken] = useState<string | null>(null);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const fromQuery = params.get('authToken');
+    const fromStorage = localStorage.getItem('net360-auth-token');
+    const token = fromQuery || fromStorage;
+
+    if (!token) {
+      setError('Missing authentication token. Redirecting to login page...');
+      setLoading(false);
+      window.setTimeout(() => {
+        window.location.href = '/?tab=profile';
+      }, 900);
+      return;
+    }
+
+    if (fromQuery && !fromStorage) {
+      localStorage.setItem('net360-auth-token', fromQuery);
+    }
+
+    setResolvedToken(token);
+  }, []);
+
   const startedAtLabel = useMemo(() => {
     if (!session?.startedAt) return '--:--';
     return new Date(session.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -65,6 +88,7 @@ export function TestInterfacePage() {
   useEffect(() => {
     async function loadSession() {
       try {
+        if (!resolvedToken) return;
         const params = new URLSearchParams(window.location.search);
         const sessionId = params.get('sessionId');
 
@@ -72,7 +96,8 @@ export function TestInterfacePage() {
           throw new Error('Missing sessionId. Please start a test from the Tests page.');
         }
 
-        const payload = await getTestSession(sessionId);
+        const response = await apiRequest<{ session: TestSession }>(`/api/tests/${sessionId}`, {}, resolvedToken);
+        const payload = response.session;
         setSession(payload as unknown as TestSession);
         setRemainingSeconds(Math.max(1, payload.durationMinutes * 60));
       } catch (err) {
@@ -83,7 +108,7 @@ export function TestInterfacePage() {
     }
 
     void loadSession();
-  }, [getTestSession]);
+  }, [resolvedToken]);
 
   useEffect(() => {
     if (!session || result || remainingSeconds <= 0) return;
@@ -144,25 +169,8 @@ export function TestInterfacePage() {
     if (previous) setCurrentIndex(previous.start);
   };
 
-  const jumpToReview = () => {
-    if (!session) return;
-    const firstMarked = session.questions.findIndex((item) => markedForReview[item.id]);
-    if (firstMarked >= 0) {
-      setCurrentIndex(firstMarked);
-      return;
-    }
-
-    const firstUnanswered = session.questions.findIndex((item) => !answers[item.id]);
-    if (firstUnanswered >= 0) {
-      setCurrentIndex(firstUnanswered);
-      return;
-    }
-
-    toast.message('All questions are answered and none are marked for review.');
-  };
-
   const handleSubmit = async (auto = false) => {
-    if (!session || isSubmitting || result) return;
+    if (!session || isSubmitting || result || !resolvedToken) return;
 
     setIsSubmitting(true);
     try {
@@ -171,11 +179,19 @@ export function TestInterfacePage() {
         selectedOption: answers[item.id] ?? null,
       }));
 
-      const attempt = await submitTestSession({
-        sessionId: session.id,
-        answers: payload,
-        elapsedSeconds: Math.max(1, session.durationMinutes * 60 - remainingSeconds),
-      });
+      const response = await apiRequest<{ attempt: { score: number; correctAnswers?: number; wrongAnswers?: number; unanswered?: number } }>(
+        `/api/tests/${session.id}/finish`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            answers: payload,
+            elapsedSeconds: Math.max(1, session.durationMinutes * 60 - remainingSeconds),
+          }),
+        },
+        resolvedToken,
+      );
+
+      const attempt = response.attempt;
 
       setResult({
         score: attempt.score,
@@ -307,7 +323,7 @@ export function TestInterfacePage() {
             })}
           </div>
 
-          <div className="grid grid-cols-3 gap-1 sm:grid-cols-5 xl:grid-cols-10">
+          <div className="grid grid-cols-3 gap-1 sm:grid-cols-5 xl:grid-cols-9">
             <ExamButton label="Save" icon={Save} onClick={() => toast.success('Answer saved for this question.')} />
             <ExamButton label="Next" icon={ArrowRight} onClick={() => setCurrentIndex((prev) => Math.min(session.questionCount - 1, prev + 1))} />
             <ExamButton label="Prev" icon={ArrowLeft} onClick={() => setCurrentIndex((prev) => Math.max(0, prev - 1))} />
@@ -316,7 +332,6 @@ export function TestInterfacePage() {
             <ExamButton label="Prev Section" icon={SkipBack} onClick={goToPreviousSection} />
             <ExamButton label="First" icon={Rewind} onClick={() => setCurrentIndex(0)} />
             <ExamButton label="Last" icon={FastForward} onClick={() => setCurrentIndex(session.questionCount - 1)} />
-            <ExamButton label="Review" icon={Bookmark} onClick={jumpToReview} />
             <ExamButton label="Help" icon={CircleHelp} onClick={() => toast.message('Use Next/Prev, Section controls, palette, and Submit when done.')} />
           </div>
         </section>

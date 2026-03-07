@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   FlaskConical,
   Layers,
+  Loader2,
   Play,
   Ruler,
   Sparkles,
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
+import { useAuth } from '../context/AuthContext';
 import { SubjectKey } from '../lib/mcq';
 
 interface TestsProps {
@@ -168,11 +170,12 @@ const TEST_TYPE_CARDS: Array<{
 
 export function Tests({ onNavigate }: TestsProps) {
   const { attempts, startTestSession } = useAppData();
+  const { user, token } = useAuth();
 
   const [selectedNetTypeId, setSelectedNetTypeId] = useState<string | null>(null);
   const [selectedTestKind, setSelectedTestKind] = useState<TestKind | null>(null);
   const [selectedSubject, setSelectedSubject] = useState<SubjectKey>('mathematics');
-  const [startingKind, setStartingKind] = useState<TestKind | null>(null);
+  const [launchingKind, setLaunchingKind] = useState<TestKind | null>(null);
 
   const selectedNetType = useMemo(
     () => NET_PROFILES.find((profile) => profile.id === selectedNetTypeId) || null,
@@ -201,13 +204,15 @@ export function Tests({ onNavigate }: TestsProps) {
     }
   }, [subjectOptions]);
 
-  const openExamWindow = (sessionId: string) => {
-    const examWindow = window.open('/test-interface', '_blank');
+  const openExamWindow = (params: { sessionId: string; testType: TestKind; token: string; examWindow: Window | null }) => {
+    const { sessionId, testType, token: authToken, examWindow } = params;
     if (!examWindow) {
       toast.error('Popup blocked. Please allow popups and try again.');
       return;
     }
-    examWindow.location.href = `/test-interface?sessionId=${encodeURIComponent(sessionId)}`;
+
+    const url = `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=${encodeURIComponent(testType)}&authToken=${encodeURIComponent(authToken)}`;
+    examWindow.location.href = url;
   };
 
   const beginTest = async (kind: TestKind) => {
@@ -216,8 +221,21 @@ export function Tests({ onNavigate }: TestsProps) {
       return;
     }
 
+    if (!user || !token) {
+      toast.error('Please login first to start a test. Redirecting to login...');
+      onNavigate?.('profile');
+      return;
+    }
+
+    // Open popup synchronously to avoid browser popup blockers.
+    const examWindow = window.open('/exam-interface', '_blank', 'width=1400,height=900');
+    if (!examWindow) {
+      toast.error('Popup blocked. Please allow popups and try again.');
+      return;
+    }
+
     try {
-      setStartingKind(kind);
+      setLaunchingKind(kind);
       const mode = kind === 'full-mock' ? 'mock' : kind === 'adaptive' ? 'adaptive' : 'topic';
       const directSubjectDistribution = selectedNetType.distribution.find(
         (item) => item.sourceSubjects.length === 1 && item.sourceSubjects[0] === selectedSubject,
@@ -246,12 +264,13 @@ export function Tests({ onNavigate }: TestsProps) {
         selectedSubject,
       });
 
-      openExamWindow(session.id);
+      openExamWindow({ sessionId: session.id, testType: kind, token, examWindow });
       toast.success('Test launched in a new window.');
     } catch (error) {
+      examWindow.close();
       toast.error(error instanceof Error ? error.message : 'Could not start test.');
     } finally {
-      setStartingKind(null);
+      setLaunchingKind(null);
     }
   };
 
@@ -405,7 +424,8 @@ export function Tests({ onNavigate }: TestsProps) {
             {TEST_TYPE_CARDS.map((card) => {
               const Icon = card.icon;
               const selected = selectedTestKind === card.id;
-              const isStarting = startingKind === card.id;
+              const isLaunchingThis = launchingKind === card.id;
+              const isAnotherLaunching = Boolean(launchingKind && launchingKind !== card.id);
               return (
                 <Card
                   key={card.id}
@@ -429,19 +449,30 @@ export function Tests({ onNavigate }: TestsProps) {
                     </ul>
 
                     <div className="flex gap-2">
-                      <Button variant="outline" className="flex-1" onClick={() => setSelectedTestKind(card.id)}>
+                      <Button
+                        variant="outline"
+                        className={`flex-1 transition-all ${selected ? 'border-indigo-500 text-indigo-700' : ''}`}
+                        onClick={() => setSelectedTestKind(card.id)}
+                        disabled={Boolean(launchingKind)}
+                      >
                         Select
                       </Button>
                       <Button
-                        className="flex-1 bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
+                        className={`flex-1 transition-all ${
+                          isLaunchingThis
+                            ? 'bg-indigo-700 text-white'
+                            : isAnotherLaunching
+                              ? 'bg-slate-300 text-slate-500'
+                              : 'bg-gradient-to-r from-indigo-600 to-violet-500 text-white hover:-translate-y-0.5'
+                        }`}
                         onClick={() => {
                           setSelectedTestKind(card.id);
                           void beginTest(card.id);
                         }}
-                        disabled={Boolean(startingKind)}
+                        disabled={Boolean(launchingKind)}
                       >
-                        <Play className="mr-1.5 h-4 w-4" />
-                        {isStarting ? 'Launching...' : card.buttonLabel}
+                        {isLaunchingThis ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />}
+                        {isLaunchingThis ? 'Launching...' : card.buttonLabel}
                       </Button>
                     </div>
                   </CardContent>

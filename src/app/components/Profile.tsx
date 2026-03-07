@@ -42,6 +42,16 @@ export function Profile({ onNavigate }: ProfileProps) {
   }, [profile]);
 
   useEffect(() => {
+    if (!user) return;
+    setLocalProfile((previous) => ({
+      ...previous,
+      firstName: previous.firstName || user.firstName || '',
+      lastName: previous.lastName || user.lastName || '',
+      email: previous.email || user.email || '',
+    }));
+  }, [user]);
+
+  useEffect(() => {
     return () => {
       if (avatarPreview) {
         URL.revokeObjectURL(avatarPreview);
@@ -528,17 +538,17 @@ export function Profile({ onNavigate }: ProfileProps) {
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Personal Information</CardTitle>
-            <CardDescription>Update your personal details</CardDescription>
+            <CardDescription>Your previous details are prefilled. You can update city only.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="first-name">First Name</Label>
-                <Input id="first-name" value={localProfile.firstName} onChange={(e) => updateField('firstName', e.target.value)} placeholder="John" />
+                <Input id="first-name" value={localProfile.firstName} disabled placeholder="John" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="last-name">Last Name</Label>
-                <Input id="last-name" value={localProfile.lastName} onChange={(e) => updateField('lastName', e.target.value)} placeholder="Doe" />
+                <Input id="last-name" value={localProfile.lastName} disabled placeholder="Doe" />
               </div>
             </div>
 
@@ -549,7 +559,7 @@ export function Profile({ onNavigate }: ProfileProps) {
 
             <div className="space-y-2">
               <Label htmlFor="phone">Phone Number</Label>
-              <Input id="phone" type="tel" value={localProfile.phone} onChange={(e) => updateField('phone', e.target.value)} placeholder="+92 300 1234567" />
+              <Input id="phone" type="tel" value={localProfile.phone} disabled placeholder="+92 300 1234567" />
             </div>
 
             <div className="space-y-2">
@@ -559,12 +569,12 @@ export function Profile({ onNavigate }: ProfileProps) {
                   <SelectValue placeholder="Select city" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="islamabad">Islamabad</SelectItem>
-                  <SelectItem value="rawalpindi">Rawalpindi</SelectItem>
-                  <SelectItem value="lahore">Lahore</SelectItem>
-                  <SelectItem value="karachi">Karachi</SelectItem>
-                  <SelectItem value="peshawar">Peshawar</SelectItem>
-                  <SelectItem value="quetta">Quetta</SelectItem>
+                  <SelectItem value="Islamabad">Islamabad</SelectItem>
+                  <SelectItem value="Rawalpindi">Rawalpindi</SelectItem>
+                  <SelectItem value="Lahore">Lahore</SelectItem>
+                  <SelectItem value="Karachi">Karachi</SelectItem>
+                  <SelectItem value="Peshawar">Peshawar</SelectItem>
+                  <SelectItem value="Quetta">Quetta</SelectItem>
                 </SelectContent>
               </Select>
             </div>

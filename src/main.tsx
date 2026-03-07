@@ -10,7 +10,9 @@
 
   const isAdminOnlyBuild = String((import.meta as any).env?.VITE_ADMIN_ONLY || '').toLowerCase() === 'true';
   const isAdminPanelRoute = window.location.pathname.startsWith('/admin');
-  const isTestInterfaceRoute = window.location.pathname.startsWith('/test-interface');
+  const isTestInterfaceRoute =
+    window.location.pathname.startsWith('/test-interface') ||
+    window.location.pathname.startsWith('/exam-interface');
 
   createRoot(document.getElementById("root")!).render(
     isAdminOnlyBuild || isAdminPanelRoute

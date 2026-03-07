@@ -37,7 +37,23 @@ import { AuthProvider } from './context/AuthContext';
 import { Toaster } from 'sonner';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('home');
+  const [activeTab, setActiveTab] = useState(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab');
+    const allowed = new Set([
+      'home',
+      'guide',
+      'programs',
+      'net-types',
+      'preparation',
+      'practice-board',
+      'ai-mentor',
+      'tests',
+      'analytics',
+      'merit-calculator',
+      'profile',
+    ]);
+    return tab && allowed.has(tab) ? tab : 'home';
+  });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const navigationItems = [
