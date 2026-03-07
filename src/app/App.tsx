@@ -6,6 +6,7 @@ import { NUSTGuide } from './components/NUSTGuide';
 import { ProgramExplorer } from './components/ProgramExplorer';
 import { NETTypes } from './components/NETTypes';
 import { PracticeBoard } from './components/PracticeBoard';
+import { QuestionContribution } from './components/QuestionContribution';
 import { AIMentor } from './components/AIMentor';
 import { Tests } from './components/Tests';
 import { Analytics } from './components/Analytics';
@@ -17,6 +18,7 @@ import {
   GraduationCap, 
   FlaskConical,
   Pencil,
+  Upload,
   Brain,
   FileText,
   TrendingUp,
@@ -43,6 +45,7 @@ export default function App() {
       'programs',
       'net-types',
       'practice-board',
+      'question-contribution',
       'smart-mentor',
       'tests',
       'analytics',
@@ -59,6 +62,7 @@ export default function App() {
     { id: 'programs', label: 'Programs', icon: GraduationCap },
     { id: 'net-types', label: 'NET Types', icon: FlaskConical },
     { id: 'practice-board', label: 'Practice Board', icon: Pencil },
+    { id: 'question-contribution', label: 'Question Contribution', icon: Upload },
     { id: 'smart-mentor', label: 'Smart Study Mentor', icon: Brain },
     { id: 'tests', label: 'Tests', icon: FileText },
     { id: 'analytics', label: 'Analytics', icon: TrendingUp },
@@ -181,6 +185,10 @@ export default function App() {
 
                 <TabsContent value="practice-board" className="mt-0 net360-page">
                   <PracticeBoard />
+                </TabsContent>
+
+                <TabsContent value="question-contribution" className="mt-0 net360-page">
+                  <QuestionContribution />
                 </TabsContent>
 
                 <TabsContent value="smart-mentor" className="mt-0 net360-page">

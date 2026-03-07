@@ -16,6 +16,7 @@ import { TestSessionModel } from './models/TestSession.js';
 import { AttemptModel } from './models/Attempt.js';
 import { AIUsageModel } from './models/AIUsage.js';
 import { PracticeBoardQuestionModel } from './models/PracticeBoardQuestion.js';
+import { QuestionSubmissionModel } from './models/QuestionSubmission.js';
 import { SignupRequestModel } from './models/SignupRequest.js';
 import { SignupTokenModel } from './models/SignupToken.js';
 
@@ -91,7 +92,7 @@ const app = express();
 app.set('trust proxy', 1);
 app.use(helmet());
 app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '10mb' }));
 
 app.use(
   '/api',
@@ -504,6 +505,31 @@ function serializePracticeBoardQuestion(item) {
     questionImageUrl: String(item.questionImageUrl || '').trim(),
     solutionText: String(item.solutionText || '').trim(),
     solutionImageUrl: String(item.solutionImageUrl || '').trim(),
+  };
+}
+
+function serializeQuestionSubmission(item) {
+  return {
+    id: String(item._id),
+    subject: String(item.subject || '').trim(),
+    questionText: String(item.questionText || '').trim(),
+    attachments: Array.isArray(item.attachments)
+      ? item.attachments.map((file) => ({
+        name: String(file.name || '').trim(),
+        mimeType: String(file.mimeType || '').trim(),
+        size: Number(file.size || 0),
+        dataUrl: String(file.dataUrl || '').trim(),
+      }))
+      : [],
+    status: String(item.status || 'pending'),
+    convertedTo: String(item.convertedTo || ''),
+    submittedByName: String(item.submittedByName || '').trim(),
+    submittedByEmail: String(item.submittedByEmail || '').trim(),
+    submittedByUserId: String(item.submittedByUserId || '').trim(),
+    reviewNotes: String(item.reviewNotes || '').trim(),
+    reviewedByEmail: String(item.reviewedByEmail || '').trim(),
+    reviewedAt: item.reviewedAt ? new Date(item.reviewedAt).toISOString() : null,
+    createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
   };
 }
 
@@ -1658,6 +1684,77 @@ app.get('/api/practice-board/questions/random', async (req, res) => {
   }
 });
 
+app.post('/api/question-submissions', async (req, res) => {
+  const {
+    subject,
+    questionText = '',
+    attachments = [],
+    submittedByName = '',
+    submittedByEmail = '',
+    submittedByUserId = '',
+  } = req.body || {};
+
+  const normalizedSubject = String(subject || '').trim();
+  if (!normalizedSubject) {
+    res.status(400).json({ error: 'Subject is required.' });
+    return;
+  }
+
+  const safeAttachments = Array.isArray(attachments)
+    ? attachments.slice(0, 3).map((file) => ({
+      name: String(file?.name || '').trim(),
+      mimeType: String(file?.mimeType || '').trim(),
+      size: Number(file?.size || 0),
+      dataUrl: String(file?.dataUrl || '').trim(),
+    }))
+    : [];
+
+  const allowedMimeTypes = new Set([
+    'image/jpeg',
+    'image/png',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ]);
+
+  for (const file of safeAttachments) {
+    if (!file.name || !file.mimeType || !file.dataUrl || !Number.isFinite(file.size)) {
+      res.status(400).json({ error: 'Each attachment must include name, mimeType, size, and file data.' });
+      return;
+    }
+    if (!allowedMimeTypes.has(file.mimeType)) {
+      res.status(400).json({ error: `Unsupported attachment type: ${file.mimeType}` });
+      return;
+    }
+    if (file.size > 2.5 * 1024 * 1024) {
+      res.status(400).json({ error: `Attachment ${file.name} exceeds 2.5 MB.` });
+      return;
+    }
+    if (!file.dataUrl.startsWith('data:')) {
+      res.status(400).json({ error: `Attachment ${file.name} is not a valid uploaded file payload.` });
+      return;
+    }
+  }
+
+  const text = String(questionText || '').trim();
+  if (!text && !safeAttachments.length) {
+    res.status(400).json({ error: 'Please provide a typed/pasted question or at least one attachment.' });
+    return;
+  }
+
+  const created = await QuestionSubmissionModel.create({
+    subject: normalizedSubject,
+    questionText: text,
+    attachments: safeAttachments,
+    status: 'pending',
+    submittedByName: String(submittedByName || '').trim(),
+    submittedByEmail: String(submittedByEmail || '').trim(),
+    submittedByUserId: String(submittedByUserId || '').trim(),
+  });
+
+  res.status(201).json({ submission: serializeQuestionSubmission(created) });
+});
+
 app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
   const message = String(req.body?.message || '').trim();
   const context = String(req.body?.context || '').trim();
@@ -2254,12 +2351,13 @@ app.get('/api/reports/export', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) => {
-  const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingSignupRequests] = await Promise.all([
+  const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingSignupRequests, pendingQuestionSubmissions] = await Promise.all([
     UserModel.countDocuments(),
     MCQModel.countDocuments(),
     AttemptModel.countDocuments(),
     AttemptModel.find().sort({ attemptedAt: -1 }).limit(12).lean(),
     SignupRequestModel.countDocuments({ status: 'pending' }),
+    QuestionSubmissionModel.countDocuments({ status: 'pending' }),
   ]);
 
   const averageScore = latestAttempts.length
@@ -2271,9 +2369,65 @@ app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) =>
     mcqCount,
     attemptsCount,
     pendingSignupRequests,
+    pendingQuestionSubmissions,
     averageScore,
     recentAttempts: latestAttempts.map((item) => serializeAttempt(item)),
   });
+});
+
+app.get('/api/admin/question-submissions', authMiddleware, requireAdmin, async (req, res) => {
+  const status = String(req.query.status || 'all').trim().toLowerCase();
+  const subject = String(req.query.subject || '').trim();
+
+  const filter = {};
+  if (status !== 'all') {
+    filter.status = status;
+  }
+  if (subject) {
+    filter.subject = { $regex: subject, $options: 'i' };
+  }
+
+  const submissions = await QuestionSubmissionModel.find(filter).sort({ createdAt: -1 }).limit(600).lean();
+  res.json({ submissions: submissions.map((item) => serializeQuestionSubmission(item)) });
+});
+
+app.post('/api/admin/question-submissions/:submissionId/review', authMiddleware, requireAdmin, async (req, res) => {
+  const submission = await QuestionSubmissionModel.findById(req.params.submissionId);
+  if (!submission) {
+    res.status(404).json({ error: 'Question submission not found.' });
+    return;
+  }
+
+  const nextStatus = String(req.body?.status || '').trim().toLowerCase();
+  const convertedTo = String(req.body?.convertedTo || '').trim().toLowerCase();
+  const reviewNotes = String(req.body?.reviewNotes || '').trim();
+
+  if (!['approved', 'rejected', 'converted'].includes(nextStatus)) {
+    res.status(400).json({ error: 'status must be approved, rejected, or converted.' });
+    return;
+  }
+
+  if (nextStatus === 'converted') {
+    if (!['mcq', 'practice'].includes(convertedTo)) {
+      res.status(400).json({ error: 'convertedTo must be mcq or practice when status is converted.' });
+      return;
+    }
+    if (submission.status !== 'approved' && submission.status !== 'converted') {
+      res.status(400).json({ error: 'Only approved submissions can be marked as converted.' });
+      return;
+    }
+    submission.convertedTo = convertedTo;
+  } else if (nextStatus === 'approved') {
+    submission.convertedTo = '';
+  }
+
+  submission.status = nextStatus;
+  submission.reviewNotes = reviewNotes;
+  submission.reviewedAt = new Date();
+  submission.reviewedByEmail = req.user.email;
+  await submission.save();
+
+  res.json({ submission: serializeQuestionSubmission(submission) });
 });
 
 app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async (_req, res) => {

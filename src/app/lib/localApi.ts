@@ -142,15 +142,40 @@ interface LocalPracticeBoardQuestion {
   updatedAt: string;
 }
 
+interface LocalSubmissionAttachment {
+  name: string;
+  mimeType: string;
+  size: number;
+  dataUrl: string;
+}
+
+interface LocalQuestionSubmission {
+  id: string;
+  subject: string;
+  questionText: string;
+  attachments: LocalSubmissionAttachment[];
+  status: 'pending' | 'approved' | 'rejected' | 'converted';
+  convertedTo: '' | 'mcq' | 'practice';
+  submittedByName: string;
+  submittedByEmail: string;
+  submittedByUserId: string;
+  reviewNotes: string;
+  reviewedByEmail: string;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface LocalDb {
   users: LocalUser[];
   sessions: LocalSession[];
   attempts: LocalAttempt[];
   aiUsage: LocalAIUsage[];
   practiceBoardQuestions: LocalPracticeBoardQuestion[];
+  questionSubmissions: LocalQuestionSubmission[];
 }
 
-const DB_STORAGE_KEY = 'net360-local-db-v5';
+const DB_STORAGE_KEY = 'net360-local-db-v6';
 let cachedMcqs: MCQ[] = [];
 
 function defaultPreferences(): PublicUser['preferences'] {
@@ -454,7 +479,7 @@ function generateAdaptiveSet(params: {
 function readDb(): LocalDb {
   const raw = localStorage.getItem(DB_STORAGE_KEY);
   if (!raw) {
-    return { users: [], sessions: [], attempts: [], aiUsage: [], practiceBoardQuestions: [] };
+    return { users: [], sessions: [], attempts: [], aiUsage: [], practiceBoardQuestions: [], questionSubmissions: [] };
   }
 
   try {
@@ -465,9 +490,10 @@ function readDb(): LocalDb {
       attempts: parsed.attempts || [],
       aiUsage: parsed.aiUsage || [],
       practiceBoardQuestions: parsed.practiceBoardQuestions || [],
+      questionSubmissions: parsed.questionSubmissions || [],
     };
   } catch {
-    return { users: [], sessions: [], attempts: [], aiUsage: [], practiceBoardQuestions: [] };
+    return { users: [], sessions: [], attempts: [], aiUsage: [], practiceBoardQuestions: [], questionSubmissions: [] };
   }
 }
 
@@ -653,6 +679,24 @@ function serializePracticeBoardQuestion(item: LocalPracticeBoardQuestion) {
     questionImageUrl: item.questionImageUrl,
     solutionText: item.solutionText,
     solutionImageUrl: item.solutionImageUrl,
+  };
+}
+
+function serializeQuestionSubmission(item: LocalQuestionSubmission) {
+  return {
+    id: item.id,
+    subject: item.subject,
+    questionText: item.questionText,
+    attachments: item.attachments,
+    status: item.status,
+    convertedTo: item.convertedTo,
+    submittedByName: item.submittedByName,
+    submittedByEmail: item.submittedByEmail,
+    submittedByUserId: item.submittedByUserId,
+    reviewNotes: item.reviewNotes,
+    reviewedByEmail: item.reviewedByEmail,
+    reviewedAt: item.reviewedAt,
+    createdAt: item.createdAt,
   };
 }
 
@@ -945,6 +989,75 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const randomIndex = Math.floor(Math.random() * filtered.length);
     const picked = filtered[randomIndex];
     return { question: serializePracticeBoardQuestion(picked) } as T;
+  }
+
+  if (url.pathname === '/api/question-submissions' && method === 'POST') {
+    const db = readDb();
+    const subject = String(body.subject || '').trim();
+    const questionText = String(body.questionText || '').trim();
+    const submittedByName = String(body.submittedByName || '').trim();
+    const submittedByEmail = String(body.submittedByEmail || '').trim();
+    const submittedByUserId = String(body.submittedByUserId || '').trim();
+    const attachments = Array.isArray(body.attachments)
+      ? body.attachments.slice(0, 3).map((file: any) => ({
+        name: String(file?.name || '').trim(),
+        mimeType: String(file?.mimeType || '').trim(),
+        size: Number(file?.size || 0),
+        dataUrl: String(file?.dataUrl || '').trim(),
+      }))
+      : [];
+
+    if (!subject) {
+      throw new Error('Subject is required.');
+    }
+    if (!questionText && !attachments.length) {
+      throw new Error('Please provide a typed/pasted question or at least one attachment.');
+    }
+
+    const allowedMimeTypes = new Set([
+      'image/jpeg',
+      'image/png',
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    ]);
+
+    for (const file of attachments) {
+      if (!file.name || !file.mimeType || !file.dataUrl || !Number.isFinite(file.size)) {
+        throw new Error('Each attachment must include name, mimeType, size, and file data.');
+      }
+      if (!allowedMimeTypes.has(file.mimeType)) {
+        throw new Error(`Unsupported attachment type: ${file.mimeType}`);
+      }
+      if (file.size > 2.5 * 1024 * 1024) {
+        throw new Error(`Attachment ${file.name} exceeds 2.5 MB.`);
+      }
+      if (!file.dataUrl.startsWith('data:')) {
+        throw new Error(`Attachment ${file.name} is not a valid uploaded file payload.`);
+      }
+    }
+
+    const now = new Date().toISOString();
+    const submission: LocalQuestionSubmission = {
+      id: `qs-${Date.now()}`,
+      subject,
+      questionText,
+      attachments,
+      status: 'pending',
+      convertedTo: '',
+      submittedByName,
+      submittedByEmail,
+      submittedByUserId,
+      reviewNotes: '',
+      reviewedByEmail: '',
+      reviewedAt: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    db.questionSubmissions.unshift(submission);
+    writeDb(db);
+    return { submission: serializeQuestionSubmission(submission) } as T;
   }
 
   if (url.pathname === '/api/practice/analyze' && method === 'POST') {
@@ -1365,6 +1478,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const mcqs = await loadMcqs();
     const mcqCount = mcqs.length;
     const attemptsCount = db.attempts.length;
+    const pendingQuestionSubmissions = db.questionSubmissions.filter((item) => item.status === 'pending').length;
     const recentAttempts = db.attempts.slice(0, 12);
     const averageScore = recentAttempts.length
       ? Math.round(recentAttempts.reduce((sum, item) => sum + item.score, 0) / recentAttempts.length)
@@ -1374,9 +1488,67 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       usersCount,
       mcqCount,
       attemptsCount,
+      pendingQuestionSubmissions,
       averageScore,
       recentAttempts,
     } as T;
+  }
+
+  if (url.pathname === '/api/admin/question-submissions' && method === 'GET') {
+    requireAdmin(token);
+    const db = readDb();
+    const status = String(url.searchParams.get('status') || 'all').trim().toLowerCase();
+    const subject = String(url.searchParams.get('subject') || '').trim().toLowerCase();
+
+    const submissions = db.questionSubmissions
+      .filter((item) => {
+        if (status !== 'all' && item.status !== status) return false;
+        if (subject && item.subject.toLowerCase() !== subject) return false;
+        return true;
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return { submissions: submissions.map(serializeQuestionSubmission) } as T;
+  }
+
+  if (/^\/api\/admin\/question-submissions\/[^/]+\/review$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAdmin(token);
+    const submissionId = url.pathname.split('/')[4];
+    const submission = db.questionSubmissions.find((item) => item.id === submissionId);
+    if (!submission) {
+      throw new Error('Question submission not found.');
+    }
+
+    const status = String(body.status || '').trim().toLowerCase();
+    const convertedTo = String(body.convertedTo || '').trim().toLowerCase() as '' | 'mcq' | 'practice';
+    const reviewNotes = String(body.reviewNotes || '').trim();
+
+    if (!['approved', 'rejected', 'converted'].includes(status)) {
+      throw new Error('status must be approved, rejected, or converted.');
+    }
+
+    if (status === 'converted') {
+      if (!['mcq', 'practice'].includes(convertedTo)) {
+        throw new Error('convertedTo must be mcq or practice when status is converted.');
+      }
+      if (submission.status !== 'approved' && submission.status !== 'converted') {
+        throw new Error('Only approved submissions can be marked as converted.');
+      }
+      submission.convertedTo = convertedTo;
+    }
+
+    if (status === 'approved') {
+      submission.convertedTo = '';
+    }
+
+    submission.status = status as LocalQuestionSubmission['status'];
+    submission.reviewNotes = reviewNotes;
+    submission.reviewedByEmail = user.email;
+    submission.reviewedAt = new Date().toISOString();
+    submission.updatedAt = new Date().toISOString();
+
+    writeDb(db);
+    return { submission: serializeQuestionSubmission(submission) } as T;
   }
 
   if (url.pathname === '/api/admin/mcqs' && method === 'GET') {

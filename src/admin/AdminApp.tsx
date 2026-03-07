@@ -27,6 +27,29 @@ interface AdminOverview {
   attemptsCount: number;
   averageScore: number;
   pendingSignupRequests?: number;
+  pendingQuestionSubmissions?: number;
+}
+
+interface AdminQuestionSubmissionAttachment {
+  name: string;
+  mimeType: string;
+  size: number;
+  dataUrl: string;
+}
+
+interface AdminQuestionSubmission {
+  id: string;
+  subject: string;
+  questionText: string;
+  attachments: AdminQuestionSubmissionAttachment[];
+  status: 'pending' | 'approved' | 'rejected' | 'converted';
+  convertedTo?: '' | 'mcq' | 'practice';
+  submittedByName?: string;
+  submittedByEmail?: string;
+  reviewNotes?: string;
+  reviewedByEmail?: string;
+  reviewedAt?: string | null;
+  createdAt?: string | null;
 }
 
 interface SignupRequest {
@@ -175,6 +198,11 @@ export default function AdminApp() {
   const [practiceQuestions, setPracticeQuestions] = useState<AdminPracticeBoardQuestion[]>([]);
   const [practiceQuery, setPracticeQuery] = useState('');
   const [practiceForm, setPracticeForm] = useState(emptyPracticeForm());
+  const [questionSubmissions, setQuestionSubmissions] = useState<AdminQuestionSubmission[]>([]);
+  const [submissionStatusFilter, setSubmissionStatusFilter] = useState('all');
+  const [submissionSubjectFilter, setSubmissionSubjectFilter] = useState('all');
+  const [submissionQuery, setSubmissionQuery] = useState('');
+  const [submissionReviewNotes, setSubmissionReviewNotes] = useState<Record<string, string>>({});
 
   const filteredMcqs = useMemo(() => {
     if (!query.trim()) return mcqs;
@@ -198,6 +226,25 @@ export default function AdminApp() {
     );
   }, [practiceQuestions, practiceQuery]);
 
+  const filteredQuestionSubmissions = useMemo(() => {
+    const needle = submissionQuery.trim().toLowerCase();
+
+    return questionSubmissions.filter((item) => {
+      if (submissionStatusFilter !== 'all' && item.status !== submissionStatusFilter) return false;
+      if (submissionSubjectFilter !== 'all' && item.subject.toLowerCase() !== submissionSubjectFilter.toLowerCase()) return false;
+      if (!needle) return true;
+
+      const blob = [item.subject, item.questionText, item.submittedByName, item.submittedByEmail, item.reviewNotes]
+        .join(' ')
+        .toLowerCase();
+      return blob.includes(needle);
+    });
+  }, [questionSubmissions, submissionStatusFilter, submissionSubjectFilter, submissionQuery]);
+
+  const submissionSubjects = useMemo(() => {
+    return Array.from(new Set(questionSubmissions.map((item) => item.subject).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [questionSubmissions]);
+
   const authToken = token;
 
   const clearAdminSession = () => {
@@ -214,6 +261,7 @@ export default function AdminApp() {
       requestPayload,
       mcqPayload,
       practicePayload,
+      submissionPayload,
       subscriptionOverviewPayload,
       subscriptionUsersPayload,
     ] = await Promise.all([
@@ -222,6 +270,7 @@ export default function AdminApp() {
       apiRequest<{ requests: SignupRequest[] }>('/api/admin/signup-requests?status=all', {}, activeToken),
       apiRequest<{ mcqs: AdminMCQ[] }>('/api/admin/mcqs', {}, activeToken),
       apiRequest<{ questions: AdminPracticeBoardQuestion[] }>('/api/admin/practice-board/questions', {}, activeToken).catch(() => ({ questions: [] })),
+      apiRequest<{ submissions: AdminQuestionSubmission[] }>('/api/admin/question-submissions?status=all', {}, activeToken).catch(() => ({ submissions: [] })),
       apiRequest<AdminSubscriptionOverview>('/api/admin/subscriptions/overview', {}, activeToken).catch(() => ({
         totalUsers: 0,
         activeUsers: 0,
@@ -237,6 +286,7 @@ export default function AdminApp() {
     setSignupRequests(requestPayload.requests || []);
     setMcqs(mcqPayload.mcqs || []);
     setPracticeQuestions(practicePayload.questions || []);
+    setQuestionSubmissions(submissionPayload.submissions || []);
     setSubscriptionOverview(subscriptionOverviewPayload);
     setSubscriptionUsers(subscriptionUsersPayload.users || []);
   };
@@ -622,6 +672,34 @@ export default function AdminApp() {
     }
   };
 
+  const reviewQuestionSubmission = async (
+    submissionId: string,
+    status: 'approved' | 'rejected' | 'converted',
+    convertedTo?: 'mcq' | 'practice',
+  ) => {
+    if (!authToken) return;
+
+    const notes = String(submissionReviewNotes[submissionId] || '').trim();
+    try {
+      await apiRequest(
+        `/api/admin/question-submissions/${submissionId}/review`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            status,
+            convertedTo: convertedTo || '',
+            reviewNotes: notes,
+          }),
+        },
+        authToken,
+      );
+      toast.success('Submission review updated.');
+      await loadAdminData(authToken);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update submission review.');
+    }
+  };
+
   const handleSectionSelection = async (selection: {
     subject: SubjectKey;
     part: 'part1' | 'part2';
@@ -717,17 +795,24 @@ export default function AdminApp() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
+        <Metric title="Pending User Submissions" value={String(overview?.pendingQuestionSubmissions || 0)} />
+        <Metric title="Approved Submissions" value={String(questionSubmissions.filter((item) => item.status === 'approved').length)} />
+        <Metric title="Converted Submissions" value={String(questionSubmissions.filter((item) => item.status === 'converted').length)} />
+      </div>
+
+      <div className="grid gap-4 md:grid-cols-3">
         <Metric title="Active Subscriptions" value={String(subscriptionOverview?.activeUsers || 0)} />
         <Metric title="Expired/Inactive" value={String(subscriptionOverview?.expiredUsers || 0)} />
         <Metric title="Tracked Users" value={String(subscriptionOverview?.totalUsers || 0)} />
       </div>
 
       <Tabs defaultValue="users" className="space-y-4">
-        <TabsList className="grid grid-cols-5 w-full max-w-4xl">
+        <TabsList className="grid grid-cols-6 w-full max-w-5xl">
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="requests">Signup Requests</TabsTrigger>
           <TabsTrigger value="mcqs">MCQs</TabsTrigger>
           <TabsTrigger value="practice-board">Practice Board</TabsTrigger>
+          <TabsTrigger value="submissions">Submissions</TabsTrigger>
           <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
         </TabsList>
 
@@ -1241,6 +1326,133 @@ export default function AdminApp() {
               </CardContent>
             </Card>
           </div>
+        </TabsContent>
+
+        <TabsContent value="submissions" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>User Question Submissions</CardTitle>
+              <CardDescription>
+                Review community-submitted questions, approve quality entries, and mark conversion targets.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid gap-3 md:grid-cols-4">
+                <div className="space-y-1.5">
+                  <Label>Status</Label>
+                  <Select value={submissionStatusFilter} onValueChange={setSubmissionStatusFilter}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="rejected">Rejected</SelectItem>
+                      <SelectItem value="converted">Converted</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Subject</Label>
+                  <Select value={submissionSubjectFilter} onValueChange={setSubmissionSubjectFilter}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All subjects</SelectItem>
+                      {submissionSubjects.map((subject) => (
+                        <SelectItem key={subject} value={subject}>{subject}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5 md:col-span-2">
+                  <Label>Search</Label>
+                  <Input
+                    value={submissionQuery}
+                    onChange={(e) => setSubmissionQuery(e.target.value)}
+                    placeholder="Search by text, subject, submitter, or notes"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-3 max-h-[760px] overflow-auto">
+                {filteredQuestionSubmissions.map((item) => (
+                  <div key={item.id} className="rounded-lg border p-3 space-y-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium">{item.subject}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Submitted by {item.submittedByName || 'Anonymous'}
+                          {item.submittedByEmail ? ` (${item.submittedByEmail})` : ''}
+                          {item.createdAt ? ` • ${new Date(item.createdAt).toLocaleString()}` : ''}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={item.status === 'pending' ? 'default' : 'outline'}>{item.status}</Badge>
+                        {item.convertedTo ? <Badge variant="outline">{item.convertedTo.toUpperCase()}</Badge> : null}
+                      </div>
+                    </div>
+
+                    <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                      {item.questionText || 'No typed text provided. See attached files below.'}
+                    </div>
+
+                    {item.attachments?.length ? (
+                      <div className="space-y-2">
+                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Attachments</p>
+                        {item.attachments.map((file) => (
+                          <a
+                            key={`${item.id}-${file.name}`}
+                            href={file.dataUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="block rounded-md border px-3 py-2 text-sm hover:bg-slate-50"
+                          >
+                            {file.name} • {file.mimeType}
+                          </a>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    <div className="space-y-1.5">
+                      <Label>Admin Notes</Label>
+                      <Textarea
+                        value={Object.prototype.hasOwnProperty.call(submissionReviewNotes, item.id)
+                          ? submissionReviewNotes[item.id]
+                          : (item.reviewNotes || '')}
+                        onChange={(e) => setSubmissionReviewNotes((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                        className="min-h-[90px]"
+                        placeholder="Add quality notes, conversion hints, or rejection reason..."
+                      />
+                      {item.reviewedByEmail || item.reviewedAt ? (
+                        <p className="text-xs text-muted-foreground">
+                          Last review: {item.reviewedByEmail || 'Admin'}
+                          {item.reviewedAt ? ` • ${new Date(item.reviewedAt).toLocaleString()}` : ''}
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" onClick={() => void reviewQuestionSubmission(item.id, 'approved')}>Approve</Button>
+                      <Button size="sm" variant="outline" onClick={() => void reviewQuestionSubmission(item.id, 'rejected')}>Reject</Button>
+                      <Button size="sm" variant="outline" onClick={() => void reviewQuestionSubmission(item.id, 'converted', 'mcq')}>
+                        Mark Converted to MCQ
+                      </Button>
+                      <Button size="sm" variant="outline" onClick={() => void reviewQuestionSubmission(item.id, 'converted', 'practice')}>
+                        Mark Converted to Practice
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+
+                {!filteredQuestionSubmissions.length ? (
+                  <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
+                    No submissions found for current filters.
+                  </div>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
         </TabsContent>
       </Tabs>
     </div>
