@@ -11,6 +11,53 @@ import { useAppData } from '../context/AppDataContext';
 import { Difficulty, SubjectKey, getSubjectLabel } from '../lib/mcq';
 
 const subjectTabs: SubjectKey[] = ['mathematics', 'physics', 'english', 'biology', 'chemistry'];
+type AcademicPart = 'part1' | 'part2';
+
+const PART_LABELS: Record<SubjectKey, Record<AcademicPart, string>> = {
+  mathematics: {
+    part1: 'Mathematics - FSc Part 1 (1st Year)',
+    part2: 'Mathematics - FSc Part 2 (2nd Year)',
+  },
+  physics: {
+    part1: 'Physics - FSc Part 1 (1st Year)',
+    part2: 'Physics - FSc Part 2 (2nd Year)',
+  },
+  english: {
+    part1: 'English - Intermediate Part 1',
+    part2: 'English - Intermediate Part 2',
+  },
+  biology: {
+    part1: 'Biology - FSc Part 1 (1st Year)',
+    part2: 'Biology - FSc Part 2 (2nd Year)',
+  },
+  chemistry: {
+    part1: 'Chemistry - FSc Part 1 (1st Year)',
+    part2: 'Chemistry - FSc Part 2 (2nd Year)',
+  },
+};
+
+const TOPIC_PART_KEYWORDS: Record<SubjectKey, Record<AcademicPart, string[]>> = {
+  mathematics: {
+    part1: ['sets', 'functions', 'matrices', 'determinants', 'trigonometry', 'quadratic', 'sequences', 'series'],
+    part2: ['integration', 'differentiation', 'limits', 'statistics', 'probability', 'vectors', 'analytical geometry'],
+  },
+  physics: {
+    part1: ['kinematics', 'dynamics', 'work energy power', 'rotational motion', 'circular motion', 'thermodynamics', 'waves', 'shm'],
+    part2: ['electrostatics', 'current electricity', 'magnetism', 'electromagnetic induction', 'optics', 'modern physics'],
+  },
+  english: {
+    part1: ['grammar', 'vocabulary', 'synonyms', 'antonyms'],
+    part2: ['reading comprehension', 'sentence correction', 'analogies'],
+  },
+  biology: {
+    part1: ['cell', 'bioenergetics', 'enzymes', 'microorganisms', 'kingdom', 'transport', 'digestion'],
+    part2: ['coordination', 'support', 'reproduction', 'evolution', 'genetics', 'ecology'],
+  },
+  chemistry: {
+    part1: ['basic concepts', 'atomic structure', 'chemical bonding', 'gases', 'liquids', 'thermochemistry', 'equilibrium'],
+    part2: ['electrochemistry', 'reaction kinetics', 'organic', 'hydrocarbons', 'alkyl halides', 'aldehydes', 'carboxylic acids'],
+  },
+};
 
 const difficultyOrder: Difficulty[] = ['Easy', 'Medium', 'Hard'];
 
@@ -22,17 +69,18 @@ export function Preparation() {
     biology: null,
     chemistry: null,
   });
+  const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<SubjectKey, AcademicPart | null>>({
+    mathematics: null,
+    physics: null,
+    english: null,
+    biology: null,
+    chemistry: null,
+  });
 
   const { loading, error, mcqsBySubject, mcqsBySubjectAndDifficulty, attempts, startPracticeTest } = useAppData();
 
   const topicsBySubject = useMemo(() => {
-    const result: Record<SubjectKey, Array<{ topic: string; count: number }>> = {
-      mathematics: [],
-      physics: [],
-      english: [],
-      biology: [],
-      chemistry: [],
-    };
+    const result = {} as Record<SubjectKey, Array<{ topic: string; count: number }>>;
 
     subjectTabs.forEach((subject) => {
       const map = new Map<string, number>();
@@ -48,19 +96,46 @@ export function Preparation() {
     return result;
   }, [mcqsBySubject]);
 
-  const completedTopicsBySubject = useMemo(() => {
-    const done: Record<SubjectKey, Set<string>> = {
-      mathematics: new Set(),
-      physics: new Set(),
-      english: new Set(),
-      biology: new Set(),
-      chemistry: new Set(),
+  const resolveTopicPart = (subject: SubjectKey, topic: string, index: number, total: number): AcademicPart => {
+    const normalized = topic.trim().toLowerCase();
+    const part1Match = TOPIC_PART_KEYWORDS[subject].part1.some((keyword) => normalized.includes(keyword));
+    if (part1Match) return 'part1';
+    const part2Match = TOPIC_PART_KEYWORDS[subject].part2.some((keyword) => normalized.includes(keyword));
+    if (part2Match) return 'part2';
+    return index < Math.ceil(total / 2) ? 'part1' : 'part2';
+  };
+
+  const topicsBySubjectAndPart = useMemo(() => {
+    const result: Record<SubjectKey, Record<AcademicPart, Array<{ topic: string; count: number }>>> = {
+      mathematics: { part1: [], part2: [] },
+      physics: { part1: [], part2: [] },
+      english: { part1: [], part2: [] },
+      biology: { part1: [], part2: [] },
+      chemistry: { part1: [], part2: [] },
     };
 
-    attempts.forEach((attempt) => {
-      if (attempt.score >= 70) {
-        done[attempt.subject].add(attempt.topic);
-      }
+    subjectTabs.forEach((subject) => {
+      const subjectTopics = topicsBySubject[subject];
+      subjectTopics.forEach((entry, index) => {
+        const part = resolveTopicPart(subject, entry.topic, index, subjectTopics.length);
+        result[subject][part].push(entry);
+      });
+    });
+
+    return result;
+  }, [topicsBySubject]);
+
+  const completedTopicsBySubject = useMemo(() => {
+    const done = {} as Record<SubjectKey, Set<string>>;
+
+    subjectTabs.forEach((subject) => {
+      const completed = new Set<string>();
+      attempts.forEach((attempt) => {
+        if (attempt.score >= 70 && attempt.subject === subject) {
+          completed.add(attempt.topic);
+        }
+      });
+      done[subject] = completed;
     });
 
     return done;
@@ -111,7 +186,7 @@ export function Preparation() {
 
       {!loading && !error ? (
         <Tabs defaultValue="mathematics">
-          <TabsList className="grid w-full grid-cols-3 lg:grid-cols-5">
+          <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-5">
             <TabsTrigger value="mathematics">Mathematics</TabsTrigger>
             <TabsTrigger value="physics">Physics</TabsTrigger>
             <TabsTrigger value="english">English</TabsTrigger>
@@ -120,7 +195,8 @@ export function Preparation() {
           </TabsList>
 
           {subjectTabs.map((subject) => {
-            const topics = topicsBySubject[subject];
+            const selectedPart = selectedPartBySubject[subject];
+            const topics = selectedPart ? topicsBySubjectAndPart[subject][selectedPart] : [];
             const selectedTopic = selectedTopicBySubject[subject];
             const subjectMcqs = mcqsBySubject[subject];
             const completedTopics = completedTopicsBySubject[subject];
@@ -131,13 +207,39 @@ export function Preparation() {
                   <CardHeader>
                     <CardTitle>{getSubjectLabel(subject)} Preparation</CardTitle>
                     <CardDescription>
-                      {subjectMcqs.length} total questions across {topics.length} topics
+                      {subjectMcqs.length} total questions across {topicsBySubject[subject].length} topics
                     </CardDescription>
                   </CardHeader>
                   <CardContent>
-                    {!topics.length ? (
-                      <div className="text-sm text-muted-foreground py-8 text-center">
-                        No MCQs found for this subject in your dataset.
+                    <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                      {(['part1', 'part2'] as AcademicPart[]).map((part) => {
+                        const isSelected = selectedPart === part;
+                        const partTopics = topicsBySubjectAndPart[subject][part];
+                        const partCount = partTopics.reduce((sum, item) => sum + item.count, 0);
+                        return (
+                          <button
+                            key={`${subject}-${part}`}
+                            type="button"
+                            onClick={() => {
+                              setSelectedPartBySubject((prev) => ({ ...prev, [subject]: part }));
+                              setSelectedTopicBySubject((prev) => ({ ...prev, [subject]: null }));
+                            }}
+                            className={`rounded-xl border p-3 text-left transition ${isSelected ? 'border-indigo-300 bg-indigo-50/60' : 'border-indigo-100 bg-white hover:bg-indigo-50/40'}`}
+                          >
+                            <p className="text-sm font-semibold text-indigo-950">{PART_LABELS[subject][part]}</p>
+                            <p className="mt-1 text-xs text-slate-500">{partCount} MCQs • {partTopics.length} topics</p>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {!selectedPart ? (
+                      <div className="text-sm text-muted-foreground py-4 text-center">
+                        Select Part 1 or Part 2 to continue.
+                      </div>
+                    ) : !topics.length ? (
+                      <div className="text-sm text-muted-foreground py-6 text-center">
+                        No MCQs found for {PART_LABELS[subject][selectedPart]} in your dataset.
                       </div>
                     ) : (
                       <ScrollArea className="h-[500px] pr-4">
