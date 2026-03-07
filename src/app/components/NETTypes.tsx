@@ -6,15 +6,11 @@ import {
   Building2,
   Check,
   CircleHelp,
-  Clock3,
-  Code,
   FlaskConical,
-  Landmark,
+  Link as LinkIcon,
   Lightbulb,
   MapPin,
   Ruler,
-  Sparkles,
-  Target,
 } from 'lucide-react';
 
 interface NetSubject {
@@ -24,12 +20,16 @@ interface NetSubject {
 }
 
 interface NetTypeCard {
+  id: string;
   title: string;
+  subtitle: string;
   icon: ComponentType<{ className?: string }>;
   headerGradient: string;
   tagColor: string;
-  usedFor: string[];
+  admissionProgrammes: string[];
   subjects: NetSubject[];
+  notes: string[];
+  guidelineLink?: string;
   totalQuestions: number;
   durationMinutes: number;
   difficulty: 'Medium' | 'High';
@@ -38,104 +38,109 @@ interface NetTypeCard {
 export function NETTypes() {
   const netTypes: NetTypeCard[] = [
     {
-      name: 'NET Engineering',
+      id: 'engineering',
+      title: 'NET-Engineering',
+      subtitle: 'HSSC Pre-Engineering / Pre-Medical* / ICS / Equivalent',
       icon: Building2,
       headerGradient: 'from-violet-500 to-indigo-400',
       tagColor: 'bg-violet-500',
       subjects: [
-        { name: 'Mathematics', percentage: 40, color: 'bg-violet-500' },
+        { name: 'Mathematics', percentage: 50, color: 'bg-violet-500' },
         { name: 'Physics', percentage: 30, color: 'bg-violet-400' },
         { name: 'English', percentage: 20, color: 'bg-violet-300' },
-        { name: 'IQ', percentage: 10, color: 'bg-violet-200' },
       ],
-      usedFor: ['Engineering', 'Computer Science', 'Software Engineering'],
-      totalQuestions: 200,
-      durationMinutes: 180,
-      difficulty: 'Medium',
-      title: 'NET Engineering',
-    },
-    {
-      name: 'NET Computer Science',
-      title: 'NET Computer Science',
-      icon: Code,
-      headerGradient: 'from-blue-500 to-cyan-400',
-      tagColor: 'bg-blue-500',
-      subjects: [
-        { name: 'Mathematics', percentage: 30, color: 'bg-blue-500' },
-        { name: 'Physics', percentage: 30, color: 'bg-blue-400' },
-        { name: 'Computer Science', percentage: 30, color: 'bg-blue-300' },
-        { name: 'English', percentage: 10, color: 'bg-blue-200' },
+      admissionProgrammes: [
+        'Engineering programmes',
+        'Computing programmes',
+        'BS Bioinformatics',
+        'BS Mathematics',
+        'BS Physics',
+        'BS Chemistry',
+        'BS Food Science & Technology',
       ],
-      usedFor: ['Computer Science', 'Software Engineering'],
+      notes: [
+        'Pre-Engineering with Additional Bio OR Pre-Medical with Additional Math candidates appear in NET-Engineering.',
+        'Pre-Medical candidates applying for Engineering without Additional Math must complete 8-week condensed Mathematics course at NUST before admission.',
+        'Pre-Medical candidates applying for Computing programmes without Additional Math also appear in NET-Engineering.',
+        'ICS / candidates with Mathematics applying to Computing programmes appear in NET-Engineering.',
+      ],
       totalQuestions: 200,
       durationMinutes: 180,
       difficulty: 'Medium',
     },
     {
-      name: 'NET Applied Sciences',
-      title: 'NET Applied Sciences',
+      id: 'applied-sciences',
+      title: 'NET-Applied Sciences',
+      subtitle: 'HSSC Pre-Medical / Equivalent',
       icon: FlaskConical,
       headerGradient: 'from-teal-500 to-cyan-400',
       tagColor: 'bg-teal-500',
       subjects: [
-        { name: 'Biology', percentage: 40, color: 'bg-emerald-500' },
+        { name: 'Biology', percentage: 50, color: 'bg-emerald-500' },
         { name: 'Chemistry', percentage: 30, color: 'bg-emerald-400' },
-        { name: 'Physics', percentage: 20, color: 'bg-emerald-300' },
-        { name: 'English', percentage: 10, color: 'bg-amber-300' },
+        { name: 'English', percentage: 20, color: 'bg-amber-300' },
       ],
-      usedFor: ['Biological Sciences', 'Chemistry', 'Physics'],
+      admissionProgrammes: [
+        'BS Biotechnology',
+        'BS Environmental Science',
+        'BS Agriculture',
+        'BS Food Science & Technology',
+        'BS Bioinformatics',
+        'BS Chemistry',
+      ],
+      notes: [
+        'This test is for students with Pre-Medical background (with or without Additional Math).',
+      ],
       totalQuestions: 200,
       durationMinutes: 180,
       difficulty: 'Medium',
     },
     {
-      name: 'NET Natural Sciences',
-      title: 'NET Natural Sciences',
-      icon: Sparkles,
-      headerGradient: 'from-cyan-500 to-sky-400',
-      tagColor: 'bg-cyan-500',
-      subjects: [
-        { name: 'Biology', percentage: 40, color: 'bg-cyan-500' },
-        { name: 'Chemistry', percentage: 30, color: 'bg-teal-400' },
-        { name: 'Physics', percentage: 20, color: 'bg-sky-400' },
-      ],
-      usedFor: ['Medical Sciences', 'Chemistry', 'Biology'],
-      totalQuestions: 200,
-      durationMinutes: 180,
-      difficulty: 'Medium',
-    },
-    {
-      name: 'NET Architecture',
-      title: 'NET Architecture',
-      icon: Ruler,
-      headerGradient: 'from-amber-500 to-orange-400',
-      tagColor: 'bg-amber-500',
-      subjects: [
-        { name: 'Mathematics', percentage: 40, color: 'bg-amber-400' },
-        { name: 'English', percentage: 20, color: 'bg-orange-400' },
-        { name: 'IQ', percentage: 20, color: 'bg-orange-300' },
-      ],
-      usedFor: ['Architecture', 'Industrial Design'],
-      totalQuestions: 200,
-      durationMinutes: 180,
-      difficulty: 'Medium',
-    },
-    {
-      name: 'NET Business',
-      title: 'NET Business',
+      id: 'business-social-sciences',
+      title: 'NET-Business Studies & Social Sciences',
+      subtitle: 'HSSC with any subject combination',
       icon: Briefcase,
       headerGradient: 'from-pink-500 to-rose-400',
       tagColor: 'bg-pink-500',
       subjects: [
-        { name: 'Mathematics', percentage: 20, color: 'bg-pink-500' },
-        { name: 'English', percentage: 40, color: 'bg-rose-400' },
-        { name: 'Business', percentage: 20, color: 'bg-pink-300' },
+        { name: 'Quantitative Mathematics', percentage: 50, color: 'bg-pink-500' },
+        { name: 'English', percentage: 50, color: 'bg-rose-400' },
       ],
-      usedFor: ['BBA', 'Economics', 'Social Sciences'],
+      admissionProgrammes: [
+        'BBA',
+        'BS Public Administration',
+        'BS Mass Communication',
+        'BS Economics',
+        'BS Psychology',
+        'BS Accounting & Finance',
+        'LLB',
+        'BS Tourism & Hospitality Management',
+        'BS Liberal Arts & Humanities',
+      ],
+      notes: ['Students from any academic background can apply.'],
       totalQuestions: 200,
       durationMinutes: 180,
       difficulty: 'Medium',
-    }
+    },
+    {
+      id: 'architecture',
+      title: 'NET-Architecture',
+      subtitle: 'HSSC with Mathematics & Physics',
+      icon: Ruler,
+      headerGradient: 'from-amber-500 to-orange-400',
+      tagColor: 'bg-amber-500',
+      subjects: [
+        { name: 'Design Aptitude', percentage: 50, color: 'bg-amber-500' },
+        { name: 'Mathematics', percentage: 30, color: 'bg-amber-400' },
+        { name: 'English', percentage: 20, color: 'bg-orange-400' },
+      ],
+      admissionProgrammes: ['B Architecture', 'B Industrial Design'],
+      notes: ['Applicants must have Mathematics and Physics in HSSC.'],
+      guidelineLink: 'https://sada.nust.edu.pk/in-the-spotlight/design-aptitude-net-guidelines/',
+      totalQuestions: 200,
+      durationMinutes: 180,
+      difficulty: 'Medium',
+    },
   ];
 
   return (
@@ -153,12 +158,15 @@ export function NETTypes() {
         <TopChip icon={MapPin} text="NUST Testing Centers" />
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2 2xl:grid-cols-3">
+      <div className="grid gap-4 lg:grid-cols-2">
         {netTypes.map((net) => (
-          <article key={net.name} className="overflow-hidden rounded-2xl border border-indigo-100 bg-white/95 shadow-[0_12px_28px_rgba(98,113,202,0.12)]">
+          <article key={net.id} className="overflow-hidden rounded-2xl border border-indigo-100 bg-white/95 shadow-[0_12px_28px_rgba(98,113,202,0.12)]">
             <header className={`flex items-center gap-2 bg-gradient-to-r px-4 py-3 text-white ${net.headerGradient}`}>
               <net.icon className="h-5 w-5" />
-              <h3 className="text-xl text-white">{net.title}</h3>
+              <div>
+                <h3 className="text-lg text-white">{net.title}</h3>
+                <p className="text-xs text-white/85">{net.subtitle}</p>
+              </div>
             </header>
 
             <div className="space-y-4 p-4">
@@ -166,7 +174,7 @@ export function NETTypes() {
                 <p className="mb-2 text-sm font-medium text-slate-700">Subject Distribution</p>
                 <div className="space-y-2.5">
                   {net.subjects.map((subject) => (
-                    <div key={`${net.name}-${subject.name}`} className="space-y-1">
+                    <div key={`${net.id}-${subject.name}`} className="space-y-1">
                       <div className="flex items-center justify-between text-sm text-slate-600">
                         <span>{subject.name}</span>
                         <span>{subject.percentage}%</span>
@@ -180,14 +188,38 @@ export function NETTypes() {
               </div>
 
               <div className="rounded-xl border border-indigo-100 bg-slate-50/80 p-3">
-                <p className="mb-2 text-sm font-medium text-slate-700">Used For</p>
+                <p className="mb-2 text-sm font-medium text-slate-700">Admission Programmes Through This NET</p>
                 <div className="flex flex-wrap gap-1.5">
-                  {net.usedFor.map((program) => (
+                  {net.admissionProgrammes.map((program) => (
                     <Badge key={program} className={`${net.tagColor} text-white`}>
                       {program}
                     </Badge>
                   ))}
                 </div>
+              </div>
+
+              <div className="rounded-xl border border-indigo-100 bg-white p-3">
+                <p className="mb-2 text-sm font-medium text-slate-700">Notes</p>
+                <ul className="space-y-1.5 text-sm text-slate-600">
+                  {net.notes.map((note) => (
+                    <li key={note} className="flex items-start gap-2">
+                      <Check className="mt-0.5 h-4 w-4 text-emerald-500" />
+                      <span>{note}</span>
+                    </li>
+                  ))}
+                </ul>
+
+                {net.guidelineLink ? (
+                  <a
+                    href={net.guidelineLink}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-flex items-center gap-1 text-sm text-indigo-700 underline-offset-2 hover:underline"
+                  >
+                    <LinkIcon className="h-4 w-4" />
+                    Design Aptitude preparation guidelines
+                  </a>
+                ) : null}
               </div>
 
               <div className="grid grid-cols-3 gap-3 border-t border-indigo-100 pt-2">
@@ -215,6 +247,7 @@ export function NETTypes() {
             <Lightbulb className="h-5 w-5 text-sky-500" />
             Important Notes
           </CardTitle>
+          <CardDescription>General NET policy reminders</CardDescription>
         </CardHeader>
         <CardContent>
           <ul className="space-y-2 text-sm text-slate-600">
@@ -232,7 +265,7 @@ export function NETTypes() {
             </li>
             <li className="flex items-start gap-2">
               <Check className="mt-0.5 h-4 w-4 text-emerald-500" />
-              <span>Each exam has 200 MCQs and a total duration of 180 minutes.</span>
+              <span>Each exam has 200 MCQs with a total duration of 180 minutes.</span>
             </li>
           </ul>
         </CardContent>
