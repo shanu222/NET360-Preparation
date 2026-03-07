@@ -286,6 +286,107 @@ function serializeAttempt(attempt) {
   };
 }
 
+function pdfEscape(value) {
+  return String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)');
+}
+
+function buildAnalyticsPdfBuffer({ attempts, user }) {
+  const testsAttempted = attempts.length;
+  const averageScore = testsAttempted
+    ? Math.round(attempts.reduce((sum, item) => sum + (Number(item.score) || 0), 0) / testsAttempted)
+    : 0;
+  const totalQuestions = attempts.reduce((sum, item) => sum + (Number(item.totalQuestions) || 0), 0);
+  const studyHours = Number((attempts.reduce((sum, item) => sum + (Number(item.durationMinutes) || 0), 0) / 60).toFixed(1));
+
+  const bySubject = new Map();
+  attempts.forEach((item) => {
+    const current = bySubject.get(item.subject) || { total: 0, count: 0 };
+    current.total += Number(item.score) || 0;
+    current.count += 1;
+    bySubject.set(item.subject, current);
+  });
+
+  const lines = [];
+  lines.push({ text: 'NET360 Performance Analytics', size: 24, color: '1 1 1', gap: 18 });
+  lines.push({ text: `Student: ${user.firstName || ''} ${user.lastName || ''} (${user.email || ''})`, size: 11, color: '1 1 1' });
+  lines.push({ text: `Generated: ${new Date().toLocaleString()}`, size: 10, color: '1 1 1', gap: 20 });
+  lines.push({ text: 'Summary', size: 14, color: '0.2 0.24 0.55', gap: 16 });
+  lines.push({ text: `Tests Attempted: ${testsAttempted}`, size: 11 });
+  lines.push({ text: `Average Score: ${averageScore}%`, size: 11 });
+  lines.push({ text: `Study Hours: ${studyHours}`, size: 11 });
+  lines.push({ text: `Questions Solved: ${totalQuestions}`, size: 11, gap: 14 });
+
+  lines.push({ text: 'Subject Performance', size: 14, color: '0.2 0.24 0.55', gap: 16 });
+  if (!bySubject.size) {
+    lines.push({ text: 'No attempts available yet.', size: 11, gap: 10 });
+  } else {
+    Array.from(bySubject.entries())
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
+      .forEach(([subject, aggregate]) => {
+        const avg = aggregate.count ? Math.round(aggregate.total / aggregate.count) : 0;
+        lines.push({ text: `${String(subject).toUpperCase()}: ${avg}% average across ${aggregate.count} attempt(s)`, size: 11 });
+      });
+    lines.push({ text: '', size: 10, gap: 6 });
+  }
+
+  lines.push({ text: 'Recent Attempts', size: 14, color: '0.2 0.24 0.55', gap: 16 });
+  attempts.slice(0, 10).forEach((item, index) => {
+    const row = `${index + 1}. ${String(item.subject || '').toUpperCase()} | ${item.topic || ''} | ${Number(item.score) || 0}% | ${new Date(item.attemptedAt).toLocaleDateString()}`;
+    lines.push({ text: row, size: 10 });
+  });
+
+  let y = 792 - 58;
+  const content = [];
+  content.push('q');
+  content.push('0.2 0.24 0.65 rg');
+  content.push('0 720 612 72 re f');
+  content.push('Q');
+
+  for (const line of lines) {
+    const size = line.size || 11;
+    const color = line.color || '0.12 0.14 0.2';
+    const drawY = line.color === '1 1 1' ? y : y - 2;
+    content.push('BT');
+    content.push(`/F1 ${size} Tf`);
+    content.push(`${color} rg`);
+    content.push(`40 ${Math.max(drawY, 42)} Td`);
+    content.push(`(${pdfEscape(line.text)}) Tj`);
+    content.push('ET');
+    y -= line.gap || (size + 6);
+    if (y < 48) break;
+  }
+
+  const stream = content.join('\n');
+
+  const objects = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n',
+    '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+    `5 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}\nendstream\nendobj\n`,
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  for (const obj of objects) {
+    offsets.push(pdf.length);
+    pdf += obj;
+  }
+
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  for (let i = 1; i < offsets.length; i += 1) {
+    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+  return Buffer.from(pdf, 'utf8');
+}
+
 async function issueAuthPayload(user, req) {
   const accessToken = makeAccessToken(user);
   const refreshToken = makeRefreshToken(user);
@@ -1223,38 +1324,18 @@ app.get('/api/analytics/summary', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/reports/export', authMiddleware, async (req, res) => {
-  const format = String(req.query.format || 'json').toLowerCase();
+  const format = String(req.query.format || 'pdf').toLowerCase();
   const attempts = await AttemptModel.find({ userId: req.user._id }).sort({ attemptedAt: -1 }).lean();
-
-  if (format === 'csv') {
-    const header = 'id,subject,topic,difficulty,mode,score,totalQuestions,correctAnswers,wrongAnswers,unanswered,durationMinutes,attemptedAt';
-    const lines = attempts.map((item) => {
-      const escapedTopic = `"${String(item.topic).replace(/"/g, '""')}"`;
-      return [
-        String(item._id),
-        item.subject,
-        escapedTopic,
-        item.difficulty,
-        item.mode,
-        item.score,
-        item.totalQuestions,
-        item.correctAnswers ?? '',
-        item.wrongAnswers ?? '',
-        item.unanswered ?? '',
-        item.durationMinutes,
-        item.attemptedAt,
-      ].join(',');
-    });
-
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="net360-report.csv"');
-    res.send([header, ...lines].join('\n'));
+  if (format !== 'pdf') {
+    res.status(400).json({ error: 'Only PDF export is supported.' });
     return;
   }
 
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="net360-report.json"');
-  res.send(JSON.stringify({ exportedAt: new Date().toISOString(), attempts: attempts.map((item) => serializeAttempt(item)) }, null, 2));
+  const bytes = buildAnalyticsPdfBuffer({ attempts, user: req.user });
+  const dateTag = new Date().toISOString().slice(0, 10);
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="net360-analytics-${dateTag}.pdf"`);
+  res.send(bytes);
 });
 
 app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) => {

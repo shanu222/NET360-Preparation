@@ -30,21 +30,21 @@ export function Analytics() {
   const { attempts, mcqsBySubject } = useAppData();
   const { token, user } = useAuth();
 
-  const exportReport = async (format: 'csv' | 'json') => {
+  const exportReportPdf = async () => {
     if (!user) {
       toast.error('Please login to export reports.');
       return;
     }
 
     try {
-      const { blob, filename } = await downloadReport(`/api/reports/export?format=${format}`, token);
+      const { blob, filename } = await downloadReport('/api/reports/export?format=pdf', token);
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
       anchor.download = filename;
       anchor.click();
       URL.revokeObjectURL(url);
-      toast.success(`Exported ${filename}`);
+      toast.success(`PDF exported: ${filename}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Export failed.');
     }
@@ -147,16 +147,9 @@ export function Analytics() {
           <Button
             variant="outline"
             className="border-indigo-200 bg-white text-indigo-700"
-            onClick={() => void exportReport('csv')}
+            onClick={() => void exportReportPdf()}
           >
-            Export CSV
-          </Button>
-          <Button
-            variant="outline"
-            className="border-indigo-200 bg-white text-indigo-700"
-            onClick={() => void exportReport('json')}
-          >
-            Export JSON
+            Export Professional PDF
           </Button>
         </div>
       </div>

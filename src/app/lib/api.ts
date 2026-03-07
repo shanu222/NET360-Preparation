@@ -94,7 +94,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
 export async function downloadReport(path: string, token?: string | null): Promise<{ blob: Blob; filename: string }> {
   if (shouldUseForcedLocalMode()) {
     const url = new URL(path, window.location.origin);
-    const format = (url.searchParams.get('format') || 'json') as 'csv' | 'json';
+    const format = (url.searchParams.get('format') || 'pdf') as 'pdf';
     return localDownloadReport(format, token);
   }
 
@@ -108,13 +108,13 @@ export async function downloadReport(path: string, token?: string | null): Promi
     response = await fetch(resolveApiPath(path), { headers });
   } catch {
     const url = new URL(path, window.location.origin);
-    const format = (url.searchParams.get('format') || 'json') as 'csv' | 'json';
+    const format = (url.searchParams.get('format') || 'pdf') as 'pdf';
     return localDownloadReport(format, token);
   }
 
   if (!response.ok && shouldFallbackFromHttpError(path, response.status)) {
     const url = new URL(path, window.location.origin);
-    const format = (url.searchParams.get('format') || 'json') as 'csv' | 'json';
+    const format = (url.searchParams.get('format') || 'pdf') as 'pdf';
     return localDownloadReport(format, token);
   }
 
