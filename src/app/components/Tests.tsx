@@ -19,6 +19,7 @@ import {
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
+import { apiRequest } from '../lib/api';
 import { SubjectKey } from '../lib/mcq';
 
 interface TestsProps {
@@ -177,6 +178,38 @@ export function Tests({ onNavigate }: TestsProps) {
   const [selectedSubject, setSelectedSubject] = useState<SubjectKey>('mathematics');
   const [launchingKind, setLaunchingKind] = useState<TestKind | null>(null);
 
+  const resolveLaunchToken = async () => {
+    const inMemory = token;
+    if (inMemory) return inMemory;
+
+    const stored = localStorage.getItem('net360-auth-token');
+    if (stored) return stored;
+
+    const refreshToken = localStorage.getItem('net360-auth-refresh-token');
+    if (!refreshToken) return null;
+
+    try {
+      const refreshed = await apiRequest<{ token: string; refreshToken: string }>(
+        '/api/auth/refresh',
+        {
+          method: 'POST',
+          body: JSON.stringify({ refreshToken }),
+        },
+      );
+
+      if (refreshed?.token) {
+        localStorage.setItem('net360-auth-token', refreshed.token);
+      }
+      if (refreshed?.refreshToken) {
+        localStorage.setItem('net360-auth-refresh-token', refreshed.refreshToken);
+      }
+
+      return refreshed?.token || null;
+    } catch {
+      return null;
+    }
+  };
+
   const selectedNetType = useMemo(
     () => NET_PROFILES.find((profile) => profile.id === selectedNetTypeId) || null,
     [selectedNetTypeId],
@@ -232,7 +265,7 @@ export function Tests({ onNavigate }: TestsProps) {
       return;
     }
 
-    const authToken = token || localStorage.getItem('net360-auth-token');
+    const authToken = await resolveLaunchToken();
     if (!authToken) {
       toast.error('Please login first to start a test. Redirecting to login...');
       onNavigate?.('profile');
