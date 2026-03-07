@@ -281,7 +281,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           <div className="grid grid-cols-2 gap-3">
             <QuickActionCard icon={Sparkles} title="Start Practice" tone="from-cyan-100 to-white" onClick={() => onNavigate('preparation')} />
             <QuickActionCard icon={FileText} title="Mock Test" tone="from-indigo-100 to-white" onClick={() => onNavigate('tests')} />
-            <QuickActionCard icon={Brain} title="AI Tutor" tone="from-sky-100 to-white" onClick={() => onNavigate('ai-mentor')} />
+            <QuickActionCard icon={Brain} title="Study Assistant" tone="from-sky-100 to-white" onClick={() => onNavigate('smart-mentor')} />
             <QuickActionCard icon={Calculator} title="Merit Predictor" tone="from-amber-100 to-white" onClick={() => onNavigate('merit-calculator')} />
           </div>
 

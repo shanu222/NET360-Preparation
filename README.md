@@ -22,7 +22,7 @@ Frontend runs on Vite, backend runs on Express.
 These are required for the new production-grade features:
 
 1. MongoDB database (Atlas or self-hosted)
-2. OpenAI API key (for AI Mentor live responses)
+2. Model provider API key (for Smart Study Mentor live responses)
 3. Separate backend deployment service (or a single service running both frontend and API via reverse proxy)
 
 ## Environment Variables
@@ -34,9 +34,9 @@ Create environment variables for backend service:
 - `JWT_REFRESH_SECRET` = strong random secret for refresh tokens
 - `ACCESS_TOKEN_TTL` = optional, default `15m`
 - `REFRESH_TOKEN_TTL_DAYS` = optional, default `30`
-- `OPENAI_API_KEY` = required for live AI Mentor
-- `OPENAI_MODEL` = optional, default `gpt-4o-mini`
-- `AI_DAILY_LIMIT` = optional, default `50`
+- `MODEL_PROVIDER_API_KEY` = required for live Smart Study Mentor
+- `MODEL_PROVIDER_MODEL` = optional, default `gpt-4o-mini`
+- `SMART_DAILY_LIMIT` = optional, default `50`
 - `ADMIN_EMAILS` = comma-separated admin emails, for example `admin@net360.pk,ops@net360.pk`
 - `API_PORT` = optional, default `4000`
 
@@ -63,7 +63,7 @@ Deploy as two Render services:
 - MongoDB model-based persistence with indexes
 - JWT access + refresh token auth flow
 - Rate limiting and helmet hardening
-- AI Mentor backend integration with daily usage limits
+- Smart Study Mentor backend integration with daily usage limits
 - Study plan generation API with account persistence
 - Admin APIs + Admin Panel UI for MCQ and analytics oversight
   

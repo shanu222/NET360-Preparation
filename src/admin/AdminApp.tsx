@@ -53,6 +53,45 @@ interface AdminMCQ {
   difficulty: string;
 }
 
+interface AdminSubscriptionPlan {
+  id: string;
+  name: string;
+  tier: string;
+  billingCycle: string;
+  pricePkr: number;
+  dailyAiLimit: number;
+}
+
+interface AdminSubscriptionOverview {
+  totalUsers: number;
+  activeUsers: number;
+  expiredUsers: number;
+  plans: AdminSubscriptionPlan[];
+  dailyUsage: Array<{
+    day: string;
+    chatCount: number;
+    solverCount: number;
+    tokenConsumed: number;
+  }>;
+}
+
+interface AdminSubscriptionUser {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  subscription: {
+    status: string;
+    planId: string;
+    billingCycle: string;
+    isActive: boolean;
+    planName: string;
+    dailyAiLimit: number;
+    paymentReference?: string;
+    expiresAt?: string | null;
+  };
+}
+
 interface LoginUser {
   id: string;
   role?: 'student' | 'admin';
@@ -88,6 +127,9 @@ export default function AdminApp() {
   const [issuedTokens, setIssuedTokens] = useState<Record<string, string>>({});
   const [query, setQuery] = useState('');
   const [form, setForm] = useState(emptyForm());
+  const [subscriptionOverview, setSubscriptionOverview] = useState<AdminSubscriptionOverview | null>(null);
+  const [subscriptionUsers, setSubscriptionUsers] = useState<AdminSubscriptionUser[]>([]);
+  const [subscriptionFilter, setSubscriptionFilter] = useState('all');
 
   const filteredMcqs = useMemo(() => {
     if (!query.trim()) return mcqs;
@@ -107,17 +149,27 @@ export default function AdminApp() {
   };
 
   const loadAdminData = async (activeToken: string) => {
-    const [overviewPayload, usersPayload, requestPayload, mcqPayload] = await Promise.all([
+    const [overviewPayload, usersPayload, requestPayload, mcqPayload, subscriptionOverviewPayload, subscriptionUsersPayload] = await Promise.all([
       apiRequest<AdminOverview>('/api/admin/overview', {}, activeToken),
       apiRequest<{ users: AdminUser[] }>('/api/admin/users', {}, activeToken),
       apiRequest<{ requests: SignupRequest[] }>('/api/admin/signup-requests?status=all', {}, activeToken),
       apiRequest<{ mcqs: AdminMCQ[] }>('/api/admin/mcqs', {}, activeToken),
+      apiRequest<AdminSubscriptionOverview>('/api/admin/subscriptions/overview', {}, activeToken).catch(() => ({
+        totalUsers: 0,
+        activeUsers: 0,
+        expiredUsers: 0,
+        plans: [],
+        dailyUsage: [],
+      })),
+      apiRequest<{ users: AdminSubscriptionUser[] }>(`/api/admin/subscriptions/users?status=${subscriptionFilter}`, {}, activeToken).catch(() => ({ users: [] })),
     ]);
 
     setOverview(overviewPayload);
     setUsers(usersPayload.users || []);
     setSignupRequests(requestPayload.requests || []);
     setMcqs(mcqPayload.mcqs || []);
+    setSubscriptionOverview(subscriptionOverviewPayload);
+    setSubscriptionUsers(subscriptionUsersPayload.users || []);
   };
 
   useEffect(() => {
@@ -180,7 +232,7 @@ export default function AdminApp() {
     return () => {
       cancelled = true;
     };
-  }, [authToken, refreshToken]);
+  }, [authToken, refreshToken, subscriptionFilter]);
 
   const login = async () => {
     if (!authForm.email || !authForm.password) {
@@ -353,6 +405,28 @@ export default function AdminApp() {
     }
   };
 
+  const updateUserSubscription = async (userId: string, planId: string, status: string) => {
+    if (!authToken) return;
+    try {
+      await apiRequest(
+        `/api/admin/subscriptions/${userId}/update`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            planId,
+            status,
+            paymentReference: `admin-${Date.now()}`,
+          }),
+        },
+        authToken,
+      );
+      toast.success('Subscription updated successfully.');
+      await loadAdminData(authToken);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update subscription.');
+    }
+  };
+
   if (!ready) {
     return (
       <div className="min-h-screen p-5 flex items-center justify-center">
@@ -422,11 +496,18 @@ export default function AdminApp() {
         <Metric title="Completed Signups" value={String(signupRequests.filter((item) => item.status === 'completed').length)} />
       </div>
 
+      <div className="grid gap-4 md:grid-cols-3">
+        <Metric title="Active Subscriptions" value={String(subscriptionOverview?.activeUsers || 0)} />
+        <Metric title="Expired/Inactive" value={String(subscriptionOverview?.expiredUsers || 0)} />
+        <Metric title="Tracked Users" value={String(subscriptionOverview?.totalUsers || 0)} />
+      </div>
+
       <Tabs defaultValue="users" className="space-y-4">
-        <TabsList className="grid grid-cols-3 w-full max-w-xl">
+        <TabsList className="grid grid-cols-4 w-full max-w-3xl">
           <TabsTrigger value="users">Users</TabsTrigger>
           <TabsTrigger value="requests">Signup Requests</TabsTrigger>
           <TabsTrigger value="mcqs">MCQs</TabsTrigger>
+          <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
         </TabsList>
 
         <TabsContent value="users" className="space-y-3">
@@ -613,6 +694,108 @@ export default function AdminApp() {
                   </button>
                 ))}
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="subscriptions" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Subscription Plans</CardTitle>
+              <CardDescription>Current plan catalog and daily limits</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-2">
+              {(subscriptionOverview?.plans || []).map((plan) => (
+                <div key={plan.id} className="rounded-lg border p-3">
+                  <p className="text-sm">{plan.name}</p>
+                  <p className="text-xs text-muted-foreground">{plan.tier} - {plan.billingCycle}</p>
+                  <p className="text-xs text-muted-foreground">PKR {plan.pricePkr} | Daily limit: {plan.dailyAiLimit}</p>
+                </div>
+              ))}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>User Subscriptions</CardTitle>
+              <CardDescription>Filter and update user subscription status</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <Label htmlFor="subscription-status-filter">Status</Label>
+                <Select value={subscriptionFilter} onValueChange={setSubscriptionFilter}>
+                  <SelectTrigger id="subscription-status-filter" className="w-[220px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                    <SelectItem value="expired">Expired</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2 max-h-[500px] overflow-auto">
+                {subscriptionUsers.map((entry) => (
+                  <div key={entry.id} className="rounded-lg border p-3 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm">{entry.email}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {[entry.firstName, entry.lastName].filter(Boolean).join(' ') || 'No name'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={entry.subscription.isActive ? 'default' : 'outline'}>
+                          {entry.subscription.status || 'inactive'}
+                        </Badge>
+                        <Badge variant="outline">{entry.subscription.planName || entry.subscription.planId || 'No plan'}</Badge>
+                      </div>
+                    </div>
+
+                    <div className="grid gap-2 md:grid-cols-3">
+                      <Button
+                        size="sm"
+                        onClick={() => void updateUserSubscription(entry.id, 'basic_monthly', 'active')}
+                      >
+                        Activate Basic
+                      </Button>
+                      <Button
+                        size="sm"
+                        onClick={() => void updateUserSubscription(entry.id, 'pro_monthly', 'active')}
+                      >
+                        Activate Pro
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => void updateUserSubscription(entry.id, entry.subscription.planId || 'basic_monthly', 'inactive')}
+                      >
+                        Set Inactive
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Recent Mentor Usage (14 Days)</CardTitle>
+              <CardDescription>Combined chat and solver activity</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-2 max-h-[360px] overflow-auto">
+              {(subscriptionOverview?.dailyUsage || []).map((item) => (
+                <div key={item.day} className="rounded-lg border p-3 text-sm">
+                  <p>{item.day}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Chat: {item.chatCount} | Solver: {item.solverCount} | Tokens: {item.tokenConsumed}
+                  </p>
+                </div>
+              ))}
             </CardContent>
           </Card>
         </TabsContent>

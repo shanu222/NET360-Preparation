@@ -5,6 +5,8 @@ const aiUsageSchema = new mongoose.Schema(
     userId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true, ref: 'User' },
     day: { type: String, required: true },
     chatCount: { type: Number, default: 0 },
+    solverCount: { type: Number, default: 0 },
+    tokenConsumed: { type: Number, default: 0 },
   },
   { timestamps: true },
 );

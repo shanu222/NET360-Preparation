@@ -27,8 +27,8 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || `${JWT_SECRET}-refresh`;
 const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '15m';
 const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
-const AI_DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT || 50);
-const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
+const AI_DAILY_LIMIT = Number(process.env.SMART_DAILY_LIMIT || process.env.AI_DAILY_LIMIT || 50);
+const OPENAI_MODEL = process.env.MODEL_PROVIDER_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const SIGNUP_TOKEN_TTL_HOURS = Number(process.env.SIGNUP_TOKEN_TTL_HOURS || 24);
 const NUST_UPDATES_CACHE_MS = Number(process.env.NUST_UPDATES_CACHE_MS || 60 * 1000);
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
@@ -36,9 +36,54 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
 
-const openai = process.env.OPENAI_API_KEY
-  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+const MODEL_PROVIDER_KEY = process.env.MODEL_PROVIDER_API_KEY || process.env.OPENAI_API_KEY || '';
+
+const openai = MODEL_PROVIDER_KEY
+  ? new OpenAI({ apiKey: MODEL_PROVIDER_KEY })
   : null;
+
+const SUBSCRIPTION_PLANS = {
+  basic_monthly: {
+    id: 'basic_monthly',
+    name: 'Basic Plan',
+    tier: 'basic',
+    billingCycle: 'monthly',
+    pricePkr: 500,
+    dailyAiLimit: 50,
+    features: ['Image upload solving', 'Structured concept + steps + final answer', 'Basic explanations'],
+    expiresInDays: 30,
+  },
+  pro_monthly: {
+    id: 'pro_monthly',
+    name: 'Pro Plan',
+    tier: 'pro',
+    billingCycle: 'monthly',
+    pricePkr: 900,
+    dailyAiLimit: 200,
+    features: ['Faster guided processing priority', 'Advanced step explanations', 'Shortcut solving tricks'],
+    expiresInDays: 30,
+  },
+  basic_yearly: {
+    id: 'basic_yearly',
+    name: 'Basic Yearly',
+    tier: 'basic',
+    billingCycle: 'yearly',
+    pricePkr: 5000,
+    dailyAiLimit: 50,
+    features: ['Image upload solving', 'Structured concept + steps + final answer', 'Yearly discounted billing'],
+    expiresInDays: 365,
+  },
+  pro_yearly: {
+    id: 'pro_yearly',
+    name: 'Pro Yearly',
+    tier: 'pro',
+    billingCycle: 'yearly',
+    pricePkr: 9000,
+    dailyAiLimit: 200,
+    features: ['Faster guided processing priority', 'Advanced explanations + tricks', 'Yearly discounted billing'],
+    expiresInDays: 365,
+  },
+};
 
 const app = express();
 // Render sits behind a proxy and forwards client IP in X-Forwarded-For.
@@ -189,6 +234,129 @@ function defaultProgress() {
   };
 }
 
+function defaultSubscription() {
+  return {
+    status: 'inactive',
+    planId: '',
+    billingCycle: '',
+    startedAt: null,
+    expiresAt: null,
+    paymentReference: '',
+    lastActivatedAt: null,
+  };
+}
+
+function normalizeSubscription(user) {
+  return { ...defaultSubscription(), ...(user?.subscription || {}) };
+}
+
+function resolveSubscriptionPlan(planId) {
+  return SUBSCRIPTION_PLANS[String(planId || '').trim()] || null;
+}
+
+function isSubscriptionActive(subscription) {
+  if (!subscription || subscription.status !== 'active') return false;
+  if (!subscription.expiresAt) return false;
+  return new Date(subscription.expiresAt).getTime() > Date.now();
+}
+
+function ensurePremiumAccess(user, res) {
+  const subscription = normalizeSubscription(user);
+  if (!isSubscriptionActive(subscription)) {
+    res.status(402).json({
+      error: 'Premium subscription required to access Smart Study Mentor features.',
+      code: 'SUBSCRIPTION_REQUIRED',
+      subscription,
+      plans: Object.values(SUBSCRIPTION_PLANS),
+    });
+    return null;
+  }
+
+  const plan = resolveSubscriptionPlan(subscription.planId);
+  if (!plan) {
+    res.status(402).json({
+      error: 'Your subscription plan is invalid. Please contact support.',
+      code: 'PLAN_NOT_FOUND',
+      subscription,
+    });
+    return null;
+  }
+
+  return { subscription, plan };
+}
+
+function estimateTokenUsage(text) {
+  const chars = String(text || '').length;
+  return Math.max(80, Math.ceil(chars / 4));
+}
+
+function inferSubject(questionText) {
+  const text = String(questionText || '').toLowerCase();
+  if (/(integration|derivative|matrix|algebra|trigon|vector|equation|limit|function)/.test(text)) return 'Mathematics';
+  if (/(force|newton|velocity|acceleration|electric|magnetic|optics|thermo|wave|current)/.test(text)) return 'Physics';
+  if (/(mole|reaction|bond|periodic|acid|base|organic|electrochem|hydrocarbon)/.test(text)) return 'Chemistry';
+  if (/(grammar|sentence|synonym|antonym|vocabulary|comprehension)/.test(text)) return 'English';
+  if (/(cell|genetics|enzyme|reproduction|ecology|respiration)/.test(text)) return 'Biology';
+  return 'General';
+}
+
+function inferTopic(questionText, subject) {
+  const text = String(questionText || '').toLowerCase();
+  if (subject === 'Mathematics') {
+    if (/integration|integral/.test(text)) return 'Integration';
+    if (/derivative|differentiation/.test(text)) return 'Differentiation';
+    if (/matrix|determinant/.test(text)) return 'Matrices';
+    if (/trigon/.test(text)) return 'Trigonometry';
+    return 'Mathematics Core';
+  }
+  if (subject === 'Physics') {
+    if (/newton|force|motion/.test(text)) return 'Mechanics';
+    if (/electric|current|voltage/.test(text)) return 'Electricity';
+    if (/wave|optics/.test(text)) return 'Waves and Optics';
+    return 'Physics Core';
+  }
+  if (subject === 'Chemistry') {
+    if (/organic|hydrocarbon|alkane|alkene/.test(text)) return 'Organic Chemistry';
+    if (/equilibrium|mole|stoichiometry/.test(text)) return 'Physical Chemistry';
+    return 'Chemistry Core';
+  }
+  if (subject === 'English') return 'Language Skills';
+  if (subject === 'Biology') return 'Biology Core';
+  return 'General Problem Solving';
+}
+
+function fallbackStructuredSolver(questionText, subject, topic) {
+  return {
+    conceptExplanation: `This question belongs to ${subject} (${topic}). Start by identifying known values, target variable, and the governing rule/formula before solving.`,
+    stepByStepSolution: [
+      'Read the question carefully and list what is given and what is required.',
+      'Select the correct concept/formula related to the target quantity.',
+      'Substitute values with proper units/sign conventions.',
+      'Simplify step-by-step and verify each transformation.',
+      'Cross-check the result against constraints/options.',
+    ],
+    finalAnswer: 'Apply the final computed value/result after substitution and simplification.',
+    shortestTrick: 'For NET speed, pre-identify the governing formula family and eliminate impossible options before full calculation.',
+  };
+}
+
+function formatStructuredStudyResponse({ conceptExplanation, steps, finalAnswer, quickTrick }) {
+  const stepLines = (steps || []).map((item, index) => `${index + 1}. ${item}`).join('\n');
+  return [
+    'Concept Explanation',
+    conceptExplanation,
+    '',
+    'Step-by-Step Solution',
+    stepLines,
+    '',
+    'Final Answer',
+    finalAnswer,
+    '',
+    'Quick Trick or Shortcut Method',
+    quickTrick,
+  ].join('\n');
+}
+
 async function bootstrapAdminAccounts() {
   if (!ADMIN_EMAILS.length) {
     console.log('Admin bootstrap skipped: ADMIN_EMAILS is empty.');
@@ -236,6 +404,8 @@ async function bootstrapAdminAccounts() {
 
 function userPublic(user) {
   const progress = { ...defaultProgress(), ...(user.progress || {}) };
+  const subscription = normalizeSubscription(user);
+  const plan = resolveSubscriptionPlan(subscription.planId);
   return {
     id: String(user._id),
     email: user.email,
@@ -251,6 +421,12 @@ function userPublic(user) {
     role: user.role || 'student',
     preferences: { ...defaultPreferences(), ...(user.preferences || {}) },
     progress,
+    subscription: {
+      ...subscription,
+      isActive: isSubscriptionActive(subscription),
+      dailyAiLimit: plan?.dailyAiLimit || 0,
+      planName: plan?.name || '',
+    },
     test_history: progress.completedTests || [],
     scores: progress.scores || [],
     study_hours: progress.studyHours || 0,
@@ -1399,6 +1575,9 @@ app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
     return;
   }
 
+  const premium = ensurePremiumAccess(req.user, res);
+  if (!premium) return;
+
   const day = new Date().toISOString().slice(0, 10);
   const usage = await AIUsageModel.findOneAndUpdate(
     { userId: req.user._id, day },
@@ -1406,8 +1585,8 @@ app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
     { upsert: true, new: true },
   );
 
-  if ((usage.chatCount || 0) > AI_DAILY_LIMIT) {
-    res.status(429).json({ error: `Daily AI limit reached (${AI_DAILY_LIMIT}). Please continue tomorrow.` });
+  if ((usage.chatCount || 0) > premium.plan.dailyAiLimit) {
+    res.status(429).json({ error: `Daily guidance limit reached (${premium.plan.dailyAiLimit}). Please continue tomorrow.` });
     return;
   }
 
@@ -1421,7 +1600,15 @@ app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
         messages: [
           {
             role: 'system',
-            content: 'You are NET360 AI Mentor. Provide concise, accurate educational guidance for NET prep in mathematics, physics, chemistry, english, intelligence and GK. If uncertain, state assumptions and suggest next steps.',
+            content: [
+              'You are NET360 Smart Study Mentor for exam preparation.',
+              'Always return your guidance in this exact plain-text structure:',
+              'Concept Explanation',
+              'Step-by-Step Solution',
+              'Final Answer',
+              'Quick Trick or Shortcut Method',
+              'Keep it concise, educational, and teacher-like.',
+            ].join('\n'),
           },
           {
             role: 'user',
@@ -1438,13 +1625,53 @@ app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
   if (!answer) {
     const normalized = message.toLowerCase();
     if (normalized.includes('integration')) {
-      answer = 'Try LIATE for integration by parts, and test substitution first when an inner derivative appears. Solve 2 timed examples and compare with answer key steps.';
+      answer = formatStructuredStudyResponse({
+        conceptExplanation: 'Integration by parts is best used when the integrand is a product of two functions where direct integration is difficult.',
+        steps: [
+          'Choose u and dv using LIATE so differentiation simplifies u.',
+          'Compute du and v correctly before substitution.',
+          'Apply integral(udv) = uv - integral(vdu).',
+          'Simplify the remaining integral and combine constants.',
+        ],
+        finalAnswer: 'Use LIATE-based substitution and complete the remaining integral after applying uv - integral(vdu).',
+        quickTrick: 'Try substitution first when an inner derivative is present; use integration by parts when substitution stalls.',
+      });
     } else if (normalized.includes('physics') || normalized.includes('newton') || normalized.includes('force')) {
-      answer = 'For numericals: draw FBD, define knowns, select equation, solve, then unit-check. In NET, free-body setup usually decides the correct option fastest.';
+      answer = formatStructuredStudyResponse({
+        conceptExplanation: 'Force and motion questions are solved fastest by converting the statement into a clean free-body diagram and equation set.',
+        steps: [
+          'Draw the free-body diagram and mark all forces with directions.',
+          'Set coordinate axes and resolve components if needed.',
+          'Apply Newton\'s laws with correct sign convention.',
+          'Solve algebraically and validate units.',
+        ],
+        finalAnswer: 'Use the free-body diagram plus Newton\'s laws to compute the required value with consistent signs and units.',
+        quickTrick: 'In MCQs, eliminate options with impossible direction/sign before full calculation.',
+      });
     } else if (normalized.includes('chemistry')) {
-      answer = 'Use concept buckets: periodic trends, bonding, stoichiometry, and equilibrium. Solve 15 topic MCQs, then review incorrect options to find recurring mistakes.';
+      answer = formatStructuredStudyResponse({
+        conceptExplanation: 'Chemistry performance improves when questions are classified into concept buckets before solving.',
+        steps: [
+          'Identify whether the question is periodic trend, bonding, stoichiometry, or equilibrium.',
+          'Write the core rule/equation for that bucket.',
+          'Substitute values carefully and check units/mole ratios.',
+          'Cross-check the result against chemical feasibility.',
+        ],
+        finalAnswer: 'Classify first, apply the correct governing rule, then verify chemical feasibility.',
+        quickTrick: 'For objective questions, use option elimination from trend direction before detailed math.',
+      });
     } else {
-      answer = 'Break the topic into concept summary, solved examples, and timed MCQs. Share one exact question and I will provide a step-by-step solution path.';
+      answer = formatStructuredStudyResponse({
+        conceptExplanation: 'A strong preparation approach combines concept clarity, worked examples, and timed practice.',
+        steps: [
+          'Start with a short concept summary for the topic.',
+          'Solve one representative example with reasoning.',
+          'Attempt timed MCQs and review mistakes immediately.',
+          'Repeat with a slightly harder variation of the same concept.',
+        ],
+        finalAnswer: 'Use an iterative cycle of concept, example, timed practice, and error review.',
+        quickTrick: 'Track repeated mistakes in one notebook and revise those patterns daily.',
+      });
     }
   }
 
@@ -1452,7 +1679,193 @@ app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
     answer,
     usage: {
       usedToday: usage.chatCount,
-      remainingToday: Math.max(0, AI_DAILY_LIMIT - usage.chatCount),
+      remainingToday: Math.max(0, premium.plan.dailyAiLimit - usage.chatCount),
+    },
+  });
+});
+
+app.get('/api/subscriptions/plans', (_req, res) => {
+  res.json({ plans: Object.values(SUBSCRIPTION_PLANS) });
+});
+
+app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
+  const subscription = normalizeSubscription(req.user);
+  const plan = resolveSubscriptionPlan(subscription.planId);
+  const day = new Date().toISOString().slice(0, 10);
+  const usage = await AIUsageModel.findOne({ userId: req.user._id, day }).lean();
+
+  res.json({
+    subscription: {
+      ...subscription,
+      isActive: isSubscriptionActive(subscription),
+      planName: plan?.name || '',
+      dailyAiLimit: plan?.dailyAiLimit || 0,
+    },
+    usage: {
+      day,
+      chatCount: usage?.chatCount || 0,
+      solverCount: usage?.solverCount || 0,
+      tokenConsumed: usage?.tokenConsumed || 0,
+      remainingToday: Math.max(0, (plan?.dailyAiLimit || 0) - ((usage?.chatCount || 0) + (usage?.solverCount || 0))),
+    },
+  });
+});
+
+app.post('/api/subscriptions/purchase', authMiddleware, async (req, res) => {
+  const planId = String(req.body?.planId || '').trim();
+  const paymentReference = String(req.body?.paymentReference || '').trim();
+  const plan = resolveSubscriptionPlan(planId);
+
+  if (!plan) {
+    res.status(400).json({ error: 'Invalid plan selected.' });
+    return;
+  }
+
+  if (!paymentReference || paymentReference.length < 4) {
+    res.status(400).json({ error: 'Payment reference is required for verification.' });
+    return;
+  }
+
+  const startedAt = new Date();
+  const expiresAt = new Date(startedAt.getTime() + plan.expiresInDays * 24 * 60 * 60 * 1000);
+  req.user.subscription = {
+    status: 'active',
+    planId: plan.id,
+    billingCycle: plan.billingCycle,
+    startedAt,
+    expiresAt,
+    paymentReference,
+    lastActivatedAt: startedAt,
+  };
+  await req.user.save();
+
+  res.status(201).json({
+    ok: true,
+    subscription: {
+      ...normalizeSubscription(req.user),
+      isActive: true,
+      planName: plan.name,
+      dailyAiLimit: plan.dailyAiLimit,
+    },
+  });
+});
+
+app.post('/api/ai/mentor/solve-image', authMiddleware, async (req, res) => {
+  const premium = ensurePremiumAccess(req.user, res);
+  if (!premium) return;
+
+  const imageDataUrl = String(req.body?.imageDataUrl || '').trim();
+  const providedText = String(req.body?.questionText || '').trim();
+  const mimeType = String(req.body?.mimeType || '').trim().toLowerCase();
+
+  const isImageAllowed = !mimeType || mimeType === 'image/png' || mimeType === 'image/jpeg' || mimeType === 'image/jpg';
+  if (!isImageAllowed) {
+    res.status(400).json({ error: 'Only JPG and PNG images are supported.' });
+    return;
+  }
+
+  if (!imageDataUrl && !providedText) {
+    res.status(400).json({ error: 'Question image or extracted question text is required.' });
+    return;
+  }
+
+  const day = new Date().toISOString().slice(0, 10);
+  let usage = await AIUsageModel.findOne({ userId: req.user._id, day });
+  if (!usage) {
+    usage = await AIUsageModel.create({ userId: req.user._id, day, chatCount: 0, solverCount: 0, tokenConsumed: 0 });
+  }
+
+  const usedToday = (usage.chatCount || 0) + (usage.solverCount || 0);
+  if (usedToday >= premium.plan.dailyAiLimit) {
+    res.status(429).json({ error: `Daily guidance limit reached (${premium.plan.dailyAiLimit}). Please continue tomorrow.` });
+    return;
+  }
+
+  let extractedQuestion = providedText;
+
+  if (!extractedQuestion && imageDataUrl && openai) {
+    try {
+      const ocrCompletion = await openai.chat.completions.create({
+        model: OPENAI_MODEL,
+        temperature: 0,
+        messages: [
+          {
+            role: 'system',
+            content: 'Extract only the readable question text from this educational image. Return plain text only.',
+          },
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: 'Extract question text exactly as visible.' },
+              { type: 'image_url', image_url: { url: imageDataUrl } },
+            ],
+          },
+        ],
+      });
+      extractedQuestion = (ocrCompletion.choices?.[0]?.message?.content || '').trim();
+    } catch {
+      extractedQuestion = '';
+    }
+  }
+
+  if (!extractedQuestion) {
+    extractedQuestion = providedText || 'Could not extract text from image. Please type the question manually.';
+  }
+
+  const subject = inferSubject(extractedQuestion);
+  const topic = inferTopic(extractedQuestion, subject);
+  let structured = fallbackStructuredSolver(extractedQuestion, subject, topic);
+
+  if (openai) {
+    try {
+      const prompt = [
+        'You are NET360 Premium Question Solver with a custom educational guidance layer.',
+        `Detected subject: ${subject}`,
+        `Detected topic: ${topic}`,
+        'Return only valid JSON with keys: conceptExplanation (string), stepByStepSolution (array of strings), finalAnswer (string), shortestTrick (string).',
+        'Write crisp educational responses, not generic chatbot text. Keep steps exam-oriented and practical.',
+        'Question:',
+        extractedQuestion,
+      ].join('\n');
+
+      const solveCompletion = await openai.chat.completions.create({
+        model: OPENAI_MODEL,
+        temperature: 0.2,
+        messages: [
+          { role: 'system', content: 'Return strict JSON only, no markdown.' },
+          { role: 'user', content: prompt },
+        ],
+      });
+
+      const raw = (solveCompletion.choices?.[0]?.message?.content || '').trim();
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed?.conceptExplanation && Array.isArray(parsed?.stepByStepSolution) && parsed?.finalAnswer && parsed?.shortestTrick) {
+          structured = {
+            conceptExplanation: String(parsed.conceptExplanation),
+            stepByStepSolution: parsed.stepByStepSolution.map((item) => String(item)),
+            finalAnswer: String(parsed.finalAnswer),
+            shortestTrick: String(parsed.shortestTrick),
+          };
+        }
+      }
+    } catch {
+      // Fall back to deterministic structured guidance.
+    }
+  }
+
+  usage.solverCount = (usage.solverCount || 0) + 1;
+  usage.tokenConsumed = (usage.tokenConsumed || 0) + estimateTokenUsage(`${extractedQuestion}\n${JSON.stringify(structured)}`);
+  await usage.save();
+
+  res.status(201).json({
+    questionText: extractedQuestion,
+    detected: { subject, topic },
+    result: structured,
+    usage: {
+      usedToday: (usage.chatCount || 0) + (usage.solverCount || 0),
+      remainingToday: Math.max(0, premium.plan.dailyAiLimit - ((usage.chatCount || 0) + (usage.solverCount || 0))),
+      tokenConsumed: usage.tokenConsumed || 0,
     },
   });
 });
@@ -1753,6 +2166,101 @@ app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) =>
     averageScore,
     recentAttempts: latestAttempts.map((item) => serializeAttempt(item)),
   });
+});
+
+app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async (_req, res) => {
+  const now = new Date();
+  const [activeUsers, expiredUsers, totalUsers, dailyUsage] = await Promise.all([
+    UserModel.countDocuments({ 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } }),
+    UserModel.countDocuments({ 'subscription.status': { $in: ['expired', 'cancelled'] } }),
+    UserModel.countDocuments(),
+    AIUsageModel.aggregate([
+      { $group: { _id: '$day', chatCount: { $sum: '$chatCount' }, solverCount: { $sum: '$solverCount' }, tokenConsumed: { $sum: '$tokenConsumed' } } },
+      { $sort: { _id: -1 } },
+      { $limit: 14 },
+    ]),
+  ]);
+
+  res.json({
+    totalUsers,
+    activeUsers,
+    expiredUsers,
+    plans: Object.values(SUBSCRIPTION_PLANS),
+    dailyUsage: dailyUsage.map((item) => ({
+      day: item._id,
+      chatCount: item.chatCount || 0,
+      solverCount: item.solverCount || 0,
+      tokenConsumed: item.tokenConsumed || 0,
+    })),
+  });
+});
+
+app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (req, res) => {
+  const status = String(req.query?.status || 'all').toLowerCase();
+  const filter = {};
+  if (status !== 'all') {
+    filter['subscription.status'] = status;
+  }
+
+  const users = await UserModel.find(filter, {
+    email: 1,
+    firstName: 1,
+    lastName: 1,
+    subscription: 1,
+  }).sort({ updatedAt: -1 }).limit(500).lean();
+
+  res.json({
+    users: users.map((item) => {
+      const subscription = normalizeSubscription(item);
+      const plan = resolveSubscriptionPlan(subscription.planId);
+      return {
+        id: String(item._id),
+        email: item.email,
+        firstName: item.firstName || '',
+        lastName: item.lastName || '',
+        subscription: {
+          ...subscription,
+          isActive: isSubscriptionActive(subscription),
+          planName: plan?.name || '',
+          dailyAiLimit: plan?.dailyAiLimit || 0,
+        },
+      };
+    }),
+  });
+});
+
+app.post('/api/admin/subscriptions/:userId/update', authMiddleware, requireAdmin, async (req, res) => {
+  const userId = String(req.params.userId || '').trim();
+  const planId = String(req.body?.planId || '').trim();
+  const status = String(req.body?.status || '').trim().toLowerCase();
+  const paymentReference = String(req.body?.paymentReference || '').trim();
+  const plan = resolveSubscriptionPlan(planId);
+
+  if (!userId || !plan || !['active', 'inactive', 'expired', 'cancelled'].includes(status)) {
+    res.status(400).json({ error: 'Valid userId, planId, and status are required.' });
+    return;
+  }
+
+  const user = await UserModel.findById(userId);
+  if (!user) {
+    res.status(404).json({ error: 'User not found.' });
+    return;
+  }
+
+  const startedAt = new Date();
+  const expiresAt = new Date(startedAt.getTime() + plan.expiresInDays * 24 * 60 * 60 * 1000);
+  user.subscription = {
+    status,
+    planId: plan.id,
+    billingCycle: plan.billingCycle,
+    startedAt,
+    expiresAt,
+    paymentReference,
+    lastActivatedAt: startedAt,
+  };
+  await user.save();
+
+  res.json({ ok: true, userId, subscription: normalizeSubscription(user) });
 });
 
 app.get('/api/admin/signup-requests', authMiddleware, requireAdmin, async (req, res) => {

@@ -4,7 +4,7 @@ Suggested Name:
 
 NET360
 
-NUSTPrep AI
+NUSTPrep Smart
 
 NET Master
 
@@ -18,7 +18,7 @@ Home
 NUST Guide
 Preparation
 Practice & Tests
-AI Mentor
+Smart Study Mentor
 Profile & Analytics
 2. Home Dashboard
 
@@ -38,7 +38,7 @@ Start Preparation
 
 Practice Test
 
-AI Doubt Solver
+Guided Doubt Solver
 
 NUST Guide
 
@@ -58,7 +58,7 @@ Today's Target
 Quick Access
 Start Practice
 Mock Test
-AI Tutor
+Study Assistant
 Merit Predictor
 3. Complete NUST Admission Guide
 
@@ -374,13 +374,13 @@ Solve Here
 
 Student writes steps.
 
-AI analyzes:
+Smart analysis:
 
 Step 1 ✓ correct
 Step 2 ✓ correct
 Step 3 ❌ mistake in algebra
 
-AI gives correction.
+Guided feedback:
 
 Features:
 
@@ -390,9 +390,9 @@ equation parser
 
 step checking
 
-8. AI Mentor
+8. Smart Study Mentor
 
-A built-in AI tutor for NET preparation.
+A built-in Smart Study Mentor for NET preparation.
 
 Functions:
 
@@ -402,13 +402,13 @@ Example:
 
 Explain integration by parts
 
-AI explains with examples.
+Concept explanation with worked examples.
 
 Question Solver
 
 Student uploads question.
 
-AI:
+Guided System:
 
 explains concept
 
@@ -422,7 +422,7 @@ NET date
 
 current preparation level
 
-AI generates:
+System generates:
 
 60 Day Study Plan
 9. Practice & Mock Tests
@@ -445,9 +445,9 @@ Total Questions: 200
 Time: 180 minutes
 Adaptive Practice
 
-AI gives questions based on weak areas.
+The system gives questions based on weak areas.
 
-10. AI Performance Analytics
+10. Smart Performance Analytics
 
 After each test:
 
@@ -457,7 +457,7 @@ Mathematics Accuracy: 72%
 Physics Accuracy: 65%
 English Accuracy: 81%
 
-AI tells:
+Performance insights highlight:
 
 Weak Areas
 - Electromagnetism
@@ -502,7 +502,7 @@ Examples:
 NET Registration Open
 Practice Reminder
 New Mock Test Available
-15. AI-Based Personal Coach
+15. Personal Study Coach
 
 Daily suggestions:
 
@@ -525,9 +525,9 @@ Firebase
 
 Supabase
 
-AI:
+Guided System:
 
-OpenAI API
+Model Provider API
 
 Math Solver Model
 
@@ -543,7 +543,7 @@ Most NET apps only provide MCQs.
 
 Your app should include:
 
-1️⃣ AI Doubt Solver
+1️⃣ Guided Doubt Solver
 2️⃣ Step-by-step math board
 3️⃣ Merit prediction
 4️⃣ Smart study planner
@@ -562,7 +562,7 @@ Premium:
 
 full mock tests
 
-AI tutor
+Study assistant
 
 step analysis
 

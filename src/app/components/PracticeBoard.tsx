@@ -16,6 +16,7 @@ interface DrawPoint {
 interface Stroke {
   tool: Tool;
   points: DrawPoint[];
+  color: string;
 }
 
 type BoardQuestion = MCQ & {
@@ -23,11 +24,20 @@ type BoardQuestion = MCQ & {
   diagramUrl?: string;
 };
 
+const PEN_COLORS = [
+  { name: 'Black', value: '#111827' },
+  { name: 'Blue', value: '#1d4ed8' },
+  { name: 'Red', value: '#dc2626' },
+  { name: 'Green', value: '#15803d' },
+  { name: 'Purple', value: '#7e22ce' },
+];
+
 export function PracticeBoard() {
   const [questionPool, setQuestionPool] = useState<BoardQuestion[]>([]);
   const [activeQuestion, setActiveQuestion] = useState<BoardQuestion | null>(null);
   const [loadingQuestion, setLoadingQuestion] = useState(false);
   const [tool, setTool] = useState<Tool>('pen');
+  const [penColor, setPenColor] = useState(PEN_COLORS[0].value);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -50,15 +60,15 @@ export function PracticeBoard() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
     strokesRef.current.forEach((stroke) => {
       if (!stroke.points.length) return;
       ctx.beginPath();
-      ctx.strokeStyle = stroke.tool === 'eraser' ? '#ffffff' : '#1e1b4b';
-      ctx.lineWidth = stroke.tool === 'eraser' ? 20 : 3;
+      ctx.strokeStyle = stroke.tool === 'eraser' ? '#ffffff' : stroke.color;
+      ctx.lineWidth = stroke.tool === 'eraser' ? 24 : 3;
       ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
       for (let i = 1; i < stroke.points.length; i += 1) {
         ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
@@ -108,13 +118,13 @@ export function PracticeBoard() {
     if (!point) return;
 
     isDrawingRef.current = true;
-    const stroke: Stroke = { tool, points: [point] };
+    const stroke: Stroke = { tool, points: [point], color: tool === 'eraser' ? '#ffffff' : penColor };
     currentStrokeRef.current = stroke;
     strokesRef.current.push(stroke);
 
     event.currentTarget.setPointerCapture(event.pointerId);
     redrawCanvas();
-  }, [getPoint, redrawCanvas, tool]);
+  }, [getPoint, penColor, redrawCanvas, tool]);
 
   const handlePointerMove = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
     if (!isDrawingRef.current || !currentStrokeRef.current) return;
@@ -134,7 +144,16 @@ export function PracticeBoard() {
   }, []);
 
   const clearBoard = useCallback(() => {
+    isDrawingRef.current = false;
+    currentStrokeRef.current = null;
     strokesRef.current = [];
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+      }
+    }
     redrawCanvas();
   }, [redrawCanvas]);
 
@@ -233,6 +252,22 @@ export function PracticeBoard() {
                 <Eraser className="h-4 w-4" />
                 Eraser
               </Button>
+              <div className="flex items-center gap-1 rounded-md border border-indigo-200 bg-white px-2 py-1">
+                {PEN_COLORS.map((color) => (
+                  <button
+                    key={color.value}
+                    type="button"
+                    title={color.name}
+                    aria-label={`Use ${color.name} pen color`}
+                    onClick={() => {
+                      setTool('pen');
+                      setPenColor(color.value);
+                    }}
+                    className={`h-6 w-6 rounded-full border ${penColor === color.value ? 'border-indigo-500 ring-2 ring-indigo-200' : 'border-slate-300'}`}
+                    style={{ backgroundColor: color.value }}
+                  />
+                ))}
+              </div>
               <Button variant="outline" className="border-indigo-200" onClick={clearBoard}>
                 <RefreshCcw className="h-4 w-4" />
                 Clear Board

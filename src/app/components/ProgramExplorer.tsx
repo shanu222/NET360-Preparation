@@ -71,7 +71,7 @@ export function ProgramExplorer() {
       icon: Code,
       label: 'Computing Programs',
       tag: 'Computing',
-      description: 'Computer science, AI, data, software, and security programs',
+      description: 'Computer science, computational intelligence, data, software, and security programs',
       programs: [
         { name: 'BS Computer Science', institution: 'SEECS', location: 'Main Campus, Islamabad', icon: Code },
         { name: 'BS Artificial Intelligence', institution: 'SEECS', location: 'Main Campus, Islamabad', icon: Sparkles },

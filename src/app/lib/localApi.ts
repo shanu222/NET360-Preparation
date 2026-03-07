@@ -915,17 +915,77 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const currentUsage = db.aiUsage.find((item) => `${item.userId}-${item.day}` === key)!;
     const dailyLimit = 50;
     if (currentUsage.chatCount > dailyLimit) {
-      throw new Error(`Daily AI limit reached (${dailyLimit}). Please continue tomorrow.`);
+      throw new Error(`Daily guidance limit reached (${dailyLimit}). Please continue tomorrow.`);
     }
 
-    let answer = 'Break the topic into concept summary, solved examples, and timed MCQs. Share one exact question and I will provide a step-by-step solution path.';
+    let answer = [
+      'Concept Explanation',
+      'A strong preparation approach combines concept clarity, worked examples, and timed practice.',
+      '',
+      'Step-by-Step Solution',
+      '1. Start with a short concept summary for the topic.',
+      '2. Solve one representative example with reasoning.',
+      '3. Attempt timed MCQs and review mistakes immediately.',
+      '4. Repeat with a slightly harder variation of the same concept.',
+      '',
+      'Final Answer',
+      'Use an iterative cycle of concept, example, timed practice, and error review.',
+      '',
+      'Quick Trick or Shortcut Method',
+      'Track repeated mistakes in one notebook and revise those patterns daily.',
+    ].join('\n');
     const normalized = message.toLowerCase();
     if (normalized.includes('integration')) {
-      answer = 'Try LIATE for integration by parts, and test substitution first when an inner derivative appears. Solve 2 timed examples and compare with answer key steps.';
+      answer = [
+        'Concept Explanation',
+        'Integration by parts is used when the integrand is a product of two functions and direct integration is difficult.',
+        '',
+        'Step-by-Step Solution',
+        '1. Choose u and dv using LIATE.',
+        '2. Compute du and v correctly.',
+        '3. Apply integral(udv) = uv - integral(vdu).',
+        '4. Simplify the remaining integral and verify.',
+        '',
+        'Final Answer',
+        'Apply LIATE and complete the remaining integral after uv - integral(vdu).',
+        '',
+        'Quick Trick or Shortcut Method',
+        'Try substitution first when an inner derivative appears; switch to integration by parts if needed.',
+      ].join('\n');
     } else if (normalized.includes('physics') || normalized.includes('newton')) {
-      answer = 'For numericals: draw FBD, define knowns, select equation, solve, then unit-check. In NET, free-body setup usually decides the correct option fastest.';
+      answer = [
+        'Concept Explanation',
+        'Force and motion numericals are solved fastest through a clear free-body diagram and correct sign convention.',
+        '',
+        'Step-by-Step Solution',
+        '1. Draw the free-body diagram and mark all forces.',
+        '2. Resolve components and set axes.',
+        '3. Apply Newton\'s laws with proper signs.',
+        '4. Solve and confirm units.',
+        '',
+        'Final Answer',
+        'Use free-body analysis and Newton\'s laws to obtain the required quantity.',
+        '',
+        'Quick Trick or Shortcut Method',
+        'Eliminate options with impossible direction/sign before full calculation.',
+      ].join('\n');
     } else if (normalized.includes('chemistry')) {
-      answer = 'Use concept buckets: periodic trends, bonding, stoichiometry, and equilibrium. Solve 15 topic MCQs, then review incorrect options to find recurring mistakes.';
+      answer = [
+        'Concept Explanation',
+        'Chemistry questions become easier when grouped into concept buckets before solving.',
+        '',
+        'Step-by-Step Solution',
+        '1. Classify the question into trend, bonding, stoichiometry, or equilibrium.',
+        '2. Write the core relation/rule.',
+        '3. Substitute values with correct units and ratios.',
+        '4. Validate the result against chemical feasibility.',
+        '',
+        'Final Answer',
+        'Classify first, apply the core rule, and confirm chemical feasibility.',
+        '',
+        'Quick Trick or Shortcut Method',
+        'Use trend-based elimination to remove impossible options quickly.',
+      ].join('\n');
     }
 
     writeDb(db);

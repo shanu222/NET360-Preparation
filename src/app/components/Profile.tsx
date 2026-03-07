@@ -603,7 +603,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                   <SelectItem value="cs">Computer Science</SelectItem>
                   <SelectItem value="ee">Electrical Engineering</SelectItem>
                   <SelectItem value="me">Mechanical Engineering</SelectItem>
-                  <SelectItem value="ai">Artificial Intelligence</SelectItem>
+                  <SelectItem value="artificial-intelligence">Artificial Intelligence</SelectItem>
                   <SelectItem value="se">Software Engineering</SelectItem>
                 </SelectContent>
               </Select>

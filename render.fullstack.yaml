@@ -1,0 +1,45 @@
+services:
+  - type: web
+    name: net360-api
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run start:server
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_PORT
+        value: 4000
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: JWT_REFRESH_SECRET
+        sync: false
+      - key: ACCESS_TOKEN_TTL
+        value: 15m
+      - key: REFRESH_TOKEN_TTL_DAYS
+        value: 30
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: AI_DAILY_LIMIT
+        value: 50
+      - key: ADMIN_EMAILS
+        sync: false
+
+  - type: web
+    name: net360-preparation
+    env: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npx vite preview --host 0.0.0.0 --port $PORT
+    autoDeploy: true
+    envVars:
+      - key: VITE_API_BASE_URL
+        # Replace with your live backend URL after the API service is created.
+        value: https://net360-api.onrender.com
+      - key: VITE_FORCE_LOCAL_API
+        value: "false"

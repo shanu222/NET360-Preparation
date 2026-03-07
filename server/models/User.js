@@ -48,6 +48,19 @@ const progressSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const subscriptionSchema = new mongoose.Schema(
+  {
+    status: { type: String, enum: ['inactive', 'active', 'expired', 'cancelled'], default: 'inactive', index: true },
+    planId: { type: String, default: '' },
+    billingCycle: { type: String, enum: ['monthly', 'yearly', ''], default: '' },
+    startedAt: { type: Date, default: null },
+    expiresAt: { type: Date, default: null },
+    paymentReference: { type: String, default: '' },
+    lastActivatedAt: { type: Date, default: null },
+  },
+  { _id: false },
+);
+
 const userSchema = new mongoose.Schema(
   {
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
@@ -64,6 +77,7 @@ const userSchema = new mongoose.Schema(
     role: { type: String, enum: ['student', 'admin'], default: 'student', index: true },
     preferences: { type: preferencesSchema, default: () => ({}) },
     progress: { type: progressSchema, default: () => ({}) },
+    subscription: { type: subscriptionSchema, default: () => ({}) },
     activeSession: { type: activeSessionSchema, default: null },
     refreshTokens: { type: [refreshTokenSchema], default: [] },
     resetPasswordTokenHash: { type: String, default: null },

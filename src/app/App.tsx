@@ -46,7 +46,7 @@ export default function App() {
       'net-types',
       'preparation',
       'practice-board',
-      'ai-mentor',
+      'smart-mentor',
       'tests',
       'analytics',
       'merit-calculator',
@@ -63,7 +63,7 @@ export default function App() {
     { id: 'net-types', label: 'NET Types', icon: FlaskConical },
     { id: 'preparation', label: 'Preparation', icon: BookMarked },
     { id: 'practice-board', label: 'Practice Board', icon: Pencil },
-    { id: 'ai-mentor', label: 'AI Mentor', icon: Brain },
+    { id: 'smart-mentor', label: 'Smart Study Mentor', icon: Brain },
     { id: 'tests', label: 'Tests', icon: FileText },
     { id: 'analytics', label: 'Analytics', icon: TrendingUp },
     { id: 'merit-calculator', label: 'Merit Calculator', icon: Calculator },
@@ -191,7 +191,7 @@ export default function App() {
                   <PracticeBoard />
                 </TabsContent>
 
-                <TabsContent value="ai-mentor" className="mt-0 net360-page">
+                <TabsContent value="smart-mentor" className="mt-0 net360-page">
                   <AIMentor onNavigate={setActiveTab} />
                 </TabsContent>
 
