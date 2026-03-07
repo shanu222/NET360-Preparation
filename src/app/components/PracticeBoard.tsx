@@ -1,271 +1,263 @@
-import { type ComponentType, useState } from 'react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Button } from './ui/button';
-import { Textarea } from './ui/textarea';
-import { Badge } from './ui/badge';
-import { BookOpen, CheckCircle, FileText, Lightbulb, MessageSquare, RotateCcw, XCircle } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Eraser, PenLine, RefreshCcw } from 'lucide-react';
 import { toast } from 'sonner';
+import { Button } from './ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { apiRequest } from '../lib/api';
-import { useAuth } from '../context/AuthContext';
+import { MCQ, getSubjectLabel } from '../lib/mcq';
+
+type Tool = 'pen' | 'eraser';
+
+interface DrawPoint {
+  x: number;
+  y: number;
+}
+
+interface Stroke {
+  tool: Tool;
+  points: DrawPoint[];
+}
+
+type BoardQuestion = MCQ & {
+  imageUrl?: string;
+  diagramUrl?: string;
+};
 
 export function PracticeBoard() {
-  const { token, user } = useAuth();
-  const [solution, setSolution] = useState('Step 1: 2x + 5 = 15\nStep 2: 2x = 15 - 5\nStep 3: 2x = 10\nStep 4: x = 10/2\nStep 5: x = 5');
-  const [feedback, setFeedback] = useState<Array<{ step: number; correct: boolean; message: string }>>([]);
-  const [suggestedSolution, setSuggestedSolution] = useState<string[]>([]);
-  const [similarQuestions, setSimilarQuestions] = useState<Array<{ id: string; subject: string; topic: string; question: string; difficulty: string }>>([]);
-  const [showAnalysis, setShowAnalysis] = useState(false);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [questionPool, setQuestionPool] = useState<BoardQuestion[]>([]);
+  const [activeQuestion, setActiveQuestion] = useState<BoardQuestion | null>(null);
+  const [loadingQuestion, setLoadingQuestion] = useState(false);
+  const [tool, setTool] = useState<Tool>('pen');
 
-  const analyzeSolution = async () => {
-    if (!user || !token) {
-      toast.error('Login required to analyze and save practice feedback.');
-      return;
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const strokesRef = useRef<Stroke[]>([]);
+  const currentStrokeRef = useRef<Stroke | null>(null);
+  const isDrawingRef = useRef(false);
+
+  const randomQuestion = useCallback((pool: BoardQuestion[], currentId?: string | null) => {
+    if (!pool.length) return null;
+    if (pool.length === 1) return pool[0];
+
+    const candidates = pool.filter((item) => item.id !== currentId);
+    const source = candidates.length ? candidates : pool;
+    return source[Math.floor(Math.random() * source.length)] || source[0] || null;
+  }, []);
+
+  const redrawCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    strokesRef.current.forEach((stroke) => {
+      if (!stroke.points.length) return;
+      ctx.beginPath();
+      ctx.strokeStyle = stroke.tool === 'eraser' ? '#ffffff' : '#1e1b4b';
+      ctx.lineWidth = stroke.tool === 'eraser' ? 20 : 3;
+      ctx.moveTo(stroke.points[0].x, stroke.points[0].y);
+      for (let i = 1; i < stroke.points.length; i += 1) {
+        ctx.lineTo(stroke.points[i].x, stroke.points[i].y);
+      }
+      ctx.stroke();
+    });
+  }, []);
+
+  const resizeCanvas = useCallback(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    const ratio = window.devicePixelRatio || 1;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+
+    if (!width || !height) return;
+
+    const nextWidth = Math.floor(width * ratio);
+    const nextHeight = Math.floor(height * ratio);
+    if (canvas.width === nextWidth && canvas.height === nextHeight) return;
+
+    canvas.width = nextWidth;
+    canvas.height = nextHeight;
+    canvas.style.width = `${width}px`;
+    canvas.style.height = `${height}px`;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    redrawCanvas();
+  }, [redrawCanvas]);
+
+  const getPoint = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    };
+  }, []);
+
+  const handlePointerDown = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
+    const point = getPoint(event);
+    if (!point) return;
+
+    isDrawingRef.current = true;
+    const stroke: Stroke = { tool, points: [point] };
+    currentStrokeRef.current = stroke;
+    strokesRef.current.push(stroke);
+
+    event.currentTarget.setPointerCapture(event.pointerId);
+    redrawCanvas();
+  }, [getPoint, redrawCanvas, tool]);
+
+  const handlePointerMove = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (!isDrawingRef.current || !currentStrokeRef.current) return;
+    const point = getPoint(event);
+    if (!point) return;
+
+    currentStrokeRef.current.points.push(point);
+    redrawCanvas();
+  }, [getPoint, redrawCanvas]);
+
+  const endDrawing = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    isDrawingRef.current = false;
+    currentStrokeRef.current = null;
+  }, []);
 
-    const lines = solution
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
+  const clearBoard = useCallback(() => {
+    strokesRef.current = [];
+    redrawCanvas();
+  }, [redrawCanvas]);
 
-    if (!lines.length) {
-      toast.error('Please enter your solution steps first.');
-      return;
-    }
-
-    setIsAnalyzing(true);
+  const loadQuestionPool = useCallback(async () => {
+    setLoadingQuestion(true);
     try {
-      const payload = await apiRequest<{
-        analysis: Array<{ step: number; correct: boolean; message: string }>;
-        suggestedSolution: string[];
-        similarQuestions: Array<{ id: string; subject: string; topic: string; question: string; difficulty: string }>;
-      }>(
-        '/api/practice/analyze',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            question: '2x + 5 = 15',
-            subject: 'mathematics',
-            steps: solution,
-          }),
-        },
-        token,
-      );
-
-      setFeedback(payload.analysis || []);
-      setSuggestedSolution(payload.suggestedSolution || []);
-      setSimilarQuestions(payload.similarQuestions || []);
-      setShowAnalysis(true);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not analyze your solution.');
+      const payload = await apiRequest<{ mcqs: BoardQuestion[] }>('/api/mcqs?limit=500');
+      const pool = Array.isArray(payload?.mcqs) ? payload.mcqs : [];
+      setQuestionPool(pool);
+      setActiveQuestion(randomQuestion(pool, null));
+    } catch {
+      setQuestionPool([]);
+      setActiveQuestion(null);
+      toast.error('Could not load questions from the database.');
     } finally {
-      setIsAnalyzing(false);
+      setLoadingQuestion(false);
     }
-  };
+  }, [randomQuestion]);
 
-  const clearBoard = () => {
-    setSolution('');
-    setFeedback([]);
-    setSuggestedSolution([]);
-    setSimilarQuestions([]);
-    setShowAnalysis(false);
-  };
+  useEffect(() => {
+    void loadQuestionPool();
+  }, [loadQuestionPool]);
+
+  useEffect(() => {
+    resizeCanvas();
+    const onResize = () => resizeCanvas();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [resizeCanvas]);
+
+  const questionImage = useMemo(() => {
+    if (!activeQuestion) return '';
+    return activeQuestion.imageUrl || activeQuestion.diagramUrl || '';
+  }, [activeQuestion]);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div>
         <h1>Practice Board</h1>
-        <p className="text-muted-foreground">Solve problems step-by-step and get AI feedback</p>
+        <p className="text-muted-foreground">Solve one random question at a time on a full digital whiteboard.</p>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-2">
-        <Card className="rounded-[26px] border border-indigo-100 bg-white/92 shadow-[0_14px_28px_rgba(98,113,202,0.10)]">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-2xl text-indigo-950">Problem</CardTitle>
-            <CardDescription className="text-base">Example problem to solve</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-5">
-            <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-[#eef2ff] to-[#e8edff] p-7">
-              <div className="mb-3 text-center text-4xl text-indigo-950">
-                2x + 5 = 15
-              </div>
-              <p className="text-center text-lg text-slate-500">
-                Solve for x
-              </p>
+      <Card className="rounded-2xl border-indigo-100 bg-white/95 shadow-[0_10px_22px_rgba(98,113,202,0.10)]">
+        <CardHeader className="pb-3">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <CardTitle className="text-indigo-950">Question</CardTitle>
+              <CardDescription>
+                {activeQuestion
+                  ? `${getSubjectLabel(activeQuestion.subject)} • ${activeQuestion.topic} • ${activeQuestion.difficulty}`
+                  : 'No question available. Import a new dataset to begin practice.'}
+              </CardDescription>
             </div>
+            <Button
+              className="w-full bg-gradient-to-r from-indigo-600 to-violet-500 text-white sm:w-auto"
+              onClick={() => {
+                const next = randomQuestion(questionPool, activeQuestion?.id || null);
+                setActiveQuestion(next);
+              }}
+              disabled={loadingQuestion || !questionPool.length}
+            >
+              {loadingQuestion ? 'Loading...' : 'Next Question'}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-xl border border-indigo-100 bg-slate-50/60 p-4">
+            <p className="text-base text-slate-800 sm:text-lg">
+              {activeQuestion?.question || 'Question bank is empty right now.'}
+            </p>
+            {questionImage ? (
+              <img src={questionImage} alt="Question diagram" className="mt-3 max-h-56 w-auto rounded-lg border border-indigo-100 bg-white object-contain" />
+            ) : null}
+          </div>
+        </CardContent>
+      </Card>
 
-            <div className="space-y-3">
-              <h4 className="text-indigo-950">Instructions</h4>
-              <ul className="space-y-1.5 text-sm text-slate-500">
-                <li className="flex items-start gap-2"><span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-slate-400" />Write each step of your solution in the workspace</li>
-                <li className="flex items-start gap-2"><span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-slate-400" />Show your work clearly.</li>
-                <li className="flex items-start gap-2"><span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-slate-400" />Click "Analyze Solution" when done</li>
-                <li className="flex items-start gap-2"><span className="mt-[7px] h-1.5 w-1.5 rounded-full bg-slate-400" />AI will check each step and provide feedback</li>
-              </ul>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card className="rounded-[26px] border border-indigo-100 bg-white/92 shadow-[0_14px_28px_rgba(98,113,202,0.10)]">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-2xl text-indigo-950">Your Solution</CardTitle>
-            <CardDescription className="text-base">Write your step-by-step solution here</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <Textarea
-              placeholder="Step 1: 2x + 5 = 15&#10;Step 2: 2x = 15 - 5&#10;Step 3: 2x = 10&#10;Step 4: x = 10/2&#10;Step 5: x = 5"
-              value={solution}
-              onChange={(e) => setSolution(e.target.value)}
-              className="min-h-[228px] rounded-xl border-indigo-100 bg-white/95 font-mono text-base text-slate-600"
-            />
-
-            <div className="flex gap-2">
-              <Button disabled={isAnalyzing} onClick={() => void analyzeSolution()} className="h-11 flex-1 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-[0_8px_18px_rgba(107,95,230,0.32)]">
-                <Lightbulb className="w-4 h-4 mr-2" />
-                {isAnalyzing ? 'Analyzing...' : 'Analyze Solution'}
-              </Button>
-              <Button variant="outline" onClick={clearBoard} className="h-11 rounded-xl border-indigo-200 bg-white/90 text-slate-700">
-                <RotateCcw className="w-4 h-4 mr-2" />
-                Clear
-              </Button>
-              <Button variant="outline" className="h-11 w-11 rounded-xl border-indigo-200 bg-white/90 text-slate-600 px-0">
-                <FileText className="w-4 h-4" />
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {showAnalysis && (
-        <Card className="border-indigo-100 bg-white/95">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Lightbulb className="w-5 h-5 text-yellow-500" />
-              AI Analysis
-            </CardTitle>
-            <CardDescription>Step-by-step feedback on your solution</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {feedback.map((item, index) => (
-              <div
-                key={index}
-                className={`p-4 rounded-lg border ${
-                  item.correct
-                    ? 'bg-green-50 border-green-200'
-                    : 'bg-red-50 border-red-200'
-                }`}
+      <Card className="rounded-2xl border-indigo-100 bg-white/96 shadow-[0_12px_24px_rgba(98,113,202,0.10)]">
+        <CardHeader className="pb-2">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-indigo-950">Digital Whiteboard</CardTitle>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant={tool === 'pen' ? 'default' : 'outline'}
+                className={tool === 'pen' ? 'bg-indigo-600 text-white' : 'border-indigo-200'}
+                onClick={() => setTool('pen')}
               >
-                <div className="flex items-start gap-3">
-                  {item.correct ? (
-                    <CheckCircle className="w-5 h-5 text-green-500 mt-0.5" />
-                  ) : (
-                    <XCircle className="w-5 h-5 text-red-500 mt-0.5" />
-                  )}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-1">
-                      <Badge variant={item.correct ? 'default' : 'destructive'}>
-                        Step {item.step}
-                      </Badge>
-                      <span className={item.correct ? 'text-green-700' : 'text-red-700'}>
-                        {item.correct ? 'Correct' : 'Needs Improvement'}
-                      </span>
-                    </div>
-                    <p className="text-sm">{item.message}</p>
-                  </div>
-                </div>
-              </div>
-            ))}
-
-            <div className="pt-4 border-t">
-              <div className="flex items-center gap-2 mb-2">
-                <CheckCircle className="w-5 h-5 text-green-500" />
-                <h4>Overall Performance</h4>
-              </div>
-              <p className="text-sm text-muted-foreground">
-                You got {feedback.filter((item) => item.correct).length} out of {feedback.length} steps marked as correct.
-                Keep each line explicit (equation, operation, resulting expression) for best feedback.
-              </p>
+                <PenLine className="h-4 w-4" />
+                Pen
+              </Button>
+              <Button
+                variant={tool === 'eraser' ? 'default' : 'outline'}
+                className={tool === 'eraser' ? 'bg-indigo-600 text-white' : 'border-indigo-200'}
+                onClick={() => setTool('eraser')}
+              >
+                <Eraser className="h-4 w-4" />
+                Eraser
+              </Button>
+              <Button variant="outline" className="border-indigo-200" onClick={clearBoard}>
+                <RefreshCcw className="h-4 w-4" />
+                Clear Board
+              </Button>
             </div>
-
-            {suggestedSolution.length ? (
-              <div className="pt-3 border-t space-y-2">
-                <h4 className="text-sm text-indigo-900">Suggested Correct Method</h4>
-                <ul className="space-y-1 text-sm text-slate-600">
-                  {suggestedSolution.map((line, index) => (
-                    <li key={`${line}-${index}`}>• {line}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            {similarQuestions.length ? (
-              <div className="pt-3 border-t space-y-2">
-                <h4 className="text-sm text-indigo-900">Similar Practice Questions</h4>
-                <div className="space-y-2">
-                  {similarQuestions.map((question) => (
-                    <div key={question.id} className="rounded-md border border-indigo-100 bg-indigo-50/40 px-3 py-2 text-sm">
-                      <p className="text-slate-700">{question.question}</p>
-                      <p className="mt-1 text-xs text-slate-500">{question.subject} • {question.topic} • {question.difficulty}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="grid gap-3 md:grid-cols-3">
-        <FeatureTile
-          icon={FileText}
-          title="Step-by-Step Analysis"
-          description="AI checks each step of your solution and provides detailed feedback"
-        />
-        <FeatureTile
-          icon={MessageSquare}
-          title="Instant Feedback"
-          description="Get immediate corrections and learn from your mistakes"
-        />
-        <FeatureTile
-          icon={BookOpen}
-          title="Multiple Problems"
-          description="Practice with hundreds of problems across all topics"
-        />
-      </div>
-
-      <Card className="border-indigo-100 bg-gradient-to-r from-[#f6f2ff] via-[#f3f4ff] to-[#edf3ff] shadow-[0_10px_24px_rgba(98,113,202,0.10)]">
-        <CardContent className="pt-5">
-          <h3 className="mb-2 flex items-center gap-2 text-indigo-950">
-            <Lightbulb className="h-5 w-5 text-amber-500" />
-            Pro Tip
-          </h3>
-          <p className="text-slate-500">
-            Write one transformation per line to receive better automated checks and cleaner revision notes.
-          </p>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div
+            ref={containerRef}
+            className="relative h-[58vh] min-h-[360px] w-full overflow-hidden rounded-xl border border-slate-200 bg-white"
+          >
+            <canvas
+              ref={canvasRef}
+              className="touch-none"
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={endDrawing}
+              onPointerCancel={endDrawing}
+              onPointerLeave={endDrawing}
+              aria-label="Digital writing board"
+            />
+          </div>
         </CardContent>
       </Card>
     </div>
-  );
-}
-
-function FeatureTile({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: ComponentType<{ className?: string }>;
-  title: string;
-  description: string;
-}) {
-  return (
-    <Card className="border-indigo-100 bg-white/90 shadow-[0_8px_18px_rgba(98,113,202,0.10)]">
-      <CardContent className="pt-5">
-        <h4 className="mb-1 inline-flex items-center gap-2 text-indigo-950">
-          <Icon className="h-4 w-4 text-indigo-400" />
-          {title}
-        </h4>
-        <p className="text-sm text-slate-500">{description}</p>
-      </CardContent>
-    </Card>
   );
 }
