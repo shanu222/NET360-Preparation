@@ -211,6 +211,17 @@ export function Tests({ onNavigate }: TestsProps) {
       return;
     }
 
+    // Fallback handoff in case query params are stripped or navigation races in popup.
+    localStorage.setItem(
+      'net360-exam-launch',
+      JSON.stringify({
+        sessionId,
+        testType,
+        authToken,
+        launchedAt: Date.now(),
+      }),
+    );
+
     const url = `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=${encodeURIComponent(testType)}&authToken=${encodeURIComponent(authToken)}`;
     examWindow.location.href = url;
   };

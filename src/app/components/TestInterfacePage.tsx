@@ -57,12 +57,37 @@ export function TestInterfacePage() {
   const [result, setResult] = useState<ResultState | null>(null);
 
   const [resolvedToken, setResolvedToken] = useState<string | null>(null);
+  const [resolvedSessionId, setResolvedSessionId] = useState<string | null>(null);
+
+  const getLaunchFallback = () => {
+    try {
+      const raw = localStorage.getItem('net360-exam-launch');
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as {
+        sessionId?: string;
+        authToken?: string;
+        launchedAt?: number;
+      };
+      if (!parsed?.sessionId) return null;
+      // Keep launch fallback short-lived.
+      if (parsed.launchedAt && Date.now() - parsed.launchedAt > 15 * 60 * 1000) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const fromQuery = params.get('authToken');
+    const launchFallback = getLaunchFallback();
+    const fromLaunchPayload = launchFallback?.authToken || null;
     const fromStorage = localStorage.getItem('net360-auth-token');
-    const token = fromQuery || fromStorage;
+    const token = fromQuery || fromLaunchPayload || fromStorage;
+
+    const querySessionId = params.get('sessionId');
+    const fallbackSessionId = launchFallback?.sessionId || null;
+    setResolvedSessionId(querySessionId || fallbackSessionId || null);
 
     if (!token) {
       setError('Missing authentication token. Redirecting to login page...');
@@ -88,15 +113,13 @@ export function TestInterfacePage() {
   useEffect(() => {
     async function loadSession() {
       try {
-        if (!resolvedToken) return;
-        const params = new URLSearchParams(window.location.search);
-        const sessionId = params.get('sessionId');
+        if (!resolvedToken || !resolvedSessionId) return;
 
-        if (!sessionId) {
+        if (!resolvedSessionId) {
           throw new Error('Missing sessionId. Please start a test from the Tests page.');
         }
 
-        const response = await apiRequest<{ session: TestSession }>(`/api/tests/${sessionId}`, {}, resolvedToken);
+        const response = await apiRequest<{ session: TestSession }>(`/api/tests/${resolvedSessionId}`, {}, resolvedToken);
         const payload = response.session;
         setSession(payload as unknown as TestSession);
         setRemainingSeconds(Math.max(1, payload.durationMinutes * 60));
@@ -108,7 +131,7 @@ export function TestInterfacePage() {
     }
 
     void loadSession();
-  }, [resolvedToken]);
+  }, [resolvedToken, resolvedSessionId]);
 
   useEffect(() => {
     if (!session || result || remainingSeconds <= 0) return;
