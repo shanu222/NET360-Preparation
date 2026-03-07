@@ -13,6 +13,7 @@ import {
   FlaskConical,
   Landmark,
   LucideIcon,
+  MapPin,
   Mountain,
   Ruler,
   Sparkles,
@@ -24,6 +25,7 @@ type CategoryKey = 'engineering' | 'computing' | 'business' | 'architecture' | '
 interface ProgramItem {
   name: string;
   institution: string;
+  location: string;
   icon: LucideIcon;
 }
 
@@ -42,40 +44,63 @@ export function ProgramExplorer() {
       icon: Building2,
       label: 'Engineering Programs',
       tag: 'Engineering',
-      description: '12 engineering disciplines across multiple institutions',
+      description: 'Engineering schools and colleges across Islamabad, Rawalpindi, Risalpur, Karachi, and Quetta',
       programs: [
-        { name: 'Mechanical Engineering', institution: 'SMME', icon: Cog },
-        { name: 'Electrical Engineering', institution: 'SEECS', icon: Zap },
-        { name: 'Mechatronics Engineering', institution: 'SMME', icon: Bot },
-        { name: 'Civil Engineering', institution: 'SCEE', icon: Landmark },
-        { name: 'Chemical Engineering', institution: 'SCME', icon: FlaskConical },
-        { name: 'Aerospace Engineering', institution: 'CAE', icon: Mountain },
+        { name: 'Electrical Engineering', institution: 'SEECS', location: 'Main Campus, Islamabad', icon: Zap },
+        { name: 'Mechanical Engineering', institution: 'SMME', location: 'Main Campus, Islamabad', icon: Cog },
+        { name: 'Aerospace Engineering', institution: 'SMME', location: 'Main Campus, Islamabad', icon: Mountain },
+        { name: 'Civil Engineering', institution: 'SCEE', location: 'Main Campus, Islamabad', icon: Landmark },
+        { name: 'Environmental Engineering', institution: 'SCEE', location: 'Main Campus, Islamabad', icon: Sparkles },
+        { name: 'Geoinformatics Engineering', institution: 'SCEE', location: 'Main Campus, Islamabad', icon: Bot },
+        { name: 'Chemical Engineering', institution: 'SCME', location: 'Main Campus, Islamabad', icon: FlaskConical },
+        { name: 'Metallurgy & Materials Engineering', institution: 'SCME', location: 'Main Campus, Islamabad', icon: Beaker },
+        { name: 'Mechanical Engineering', institution: 'CEME', location: 'Rawalpindi', icon: Cog },
+        { name: 'Electrical Engineering', institution: 'CEME', location: 'Rawalpindi', icon: Zap },
+        { name: 'Mechatronics Engineering', institution: 'CEME', location: 'Rawalpindi', icon: Bot },
+        { name: 'Civil Engineering', institution: 'MCE', location: 'Risalpur', icon: Landmark },
+        { name: 'Aerospace Engineering', institution: 'CAE', location: 'Risalpur', icon: Mountain },
+        { name: 'Avionics Engineering', institution: 'CAE', location: 'Risalpur', icon: Sparkles },
+        { name: 'Electrical Engineering', institution: 'PNEC', location: 'Karachi', icon: Zap },
+        { name: 'Mechanical Engineering', institution: 'PNEC', location: 'Karachi', icon: Cog },
+        { name: 'Naval Architecture & Marine Engineering', institution: 'PNEC', location: 'Karachi', icon: Mountain },
+        { name: 'Civil Engineering', institution: 'NBC', location: 'Quetta', icon: Landmark },
       ],
-      institutions: ['SMME', 'SEECS', 'SCEE', 'SCME', 'CEME', 'CAE', 'PNEC', 'MCS']
+      institutions: ['SEECS', 'SMME', 'SCEE', 'SCME', 'CEME', 'MCE', 'CAE', 'PNEC', 'NBC'],
     },
     computing: {
       icon: Code,
       label: 'Computing Programs',
       tag: 'Computing',
-      description: 'Cutting-edge computer science and AI programs',
+      description: 'Computer science, AI, data, software, and security programs',
       programs: [
-        { name: 'BS Computer Science', institution: 'SEECS', icon: Code },
-        { name: 'BS Artificial Intelligence', institution: 'SEECS', icon: Sparkles },
-        { name: 'BS Data Science', institution: 'SEECS', icon: Atom },
-        { name: 'BS Bioinformatics', institution: 'AIMMS', icon: Beaker },
-      ]
+        { name: 'BS Computer Science', institution: 'SEECS', location: 'Main Campus, Islamabad', icon: Code },
+        { name: 'BS Artificial Intelligence', institution: 'SEECS', location: 'Main Campus, Islamabad', icon: Sparkles },
+        { name: 'BS Data Science', institution: 'SEECS', location: 'Main Campus, Islamabad', icon: Atom },
+        { name: 'Computer Engineering', institution: 'CEME', location: 'Rawalpindi', icon: Bot },
+        { name: 'Software Engineering', institution: 'MCS', location: 'Rawalpindi', icon: Code },
+        { name: 'Information Security', institution: 'MCS', location: 'Rawalpindi', icon: Sparkles },
+        { name: 'Computer Science', institution: 'PNEC', location: 'Karachi', icon: Code },
+        { name: 'Computer Science', institution: 'NBC', location: 'Quetta', icon: Code },
+        { name: 'Artificial Intelligence', institution: 'NBC', location: 'Quetta', icon: Sparkles },
+      ],
+      institutions: ['SEECS', 'CEME', 'MCS', 'PNEC', 'NBC'],
     },
     business: {
       icon: Briefcase,
-      label: 'Business & Social Sciences',
-      tag: 'Business',
-      description: 'Diverse programs in business, economics, and social sciences',
+      label: 'Business, Social Sciences & Law',
+      tag: 'Business/Social',
+      description: 'Business, humanities, public policy, and law programs',
       programs: [
-        { name: 'BBA', institution: 'S3H', icon: Briefcase },
-        { name: 'Economics', institution: 'S3H', icon: Building2 },
-        { name: 'Psychology', institution: 'S3H', icon: Sparkles },
-        { name: 'Accounting & Finance', institution: 'S3H', icon: Landmark },
-      ]
+        { name: 'BBA', institution: 'NBS', location: 'Main Campus, Islamabad', icon: Briefcase },
+        { name: 'MBA', institution: 'NBS', location: 'Main Campus, Islamabad', icon: Briefcase },
+        { name: 'BS Economics', institution: 'S3H', location: 'Main Campus, Islamabad', icon: Building2 },
+        { name: 'BS Psychology', institution: 'S3H', location: 'Main Campus, Islamabad', icon: Sparkles },
+        { name: 'BS Mass Communication', institution: 'S3H', location: 'Main Campus, Islamabad', icon: Code },
+        { name: 'BS Liberal Arts & Humanities', institution: 'S3H', location: 'Main Campus, Islamabad', icon: Landmark },
+        { name: 'BS Public Administration', institution: 'JSPPL', location: 'Main Campus, Islamabad', icon: Building2 },
+        { name: 'LLB', institution: 'NLS', location: 'Main Campus, Islamabad', icon: Landmark },
+      ],
+      institutions: ['NBS', 'S3H', 'JSPPL', 'NLS'],
     },
     architecture: {
       icon: Ruler,
@@ -83,34 +108,41 @@ export function ProgramExplorer() {
       tag: 'Architecture',
       description: 'Creative programs in architecture and industrial design',
       programs: [
-        { name: 'BS Architecture', institution: 'SADA', icon: Ruler },
-        { name: 'BS Industrial Design', institution: 'SADA', icon: Mountain },
-      ]
+        { name: 'Bachelor of Architecture', institution: 'SADA', location: 'Main Campus, Islamabad', icon: Ruler },
+        { name: 'Bachelor of Industrial Design', institution: 'SADA', location: 'Main Campus, Islamabad', icon: Mountain },
+      ],
+      institutions: ['SADA'],
     },
     sciences: {
       icon: Beaker,
-      label: 'Natural Sciences',
+      label: 'Natural & Interdisciplinary Sciences',
       tag: 'Sciences',
-      description: 'Pure science programs in mathematics, physics, and chemistry',
+      description: 'Natural sciences and interdisciplinary biosciences programs',
       programs: [
-        { name: 'BS Mathematics', institution: 'SNS', icon: Atom },
-        { name: 'BS Physics', institution: 'SNS', icon: Zap },
-        { name: 'BS Chemistry', institution: 'SNS', icon: FlaskConical },
-      ]
+        { name: 'BS Physics', institution: 'SNS', location: 'Main Campus, Islamabad', icon: Zap },
+        { name: 'BS Mathematics', institution: 'SNS', location: 'Main Campus, Islamabad', icon: Atom },
+        { name: 'BS Chemistry', institution: 'SNS', location: 'Main Campus, Islamabad', icon: FlaskConical },
+        { name: 'BS Bioinformatics', institution: 'SINES', location: 'Main Campus, Islamabad', icon: Beaker },
+        { name: 'Biosciences', institution: 'SINES', location: 'Main Campus, Islamabad', icon: Sparkles },
+      ],
+      institutions: ['SNS', 'SINES'],
     },
     applied: {
       icon: Sparkles,
       label: 'Applied Sciences',
       tag: 'Applied',
-      description: 'Interdisciplinary programs in biotechnology and environment',
+      description: 'Applied biosciences, agriculture, and food science programs',
       programs: [
-        { name: 'BS Biotechnology', institution: 'AIMMS', icon: Beaker },
-        { name: 'BS Environmental Science', institution: 'AIMMS', icon: Mountain },
-        { name: 'BS Agriculture', institution: 'AIMMS', icon: Sparkles },
-        { name: 'BS Food Science & Technology', institution: 'AIMMS', icon: FlaskConical },
-      ]
-    }
+        { name: 'BS Biotechnology', institution: 'ASAB', location: 'Main Campus, Islamabad', icon: Beaker },
+        { name: 'BS Agriculture', institution: 'ASAB', location: 'Main Campus, Islamabad', icon: Sparkles },
+        { name: 'BS Food Science & Technology', institution: 'ASAB', location: 'Main Campus, Islamabad', icon: FlaskConical },
+      ],
+      institutions: ['ASAB'],
+    },
   };
+
+  const totalInstitutions = 18;
+  const majorLocations = ['Islamabad (Main Campus)', 'Rawalpindi', 'Risalpur', 'Karachi', 'Quetta'];
 
   return (
     <div className="space-y-5">
@@ -118,7 +150,7 @@ export function ProgramExplorer() {
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_82%_20%,rgba(168,151,255,0.25),transparent_35%),radial-gradient(circle_at_12%_88%,rgba(140,186,255,0.2),transparent_30%)]" />
         <div className="relative">
           <h1 className="text-3xl text-indigo-950">Explore NUST Programs</h1>
-          <p className="text-base text-slate-600">Discover all undergraduate programs offered at NUST</p>
+          <p className="text-base text-slate-600">Updated view of NUST Schools, Colleges and Campuses with undergraduate programs</p>
         </div>
       </section>
 
@@ -168,6 +200,29 @@ export function ProgramExplorer() {
         <ProgramPanel value="sciences" category={programs.sciences} />
         <ProgramPanel value="applied" category={programs.applied} />
       </Tabs>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Quick Summary</CardTitle>
+          <CardDescription>Total NUST institutions and major locations</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="rounded-xl border border-indigo-100 bg-white p-3">
+            <p className="text-sm text-slate-600">Total NUST Institutions</p>
+            <p className="text-2xl text-indigo-950">~{totalInstitutions}</p>
+          </div>
+          <div>
+            <p className="mb-2 text-sm text-slate-700">Major Locations</p>
+            <div className="flex flex-wrap gap-2">
+              {majorLocations.map((location) => (
+                <Badge key={location} variant="secondary" className="bg-white border border-indigo-100 text-slate-700">
+                  {location}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }
@@ -191,6 +246,19 @@ function ProgramPanel({ value, category }: { value: string; category: ProgramCat
               <ProgramCard key={program.name} program={program} tag={category.tag} />
             ))}
           </div>
+
+          {category.institutions?.length ? (
+            <div className="mt-4 border-t border-indigo-100 pt-4">
+              <h4 className="mb-2 text-slate-700">Institutions</h4>
+              <div className="flex flex-wrap gap-2">
+                {category.institutions.map((inst) => (
+                  <Badge key={inst} variant="secondary" className="bg-white border border-indigo-100 text-slate-700">
+                    {inst}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </CardContent>
       </Card>
     </TabsContent>
@@ -216,6 +284,10 @@ function ProgramCard({
           <div>
             <h4 className="text-xl text-indigo-950">{program.name}</h4>
             <p className="text-sm text-slate-500">{program.institution}</p>
+            <p className="text-xs text-slate-400 inline-flex items-center gap-1">
+              <MapPin className="h-3 w-3" />
+              {program.location}
+            </p>
           </div>
         </div>
         <Badge className="bg-gradient-to-r from-indigo-500 to-violet-500 text-white">{tag}</Badge>
