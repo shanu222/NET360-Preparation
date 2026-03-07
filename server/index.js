@@ -550,39 +550,219 @@ function requireAdmin(req, res, next) {
   next();
 }
 
-function buildMockQuestionSet(mcqs, requestedCount) {
-  const targets = [
-    { subject: 'mathematics', count: 100 },
-    { subject: 'physics', count: 60 },
-    { subject: 'english', count: 40 },
-  ];
+const NET_TEST_PROFILES = {
+  'net-engineering': {
+    label: 'NET Engineering',
+    durationMinutes: 180,
+    totalQuestions: 200,
+    distribution: [
+      { label: 'Mathematics', percentage: 50, sourceSubjects: ['mathematics'] },
+      { label: 'Physics', percentage: 30, sourceSubjects: ['physics'] },
+      { label: 'English', percentage: 20, sourceSubjects: ['english'] },
+    ],
+    subjectWiseQuestions: {
+      mathematics: 100,
+      physics: 60,
+      english: 40,
+    },
+  },
+  'net-applied-sciences': {
+    label: 'NET Applied Sciences',
+    durationMinutes: 180,
+    totalQuestions: 200,
+    distribution: [
+      { label: 'Biology', percentage: 50, sourceSubjects: ['biology'] },
+      { label: 'Chemistry', percentage: 30, sourceSubjects: ['chemistry'] },
+      { label: 'English', percentage: 20, sourceSubjects: ['english'] },
+    ],
+    subjectWiseQuestions: {
+      biology: 100,
+      chemistry: 60,
+      english: 40,
+    },
+  },
+  'net-business-social-sciences': {
+    label: 'NET Business & Social Sciences',
+    durationMinutes: 180,
+    totalQuestions: 200,
+    distribution: [
+      { label: 'Quantitative Mathematics', percentage: 50, sourceSubjects: ['mathematics'] },
+      { label: 'English', percentage: 50, sourceSubjects: ['english'] },
+    ],
+    subjectWiseQuestions: {
+      mathematics: 100,
+      english: 100,
+    },
+  },
+  'net-architecture': {
+    label: 'NET Architecture',
+    durationMinutes: 180,
+    totalQuestions: 200,
+    distribution: [
+      // Design aptitude is approximated from mixed conceptual pools.
+      { label: 'Design Aptitude', percentage: 50, sourceSubjects: ['english', 'physics', 'mathematics'] },
+      { label: 'Mathematics', percentage: 30, sourceSubjects: ['mathematics'] },
+      { label: 'English', percentage: 20, sourceSubjects: ['english'] },
+    ],
+    subjectWiseQuestions: {
+      mathematics: 100,
+      english: 60,
+      physics: 40,
+    },
+  },
+  'net-natural-sciences': {
+    label: 'NET Natural Sciences',
+    durationMinutes: 180,
+    totalQuestions: 200,
+    distribution: [
+      { label: 'Biology', percentage: 40, sourceSubjects: ['biology'] },
+      { label: 'Chemistry', percentage: 30, sourceSubjects: ['chemistry'] },
+      { label: 'Physics', percentage: 20, sourceSubjects: ['physics'] },
+      { label: 'English', percentage: 10, sourceSubjects: ['english'] },
+    ],
+    subjectWiseQuestions: {
+      biology: 80,
+      chemistry: 60,
+      physics: 40,
+      english: 20,
+    },
+  },
+};
 
-  const desired = clamp(Number(requestedCount) || 200, 1, 200);
-  const picks = [];
-  const usedIds = new Set();
+function normalizeNetType(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (!value) return 'net-engineering';
 
-  targets.forEach((target) => {
-    const pool = shuffle(mcqs.filter((item) => item.subject === target.subject));
-    for (const question of pool) {
-      const key = String(question._id);
-      if (usedIds.has(key)) continue;
-      picks.push(question);
-      usedIds.add(key);
-      if (picks.length >= desired || picks.filter((q) => q.subject === target.subject).length >= target.count) {
+  const aliases = {
+    engineering: 'net-engineering',
+    'net engineering': 'net-engineering',
+    'net-engineering': 'net-engineering',
+    applied: 'net-applied-sciences',
+    'applied sciences': 'net-applied-sciences',
+    'net applied sciences': 'net-applied-sciences',
+    'net-applied-sciences': 'net-applied-sciences',
+    business: 'net-business-social-sciences',
+    'business & social sciences': 'net-business-social-sciences',
+    'business and social sciences': 'net-business-social-sciences',
+    'net-business-social-sciences': 'net-business-social-sciences',
+    architecture: 'net-architecture',
+    'net-architecture': 'net-architecture',
+    'natural sciences': 'net-natural-sciences',
+    'net-natural-sciences': 'net-natural-sciences',
+  };
+
+  return aliases[value] || value;
+}
+
+function allocateDistributionCounts(distribution, totalQuestions) {
+  const base = distribution.map((item) => ({
+    ...item,
+    count: Math.floor((item.percentage / 100) * totalQuestions),
+  }));
+
+  let assigned = base.reduce((sum, item) => sum + item.count, 0);
+  let cursor = 0;
+  while (assigned < totalQuestions && base.length) {
+    base[cursor % base.length].count += 1;
+    assigned += 1;
+    cursor += 1;
+  }
+
+  return base;
+}
+
+function pickFromPoolsByDistribution({ distribution, pool, totalQuestions, usedIds = new Set() }) {
+  const counts = allocateDistributionCounts(distribution, totalQuestions);
+  const selected = [];
+
+  counts.forEach((entry) => {
+    const candidates = shuffle(
+      pool.filter((item) => {
+        if (usedIds.has(String(item._id))) return false;
+        return entry.sourceSubjects.includes(item.subject);
+      }),
+    );
+
+    for (const question of candidates) {
+      selected.push(question);
+      usedIds.add(String(question._id));
+      if (selected.filter((item) => entry.sourceSubjects.includes(item.subject)).length >= entry.count) {
+        break;
+      }
+      if (selected.length >= totalQuestions) {
         break;
       }
     }
   });
 
-  if (picks.length < desired) {
-    const remaining = shuffle(mcqs.filter((item) => !usedIds.has(String(item._id))));
-    for (const question of remaining) {
-      picks.push(question);
-      if (picks.length >= desired) break;
+  if (selected.length < totalQuestions) {
+    const fallback = shuffle(pool.filter((item) => !usedIds.has(String(item._id))));
+    for (const question of fallback) {
+      selected.push(question);
+      usedIds.add(String(question._id));
+      if (selected.length >= totalQuestions) break;
     }
   }
 
-  return picks;
+  return selected.slice(0, totalQuestions);
+}
+
+function generateAdaptiveSet({ profile, allQuestions, weakTopics, questionCount }) {
+  const profileSubjects = Array.from(
+    new Set(profile.distribution.flatMap((item) => item.sourceSubjects)),
+  );
+  const inScope = allQuestions.filter((item) => profileSubjects.includes(item.subject));
+
+  const weakSet = new Set((weakTopics || []).map((item) => String(item).toLowerCase()));
+
+  const weakPool = inScope.filter((item) => weakSet.has(String(item.subject).toLowerCase()) || weakSet.has(String(item.topic).toLowerCase()));
+  const mediumPool = inScope.filter((item) => item.difficulty === 'Medium');
+  const hardPool = inScope.filter((item) => item.difficulty === 'Hard');
+
+  const easyCount = Math.max(1, Math.round(questionCount * 0.4));
+  const mediumCount = Math.max(1, Math.round(questionCount * 0.4));
+  const hardCount = Math.max(1, questionCount - easyCount - mediumCount);
+
+  const selected = [];
+  const usedIds = new Set();
+
+  const fromWeak = shuffle(weakPool);
+  for (const question of fromWeak) {
+    if (usedIds.has(String(question._id))) continue;
+    selected.push(question);
+    usedIds.add(String(question._id));
+    if (selected.length >= easyCount) break;
+  }
+
+  const fromMedium = shuffle(mediumPool);
+  for (const question of fromMedium) {
+    if (usedIds.has(String(question._id))) continue;
+    selected.push(question);
+    usedIds.add(String(question._id));
+    if (selected.length >= easyCount + mediumCount) break;
+  }
+
+  const fromHard = shuffle(hardPool);
+  for (const question of fromHard) {
+    if (usedIds.has(String(question._id))) continue;
+    selected.push(question);
+    usedIds.add(String(question._id));
+    if (selected.length >= easyCount + mediumCount + hardCount) break;
+  }
+
+  if (selected.length < questionCount) {
+    const fill = shuffle(inScope.filter((item) => !usedIds.has(String(item._id))));
+    for (const question of fill) {
+      selected.push(question);
+      usedIds.add(String(question._id));
+      if (selected.length >= questionCount) break;
+    }
+  }
+
+  const difficultyRank = { Easy: 1, Medium: 2, Hard: 3 };
+  selected.sort((a, b) => difficultyRank[a.difficulty] - difficultyRank[b.difficulty]);
+
+  return selected.slice(0, questionCount);
 }
 
 function generateStudyPlan({ targetDate, preparationLevel, weakSubjects, dailyStudyHours }) {
@@ -1304,7 +1484,16 @@ app.get('/api/study-plans/latest', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/tests/start', authMiddleware, async (req, res) => {
-  const { subject, difficulty, topic, mode, questionCount = 20 } = req.body || {};
+  const {
+    subject,
+    difficulty,
+    topic,
+    mode,
+    questionCount = 20,
+    netType,
+    testType,
+    selectedSubject,
+  } = req.body || {};
 
   if (!mode) {
     res.status(400).json({ error: 'mode is required.' });
@@ -1314,13 +1503,37 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
   const normalizedMode = String(mode);
   const normalizedSubject = String(subject || 'mathematics').toLowerCase();
   const normalizedDifficulty = String(difficulty || 'Medium');
-  const desiredQuestions = clamp(Number(questionCount) || (normalizedMode === 'mock' ? 200 : 20), 1, 200);
+  const normalizedNetType = normalizeNetType(netType);
+  const profile = NET_TEST_PROFILES[normalizedNetType] || NET_TEST_PROFILES['net-engineering'];
+  const normalizedTestType = String(testType || '').toLowerCase();
+  const desiredQuestions = clamp(Number(questionCount) || (normalizedMode === 'mock' ? profile.totalQuestions : 20), 1, 200);
 
   let selected = [];
+  const allInProfile = await MCQModel.find({
+    subject: {
+      $in: Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects))),
+    },
+  }).lean();
 
-  if (normalizedMode === 'mock') {
-    const all = await MCQModel.find({ subject: { $in: ['mathematics', 'physics', 'english'] } }).lean();
-    selected = buildMockQuestionSet(all, desiredQuestions);
+  if (normalizedTestType === 'full-mock' || normalizedMode === 'mock') {
+    selected = pickFromPoolsByDistribution({
+      distribution: profile.distribution,
+      pool: allInProfile,
+      totalQuestions: profile.totalQuestions,
+    });
+  } else if (normalizedTestType === 'subject-wise') {
+    const pickedSubject = String(selectedSubject || normalizedSubject || '').toLowerCase();
+    const subjectCount = profile.subjectWiseQuestions[pickedSubject] || desiredQuestions;
+    const subjectPool = await MCQModel.find({ subject: pickedSubject }).lean();
+    selected = shuffle(subjectPool).slice(0, Math.min(subjectCount, subjectPool.length));
+  } else if (normalizedTestType === 'adaptive' || normalizedMode === 'adaptive') {
+    const weakTopics = req.user.progress?.weakTopics || [];
+    selected = generateAdaptiveSet({
+      profile,
+      allQuestions: allInProfile,
+      weakTopics,
+      questionCount: desiredQuestions,
+    });
   } else {
     const filter = {
       subject: normalizedSubject,
@@ -1357,7 +1570,7 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
 
   const session = await TestSessionModel.create({
     userId: req.user._id,
-    subject: normalizedMode === 'mock' ? 'mathematics' : normalizedSubject,
+    subject: normalizedMode === 'mock' ? normalizedSubject : normalizedSubject,
     difficulty: normalizedDifficulty,
     topic: String(topic || (normalizedMode === 'mock' ? 'Full Mock' : 'All Topics')),
     mode: normalizedMode,
@@ -1365,12 +1578,25 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     answerKey,
     questionIds: questions.map((item) => item.id),
     questionCount: questions.length,
-    durationMinutes: normalizedMode === 'mock' ? 180 : Math.max(10, Math.round(questions.length * 1.2)),
+    durationMinutes:
+      normalizedMode === 'mock' || normalizedTestType === 'full-mock'
+        ? profile.durationMinutes
+        : Math.max(10, Math.round(questions.length * 1.2)),
     startedAt: new Date(),
     finishedAt: null,
   });
 
-  res.status(201).json({ session: serializeSession(session) });
+  const serialized = serializeSession(session);
+  serialized.netType = normalizedNetType;
+  serialized.testType = normalizedTestType || normalizedMode;
+  serialized.config = {
+    profile: profile.label,
+    requestedTestType: normalizedTestType || normalizedMode,
+    distribution: profile.distribution,
+    selectedSubject: selectedSubject || null,
+  };
+
+  res.status(201).json({ session: serialized });
 });
 
 app.get('/api/tests/:sessionId', authMiddleware, async (req, res) => {

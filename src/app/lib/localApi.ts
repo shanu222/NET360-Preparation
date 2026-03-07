@@ -1,6 +1,7 @@
 import { parseMcqs, type Difficulty, type MCQ, type SubjectKey } from './mcq';
 
 type TestMode = 'topic' | 'mock' | 'adaptive';
+type TestType = 'subject-wise' | 'full-mock' | 'adaptive';
 
 type PublicUser = {
   id: string;
@@ -86,6 +87,14 @@ interface LocalSession {
   durationMinutes: number;
   startedAt: string;
   finishedAt: string | null;
+  netType?: string;
+  testType?: TestType | TestMode;
+  config?: {
+    profile: string;
+    requestedTestType: string;
+    distribution: Array<{ label: string; percentage: number; sourceSubjects: SubjectKey[] }>;
+    selectedSubject: SubjectKey | null;
+  };
 }
 
 interface LocalAttempt {
@@ -214,7 +223,215 @@ function toPublicSession(session: LocalSession) {
     startedAt: session.startedAt,
     finishedAt: session.finishedAt,
     questions: session.questions,
+    netType: session.netType,
+    testType: session.testType,
+    config: session.config,
   };
+}
+
+const NET_TEST_PROFILES: Record<string, {
+  label: string;
+  durationMinutes: number;
+  totalQuestions: number;
+  distribution: Array<{ label: string; percentage: number; sourceSubjects: SubjectKey[] }>;
+  subjectWiseQuestions: Partial<Record<SubjectKey, number>>;
+}> = {
+  'net-engineering': {
+    label: 'NET Engineering',
+    durationMinutes: 180,
+    totalQuestions: 200,
+    distribution: [
+      { label: 'Mathematics', percentage: 50, sourceSubjects: ['mathematics'] },
+      { label: 'Physics', percentage: 30, sourceSubjects: ['physics'] },
+      { label: 'English', percentage: 20, sourceSubjects: ['english'] },
+    ],
+    subjectWiseQuestions: { mathematics: 100, physics: 60, english: 40 },
+  },
+  'net-applied-sciences': {
+    label: 'NET Applied Sciences',
+    durationMinutes: 180,
+    totalQuestions: 200,
+    distribution: [
+      { label: 'Biology', percentage: 50, sourceSubjects: ['biology'] },
+      { label: 'Chemistry', percentage: 30, sourceSubjects: ['chemistry'] },
+      { label: 'English', percentage: 20, sourceSubjects: ['english'] },
+    ],
+    subjectWiseQuestions: { biology: 100, chemistry: 60, english: 40 },
+  },
+  'net-business-social-sciences': {
+    label: 'NET Business & Social Sciences',
+    durationMinutes: 180,
+    totalQuestions: 200,
+    distribution: [
+      { label: 'Quantitative Mathematics', percentage: 50, sourceSubjects: ['mathematics'] },
+      { label: 'English', percentage: 50, sourceSubjects: ['english'] },
+    ],
+    subjectWiseQuestions: { mathematics: 100, english: 100 },
+  },
+  'net-architecture': {
+    label: 'NET Architecture',
+    durationMinutes: 180,
+    totalQuestions: 200,
+    distribution: [
+      { label: 'Design Aptitude', percentage: 50, sourceSubjects: ['english', 'physics', 'mathematics'] },
+      { label: 'Mathematics', percentage: 30, sourceSubjects: ['mathematics'] },
+      { label: 'English', percentage: 20, sourceSubjects: ['english'] },
+    ],
+    subjectWiseQuestions: { mathematics: 100, english: 60, physics: 40 },
+  },
+  'net-natural-sciences': {
+    label: 'NET Natural Sciences',
+    durationMinutes: 180,
+    totalQuestions: 200,
+    distribution: [
+      { label: 'Biology', percentage: 40, sourceSubjects: ['biology'] },
+      { label: 'Chemistry', percentage: 30, sourceSubjects: ['chemistry'] },
+      { label: 'Physics', percentage: 20, sourceSubjects: ['physics'] },
+      { label: 'English', percentage: 10, sourceSubjects: ['english'] },
+    ],
+    subjectWiseQuestions: { biology: 80, chemistry: 60, physics: 40, english: 20 },
+  },
+};
+
+function normalizeNetType(raw: unknown) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (!value) return 'net-engineering';
+
+  const aliases: Record<string, string> = {
+    engineering: 'net-engineering',
+    'net engineering': 'net-engineering',
+    'net-engineering': 'net-engineering',
+    applied: 'net-applied-sciences',
+    'applied sciences': 'net-applied-sciences',
+    'net applied sciences': 'net-applied-sciences',
+    'net-applied-sciences': 'net-applied-sciences',
+    business: 'net-business-social-sciences',
+    'business & social sciences': 'net-business-social-sciences',
+    'business and social sciences': 'net-business-social-sciences',
+    'net-business-social-sciences': 'net-business-social-sciences',
+    architecture: 'net-architecture',
+    'net-architecture': 'net-architecture',
+    'natural sciences': 'net-natural-sciences',
+    'net-natural-sciences': 'net-natural-sciences',
+  };
+
+  return aliases[value] || value;
+}
+
+function allocateDistributionCounts(
+  distribution: Array<{ label: string; percentage: number; sourceSubjects: SubjectKey[] }>,
+  totalQuestions: number,
+) {
+  const base = distribution.map((item) => ({
+    ...item,
+    count: Math.floor((item.percentage / 100) * totalQuestions),
+  }));
+
+  let assigned = base.reduce((sum, item) => sum + item.count, 0);
+  let cursor = 0;
+  while (assigned < totalQuestions && base.length) {
+    base[cursor % base.length].count += 1;
+    assigned += 1;
+    cursor += 1;
+  }
+
+  return base;
+}
+
+function pickFromPoolsByDistribution(params: {
+  distribution: Array<{ label: string; percentage: number; sourceSubjects: SubjectKey[] }>;
+  pool: MCQ[];
+  totalQuestions: number;
+  usedIds?: Set<string>;
+}) {
+  const { distribution, pool, totalQuestions, usedIds = new Set<string>() } = params;
+  const counts = allocateDistributionCounts(distribution, totalQuestions);
+  const selected: MCQ[] = [];
+
+  counts.forEach((entry) => {
+    const candidates = shuffle(
+      pool.filter((item) => !usedIds.has(item.id) && entry.sourceSubjects.includes(item.subject)),
+    );
+    let pickedForEntry = 0;
+    for (const question of candidates) {
+      selected.push(question);
+      usedIds.add(question.id);
+      pickedForEntry += 1;
+      if (pickedForEntry >= entry.count || selected.length >= totalQuestions) break;
+    }
+  });
+
+  if (selected.length < totalQuestions) {
+    const fallback = shuffle(pool.filter((item) => !usedIds.has(item.id)));
+    for (const question of fallback) {
+      selected.push(question);
+      usedIds.add(question.id);
+      if (selected.length >= totalQuestions) break;
+    }
+  }
+
+  return selected.slice(0, totalQuestions);
+}
+
+function generateAdaptiveSet(params: {
+  profile: {
+    distribution: Array<{ label: string; percentage: number; sourceSubjects: SubjectKey[] }>;
+  };
+  allQuestions: MCQ[];
+  weakTopics: string[];
+  questionCount: number;
+}) {
+  const { profile, allQuestions, weakTopics, questionCount } = params;
+  const profileSubjects = Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects)));
+  const inScope = allQuestions.filter((item) => profileSubjects.includes(item.subject));
+  const weakSet = new Set((weakTopics || []).map((item) => String(item).toLowerCase()));
+
+  const weakPool = inScope.filter(
+    (item) => weakSet.has(String(item.subject).toLowerCase()) || weakSet.has(String(item.topic).toLowerCase()),
+  );
+  const mediumPool = inScope.filter((item) => item.difficulty === 'Medium');
+  const hardPool = inScope.filter((item) => item.difficulty === 'Hard');
+
+  const weakCount = Math.max(1, Math.round(questionCount * 0.4));
+  const mediumCount = Math.max(1, Math.round(questionCount * 0.4));
+  const hardCount = Math.max(1, questionCount - weakCount - mediumCount);
+
+  const selected: MCQ[] = [];
+  const usedIds = new Set<string>();
+
+  for (const question of shuffle(weakPool)) {
+    if (usedIds.has(question.id)) continue;
+    selected.push(question);
+    usedIds.add(question.id);
+    if (selected.length >= weakCount) break;
+  }
+
+  for (const question of shuffle(mediumPool)) {
+    if (usedIds.has(question.id)) continue;
+    selected.push(question);
+    usedIds.add(question.id);
+    if (selected.length >= weakCount + mediumCount) break;
+  }
+
+  for (const question of shuffle(hardPool)) {
+    if (usedIds.has(question.id)) continue;
+    selected.push(question);
+    usedIds.add(question.id);
+    if (selected.length >= weakCount + mediumCount + hardCount) break;
+  }
+
+  if (selected.length < questionCount) {
+    for (const question of shuffle(inScope.filter((item) => !usedIds.has(item.id)))) {
+      selected.push(question);
+      usedIds.add(question.id);
+      if (selected.length >= questionCount) break;
+    }
+  }
+
+  const difficultyRank: Record<Difficulty, number> = { Easy: 1, Medium: 2, Hard: 3 };
+  selected.sort((a, b) => (difficultyRank[a.difficulty] || 2) - (difficultyRank[b.difficulty] || 2));
+
+  return selected.slice(0, questionCount);
 }
 
 function readDb(): LocalDb {
@@ -769,7 +986,11 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const difficulty = String(body.difficulty || 'Medium') as Difficulty;
     const topic = String(body.topic || 'All Topics');
     const mode = String(body.mode || '') as TestMode;
-    const requested = Number(body.questionCount) || (mode === 'mock' ? 200 : 20);
+    const netType = normalizeNetType(body.netType);
+    const testType = String(body.testType || '').toLowerCase() as TestType | '';
+    const selectedSubject = String(body.selectedSubject || subject).toLowerCase() as SubjectKey;
+    const profile = NET_TEST_PROFILES[netType] || NET_TEST_PROFILES['net-engineering'];
+    const requested = Number(body.questionCount) || (mode === 'mock' ? profile.totalQuestions : 20);
     const questionCount = clamp(requested, 1, 200);
 
     if (!mode) {
@@ -779,8 +1000,26 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const mcqs = await loadMcqs();
     let selected: MCQ[] = [];
 
-    if (mode === 'mock') {
-      selected = buildMockQuestionSet(mcqs, questionCount);
+    const profileSubjects = Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects)));
+    const scoped = mcqs.filter((item) => profileSubjects.includes(item.subject));
+
+    if (testType === 'full-mock' || mode === 'mock') {
+      selected = pickFromPoolsByDistribution({
+        distribution: profile.distribution,
+        pool: scoped,
+        totalQuestions: profile.totalQuestions,
+      });
+    } else if (testType === 'subject-wise') {
+      const subjectCount = profile.subjectWiseQuestions[selectedSubject] || questionCount;
+      const subjectPool = mcqs.filter((item) => item.subject === selectedSubject);
+      selected = shuffle(subjectPool).slice(0, Math.min(subjectCount, subjectPool.length));
+    } else if (testType === 'adaptive' || mode === 'adaptive') {
+      selected = generateAdaptiveSet({
+        profile,
+        allQuestions: scoped,
+        weakTopics: user.progress?.weakTopics || [],
+        questionCount,
+      });
     } else {
       let pool = mcqs.filter(
         (item) => item.subject === subject && item.difficulty.toLowerCase() === difficulty.toLowerCase(),
@@ -818,17 +1057,28 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const session: LocalSession = {
       id: `session-${Date.now()}`,
       userId: user.id,
-      subject: mode === 'mock' ? 'mathematics' : subject,
+      subject: testType === 'subject-wise' ? selectedSubject : subject,
       difficulty,
-      topic: mode === 'mock' ? 'Full Mock' : topic,
+      topic: mode === 'mock' || testType === 'full-mock' ? `${profile.label} Full Mock` : topic,
       mode,
       questions,
       answerKey,
       questionIds: questions.map((item) => item.id),
       questionCount: questions.length,
-      durationMinutes: mode === 'mock' ? 180 : Math.max(10, Math.round(questions.length * 1.2)),
+      durationMinutes:
+        mode === 'mock' || testType === 'full-mock'
+          ? profile.durationMinutes
+          : Math.max(10, Math.round(questions.length * 1.2)),
       startedAt: new Date().toISOString(),
       finishedAt: null,
+      netType,
+      testType: testType || mode,
+      config: {
+        profile: profile.label,
+        requestedTestType: testType || mode,
+        distribution: profile.distribution,
+        selectedSubject: testType === 'subject-wise' ? selectedSubject : null,
+      },
     };
 
     db.sessions.push(session);

@@ -44,6 +44,9 @@ interface TestSession {
   startedAt: string;
   finishedAt: string | null;
   questions: SessionQuestion[];
+  netType?: string;
+  testType?: string;
+  config?: Record<string, unknown>;
 }
 
 interface ProfileState {
@@ -87,6 +90,9 @@ interface AppDataContextValue {
     topic: string;
     mode: 'topic' | 'mock' | 'adaptive';
     questionCount?: number;
+    netType?: string;
+    testType?: 'subject-wise' | 'full-mock' | 'adaptive';
+    selectedSubject?: SubjectKey;
   }) => Promise<TestSession>;
   getTestSession: (sessionId: string) => Promise<TestSession>;
   submitTestSession: (params: {
@@ -251,6 +257,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     topic,
     mode,
     questionCount = 20,
+    netType,
+    testType,
+    selectedSubject,
   }) => {
     if (!token || !user) {
       throw new Error('Please login first to start a server-backed test session.');
@@ -260,7 +269,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       '/api/tests/start',
       {
         method: 'POST',
-        body: JSON.stringify({ subject, difficulty, topic, mode, questionCount }),
+        body: JSON.stringify({ subject, difficulty, topic, mode, questionCount, netType, testType, selectedSubject }),
       },
       token,
     );
