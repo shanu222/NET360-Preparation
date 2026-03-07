@@ -240,7 +240,7 @@ export function Profile({ onNavigate }: ProfileProps) {
           <p className="text-muted-foreground">Login or register to enable server-backed sessions, auth, and report export</p>
         </div>
 
-        <div className="grid gap-4 xl:grid-cols-[1fr_1.65fr]">
+        <div className="grid gap-4 lg:grid-cols-[1fr_1.5fr] xl:grid-cols-[1fr_1.65fr]">
           <Card className="rounded-2xl border-indigo-100 bg-white/92 shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
             <CardHeader className="pb-3">
               <CardTitle>{isRegisterMode ? 'Create Account' : 'Login'}</CardTitle>
@@ -252,7 +252,7 @@ export function Profile({ onNavigate }: ProfileProps) {
             </CardHeader>
             <CardContent className="space-y-4">
               {isRegisterMode ? (
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label htmlFor="reg-first-name">First Name</Label>
                     <Input
@@ -388,7 +388,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                 {isRegisterMode ? 'Create Account' : 'Login'}
               </Button>
 
-              <div className="grid grid-cols-[1fr_auto_auto] gap-2">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto]">
                 <Button
                   variant="outline"
                   className="h-11 rounded-xl border-indigo-200 bg-white text-indigo-700"
@@ -398,7 +398,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                 </Button>
                 <Button
                   variant="outline"
-                  className="h-11 w-11 rounded-xl border-indigo-200 bg-white p-0 text-indigo-500"
+                  className="h-11 w-full rounded-xl border-indigo-200 bg-white p-0 text-indigo-500 sm:w-11"
                   onClick={() => {
                     setAuthForm({
                       firstName: '',
@@ -419,7 +419,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                 </Button>
                 <Button
                   variant="outline"
-                  className="h-11 w-11 rounded-xl border-indigo-200 bg-white p-0 text-indigo-500"
+                  className="h-11 w-full rounded-xl border-indigo-200 bg-white p-0 text-indigo-500 sm:w-11"
                   onClick={() => setIsRegisterMode((prev) => !prev)}
                 >
                   <UserRound className="h-4 w-4" />
@@ -442,7 +442,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                 <span className="relative bg-white px-3">or continue with</span>
               </div>
 
-              <div className="flex justify-center gap-3">
+              <div className="flex flex-wrap justify-center gap-3">
                 <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white text-lg text-slate-700">G</Button>
                 <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white text-slate-700">
                   <Apple className="h-5 w-5" />

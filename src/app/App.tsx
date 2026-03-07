@@ -98,8 +98,8 @@ export default function App() {
   return (
     <AuthProvider>
       <AppDataProvider>
-      <div className="min-h-screen p-2 sm:p-4 md:p-6">
-        <div className="net360-shell mx-auto flex w-full max-w-[1320px] gap-3 rounded-[28px] border border-white/70 bg-white/65 p-2 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl">
+      <div className="min-h-screen p-2 sm:p-4 md:p-5 xl:p-6">
+        <div className="net360-shell mx-auto flex w-full max-w-[1600px] flex-col gap-3 rounded-[24px] border border-white/70 bg-white/65 p-2 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl xl:flex-row xl:rounded-[28px]">
           {/* Desktop Sidebar */}
           <aside className="relative hidden xl:flex w-64 shrink-0 flex-col overflow-hidden rounded-3xl border border-indigo-300/30 bg-gradient-to-b from-[#5f4ee6] via-[#5b40d7] to-[#5e3ae0] p-4">
             <div className="pointer-events-none absolute -bottom-20 -left-16 h-56 w-72 rounded-full bg-fuchsia-400/25 blur-3xl" />
@@ -120,9 +120,9 @@ export default function App() {
             </ScrollArea>
           </aside>
 
-          <section className="flex min-w-0 flex-1 flex-col rounded-3xl border border-white/80 bg-gradient-to-br from-white/85 to-[#f2f4ff]/80 backdrop-blur">
+          <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white/85 to-[#f2f4ff]/80 backdrop-blur sm:rounded-3xl">
             {/* Header */}
-            <header className="sticky top-0 z-40 flex h-16 items-center justify-between border-b border-indigo-100/70 bg-white/65 px-3 sm:px-5 rounded-t-3xl backdrop-blur-xl">
+            <header className="sticky top-0 z-40 flex h-16 items-center justify-between rounded-t-2xl border-b border-indigo-100/70 bg-white/65 px-3 backdrop-blur-xl sm:px-5 sm:rounded-t-3xl">
               <div className="flex items-center gap-3">
                 <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
                   <SheetTrigger asChild className="xl:hidden">
@@ -165,7 +165,7 @@ export default function App() {
             </header>
 
             {/* Main Content */}
-            <main className="px-3 py-4 sm:px-5 sm:py-5">
+            <main className="overflow-x-clip px-3 py-4 sm:px-5 sm:py-5">
               <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-0">
                 <TabsContent value="home" className="mt-0">
                   <Dashboard onNavigate={setActiveTab} />

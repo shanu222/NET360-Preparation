@@ -237,16 +237,16 @@ export function TestInterfacePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f2f6fb] p-3 text-[#0d2c5a]">
-        <div className="mx-auto max-w-[1600px] rounded border border-[#2b5f9f] bg-white p-6">Loading test interface...</div>
+      <div className="min-h-screen bg-[#f2f6fb] p-2 sm:p-3 text-[#0d2c5a]">
+        <div className="mx-auto max-w-[1600px] rounded border border-[#2b5f9f] bg-white p-4 sm:p-6">Loading test interface...</div>
       </div>
     );
   }
 
   if (error || !session || !question) {
     return (
-      <div className="min-h-screen bg-[#f2f6fb] p-3 text-[#0d2c5a]">
-        <div className="mx-auto max-w-[1600px] rounded border border-[#2b5f9f] bg-white p-6">
+      <div className="min-h-screen bg-[#f2f6fb] p-2 sm:p-3 text-[#0d2c5a]">
+        <div className="mx-auto max-w-[1600px] rounded border border-[#2b5f9f] bg-white p-4 sm:p-6">
           <p className="mb-4 text-red-700">{error || 'Session could not be loaded.'}</p>
           <button
             type="button"
@@ -263,28 +263,28 @@ export function TestInterfacePage() {
   const questionNumber = currentIndex + 1;
 
   return (
-    <div className="min-h-screen bg-[#f2f6fb] p-2 text-[#0d2c5a]">
+    <div className="min-h-screen bg-[#f2f6fb] p-2 text-[#0d2c5a] sm:p-3">
       <div className="mx-auto max-w-[1900px] rounded border-2 border-[#2b5f9f] bg-[#eef4fb] shadow-[0_12px_30px_rgba(5,32,71,0.15)]">
-        <header className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 border-b border-[#2b5f9f] bg-white px-2 py-1 text-sm">
+        <header className="grid gap-1 border-b border-[#2b5f9f] bg-white px-2 py-1.5 text-xs sm:grid-cols-[1fr_auto_1fr] sm:items-center sm:gap-2 sm:py-1 sm:text-sm">
           <div className="font-semibold text-[#1f6b1f]">{formatSubject(question.subject)}</div>
-          <div className="text-center text-xl text-[#a11c12]">{session.topic}</div>
-          <div className="text-right text-2xl text-[#b31212]">NUST05 <span className="text-sm text-[#1f6b1f]">[{question.topic}]</span></div>
+          <div className="text-left text-base text-[#a11c12] sm:text-center sm:text-xl">{session.topic}</div>
+          <div className="text-left text-lg text-[#b31212] sm:text-right sm:text-2xl">NUST05 <span className="text-xs sm:text-sm text-[#1f6b1f]">[{question.topic}]</span></div>
         </header>
 
-        <div className="grid grid-cols-[1fr_160px] border-b border-[#2b5f9f] bg-[#d6e5f4] text-sm">
+        <div className="grid border-b border-[#2b5f9f] bg-[#d6e5f4] text-sm sm:grid-cols-[1fr_160px]">
           <div className="px-2 py-1">Question No : <span className="text-blue-700">{questionNumber} of {session.questionCount}</span></div>
-          <div className="border-l border-[#2b5f9f] px-2 py-1 text-right">Marks: <span className="text-blue-700">1</span></div>
+          <div className="border-t border-[#2b5f9f] px-2 py-1 text-left sm:border-l sm:border-t-0 sm:text-right">Marks: <span className="text-blue-700">1</span></div>
         </div>
 
-        <main className="grid grid-cols-[1fr_160px] gap-0 border-b border-[#2b5f9f] bg-[#c8d3df]">
-          <section className="border-r border-[#2b5f9f] p-2">
+        <main className="grid gap-0 border-b border-[#2b5f9f] bg-[#c8d3df] sm:grid-cols-[1fr_160px]">
+          <section className="border-b border-[#2b5f9f] p-2 sm:border-b-0 sm:border-r">
             <p className="mb-2 font-semibold text-black">Question</p>
-            <div className="min-h-[120px] rounded border border-[#1e3f6e] bg-white p-3 text-black">
+            <div className="min-h-[120px] rounded border border-[#1e3f6e] bg-white p-3 text-sm text-black sm:text-base">
               {question.question}
             </div>
           </section>
 
-          <aside className="p-2">
+          <aside className="grid grid-cols-1 gap-2 p-2 sm:block">
             <p className="mb-1 text-xs text-black">Candidate</p>
             <div className="mb-2 rounded border border-[#d25555] bg-white p-2 text-center text-[13px] text-black">
               {user?.firstName || 'Candidate'} {user?.lastName || ''}
@@ -301,14 +301,14 @@ export function TestInterfacePage() {
           {question.options.map((option, idx) => {
             const isSelected = answers[question.id] === option;
             return (
-              <label key={`${question.id}-${idx}`} className="grid grid-cols-[28px_1fr] items-center gap-2">
+              <label key={`${question.id}-${idx}`} className="grid grid-cols-[24px_1fr] items-start gap-2 sm:grid-cols-[28px_1fr] sm:items-center">
                 <input
                   type="radio"
                   name={`question-${question.id}`}
                   checked={isSelected}
                   onChange={() => setAnswers((prev) => ({ ...prev, [question.id]: option }))}
                 />
-                <div className="rounded border border-[#1e3f6e] bg-white px-2 py-2 text-black">{option}</div>
+                <div className="rounded border border-[#1e3f6e] bg-white px-2 py-2 text-sm text-black sm:text-base">{option}</div>
               </label>
             );
           })}
@@ -322,7 +322,7 @@ export function TestInterfacePage() {
             <p className="mt-1 text-lg text-blue-700">{formatTime(remainingSeconds)}</p>
           </div>
 
-          <div className="grid grid-cols-3 gap-1 sm:grid-cols-5 xl:grid-cols-9">
+          <div className="grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
             <ExamButton label="Save" icon={Save} onClick={() => toast.success('Answer saved for this question.')} />
             <ExamButton label="Next" icon={ArrowRight} onClick={() => setCurrentIndex((prev) => Math.min(session.questionCount - 1, prev + 1))} />
             <ExamButton label="Prev" icon={ArrowLeft} onClick={() => setCurrentIndex((prev) => Math.max(0, prev - 1))} />
@@ -331,12 +331,12 @@ export function TestInterfacePage() {
             <ExamButton label="Prev Section" icon={SkipBack} onClick={goToPreviousSection} />
             <ExamButton label="First" icon={Rewind} onClick={() => setCurrentIndex(0)} />
             <ExamButton label="Last" icon={FastForward} onClick={() => setCurrentIndex(session.questionCount - 1)} />
-            <ExamButton label="Help" icon={CircleHelp} onClick={() => toast.message('Use Next/Prev, Section controls, palette, and Submit when done.')} />
+            <ExamButton label="Help" icon={CircleHelp} onClick={() => toast.message('Use Next/Prev, section controls, and Submit when done.')} />
           </div>
         </section>
 
-        <footer className="flex items-center justify-between gap-2 border-t border-[#2b5f9f] px-3 py-2 text-sm">
-          <div className="flex items-center gap-3 text-xs">
+        <footer className="flex flex-col items-stretch gap-2 border-t border-[#2b5f9f] px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap items-center gap-3 text-xs">
             <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded bg-[#10b981]" />Answered {answeredCount}</span>
             <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded bg-[#ef4444]" />Unanswered {session.questionCount - answeredCount}</span>
             <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded bg-[#facc15]" />Marked {reviewCount}</span>
@@ -344,7 +344,7 @@ export function TestInterfacePage() {
 
           <button
             type="button"
-            className="inline-flex items-center gap-1 rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-1 text-blue-700 hover:bg-[#c9deff] disabled:opacity-60"
+            className="inline-flex w-full items-center justify-center gap-1 rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-1 text-blue-700 hover:bg-[#c9deff] disabled:opacity-60 sm:w-auto"
             onClick={() => void handleSubmit(false)}
             disabled={isSubmitting || Boolean(result)}
           >
@@ -354,7 +354,7 @@ export function TestInterfacePage() {
         </footer>
       </div>
 
-      <div className="mt-1 bg-white py-2 text-center text-sm text-red-600">
+      <div className="mt-1 bg-white px-2 py-2 text-center text-xs text-red-600 sm:text-sm">
         This is just a Sample of Computer Based NUST Entry Test (CBNET) .{' '}
         <button
           type="button"
@@ -388,7 +388,7 @@ export function TestInterfacePage() {
               <p>Wrong: {result.wrongAnswers ?? '-'}</p>
               <p>Unanswered: {result.unanswered ?? '-'}</p>
             </div>
-            <div className="mt-4 flex gap-2">
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
               <button
                 type="button"
                 className="rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-1 text-blue-700"
@@ -427,7 +427,7 @@ function ExamButton({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-10 items-center justify-center gap-1 rounded border border-[#3a5f8e] bg-gradient-to-b from-[#90b0d4] to-[#6f8eb8] px-1 text-[11px] text-white shadow hover:from-[#9db9d8] hover:to-[#7a99c0]"
+      className="inline-flex h-10 items-center justify-center gap-1 rounded border border-[#3a5f8e] bg-gradient-to-b from-[#90b0d4] to-[#6f8eb8] px-2 text-[10px] text-white shadow hover:from-[#9db9d8] hover:to-[#7a99c0] sm:text-[11px]"
     >
       <Icon className="h-3.5 w-3.5" />
       {label}

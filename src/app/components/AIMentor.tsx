@@ -242,7 +242,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                   </div>
                 ) : null}
 
-                <ScrollArea className="h-[360px] rounded-xl border border-indigo-100 bg-[#fafbff] p-3 pr-4">
+                <ScrollArea className="h-[320px] rounded-xl border border-indigo-100 bg-[#fafbff] p-3 pr-4 sm:h-[360px]">
                   <div className="space-y-4">
                     {chatMessages.map((msg, index) => (
                       <div
@@ -263,7 +263,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                   </div>
                 </ScrollArea>
 
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row">
                   <Textarea
                     placeholder="Ask your question here... e.g., Explain integration by parts"
                     value={question}
@@ -279,7 +279,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                   <Button
                     onClick={() => void askQuestion()}
                     disabled={isAskingAI}
-                    className="h-[70px] w-14 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
+                    className="h-11 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white sm:h-[70px] sm:w-14"
                   >
                     <Send className="h-4 w-4" />
                   </Button>

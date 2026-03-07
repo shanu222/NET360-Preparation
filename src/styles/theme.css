@@ -126,14 +126,28 @@
     @apply border-border outline-ring/50;
   }
 
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-sans);
+    overflow-x: hidden;
     background-image:
       radial-gradient(circle at 20% 15%, rgba(158, 171, 255, 0.5), transparent 35%),
       radial-gradient(circle at 90% 8%, rgba(252, 214, 178, 0.35), transparent 28%),
       linear-gradient(180deg, #eeedf9 0%, #e8eaf8 100%);
     background-attachment: fixed;
+  }
+
+  img,
+  video,
+  canvas,
+  svg {
+    max-width: 100%;
   }
 
   /**
@@ -210,6 +224,8 @@
 
   .net360-page {
     padding-top: 0.25rem;
+    min-width: 0;
+    overflow-x: clip;
   }
 
   .net360-page h1 {
@@ -299,5 +315,19 @@
     min-width: max-content;
     align-items: center;
     animation: net360-updates-slide-ltr 20s linear infinite;
+  }
+
+  @media (max-width: 1024px) {
+    body {
+      background-attachment: scroll;
+    }
+  }
+
+  @media (max-width: 640px) {
+    .net360-shell {
+      border-radius: 1.15rem;
+      gap: 0.45rem;
+      padding: 0.45rem;
+    }
   }
 }
