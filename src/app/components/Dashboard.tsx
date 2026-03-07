@@ -9,8 +9,8 @@ import {
   Calculator,
   FileText,
   Trophy,
-  ArrowRight,
   Sparkles,
+  Megaphone,
 } from 'lucide-react';
 import { Progress } from './ui/progress';
 import { useAppData } from '../context/AppDataContext';
@@ -40,6 +40,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const { mcqsBySubject, attempts, profile } = useAppData();
   const [liveUpdates, setLiveUpdates] = useState<LiveUpdateItem[]>(FALLBACK_UPDATES);
   const [updatesStatus, setUpdatesStatus] = useState<'live' | 'cache' | 'stale-cache' | 'fallback'>('fallback');
+  const [adIndex, setAdIndex] = useState(0);
 
   const daysUntilNET = useMemo(() => {
     const userTestDate = profile.testDate ? new Date(profile.testDate) : TEST_DATE;
@@ -148,6 +149,17 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     }));
   }, [attempts]);
 
+  const tickerText = useMemo(() => {
+    const items = (liveUpdates.length ? liveUpdates : FALLBACK_UPDATES)
+      .map((item) => `${item.title} - ${item.subtitle}`);
+    return items.join('   |   ');
+  }, [liveUpdates]);
+
+  const featuredUpdate = useMemo(() => {
+    if (!liveUpdates.length) return FALLBACK_UPDATES[0];
+    return liveUpdates[adIndex % liveUpdates.length];
+  }, [adIndex, liveUpdates]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -180,6 +192,16 @@ export function Dashboard({ onNavigate }: DashboardProps) {
 
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setAdIndex((prev) => prev + 1);
+    }, 7000);
+
+    return () => {
       window.clearInterval(timer);
     };
   }, []);
@@ -301,10 +323,33 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               {updatesStatus === 'live' ? 'LIVE' : updatesStatus === 'cache' ? 'CACHE' : updatesStatus === 'stale-cache' ? 'STALE' : 'FALLBACK'}
             </span>
           </div>
-          <div className="rounded-2xl border border-indigo-100 bg-white/90 p-2 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
-            {liveUpdates.map((item) => (
-              <UpdateItem key={`${item.title}-${item.url}`} title={item.title} subtitle={item.subtitle} href={item.url} />
-            ))}
+
+          <div className="rounded-2xl border border-indigo-100 bg-white/95 p-3 shadow-[0_10px_25px_rgba(98,113,202,0.11)] space-y-3">
+            <div className="overflow-hidden rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-900 via-indigo-700 to-sky-600 px-2 py-2 text-white">
+              <div className="net360-updates-marquee-track whitespace-nowrap text-sm">
+                <span className="inline-flex items-center gap-2 pr-10">
+                  <Megaphone className="h-4 w-4" />
+                  {tickerText}
+                </span>
+                <span className="inline-flex items-center gap-2 pr-10">
+                  <Megaphone className="h-4 w-4" />
+                  {tickerText}
+                </span>
+              </div>
+            </div>
+
+            <div className="rounded-xl border border-indigo-100 bg-indigo-50/55 p-2 max-h-[210px] overflow-auto">
+              {liveUpdates.map((item) => (
+                <UpdateTextItem key={`${item.title}-${item.url}`} title={item.title} subtitle={item.subtitle} />
+              ))}
+            </div>
+
+            <div className="relative overflow-hidden rounded-xl p-3 text-white shadow-[0_12px_28px_rgba(52,76,184,0.35)] bg-gradient-to-r from-[#1f2f8f] via-[#384dbe] to-[#3aa7d7]">
+              <div className="absolute -right-12 -top-10 h-28 w-28 rounded-full bg-white/20 blur-2xl" />
+              <p className="text-[11px] uppercase tracking-[0.18em] text-blue-100">Admissions Spotlight</p>
+              <p className="mt-1 text-sm font-semibold">{featuredUpdate.title}</p>
+              <p className="text-xs text-blue-100/95">{featuredUpdate.subtitle}</p>
+            </div>
           </div>
         </div>
       </section>
@@ -357,19 +402,13 @@ function QuickActionCard({
   );
 }
 
-function UpdateItem({ title, subtitle, href }: { title: string; subtitle: string; href?: string }) {
+function UpdateTextItem({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <a
-      href={href || '#'}
-      target="_blank"
-      rel="noreferrer"
-      className="flex w-full items-center justify-between rounded-xl px-3 py-3 text-left transition hover:bg-indigo-50/70"
-    >
+    <div className="rounded-xl px-3 py-2 text-left transition hover:bg-indigo-50/70">
       <div>
         <p className="text-sm font-medium text-slate-800">{title}</p>
         <p className="text-xs text-slate-500">{subtitle}</p>
       </div>
-      <ArrowRight className="h-4 w-4 text-slate-400" />
-    </a>
+    </div>
   );
 }

@@ -284,4 +284,20 @@
     border-color: rgba(129, 145, 230, 0.24);
     background: rgba(255, 255, 255, 0.82);
   }
+
+  @keyframes net360-updates-slide-ltr {
+    0% {
+      transform: translateX(-100%);
+    }
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  .net360-updates-marquee-track {
+    display: inline-flex;
+    min-width: max-content;
+    align-items: center;
+    animation: net360-updates-slide-ltr 20s linear infinite;
+  }
 }
