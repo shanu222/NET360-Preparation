@@ -10,7 +10,7 @@ const mcqSchema = new mongoose.Schema(
     answer: { type: String, required: true },
     tip: { type: String, default: '' },
     difficulty: { type: String, required: true, index: true },
-    source: { type: String, default: 'NET Dataset' },
+    source: { type: String, default: 'Imported' },
   },
   { timestamps: true },
 );

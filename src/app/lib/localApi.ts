@@ -1,4 +1,4 @@
-import { parseMcqs, type Difficulty, type MCQ, type SubjectKey } from './mcq';
+import { type Difficulty, type MCQ, type SubjectKey } from './mcq';
 
 type TestMode = 'topic' | 'mock' | 'adaptive';
 type TestType = 'subject-wise' | 'full-mock' | 'adaptive';
@@ -130,8 +130,7 @@ interface LocalDb {
   aiUsage: LocalAIUsage[];
 }
 
-const DB_STORAGE_KEY = 'net360-local-db-v3';
-const MCQ_DATA_PATH = '/MCQS/NET_10000_MCQs_Dataset.csv';
+const DB_STORAGE_KEY = 'net360-local-db-v4';
 let cachedMcqs: MCQ[] = [];
 
 function defaultPreferences(): PublicUser['preferences'] {
@@ -486,17 +485,8 @@ function requireAdmin(token?: string | null) {
 
 async function loadMcqs() {
   if (cachedMcqs.length) return cachedMcqs;
-
-  const response = await fetch(MCQ_DATA_PATH);
-  if (!response.ok) {
-    throw new Error('Failed to load MCQ dataset.');
-  }
-
-  const csvText = await response.text();
-  cachedMcqs = parseMcqs(csvText).map((item) => ({
-    ...item,
-    answer: normalizeAnswer(item.answer, item.options),
-  }));
+  // Legacy bundled dataset has been removed. Keep structures ready for future imports/admin additions.
+  cachedMcqs = [];
   return cachedMcqs;
 }
 

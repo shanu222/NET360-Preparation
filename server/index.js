@@ -10,7 +10,6 @@ import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import OpenAI from 'openai';
 import { connectMongo } from './lib/mongo.js';
-import { loadMcqsFromCsv } from './lib/mcqLoader.js';
 import { UserModel } from './models/User.js';
 import { MCQModel } from './models/MCQ.js';
 import { TestSessionModel } from './models/TestSession.js';
@@ -36,7 +35,6 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .split(',')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
-const MCQ_CSV_PATH = path.join(__dirname, '..', 'public', 'MCQS', 'NET_10000_MCQs_Dataset.csv');
 
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -1943,6 +1941,23 @@ app.get('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   });
 });
 
+app.delete('/api/admin/mcqs/purge-all', authMiddleware, requireAdmin, async (_req, res) => {
+  const [mcqResult, sessionResult, attemptResult] = await Promise.all([
+    MCQModel.deleteMany({}),
+    TestSessionModel.deleteMany({}),
+    AttemptModel.deleteMany({}),
+  ]);
+
+  res.json({
+    ok: true,
+    removed: {
+      mcqs: mcqResult.deletedCount || 0,
+      sessions: sessionResult.deletedCount || 0,
+      attempts: attemptResult.deletedCount || 0,
+    },
+  });
+});
+
 app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const { question, options, answer, subject, topic, difficulty = 'Medium', tip = '' } = req.body || {};
   if (!question || !Array.isArray(options) || options.length < 2 || !answer || !subject || !topic) {
@@ -2009,15 +2024,6 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
 async function bootstrap() {
   await connectMongo(MONGODB_URI);
   await bootstrapAdminAccounts();
-
-  const mcqCount = await MCQModel.countDocuments();
-  if (!mcqCount) {
-    const rows = await loadMcqsFromCsv(MCQ_CSV_PATH);
-    if (rows.length) {
-      await MCQModel.insertMany(rows, { ordered: false });
-      console.log(`Seeded ${rows.length} MCQs into MongoDB.`);
-    }
-  }
 
   app.listen(PORT, () => {
     console.log(`NET360 API running on http://localhost:${PORT}`);

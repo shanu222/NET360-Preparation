@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from './ui/dialog';
 import {
-  ArrowRight,
   Brain,
   Building2,
   CheckCircle2,
@@ -20,7 +20,7 @@ import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
-import { SubjectKey } from '../lib/mcq';
+import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 
 interface TestsProps {
   onNavigate?: (section: string) => void;
@@ -129,7 +129,6 @@ const TEST_TYPE_CARDS: Array<{
   icon: typeof Layers;
   description: string;
   bullets: string[];
-  buttonLabel: string;
 }> = [
   {
     id: 'subject-wise',
@@ -141,7 +140,6 @@ const TEST_TYPE_CARDS: Array<{
       'Aligned to selected NET type distribution',
       'Uses question bank for targeted revision',
     ],
-    buttonLabel: 'Start Subject-Wise Test',
   },
   {
     id: 'full-mock',
@@ -153,7 +151,6 @@ const TEST_TYPE_CARDS: Array<{
       'Real exam-style pacing and navigation',
       'Auto-submit on timer completion',
     ],
-    buttonLabel: 'Start Full Mock Test',
   },
   {
     id: 'adaptive',
@@ -165,7 +162,6 @@ const TEST_TYPE_CARDS: Array<{
       '40% medium reinforcement',
       '20% advanced challenge set',
     ],
-    buttonLabel: 'Start Adaptive Test',
   },
 ];
 
@@ -177,6 +173,7 @@ export function Tests({ onNavigate }: TestsProps) {
   const [selectedTestKind, setSelectedTestKind] = useState<TestKind | null>(null);
   const [selectedSubject, setSelectedSubject] = useState<SubjectKey>('mathematics');
   const [launchingKind, setLaunchingKind] = useState<TestKind | null>(null);
+  const [subjectPickerOpen, setSubjectPickerOpen] = useState(false);
 
   const resolveLaunchToken = async () => {
     const inMemory = token;
@@ -224,9 +221,9 @@ export function Tests({ onNavigate }: TestsProps) {
     if (!selectedNetType) return [];
     const map = new Map<SubjectKey, string>();
     selectedNetType.distribution.forEach((item) => {
-      if (item.sourceSubjects.length === 1) {
-        map.set(item.sourceSubjects[0], item.label);
-      }
+      item.sourceSubjects.forEach((subject) => {
+        map.set(subject, getSubjectLabel(subject));
+      });
     });
     return Array.from(map.entries()).map(([key, label]) => ({ key, label }));
   }, [selectedNetType]);
@@ -259,7 +256,7 @@ export function Tests({ onNavigate }: TestsProps) {
     examWindow.location.href = url;
   };
 
-  const beginTest = async (kind: TestKind) => {
+  const beginTest = async (kind: TestKind, subjectOverride?: SubjectKey) => {
     if (!selectedNetType) {
       toast.error('Select a NET type first.');
       return;
@@ -282,8 +279,9 @@ export function Tests({ onNavigate }: TestsProps) {
     try {
       setLaunchingKind(kind);
       const mode = kind === 'full-mock' ? 'mock' : kind === 'adaptive' ? 'adaptive' : 'topic';
+      const subjectToUse = subjectOverride || selectedSubject;
       const directSubjectDistribution = selectedNetType.distribution.find(
-        (item) => item.sourceSubjects.length === 1 && item.sourceSubjects[0] === selectedSubject,
+        (item) => item.sourceSubjects.length === 1 && item.sourceSubjects[0] === subjectToUse,
       );
 
       const questionCount =
@@ -294,7 +292,7 @@ export function Tests({ onNavigate }: TestsProps) {
             : 60;
 
       const session = await startTestSession({
-        subject: selectedSubject,
+        subject: subjectToUse,
         difficulty: 'Medium',
         topic:
           kind === 'full-mock'
@@ -306,7 +304,7 @@ export function Tests({ onNavigate }: TestsProps) {
         questionCount,
         netType: selectedNetType.id,
         testType: kind,
-        selectedSubject,
+        selectedSubject: subjectToUse,
       });
 
       openExamWindow({ sessionId: session.id, testType: kind, token: authToken, examWindow });
@@ -317,6 +315,15 @@ export function Tests({ onNavigate }: TestsProps) {
     } finally {
       setLaunchingKind(null);
     }
+  };
+
+  const handleStartTestClick = (kind: TestKind) => {
+    setSelectedTestKind(kind);
+    if (kind === 'subject-wise') {
+      setSubjectPickerOpen(true);
+      return;
+    }
+    void beginTest(kind);
   };
 
   return (
@@ -431,11 +438,6 @@ export function Tests({ onNavigate }: TestsProps) {
                 <StatCard title="Time Limit" value={`${selectedNetType.durationMinutes} Minutes`} />
                 <StatCard title="Negative Marking" value="0" />
               </div>
-
-              <div className="inline-flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50/40 px-3 py-2 text-sm text-indigo-900">
-                <ArrowRight className="h-4 w-4" />
-                Continue to Step 3 to select your test mode.
-              </div>
             </CardContent>
           </Card>
         </section>
@@ -444,26 +446,6 @@ export function Tests({ onNavigate }: TestsProps) {
       {selectedNetType ? (
         <section className="space-y-3 opacity-100 translate-y-0 transition-all duration-300">
           <h2 className="text-lg text-indigo-950">Step 3: Test Type Selection</h2>
-
-          {selectedTestKind === 'subject-wise' ? (
-            <Card className="rounded-xl border-indigo-100 bg-white">
-              <CardContent className="pt-4">
-                <p className="mb-2 text-sm text-slate-600">Choose subject for subject-wise generation:</p>
-                <div className="flex flex-wrap gap-2">
-                  {subjectOptions.map((item) => (
-                    <Button
-                      key={item.key}
-                      variant={selectedSubject === item.key ? 'default' : 'outline'}
-                      className={selectedSubject === item.key ? 'bg-gradient-to-r from-indigo-600 to-violet-500 text-white' : ''}
-                      onClick={() => setSelectedSubject(item.key)}
-                    >
-                      {item.label}
-                    </Button>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          ) : null}
 
           <div className="grid gap-4 lg:grid-cols-3">
             {TEST_TYPE_CARDS.map((card) => {
@@ -493,33 +475,20 @@ export function Tests({ onNavigate }: TestsProps) {
                       ))}
                     </ul>
 
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        className={`flex-1 transition-all ${selected ? 'border-indigo-500 text-indigo-700' : ''}`}
-                        onClick={() => setSelectedTestKind(card.id)}
-                        disabled={Boolean(launchingKind)}
-                      >
-                        Select
-                      </Button>
-                      <Button
-                        className={`flex-1 transition-all ${
-                          isLaunchingThis
-                            ? 'bg-indigo-700 text-white'
-                            : isAnotherLaunching
-                              ? 'bg-slate-300 text-slate-500'
-                              : 'bg-gradient-to-r from-indigo-600 to-violet-500 text-white hover:-translate-y-0.5'
-                        }`}
-                        onClick={() => {
-                          setSelectedTestKind(card.id);
-                          void beginTest(card.id);
-                        }}
-                        disabled={Boolean(launchingKind)}
-                      >
-                        {isLaunchingThis ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />}
-                        {isLaunchingThis ? 'Launching...' : card.buttonLabel}
-                      </Button>
-                    </div>
+                    <Button
+                      className={`w-full transition-all ${
+                        isLaunchingThis
+                          ? 'bg-indigo-700 text-white'
+                          : isAnotherLaunching
+                            ? 'bg-slate-300 text-slate-500'
+                            : 'bg-gradient-to-r from-indigo-600 to-violet-500 text-white hover:-translate-y-0.5'
+                      }`}
+                      onClick={() => handleStartTestClick(card.id)}
+                      disabled={Boolean(launchingKind)}
+                    >
+                      {isLaunchingThis ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />}
+                      {isLaunchingThis ? 'Launching...' : 'Start Test'}
+                    </Button>
                   </CardContent>
                 </Card>
               );
@@ -527,6 +496,35 @@ export function Tests({ onNavigate }: TestsProps) {
           </div>
         </section>
       ) : null}
+
+      <Dialog open={subjectPickerOpen} onOpenChange={setSubjectPickerOpen}>
+        <DialogContent className="max-w-md rounded-2xl border-indigo-100 bg-white/98 p-0 sm:max-w-lg">
+          <DialogHeader className="border-b border-indigo-100 px-5 py-4">
+            <DialogTitle className="text-indigo-950">Choose Subject</DialogTitle>
+            <DialogDescription>
+              Select a subject to start your subject-wise test instantly.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-2 p-4 sm:grid-cols-2">
+            {subjectOptions.map((item) => (
+              <Button
+                key={item.key}
+                variant="outline"
+                className="h-auto min-h-11 justify-start rounded-xl border-indigo-200 bg-white px-3 py-2 text-indigo-900 hover:bg-indigo-50"
+                disabled={Boolean(launchingKind)}
+                onClick={() => {
+                  setSelectedSubject(item.key);
+                  setSubjectPickerOpen(false);
+                  void beginTest('subject-wise', item.key);
+                }}
+              >
+                {item.label}
+              </Button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <div className="pt-1 text-xs text-slate-500">
         <button
