@@ -308,7 +308,7 @@ export function PracticeBoard() {
         <CardContent>
           <div
             ref={containerRef}
-            className="relative h-[58vh] min-h-[360px] w-full overflow-hidden rounded-xl border border-slate-200 bg-white"
+            className="relative h-[48vh] min-h-[250px] w-full overflow-hidden rounded-xl border border-slate-200 bg-white sm:h-[52vh] sm:min-h-[300px] lg:h-[58vh] lg:min-h-[360px]"
           >
             <canvas
               ref={canvasRef}

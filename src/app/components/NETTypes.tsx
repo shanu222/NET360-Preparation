@@ -173,7 +173,7 @@ export function NETTypes() {
         <p className="text-muted-foreground">Understand different NET categories and their syllabus distribution</p>
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <TopChip icon={Building2} text="Engineering NET" />
         <TopChip icon={Briefcase} text="Business NET" />
         <TopChip icon={FlaskConical} text="Applied Sciences" />
@@ -246,7 +246,7 @@ export function NETTypes() {
                 ) : null}
               </div>
 
-              <div className="grid grid-cols-3 gap-3 border-t border-indigo-100 pt-2">
+              <div className="grid grid-cols-1 gap-2 border-t border-indigo-100 pt-2 sm:grid-cols-3 sm:gap-3">
                 <div className="rounded-lg bg-slate-50 p-2">
                   <p className="text-[11px] text-slate-500">Total Questions</p>
                   <p className="text-indigo-950">{net.totalQuestions}</p>
@@ -265,7 +265,7 @@ export function NETTypes() {
         ))}
       </div>
 
-      <Card className="max-w-sm">
+      <Card className="max-w-none">
         <CardHeader>
           <CardTitle className="inline-flex items-center gap-2">
             <Lightbulb className="h-5 w-5 text-sky-500" />
@@ -308,12 +308,12 @@ function TopChip({
   muted?: string;
 }) {
   return (
-    <div className="inline-flex h-11 items-center gap-2 rounded-xl border border-indigo-100 bg-white/85 px-3 text-slate-700 shadow-sm">
+    <div className="inline-flex h-auto min-h-11 items-center gap-2 rounded-xl border border-indigo-100 bg-white/85 px-3 py-2 text-slate-700 shadow-sm">
       <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
         <Icon className="h-3.5 w-3.5" />
       </span>
-      <span className="text-sm font-medium">{text}</span>
-      {muted ? <span className="text-xs text-slate-400">{muted}</span> : null}
+      <span className="text-sm font-medium leading-tight">{text}</span>
+      {muted ? <span className="text-xs leading-tight text-slate-400">{muted}</span> : null}
     </div>
   );
 }

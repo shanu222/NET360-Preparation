@@ -282,9 +282,9 @@ function ProgramCard({
             <Icon className="h-5 w-5" />
           </span>
           <div>
-            <h4 className="text-xl text-indigo-950">{program.name}</h4>
+            <h4 className="text-lg text-indigo-950 sm:text-xl">{program.name}</h4>
             <p className="text-sm text-slate-500">{program.institution}</p>
-            <p className="text-xs text-slate-400 inline-flex items-center gap-1">
+            <p className="inline-flex flex-wrap items-center gap-1 text-xs text-slate-400">
               <MapPin className="h-3 w-3" />
               {program.location}
             </p>

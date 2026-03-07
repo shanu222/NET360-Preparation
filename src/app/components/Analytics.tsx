@@ -146,7 +146,7 @@ export function Analytics() {
         <div className="flex gap-2">
           <Button
             variant="outline"
-            className="border-indigo-200 bg-white text-indigo-700"
+            className="w-full border-indigo-200 bg-white text-indigo-700 sm:w-auto"
             onClick={() => void exportReportPdf()}
           >
             Export Professional PDF
@@ -154,13 +154,13 @@ export function Analytics() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="rounded-xl border-indigo-100 bg-white/92">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm text-slate-700">Tests Attempted</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-4xl text-indigo-950">{overallStats.testsAttempted}</div>
+            <div className="text-3xl text-indigo-950 sm:text-4xl">{overallStats.testsAttempted}</div>
             <p className="mt-1 text-xs text-slate-500">Total test records</p>
           </CardContent>
         </Card>
@@ -170,7 +170,7 @@ export function Analytics() {
             <CardTitle className="text-sm text-slate-700">Average Score</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-4xl text-indigo-950">{overallStats.averageScore}%</div>
+            <div className="text-3xl text-indigo-950 sm:text-4xl">{overallStats.averageScore}%</div>
             <p className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500">
               <TrendingUp className="h-3 w-3 text-indigo-500" />
               Average % of Correct Answers
@@ -183,7 +183,7 @@ export function Analytics() {
             <CardTitle className="text-sm text-slate-700">Study Hours</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-4xl text-indigo-950">{overallStats.timeSpent}h</div>
+            <div className="text-3xl text-indigo-950 sm:text-4xl">{overallStats.timeSpent}h</div>
             <p className="mt-1 text-xs text-slate-500">Cumulative total from last 30 days</p>
           </CardContent>
         </Card>
@@ -193,7 +193,7 @@ export function Analytics() {
             <CardTitle className="text-sm text-slate-700">Questions Solved</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-4xl text-indigo-950">{overallStats.questionsAttempted}</div>
+            <div className="text-3xl text-indigo-950 sm:text-4xl">{overallStats.questionsAttempted}</div>
             <p className="mt-1 text-xs text-slate-500">Total MCQs attempted (bank: {questionBankSize})</p>
           </CardContent>
         </Card>

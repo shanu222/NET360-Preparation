@@ -91,12 +91,6 @@ export function MeritCalculator() {
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="ssc-helper">Weightage: 10%</Label>
-                <Input id="ssc-helper" type="text" placeholder="Eg. 85" disabled className="border-indigo-100" />
-                <p className="text-xs text-slate-500">Weightage: 40%</p>
-              </div>
-
-              <div className="space-y-1.5">
                 <Label htmlFor="hssc">HSSC/Intermediate Percentage</Label>
                 <Input
                   id="hssc"
@@ -127,12 +121,9 @@ export function MeritCalculator() {
               </div>
             </div>
 
-            <div className="grid grid-cols-3 gap-2 pt-1">
+            <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-2">
               <Button onClick={calculateMerit} className="rounded-lg bg-gradient-to-r from-indigo-600 to-violet-500 text-white">
                 Calculate
-              </Button>
-              <Button onClick={reset} variant="outline" className="border-indigo-200 bg-white text-slate-700">
-                Reset
               </Button>
               <Button onClick={reset} variant="outline" className="border-indigo-200 bg-white text-slate-700">
                 Reset
@@ -158,7 +149,7 @@ export function MeritCalculator() {
           <CardContent className="space-y-4">
             <div>
               <p className="text-[15px] text-slate-700">Aggregate:</p>
-              <p className="text-4xl text-indigo-950">{aggregate !== null ? aggregate.toFixed(2) : '-- --'}</p>
+              <p className="text-3xl text-indigo-950 sm:text-4xl">{aggregate !== null ? aggregate.toFixed(2) : '-- --'}</p>
             </div>
 
             <div>

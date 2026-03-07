@@ -74,6 +74,9 @@ export default function App() {
     { id: 'profile', label: 'Profile', icon: User }
   ];
 
+  const activeNavigationItem = navigationItems.find((item) => item.id === activeTab);
+  const activeTitle = activeNavigationItem?.label || 'Dashboard';
+
   const NavigationContent = () => (
     <nav className="space-y-1.5">
       {navigationItems.map((item) => {
@@ -119,7 +122,7 @@ export default function App() {
                 </div>
               </div>
             </div>
-            <ScrollArea className="relative h-[calc(100vh-170px)] pr-2">
+            <ScrollArea className="relative h-[calc(100dvh-170px)] pr-2">
               <NavigationContent />
             </ScrollArea>
           </aside>
@@ -145,7 +148,7 @@ export default function App() {
                   </SheetContent>
                 </Sheet>
                 <div>
-                  <h1 className="text-xl text-indigo-950">Dashboard</h1>
+                  <h1 className="text-base text-indigo-950 sm:text-xl">{activeTitle}</h1>
                   <p className="hidden text-xs text-slate-500 sm:block">My page</p>
                 </div>
               </div>
@@ -169,8 +172,8 @@ export default function App() {
             </header>
 
             {/* Main Content */}
-            <main className="overflow-x-clip px-3 py-4 sm:px-5 sm:py-5">
-              <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-0">
+            <main className="min-w-0 overflow-x-clip px-3 py-4 sm:px-5 sm:py-5">
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-0">
                 <TabsContent value="home" className="mt-0">
                   <Dashboard onNavigate={setActiveTab} />
                 </TabsContent>

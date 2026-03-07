@@ -228,6 +228,15 @@
     overflow-x: clip;
   }
 
+  .net360-page > * {
+    min-width: 0;
+  }
+
+  .net360-page .recharts-responsive-container,
+  .net360-page .recharts-wrapper {
+    min-width: 0 !important;
+  }
+
   .net360-page h1 {
     color: #1f2a63;
     font-size: clamp(1.5rem, 1.2rem + 1.2vw, 1.95rem);
@@ -328,6 +337,14 @@
       border-radius: 1.15rem;
       gap: 0.45rem;
       padding: 0.45rem;
+    }
+
+    .net360-page {
+      padding-top: 0;
+    }
+
+    .net360-page [data-slot='card'] {
+      border-radius: 0.9rem;
     }
   }
 }

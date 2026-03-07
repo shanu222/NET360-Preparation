@@ -217,10 +217,10 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-[1.5fr_1fr] lg:items-center">
           <div className="relative overflow-hidden rounded-2xl border border-white/25 bg-white/10 p-4 backdrop-blur-sm">
             <div className="absolute -right-16 -top-24 h-40 w-40 rounded-full bg-cyan-200/30 blur-2xl" />
-            <div className="relative flex items-center gap-4">
-              <div className="flex h-24 w-24 shrink-0 items-center justify-center rounded-full border-4 border-white/80 bg-gradient-to-br from-white/20 to-white/5 text-center shadow-[inset_0_0_30px_rgba(255,255,255,0.2)]">
+            <div className="relative flex flex-col items-start gap-4 sm:flex-row sm:items-center">
+              <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full border-4 border-white/80 bg-gradient-to-br from-white/20 to-white/5 text-center shadow-[inset_0_0_30px_rgba(255,255,255,0.2)] sm:h-24 sm:w-24">
                 <div>
-                  <p className="text-3xl font-semibold leading-none">{daysUntilNET}</p>
+                  <p className="text-2xl font-semibold leading-none sm:text-3xl">{daysUntilNET}</p>
                   <p className="text-sm text-blue-100">Days</p>
                 </div>
               </div>
@@ -228,7 +228,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                 <p className="mb-1 inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-2 py-1 text-xs">
                   <Calendar className="w-3.5 h-3.5" /> NET 2026 Countdown
                 </p>
-                <p className="text-3xl leading-tight">{daysUntilNET} Days</p>
+                <p className="text-2xl leading-tight sm:text-3xl">{daysUntilNET} Days</p>
                 <p className="text-sm text-indigo-100">Stay focused and keep practicing!</p>
               </div>
             </div>
@@ -278,7 +278,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       <section className="grid gap-4 lg:grid-cols-[1.65fr_1fr]">
         <div className="space-y-3">
           <h3 className="px-1 text-xl text-indigo-950">Quick Actions</h3>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <QuickActionCard icon={Sparkles} title="Start Practice" tone="from-cyan-100 to-white" onClick={() => onNavigate('tests')} />
             <QuickActionCard icon={FileText} title="Mock Test" tone="from-indigo-100 to-white" onClick={() => onNavigate('tests')} />
             <QuickActionCard icon={Brain} title="Study Assistant" tone="from-sky-100 to-white" onClick={() => onNavigate('smart-mentor')} />
@@ -290,16 +290,18 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <h4 className="text-base text-indigo-950">This Week Performance</h4>
               <span className="rounded-full bg-indigo-50 px-2 py-1 text-xs text-indigo-700">7D</span>
             </div>
-            <div className="grid grid-cols-7 items-end gap-2 rounded-xl bg-slate-50 p-3">
-              {weekChart.map((point) => (
-                <div key={point.label} className="text-center">
-                  <div
-                    className="mx-auto w-5 rounded-md bg-gradient-to-t from-indigo-600 to-violet-400"
-                    style={{ height: `${point.height}px` }}
-                  />
-                  <p className="mt-2 text-[11px] text-slate-500">{point.label}</p>
-                </div>
-              ))}
+            <div className="overflow-x-auto">
+              <div className="grid min-w-[380px] grid-cols-7 items-end gap-2 rounded-xl bg-slate-50 p-3">
+                {weekChart.map((point) => (
+                  <div key={point.label} className="text-center">
+                    <div
+                      className="mx-auto w-5 rounded-md bg-gradient-to-t from-indigo-600 to-violet-400"
+                      style={{ height: `${point.height}px` }}
+                    />
+                    <p className="mt-2 text-[11px] text-slate-500">{point.label}</p>
+                  </div>
+                ))}
+              </div>
             </div>
             <div className="mt-4 space-y-2">
               {subjectStats.map((subject) => (

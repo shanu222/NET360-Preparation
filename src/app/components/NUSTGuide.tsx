@@ -125,7 +125,7 @@ export function NUSTGuide() {
                     {route.subtitle === 'Most Popular' ? <Badge className="bg-indigo-700/80">Most Popular</Badge> : null}
                   </div>
                   <div className="space-y-3 p-4">
-                    <h3 className="text-[30px] leading-tight text-indigo-950 sm:text-xl">{route.title}</h3>
+                    <h3 className="text-xl leading-tight text-indigo-950 sm:text-2xl">{route.title}</h3>
                     <ul className="space-y-2 text-sm text-slate-700">
                       {route.points.map((item) => (
                         <li key={item} className="flex items-center gap-2">
@@ -134,7 +134,7 @@ export function NUSTGuide() {
                         </li>
                       ))}
                     </ul>
-                    <Button className={`h-10 bg-gradient-to-r ${route.buttonTone} text-white`}>
+                    <Button className={`h-10 w-full bg-gradient-to-r ${route.buttonTone} text-white sm:w-auto`}>
                       {route.action}
                       <ArrowRight className="ml-2 h-4 w-4" />
                     </Button>
