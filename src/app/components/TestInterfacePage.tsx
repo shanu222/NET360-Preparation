@@ -314,36 +314,12 @@ export function TestInterfacePage() {
           })}
         </section>
 
-        <section className="grid gap-2 border-b border-[#2b5f9f] bg-[#c8d3df] p-2 xl:grid-cols-[150px_1fr_500px]">
+        <section className="grid gap-2 border-b border-[#2b5f9f] bg-[#c8d3df] p-2 xl:grid-cols-[150px_1fr]">
           <div className="rounded border border-[#1e3f6e] bg-white p-2 text-xs text-black">
             <p>Start Time: <span className="text-blue-700">{startedAtLabel}</span></p>
             <p className="text-3xl leading-tight text-[#009c3f]">{Math.ceil(remainingSeconds / 60)}</p>
             <p>min Remaining</p>
             <p className="mt-1 text-lg text-blue-700">{formatTime(remainingSeconds)}</p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2 rounded border border-[#1e3f6e] bg-white p-2 text-xs sm:grid-cols-4">
-            {session.questions.map((item, idx) => {
-              const answered = Boolean(answers[item.id]);
-              const review = Boolean(markedForReview[item.id]);
-              const active = idx === currentIndex;
-              const tone = review
-                ? 'bg-[#facc15] text-black'
-                : answered
-                  ? 'bg-[#10b981] text-white'
-                  : 'bg-[#ef4444] text-white';
-
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setCurrentIndex(idx)}
-                  className={`h-8 rounded border border-[#1e3f6e] text-[11px] ${tone} ${active ? 'ring-2 ring-[#1e3f6e]' : ''}`}
-                >
-                  Q{idx + 1}
-                </button>
-              );
-            })}
           </div>
 
           <div className="grid grid-cols-3 gap-1 sm:grid-cols-5 xl:grid-cols-9">
