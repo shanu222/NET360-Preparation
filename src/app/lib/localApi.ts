@@ -162,11 +162,36 @@ interface LocalQuestionSubmission {
   submittedByName: string;
   submittedByEmail: string;
   submittedByUserId: string;
+  submittedByClientId: string;
+  actorKey: string;
+  moderation: {
+    result: 'approved' | 'rejected' | 'manual-override';
+    reasons: string[];
+    score: number;
+    blockedActor: boolean;
+    reviewedAt: string | null;
+  };
   reviewNotes: string;
   reviewedByEmail: string;
   reviewedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+interface LocalContributionPolicy {
+  maxSubmissionsPerDay: number;
+  maxFilesPerSubmission: number;
+  maxFileSizeBytes: number;
+  allowedMimeTypes: string[];
+  blockDurationMinutes: number;
+  updatedByEmail: string;
+}
+
+interface LocalSubmissionRestriction {
+  actorKey: string;
+  blockedUntil: string | null;
+  reason: string;
+  lastViolationAt: string | null;
 }
 
 interface LocalDb {
@@ -176,10 +201,37 @@ interface LocalDb {
   aiUsage: LocalAIUsage[];
   practiceBoardQuestions: LocalPracticeBoardQuestion[];
   questionSubmissions: LocalQuestionSubmission[];
+  contributionPolicy: LocalContributionPolicy;
+  submissionRestrictions: LocalSubmissionRestriction[];
 }
 
-const DB_STORAGE_KEY = 'net360-local-db-v6';
+const DB_STORAGE_KEY = 'net360-local-db-v7';
 let cachedMcqs: MCQ[] = [];
+
+const CONTENT_RESTRICTION_MESSAGE = 'Your submission contains content that does not meet the platform guidelines.\nUpload access has been temporarily restricted.\nPlease contact the administration if you believe this action was taken by mistake.';
+const SUPPORTED_SUBJECTS = new Set([
+  'mathematics',
+  'physics',
+  'chemistry',
+  'biology',
+  'english',
+  'quantitative mathematics',
+  'design aptitude',
+]);
+const DEFAULT_CONTRIBUTION_POLICY: LocalContributionPolicy = {
+  maxSubmissionsPerDay: 5,
+  maxFilesPerSubmission: 3,
+  maxFileSizeBytes: 1024 * 1024,
+  allowedMimeTypes: [
+    'image/jpeg',
+    'image/png',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  ],
+  blockDurationMinutes: 180,
+  updatedByEmail: '',
+};
 
 function defaultPreferences(): PublicUser['preferences'] {
   return {
@@ -482,7 +534,16 @@ function generateAdaptiveSet(params: {
 function readDb(): LocalDb {
   const raw = localStorage.getItem(DB_STORAGE_KEY);
   if (!raw) {
-    return { users: [], sessions: [], attempts: [], aiUsage: [], practiceBoardQuestions: [], questionSubmissions: [] };
+    return {
+      users: [],
+      sessions: [],
+      attempts: [],
+      aiUsage: [],
+      practiceBoardQuestions: [],
+      questionSubmissions: [],
+      contributionPolicy: { ...DEFAULT_CONTRIBUTION_POLICY },
+      submissionRestrictions: [],
+    };
   }
 
   try {
@@ -494,9 +555,23 @@ function readDb(): LocalDb {
       aiUsage: parsed.aiUsage || [],
       practiceBoardQuestions: parsed.practiceBoardQuestions || [],
       questionSubmissions: parsed.questionSubmissions || [],
+      contributionPolicy: {
+        ...DEFAULT_CONTRIBUTION_POLICY,
+        ...(parsed.contributionPolicy || {}),
+      },
+      submissionRestrictions: parsed.submissionRestrictions || [],
     };
   } catch {
-    return { users: [], sessions: [], attempts: [], aiUsage: [], practiceBoardQuestions: [], questionSubmissions: [] };
+    return {
+      users: [],
+      sessions: [],
+      attempts: [],
+      aiUsage: [],
+      practiceBoardQuestions: [],
+      questionSubmissions: [],
+      contributionPolicy: { ...DEFAULT_CONTRIBUTION_POLICY },
+      submissionRestrictions: [],
+    };
   }
 }
 
@@ -550,6 +625,134 @@ function parseBody(options: RequestInit) {
     }
   }
   return {};
+}
+
+function normalizeContributionActorKey(params: {
+  submittedByUserId?: string;
+  submittedByClientId?: string;
+  submittedByEmail?: string;
+}) {
+  const userId = String(params?.submittedByUserId || '').trim();
+  if (userId) return `user:${userId}`;
+
+  const clientId = String(params?.submittedByClientId || '').trim();
+  if (clientId) return `client:${clientId}`;
+
+  const email = String(params?.submittedByEmail || '').trim().toLowerCase();
+  if (email) return `email:${email}`;
+
+  return 'guest:local-browser';
+}
+
+function normalizePolicy(policy?: Partial<LocalContributionPolicy>): LocalContributionPolicy {
+  return {
+    maxSubmissionsPerDay: clamp(Number(policy?.maxSubmissionsPerDay) || DEFAULT_CONTRIBUTION_POLICY.maxSubmissionsPerDay, 1, 100),
+    maxFilesPerSubmission: clamp(Number(policy?.maxFilesPerSubmission) || DEFAULT_CONTRIBUTION_POLICY.maxFilesPerSubmission, 1, 10),
+    maxFileSizeBytes: clamp(Number(policy?.maxFileSizeBytes) || DEFAULT_CONTRIBUTION_POLICY.maxFileSizeBytes, 64 * 1024, 10 * 1024 * 1024),
+    allowedMimeTypes: Array.isArray(policy?.allowedMimeTypes) && policy.allowedMimeTypes.length
+      ? policy.allowedMimeTypes
+      : DEFAULT_CONTRIBUTION_POLICY.allowedMimeTypes,
+    blockDurationMinutes: clamp(Number(policy?.blockDurationMinutes) || DEFAULT_CONTRIBUTION_POLICY.blockDurationMinutes, 5, 10080),
+    updatedByEmail: String(policy?.updatedByEmail || '').trim(),
+  };
+}
+
+function moderateQuestionSubmission(params: {
+  subject: string;
+  questionText: string;
+  questionDescription: string;
+  questionSource: string;
+  submissionReason: string;
+  attachments: Array<{ name: string; mimeType: string }>;
+}) {
+  const subject = String(params.subject || '').trim().toLowerCase();
+  const blob = [
+    subject,
+    String(params.questionText || '').trim(),
+    String(params.questionDescription || '').trim(),
+    String(params.questionSource || '').trim(),
+    String(params.submissionReason || '').trim(),
+    ...params.attachments.map((item) => `${item.name} ${item.mimeType}`),
+  ]
+    .join(' ')
+    .toLowerCase();
+
+  const reasons: string[] = [];
+  let score = 0;
+
+  if (!SUPPORTED_SUBJECTS.has(subject)) {
+    reasons.push('Subject is not part of supported academic categories.');
+    score += 50;
+  }
+
+  const blockedPatterns = [
+    /(casino|betting|loan scam|crypto signal|porn|adult|escort|hack|malware|ransomware)/i,
+    /(<script|javascript:|onerror=|drop table|union select|--\s)/i,
+    /(buy now|free money|click here|subscribe now|whatsapp group)/i,
+  ];
+  blockedPatterns.forEach((pattern) => {
+    if (pattern.test(blob)) {
+      reasons.push('Contains malicious, offensive, spam, or fraudulent patterns.');
+      score += 50;
+    }
+  });
+
+  const educationalSignals = /(equation|theorem|proof|mcq|numerical|past paper|chapter|syllabus|concept|net|engineering|science|question)/i;
+  if (!educationalSignals.test(blob)) {
+    reasons.push('Submission appears non-educational or unrelated to platform scope.');
+    score += 35;
+  }
+
+  if (String(params.questionText || '').trim().length > 0 && String(params.questionText || '').trim().length < 10 && params.attachments.length === 0) {
+    reasons.push('Question text is too short to be useful for review.');
+    score += 20;
+  }
+
+  const uniqueReasons = Array.from(new Set(reasons));
+  return {
+    result: uniqueReasons.length ? 'rejected' : 'approved',
+    reasons: uniqueReasons,
+    score: uniqueReasons.length ? Math.min(100, score || 60) : 0,
+  } as const;
+}
+
+function getRestrictionState(db: LocalDb, actorKey: string) {
+  const found = db.submissionRestrictions.find((item) => item.actorKey === actorKey);
+  if (!found?.blockedUntil) {
+    return { restricted: false, blockedUntil: null as string | null };
+  }
+
+  const blockedUntilMs = new Date(found.blockedUntil).getTime();
+  if (!Number.isFinite(blockedUntilMs) || blockedUntilMs <= Date.now()) {
+    return { restricted: false, blockedUntil: null as string | null };
+  }
+
+  return { restricted: true, blockedUntil: found.blockedUntil };
+}
+
+function applyActorRestriction(db: LocalDb, actorKey: string, reason: string) {
+  const blockDurationMinutes = normalizePolicy(db.contributionPolicy).blockDurationMinutes;
+  const blockedUntil = new Date(Date.now() + blockDurationMinutes * 60 * 1000).toISOString();
+  const index = db.submissionRestrictions.findIndex((item) => item.actorKey === actorKey);
+  const next: LocalSubmissionRestriction = {
+    actorKey,
+    blockedUntil,
+    reason,
+    lastViolationAt: new Date().toISOString(),
+  };
+
+  if (index >= 0) {
+    db.submissionRestrictions[index] = next;
+  } else {
+    db.submissionRestrictions.push(next);
+  }
+
+  return blockedUntil;
+}
+
+function startOfToday() {
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0).getTime();
 }
 
 function updateProgress(db: LocalDb, user: LocalUser) {
@@ -687,6 +890,13 @@ function serializePracticeBoardQuestion(item: LocalPracticeBoardQuestion) {
 
 function serializeQuestionSubmission(item: LocalQuestionSubmission) {
   const normalizedStatus = String(item.status || 'pending') === 'converted' ? 'approved' : item.status;
+  const moderation = item.moderation || {
+    result: 'approved',
+    reasons: [],
+    score: 0,
+    blockedActor: false,
+    reviewedAt: null,
+  };
   return {
     id: item.id,
     subject: item.subject,
@@ -700,6 +910,9 @@ function serializeQuestionSubmission(item: LocalQuestionSubmission) {
     submittedByName: item.submittedByName,
     submittedByEmail: item.submittedByEmail,
     submittedByUserId: item.submittedByUserId,
+    submittedByClientId: item.submittedByClientId,
+    actorKey: item.actorKey,
+    moderation,
     reviewNotes: item.reviewNotes,
     reviewedByEmail: item.reviewedByEmail,
     reviewedAt: item.reviewedAt,
@@ -1000,6 +1213,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
 
   if (url.pathname === '/api/question-submissions' && method === 'POST') {
     const db = readDb();
+    const policy = normalizePolicy(db.contributionPolicy);
     const subject = String(body.subject || '').trim();
     const questionText = String(body.questionText || '').trim();
     const questionDescription = String(body.questionDescription || '').trim();
@@ -1008,14 +1222,30 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const submittedByName = String(body.submittedByName || '').trim();
     const submittedByEmail = String(body.submittedByEmail || '').trim();
     const submittedByUserId = String(body.submittedByUserId || '').trim();
+    const submittedByClientId = String(body.submittedByClientId || '').trim();
+    const actorKey = normalizeContributionActorKey({ submittedByUserId, submittedByClientId, submittedByEmail });
+
+    const restriction = getRestrictionState(db, actorKey);
+    if (restriction.restricted) {
+      const blockedError = new Error(CONTENT_RESTRICTION_MESSAGE) as Error & { status?: number; code?: string; payload?: Record<string, unknown> };
+      blockedError.status = 403;
+      blockedError.code = 'UPLOAD_RESTRICTED';
+      blockedError.payload = { blockedUntil: restriction.blockedUntil, code: 'UPLOAD_RESTRICTED' };
+      throw blockedError;
+    }
+
     const attachments = Array.isArray(body.attachments)
-      ? body.attachments.slice(0, 3).map((file: any) => ({
+      ? body.attachments.map((file: any) => ({
         name: String(file?.name || '').trim(),
         mimeType: String(file?.mimeType || '').trim(),
         size: Number(file?.size || 0),
         dataUrl: String(file?.dataUrl || '').trim(),
       }))
       : [];
+
+    if (attachments.length > policy.maxFilesPerSubmission) {
+      throw new Error(`You can upload up to ${policy.maxFilesPerSubmission} files per submission.`);
+    }
 
     if (!subject) {
       throw new Error('Subject is required.');
@@ -1027,13 +1257,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       throw new Error('Please explain why this question should be added.');
     }
 
-    const allowedMimeTypes = new Set([
-      'image/jpeg',
-      'image/png',
-      'application/pdf',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-    ]);
+    const allowedMimeTypes = new Set(policy.allowedMimeTypes);
 
     for (const file of attachments) {
       if (!file.name || !file.mimeType || !file.dataUrl || !Number.isFinite(file.size)) {
@@ -1042,13 +1266,30 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       if (!allowedMimeTypes.has(file.mimeType)) {
         throw new Error(`Unsupported attachment type: ${file.mimeType}`);
       }
-      if (file.size > 2.5 * 1024 * 1024) {
-        throw new Error(`Attachment ${file.name} exceeds 2.5 MB.`);
+      if (file.size > policy.maxFileSizeBytes) {
+        throw new Error('Upload failed: File size exceeds the allowed limit.');
       }
       if (!file.dataUrl.startsWith('data:')) {
         throw new Error(`Attachment ${file.name} is not a valid uploaded file payload.`);
       }
     }
+
+    const submissionsToday = db.questionSubmissions.filter((item) => item.actorKey === actorKey && new Date(item.createdAt).getTime() >= startOfToday());
+    if (submissionsToday.length >= policy.maxSubmissionsPerDay) {
+      const limitError = new Error(`Daily limit reached. You can submit up to ${policy.maxSubmissionsPerDay} times per day.`) as Error & { status?: number };
+      limitError.status = 429;
+      throw limitError;
+    }
+
+    const moderation = moderateQuestionSubmission({
+      subject,
+      questionText,
+      questionDescription,
+      questionSource,
+      submissionReason,
+      attachments,
+    });
+    const rejectedByModeration = moderation.result === 'rejected';
 
     const now = new Date().toISOString();
     const submission: LocalQuestionSubmission = {
@@ -1059,21 +1300,69 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       questionSource,
       submissionReason,
       attachments,
-      status: 'pending',
+      status: rejectedByModeration ? 'rejected' : 'pending',
       queuedForBank: false,
       submittedByName,
       submittedByEmail,
       submittedByUserId,
-      reviewNotes: '',
-      reviewedByEmail: '',
-      reviewedAt: null,
+      submittedByClientId,
+      actorKey,
+      moderation: {
+        result: moderation.result,
+        reasons: moderation.reasons,
+        score: moderation.score,
+        blockedActor: rejectedByModeration,
+        reviewedAt: rejectedByModeration ? now : null,
+      },
+      reviewNotes: rejectedByModeration ? `Auto moderation: ${moderation.reasons.join(' ')}` : '',
+      reviewedByEmail: rejectedByModeration ? 'AI moderation' : '',
+      reviewedAt: rejectedByModeration ? now : null,
       createdAt: now,
       updatedAt: now,
     };
 
     db.questionSubmissions.unshift(submission);
+
+    if (rejectedByModeration) {
+      const blockedUntil = applyActorRestriction(db, actorKey, moderation.reasons.join(' '));
+      writeDb(db);
+      const moderationError = new Error(CONTENT_RESTRICTION_MESSAGE) as Error & { status?: number; code?: string; payload?: Record<string, unknown> };
+      moderationError.status = 403;
+      moderationError.code = 'CONTENT_RESTRICTED';
+      moderationError.payload = {
+        code: 'CONTENT_RESTRICTED',
+        blockedUntil,
+        submission: serializeQuestionSubmission(submission),
+      };
+      throw moderationError;
+    }
+
     writeDb(db);
     return { submission: serializeQuestionSubmission(submission) } as T;
+  }
+
+  if (url.pathname === '/api/question-submissions/access' && method === 'GET') {
+    const db = readDb();
+    const submittedByEmail = String(url.searchParams.get('submittedByEmail') || '').trim();
+    const submittedByUserId = String(url.searchParams.get('submittedByUserId') || '').trim();
+    const submittedByClientId = String(url.searchParams.get('submittedByClientId') || '').trim();
+    const actorKey = normalizeContributionActorKey({ submittedByEmail, submittedByUserId, submittedByClientId });
+    const policy = normalizePolicy(db.contributionPolicy);
+    const restriction = getRestrictionState(db, actorKey);
+    const submissionsToday = db.questionSubmissions.filter((item) => item.actorKey === actorKey && new Date(item.createdAt).getTime() >= startOfToday());
+
+    return {
+      blocked: restriction.restricted,
+      blockedUntil: restriction.blockedUntil,
+      message: restriction.restricted ? CONTENT_RESTRICTION_MESSAGE : '',
+      limits: {
+        maxSubmissionsPerDay: policy.maxSubmissionsPerDay,
+        maxFilesPerSubmission: policy.maxFilesPerSubmission,
+        maxFileSizeBytes: policy.maxFileSizeBytes,
+        remainingSubmissionsToday: Math.max(0, policy.maxSubmissionsPerDay - submissionsToday.length),
+        allowedMimeTypes: policy.allowedMimeTypes,
+      },
+    } as T;
   }
 
   if (url.pathname === '/api/question-submissions/history' && method === 'GET') {
@@ -1547,6 +1836,26 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     return { submissions: submissions.map(serializeQuestionSubmission) } as T;
   }
 
+  if (url.pathname === '/api/admin/question-submissions/policy' && method === 'GET') {
+    requireAdmin(token);
+    const db = readDb();
+    return { policy: normalizePolicy(db.contributionPolicy) } as T;
+  }
+
+  if (url.pathname === '/api/admin/question-submissions/policy' && method === 'PUT') {
+    const { db, user } = requireAdmin(token);
+    db.contributionPolicy = normalizePolicy({
+      maxSubmissionsPerDay: Number(body.maxSubmissionsPerDay),
+      maxFilesPerSubmission: Number(body.maxFilesPerSubmission),
+      maxFileSizeBytes: Number(body.maxFileSizeBytes),
+      blockDurationMinutes: Number(body.blockDurationMinutes),
+      allowedMimeTypes: DEFAULT_CONTRIBUTION_POLICY.allowedMimeTypes,
+      updatedByEmail: user.email,
+    });
+    writeDb(db);
+    return { policy: db.contributionPolicy } as T;
+  }
+
   if (/^\/api\/admin\/question-submissions\/[^/]+\/review$/.test(url.pathname) && method === 'POST') {
     const { db, user } = requireAdmin(token);
     const submissionId = url.pathname.split('/')[4];
@@ -1571,6 +1880,10 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     submission.reviewNotes = reviewNotes;
     submission.reviewedByEmail = user.email;
     submission.reviewedAt = new Date().toISOString();
+    if (status === 'approved' && submission.moderation?.result === 'rejected') {
+      submission.moderation.result = 'manual-override';
+      submission.moderation.reviewedAt = new Date().toISOString();
+    }
     submission.updatedAt = new Date().toISOString();
 
     writeDb(db);

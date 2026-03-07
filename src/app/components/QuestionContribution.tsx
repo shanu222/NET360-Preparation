@@ -28,7 +28,26 @@ interface UserSubmission {
   status: 'pending' | 'approved' | 'rejected';
   queuedForBank?: boolean;
   reviewNotes?: string;
+  moderation?: {
+    result?: 'approved' | 'rejected' | 'manual-override';
+    reasons?: string[];
+    score?: number;
+  };
   createdAt?: string | null;
+}
+
+interface ContributionLimits {
+  maxSubmissionsPerDay: number;
+  maxFilesPerSubmission: number;
+  maxFileSizeBytes: number;
+  remainingSubmissionsToday: number;
+}
+
+interface ContributionAccessPayload {
+  blocked: boolean;
+  blockedUntil?: string | null;
+  message?: string;
+  limits?: ContributionLimits;
 }
 
 const SUBJECT_OPTIONS = [
@@ -50,8 +69,9 @@ const ACCEPTED_TYPES = new Set([
 ]);
 
 const MAX_FILES = 3;
-const MAX_FILE_SIZE_BYTES = Math.floor(2.5 * 1024 * 1024);
+const MAX_FILE_SIZE_BYTES = 1024 * 1024;
 const SUBMISSION_IDS_STORAGE_KEY = 'net360-question-submission-ids';
+const SUBMISSION_CLIENT_ID_KEY = 'net360-question-submission-client-id';
 
 function statusPillClass(status: UserSubmission['status']) {
   if (status === 'approved') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
@@ -87,6 +107,22 @@ function writeTrackedSubmissionIds(ids: string[]) {
   localStorage.setItem(SUBMISSION_IDS_STORAGE_KEY, JSON.stringify(ids.slice(0, 100)));
 }
 
+function getOrCreateSubmissionClientId() {
+  const existing = localStorage.getItem(SUBMISSION_CLIENT_ID_KEY);
+  if (existing) return existing;
+
+  const generated = `client-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
+  localStorage.setItem(SUBMISSION_CLIENT_ID_KEY, generated);
+  return generated;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes >= 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
+  return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
 function toDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -107,12 +143,40 @@ export function QuestionContribution() {
   const [submissions, setSubmissions] = useState<UserSubmission[]>([]);
   const [loadingSubmissions, setLoadingSubmissions] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [limits, setLimits] = useState<ContributionLimits>({
+    maxSubmissionsPerDay: 5,
+    maxFilesPerSubmission: MAX_FILES,
+    maxFileSizeBytes: MAX_FILE_SIZE_BYTES,
+    remainingSubmissionsToday: 5,
+  });
+  const [accessBlocked, setAccessBlocked] = useState(false);
+  const [blockedUntil, setBlockedUntil] = useState<string | null>(null);
 
   const submitterName = useMemo(() => {
     const first = String(user?.firstName || '').trim();
     const last = String(user?.lastName || '').trim();
     return [first, last].filter(Boolean).join(' ');
   }, [user]);
+
+  const submissionClientId = useMemo(() => getOrCreateSubmissionClientId(), []);
+
+  const loadAccessPolicy = async () => {
+    try {
+      const query = new URLSearchParams();
+      if (user?.email) query.set('submittedByEmail', user.email);
+      if (user?.id) query.set('submittedByUserId', user.id);
+      query.set('submittedByClientId', submissionClientId);
+
+      const payload = await apiRequest<ContributionAccessPayload>(`/api/question-submissions/access?${query.toString()}`);
+      setAccessBlocked(Boolean(payload?.blocked));
+      setBlockedUntil(payload?.blockedUntil ? String(payload.blockedUntil) : null);
+      if (payload?.limits) {
+        setLimits(payload.limits);
+      }
+    } catch {
+      // Keep defaults when policy endpoint is unavailable.
+    }
+  };
 
   const loadTrackedSubmissions = async () => {
     const ids = readTrackedSubmissionIds();
@@ -136,6 +200,7 @@ export function QuestionContribution() {
 
   useEffect(() => {
     void loadTrackedSubmissions();
+    void loadAccessPolicy();
   }, []);
 
   const onSelectFiles = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -144,8 +209,13 @@ export function QuestionContribution() {
 
     if (!files.length) return;
 
-    if (attachments.length + files.length > MAX_FILES) {
-      toast.error(`You can upload up to ${MAX_FILES} files.`);
+    if (accessBlocked) {
+      toast.error('Upload access is temporarily restricted.');
+      return;
+    }
+
+    if (attachments.length + files.length > limits.maxFilesPerSubmission) {
+      toast.error(`You can upload up to ${limits.maxFilesPerSubmission} files.`);
       return;
     }
 
@@ -156,8 +226,8 @@ export function QuestionContribution() {
           toast.error(`Unsupported file type: ${file.name}`);
           continue;
         }
-        if (file.size > MAX_FILE_SIZE_BYTES) {
-          toast.error(`${file.name} is larger than 2.5 MB.`);
+        if (file.size > limits.maxFileSizeBytes) {
+          toast.error('Upload failed: File size exceeds the allowed limit.');
           continue;
         }
 
@@ -188,6 +258,16 @@ export function QuestionContribution() {
       return;
     }
 
+    if (accessBlocked) {
+      toast.error('Upload access is temporarily restricted.');
+      return;
+    }
+
+    if (limits.remainingSubmissionsToday <= 0) {
+      toast.error(`Daily limit reached. You can submit up to ${limits.maxSubmissionsPerDay} times per day.`);
+      return;
+    }
+
     if (!questionText.trim() && !attachments.length) {
       toast.error('Add typed text or attach at least one file.');
       return;
@@ -212,6 +292,7 @@ export function QuestionContribution() {
           submittedByName: submitterName,
           submittedByEmail: user?.email || '',
           submittedByUserId: user?.id || '',
+          submittedByClientId: submissionClientId,
         }),
       });
 
@@ -229,8 +310,26 @@ export function QuestionContribution() {
       setAttachments([]);
       toast.success('Question submitted for admin review. Thank you for contributing.');
       await loadTrackedSubmissions();
+      await loadAccessPolicy();
     } catch (error) {
+      const apiError = error as Error & { payload?: { submission?: UserSubmission; blockedUntil?: string | null } };
+      const rejectedSubmission = apiError?.payload?.submission;
+      const blockedUntilValue = apiError?.payload?.blockedUntil;
+
+      if (rejectedSubmission?.id) {
+        const current = readTrackedSubmissionIds();
+        const merged = Array.from(new Set([rejectedSubmission.id, ...current]));
+        writeTrackedSubmissionIds(merged);
+        await loadTrackedSubmissions();
+      }
+
+      if (blockedUntilValue) {
+        setAccessBlocked(true);
+        setBlockedUntil(String(blockedUntilValue));
+      }
+
       toast.error(error instanceof Error ? error.message : 'Could not submit your question.');
+      await loadAccessPolicy();
     } finally {
       setSubmitting(false);
     }
@@ -242,6 +341,15 @@ export function QuestionContribution() {
         <h1>Question Contribution</h1>
         <p className="text-muted-foreground">Submit questions and resources to help expand the NET360 question bank.</p>
       </div>
+
+      {accessBlocked ? (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700 whitespace-pre-wrap">
+          Your submission contains content that does not meet the platform guidelines.
+          {'\n'}Upload access has been temporarily restricted.
+          {'\n'}Please contact the administration if you believe this action was taken by mistake.
+          {blockedUntil ? `\nRestriction lifts on: ${new Date(blockedUntil).toLocaleString()}` : ''}
+        </div>
+      ) : null}
 
       <Card className="rounded-2xl border-indigo-100 bg-white/95 shadow-[0_10px_24px_rgba(98,113,202,0.10)]">
         <CardHeader>
@@ -317,9 +425,10 @@ export function QuestionContribution() {
               multiple
               accept=".jpg,.jpeg,.png,.pdf,.doc,.docx"
               onChange={(e) => void onSelectFiles(e)}
+              disabled={accessBlocked || submitting}
             />
             <p className="text-xs text-muted-foreground">
-              Allowed: JPG, PNG, PDF, DOC, DOCX. Maximum {MAX_FILES} files, 2.5 MB each.
+              Allowed: JPG, PNG, PDF, DOC, DOCX. Maximum {limits.maxFilesPerSubmission} files, {formatBytes(limits.maxFileSizeBytes)} each. Remaining submissions today: {limits.remainingSubmissionsToday}/{limits.maxSubmissionsPerDay}.
             </p>
           </div>
 
@@ -344,7 +453,7 @@ export function QuestionContribution() {
             <Button
               className="bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
               onClick={() => void submitQuestion()}
-              disabled={submitting}
+              disabled={submitting || accessBlocked}
             >
               <Send className="h-4 w-4" />
               {submitting ? 'Submitting...' : 'Submit Question'}
@@ -358,7 +467,7 @@ export function QuestionContribution() {
                 setSubmissionReason('');
                 setAttachments([]);
               }}
-              disabled={submitting}
+              disabled={submitting || accessBlocked}
             >
               <Upload className="h-4 w-4" />
               Clear

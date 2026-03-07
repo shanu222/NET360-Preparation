@@ -49,10 +49,28 @@ interface AdminQuestionSubmission {
   queuedForBank?: boolean;
   submittedByName?: string;
   submittedByEmail?: string;
+  submittedByUserId?: string;
+  submittedByClientId?: string;
+  actorKey?: string;
+  moderation?: {
+    result?: 'approved' | 'rejected' | 'manual-override';
+    reasons?: string[];
+    score?: number;
+    blockedActor?: boolean;
+    reviewedAt?: string | null;
+  };
   reviewNotes?: string;
   reviewedByEmail?: string;
   reviewedAt?: string | null;
   createdAt?: string | null;
+}
+
+interface AdminContributionPolicy {
+  maxSubmissionsPerDay: number;
+  maxFilesPerSubmission: number;
+  maxFileSizeBytes: number;
+  blockDurationMinutes: number;
+  updatedByEmail?: string;
 }
 
 interface SignupRequest {
@@ -206,6 +224,12 @@ export default function AdminApp() {
   const [submissionSubjectFilter, setSubmissionSubjectFilter] = useState('all');
   const [submissionQuery, setSubmissionQuery] = useState('');
   const [submissionReviewNotes, setSubmissionReviewNotes] = useState<Record<string, string>>({});
+  const [contributionPolicy, setContributionPolicy] = useState<AdminContributionPolicy>({
+    maxSubmissionsPerDay: 5,
+    maxFilesPerSubmission: 3,
+    maxFileSizeBytes: 1024 * 1024,
+    blockDurationMinutes: 180,
+  });
 
   const filteredMcqs = useMemo(() => {
     if (!query.trim()) return mcqs;
@@ -274,6 +298,7 @@ export default function AdminApp() {
       mcqPayload,
       practicePayload,
       submissionPayload,
+      policyPayload,
       subscriptionOverviewPayload,
       subscriptionUsersPayload,
     ] = await Promise.all([
@@ -283,6 +308,14 @@ export default function AdminApp() {
       apiRequest<{ mcqs: AdminMCQ[] }>('/api/admin/mcqs', {}, activeToken),
       apiRequest<{ questions: AdminPracticeBoardQuestion[] }>('/api/admin/practice-board/questions', {}, activeToken).catch(() => ({ questions: [] })),
       apiRequest<{ submissions: AdminQuestionSubmission[] }>('/api/admin/question-submissions?status=all', {}, activeToken).catch(() => ({ submissions: [] })),
+      apiRequest<{ policy: AdminContributionPolicy }>('/api/admin/question-submissions/policy', {}, activeToken).catch(() => ({
+        policy: {
+          maxSubmissionsPerDay: 5,
+          maxFilesPerSubmission: 3,
+          maxFileSizeBytes: 1024 * 1024,
+          blockDurationMinutes: 180,
+        },
+      })),
       apiRequest<AdminSubscriptionOverview>('/api/admin/subscriptions/overview', {}, activeToken).catch(() => ({
         totalUsers: 0,
         activeUsers: 0,
@@ -299,6 +332,12 @@ export default function AdminApp() {
     setMcqs(mcqPayload.mcqs || []);
     setPracticeQuestions(practicePayload.questions || []);
     setQuestionSubmissions(submissionPayload.submissions || []);
+    setContributionPolicy(policyPayload.policy || {
+      maxSubmissionsPerDay: 5,
+      maxFilesPerSubmission: 3,
+      maxFileSizeBytes: 1024 * 1024,
+      blockDurationMinutes: 180,
+    });
     setSubscriptionOverview(subscriptionOverviewPayload);
     setSubscriptionUsers(subscriptionUsersPayload.users || []);
   };
@@ -707,6 +746,29 @@ export default function AdminApp() {
       await loadAdminData(authToken);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update submission review.');
+    }
+  };
+
+  const saveContributionPolicy = async () => {
+    if (!authToken) return;
+    try {
+      const payload = await apiRequest<{ policy: AdminContributionPolicy }>(
+        '/api/admin/question-submissions/policy',
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            maxSubmissionsPerDay: contributionPolicy.maxSubmissionsPerDay,
+            maxFilesPerSubmission: contributionPolicy.maxFilesPerSubmission,
+            maxFileSizeBytes: contributionPolicy.maxFileSizeBytes,
+            blockDurationMinutes: contributionPolicy.blockDurationMinutes,
+          }),
+        },
+        authToken,
+      );
+      setContributionPolicy(payload.policy);
+      toast.success('Submission policy updated.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update policy.');
     }
   };
 
@@ -1347,6 +1409,56 @@ export default function AdminApp() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
+              <div className="rounded-lg border bg-slate-50 p-3 space-y-3">
+                <p className="text-sm font-medium">Submission Policy</p>
+                <div className="grid gap-3 md:grid-cols-4">
+                  <div className="space-y-1.5">
+                    <Label>Max submissions/day</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={100}
+                      value={contributionPolicy.maxSubmissionsPerDay}
+                      onChange={(e) => setContributionPolicy((prev) => ({ ...prev, maxSubmissionsPerDay: Number(e.target.value) || prev.maxSubmissionsPerDay }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Max files/submission</Label>
+                    <Input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={contributionPolicy.maxFilesPerSubmission}
+                      onChange={(e) => setContributionPolicy((prev) => ({ ...prev, maxFilesPerSubmission: Number(e.target.value) || prev.maxFilesPerSubmission }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Max file size (bytes)</Label>
+                    <Input
+                      type="number"
+                      min={65536}
+                      max={10485760}
+                      value={contributionPolicy.maxFileSizeBytes}
+                      onChange={(e) => setContributionPolicy((prev) => ({ ...prev, maxFileSizeBytes: Number(e.target.value) || prev.maxFileSizeBytes }))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Block duration (minutes)</Label>
+                    <Input
+                      type="number"
+                      min={5}
+                      max={10080}
+                      value={contributionPolicy.blockDurationMinutes}
+                      onChange={(e) => setContributionPolicy((prev) => ({ ...prev, blockDurationMinutes: Number(e.target.value) || prev.blockDurationMinutes }))}
+                    />
+                  </div>
+                </div>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-xs text-muted-foreground">Allowed types are fixed: JPG, PNG, PDF, DOC, DOCX.</p>
+                  <Button size="sm" variant="outline" onClick={() => void saveContributionPolicy()}>Save Policy</Button>
+                </div>
+              </div>
+
               <div className="grid gap-3 md:grid-cols-4">
                 <div className="space-y-1.5">
                   <Label>Status</Label>
@@ -1393,14 +1505,24 @@ export default function AdminApp() {
                         <p className="text-xs text-muted-foreground">
                           Submitted by {item.submittedByName || 'Anonymous'}
                           {item.submittedByEmail ? ` (${item.submittedByEmail})` : ''}
+                          {item.submittedByUserId ? ` • UserId: ${item.submittedByUserId}` : ''}
+                          {!item.submittedByUserId && item.actorKey ? ` • Identifier: ${item.actorKey}` : ''}
                           {item.createdAt ? ` • ${new Date(item.createdAt).toLocaleString()}` : ''}
                         </p>
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge variant={item.status === 'pending' ? 'default' : 'outline'}>{item.status}</Badge>
+                        <Badge variant="outline">Moderation: {item.moderation?.result || 'approved'}</Badge>
                         {item.queuedForBank ? <Badge variant="outline">Queued for Bank</Badge> : null}
                       </div>
                     </div>
+
+                    {item.moderation?.reasons?.length ? (
+                      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                        <p className="font-medium">AI moderation reasons</p>
+                        <p>{item.moderation.reasons.join(' ')}</p>
+                      </div>
+                    ) : null}
 
                     <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-700 whitespace-pre-wrap">
                       {item.questionText || 'No typed text provided. See attached files below.'}
