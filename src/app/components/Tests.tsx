@@ -128,17 +128,15 @@ const NET_PROFILES: NetTypeProfile[] = [
   {
     id: 'net-natural-sciences',
     name: 'NET Natural Sciences',
-    short: 'Biology + Chemistry + Physics',
-    description: 'Natural sciences route with interdisciplinary science coverage.',
+    short: 'Alternative Academic Stream',
+    description: 'For candidates whose academic background does not match standard streams.',
     icon: Sparkles,
     gradient: 'from-cyan-600 to-sky-500',
     totalQuestions: 200,
     durationMinutes: 180,
     distribution: [
-      { label: 'Biology', percentage: 40, mcqs: 80, sourceSubjects: ['biology'] },
-      { label: 'Chemistry', percentage: 30, mcqs: 60, sourceSubjects: ['chemistry'] },
-      { label: 'Physics', percentage: 20, mcqs: 40, sourceSubjects: ['physics'] },
-      { label: 'English', percentage: 10, mcqs: 20, sourceSubjects: ['english'] },
+      { label: 'Mathematics', percentage: 50, mcqs: 100, sourceSubjects: ['mathematics'] },
+      { label: 'English', percentage: 50, mcqs: 100, sourceSubjects: ['english'] },
     ],
   },
 ];

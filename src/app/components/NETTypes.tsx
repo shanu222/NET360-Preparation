@@ -141,6 +141,29 @@ export function NETTypes() {
       durationMinutes: 180,
       difficulty: 'Medium',
     },
+    {
+      id: 'natural-sciences',
+      title: 'NET-Natural Sciences',
+      subtitle: 'HSSC / Equivalent',
+      icon: CircleHelp,
+      headerGradient: 'from-cyan-500 to-sky-400',
+      tagColor: 'bg-cyan-500',
+      subjects: [
+        { name: 'Mathematics', percentage: 50, color: 'bg-cyan-500' },
+        { name: 'English', percentage: 50, color: 'bg-sky-400' },
+      ],
+      admissionProgrammes: [
+        'BS Mathematics',
+        'BS Physics',
+        'BS Chemistry',
+      ],
+      notes: [
+        'For candidates whose academic background does not match standard streams.',
+      ],
+      totalQuestions: 200,
+      durationMinutes: 180,
+      difficulty: 'Medium',
+    },
   ];
 
   return (
@@ -150,10 +173,11 @@ export function NETTypes() {
         <p className="text-muted-foreground">Understand different NET categories and their syllabus distribution</p>
       </div>
 
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-6">
         <TopChip icon={Building2} text="Engineering NET" />
         <TopChip icon={Briefcase} text="Business NET" />
         <TopChip icon={FlaskConical} text="Applied Sciences" />
+        <TopChip icon={CircleHelp} text="Natural Sciences" />
         <TopChip icon={CircleHelp} text="200 Questions" muted="180 Minutes" />
         <TopChip icon={MapPin} text="NUST Testing Centers" />
       </div>

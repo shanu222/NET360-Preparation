@@ -615,16 +615,12 @@ const NET_TEST_PROFILES = {
     durationMinutes: 180,
     totalQuestions: 200,
     distribution: [
-      { label: 'Biology', percentage: 40, sourceSubjects: ['biology'] },
-      { label: 'Chemistry', percentage: 30, sourceSubjects: ['chemistry'] },
-      { label: 'Physics', percentage: 20, sourceSubjects: ['physics'] },
-      { label: 'English', percentage: 10, sourceSubjects: ['english'] },
+      { label: 'Mathematics', percentage: 50, sourceSubjects: ['mathematics'] },
+      { label: 'English', percentage: 50, sourceSubjects: ['english'] },
     ],
     subjectWiseQuestions: {
-      biology: 80,
-      chemistry: 60,
-      physics: 40,
-      english: 20,
+      mathematics: 100,
+      english: 100,
     },
   },
 };
