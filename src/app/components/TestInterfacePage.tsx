@@ -336,7 +336,7 @@ export function TestInterfacePage() {
           </div>
         </section>
 
-        <footer className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+        <footer className="flex items-center justify-between gap-2 border-t border-[#2b5f9f] px-3 py-2 text-sm">
           <div className="flex items-center gap-3 text-xs">
             <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded bg-[#10b981]" />Answered {answeredCount}</span>
             <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded bg-[#ef4444]" />Unanswered {session.questionCount - answeredCount}</span>
@@ -353,6 +353,29 @@ export function TestInterfacePage() {
             Click here to FINISH Your Test
           </button>
         </footer>
+      </div>
+
+      <div className="mt-1 bg-white py-2 text-center text-sm text-red-600">
+        This is just a Sample of Computer Based NUST Entry Test (CBNET) .{' '}
+        <button
+          type="button"
+          className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
+          onClick={() => {
+            window.location.href = '/';
+          }}
+        >
+          Go to Main Page
+        </button>
+        {' | '}
+        <button
+          type="button"
+          className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
+          onClick={() => {
+            window.location.href = '/?tab=profile';
+          }}
+        >
+          Go to Login Page
+        </button>
       </div>
 
       {result ? (
