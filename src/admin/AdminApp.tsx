@@ -41,9 +41,12 @@ interface AdminQuestionSubmission {
   id: string;
   subject: string;
   questionText: string;
+  questionDescription?: string;
+  questionSource?: string;
+  submissionReason?: string;
   attachments: AdminQuestionSubmissionAttachment[];
-  status: 'pending' | 'approved' | 'rejected' | 'converted';
-  convertedTo?: '' | 'mcq' | 'practice';
+  status: 'pending' | 'approved' | 'rejected';
+  queuedForBank?: boolean;
   submittedByName?: string;
   submittedByEmail?: string;
   reviewNotes?: string;
@@ -234,7 +237,16 @@ export default function AdminApp() {
       if (submissionSubjectFilter !== 'all' && item.subject.toLowerCase() !== submissionSubjectFilter.toLowerCase()) return false;
       if (!needle) return true;
 
-      const blob = [item.subject, item.questionText, item.submittedByName, item.submittedByEmail, item.reviewNotes]
+      const blob = [
+        item.subject,
+        item.questionText,
+        item.questionDescription,
+        item.questionSource,
+        item.submissionReason,
+        item.submittedByName,
+        item.submittedByEmail,
+        item.reviewNotes,
+      ]
         .join(' ')
         .toLowerCase();
       return blob.includes(needle);
@@ -674,8 +686,7 @@ export default function AdminApp() {
 
   const reviewQuestionSubmission = async (
     submissionId: string,
-    status: 'approved' | 'rejected' | 'converted',
-    convertedTo?: 'mcq' | 'practice',
+    status: 'approved' | 'rejected',
   ) => {
     if (!authToken) return;
 
@@ -687,7 +698,6 @@ export default function AdminApp() {
           method: 'POST',
           body: JSON.stringify({
             status,
-            convertedTo: convertedTo || '',
             reviewNotes: notes,
           }),
         },
@@ -797,7 +807,7 @@ export default function AdminApp() {
       <div className="grid gap-4 md:grid-cols-3">
         <Metric title="Pending User Submissions" value={String(overview?.pendingQuestionSubmissions || 0)} />
         <Metric title="Approved Submissions" value={String(questionSubmissions.filter((item) => item.status === 'approved').length)} />
-        <Metric title="Converted Submissions" value={String(questionSubmissions.filter((item) => item.status === 'converted').length)} />
+        <Metric title="Rejected Submissions" value={String(questionSubmissions.filter((item) => item.status === 'rejected').length)} />
       </div>
 
       <div className="grid gap-4 md:grid-cols-3">
@@ -1333,7 +1343,7 @@ export default function AdminApp() {
             <CardHeader>
               <CardTitle>User Question Submissions</CardTitle>
               <CardDescription>
-                Review community-submitted questions, approve quality entries, and mark conversion targets.
+                Review community-submitted questions, then approve or reject each submission with feedback.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -1344,10 +1354,9 @@ export default function AdminApp() {
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All</SelectItem>
-                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="pending">Pending Review</SelectItem>
                       <SelectItem value="approved">Approved</SelectItem>
                       <SelectItem value="rejected">Rejected</SelectItem>
-                      <SelectItem value="converted">Converted</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1389,13 +1398,34 @@ export default function AdminApp() {
                       </div>
                       <div className="flex items-center gap-2">
                         <Badge variant={item.status === 'pending' ? 'default' : 'outline'}>{item.status}</Badge>
-                        {item.convertedTo ? <Badge variant="outline">{item.convertedTo.toUpperCase()}</Badge> : null}
+                        {item.queuedForBank ? <Badge variant="outline">Queued for Bank</Badge> : null}
                       </div>
                     </div>
 
                     <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-700 whitespace-pre-wrap">
                       {item.questionText || 'No typed text provided. See attached files below.'}
                     </div>
+
+                    {item.questionDescription ? (
+                      <div className="rounded-md border bg-white p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                        <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Question Description</p>
+                        {item.questionDescription}
+                      </div>
+                    ) : null}
+
+                    {item.questionSource ? (
+                      <div className="rounded-md border bg-white p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                        <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Source</p>
+                        {item.questionSource}
+                      </div>
+                    ) : null}
+
+                    {item.submissionReason ? (
+                      <div className="rounded-md border bg-white p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                        <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Reason for Submission</p>
+                        {item.submissionReason}
+                      </div>
+                    ) : null}
 
                     {item.attachments?.length ? (
                       <div className="space-y-2">
@@ -1415,14 +1445,14 @@ export default function AdminApp() {
                     ) : null}
 
                     <div className="space-y-1.5">
-                      <Label>Admin Notes</Label>
+                      <Label>Review Notes (required for rejection)</Label>
                       <Textarea
                         value={Object.prototype.hasOwnProperty.call(submissionReviewNotes, item.id)
                           ? submissionReviewNotes[item.id]
                           : (item.reviewNotes || '')}
                         onChange={(e) => setSubmissionReviewNotes((prev) => ({ ...prev, [item.id]: e.target.value }))}
                         className="min-h-[90px]"
-                        placeholder="Add quality notes, conversion hints, or rejection reason..."
+                        placeholder="Add a short explanation, especially when rejecting."
                       />
                       {item.reviewedByEmail || item.reviewedAt ? (
                         <p className="text-xs text-muted-foreground">
@@ -1435,12 +1465,6 @@ export default function AdminApp() {
                     <div className="flex flex-wrap gap-2">
                       <Button size="sm" onClick={() => void reviewQuestionSubmission(item.id, 'approved')}>Approve</Button>
                       <Button size="sm" variant="outline" onClick={() => void reviewQuestionSubmission(item.id, 'rejected')}>Reject</Button>
-                      <Button size="sm" variant="outline" onClick={() => void reviewQuestionSubmission(item.id, 'converted', 'mcq')}>
-                        Mark Converted to MCQ
-                      </Button>
-                      <Button size="sm" variant="outline" onClick={() => void reviewQuestionSubmission(item.id, 'converted', 'practice')}>
-                        Mark Converted to Practice
-                      </Button>
                     </div>
                   </div>
                 ))}

@@ -509,10 +509,15 @@ function serializePracticeBoardQuestion(item) {
 }
 
 function serializeQuestionSubmission(item) {
+  const rawStatus = String(item.status || 'pending').toLowerCase();
+  const normalizedStatus = rawStatus === 'converted' ? 'approved' : rawStatus;
   return {
     id: String(item._id),
     subject: String(item.subject || '').trim(),
     questionText: String(item.questionText || '').trim(),
+    questionDescription: String(item.questionDescription || '').trim(),
+    questionSource: String(item.questionSource || '').trim(),
+    submissionReason: String(item.submissionReason || '').trim(),
     attachments: Array.isArray(item.attachments)
       ? item.attachments.map((file) => ({
         name: String(file.name || '').trim(),
@@ -521,8 +526,8 @@ function serializeQuestionSubmission(item) {
         dataUrl: String(file.dataUrl || '').trim(),
       }))
       : [],
-    status: String(item.status || 'pending'),
-    convertedTo: String(item.convertedTo || ''),
+    status: normalizedStatus,
+    queuedForBank: Boolean(item.queuedForBank),
     submittedByName: String(item.submittedByName || '').trim(),
     submittedByEmail: String(item.submittedByEmail || '').trim(),
     submittedByUserId: String(item.submittedByUserId || '').trim(),
@@ -1688,6 +1693,9 @@ app.post('/api/question-submissions', async (req, res) => {
   const {
     subject,
     questionText = '',
+    questionDescription = '',
+    questionSource = '',
+    submissionReason = '',
     attachments = [],
     submittedByName = '',
     submittedByEmail = '',
@@ -1737,22 +1745,60 @@ app.post('/api/question-submissions', async (req, res) => {
   }
 
   const text = String(questionText || '').trim();
+  const description = String(questionDescription || '').trim();
+  const source = String(questionSource || '').trim();
+  const reason = String(submissionReason || '').trim();
+
   if (!text && !safeAttachments.length) {
     res.status(400).json({ error: 'Please provide a typed/pasted question or at least one attachment.' });
+    return;
+  }
+
+  if (!reason) {
+    res.status(400).json({ error: 'Please explain why this question should be added.' });
     return;
   }
 
   const created = await QuestionSubmissionModel.create({
     subject: normalizedSubject,
     questionText: text,
+    questionDescription: description,
+    questionSource: source,
+    submissionReason: reason,
     attachments: safeAttachments,
     status: 'pending',
+    queuedForBank: false,
     submittedByName: String(submittedByName || '').trim(),
     submittedByEmail: String(submittedByEmail || '').trim(),
     submittedByUserId: String(submittedByUserId || '').trim(),
   });
 
   res.status(201).json({ submission: serializeQuestionSubmission(created) });
+});
+
+app.get('/api/question-submissions/history', async (req, res) => {
+  const rawIds = String(req.query.ids || '').trim();
+  if (!rawIds) {
+    res.json({ submissions: [] });
+    return;
+  }
+
+  const ids = rawIds
+    .split(',')
+    .map((value) => String(value || '').trim())
+    .filter((value) => isValidObjectId(value))
+    .slice(0, 100);
+
+  if (!ids.length) {
+    res.json({ submissions: [] });
+    return;
+  }
+
+  const submissions = await QuestionSubmissionModel.find({ _id: { $in: ids } })
+    .sort({ createdAt: -1 })
+    .lean();
+
+  res.json({ submissions: submissions.map((item) => serializeQuestionSubmission(item)) });
 });
 
 app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
@@ -2399,29 +2445,20 @@ app.post('/api/admin/question-submissions/:submissionId/review', authMiddleware,
   }
 
   const nextStatus = String(req.body?.status || '').trim().toLowerCase();
-  const convertedTo = String(req.body?.convertedTo || '').trim().toLowerCase();
   const reviewNotes = String(req.body?.reviewNotes || '').trim();
 
-  if (!['approved', 'rejected', 'converted'].includes(nextStatus)) {
-    res.status(400).json({ error: 'status must be approved, rejected, or converted.' });
+  if (!['approved', 'rejected'].includes(nextStatus)) {
+    res.status(400).json({ error: 'status must be approved or rejected.' });
     return;
   }
 
-  if (nextStatus === 'converted') {
-    if (!['mcq', 'practice'].includes(convertedTo)) {
-      res.status(400).json({ error: 'convertedTo must be mcq or practice when status is converted.' });
-      return;
-    }
-    if (submission.status !== 'approved' && submission.status !== 'converted') {
-      res.status(400).json({ error: 'Only approved submissions can be marked as converted.' });
-      return;
-    }
-    submission.convertedTo = convertedTo;
-  } else if (nextStatus === 'approved') {
-    submission.convertedTo = '';
+  if (nextStatus === 'rejected' && !reviewNotes) {
+    res.status(400).json({ error: 'Please provide a short explanation for rejection.' });
+    return;
   }
 
   submission.status = nextStatus;
+  submission.queuedForBank = nextStatus === 'approved';
   submission.reviewNotes = reviewNotes;
   submission.reviewedAt = new Date();
   submission.reviewedByEmail = req.user.email;

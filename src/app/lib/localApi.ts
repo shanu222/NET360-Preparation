@@ -153,9 +153,12 @@ interface LocalQuestionSubmission {
   id: string;
   subject: string;
   questionText: string;
+  questionDescription: string;
+  questionSource: string;
+  submissionReason: string;
   attachments: LocalSubmissionAttachment[];
-  status: 'pending' | 'approved' | 'rejected' | 'converted';
-  convertedTo: '' | 'mcq' | 'practice';
+  status: 'pending' | 'approved' | 'rejected';
+  queuedForBank: boolean;
   submittedByName: string;
   submittedByEmail: string;
   submittedByUserId: string;
@@ -683,13 +686,17 @@ function serializePracticeBoardQuestion(item: LocalPracticeBoardQuestion) {
 }
 
 function serializeQuestionSubmission(item: LocalQuestionSubmission) {
+  const normalizedStatus = String(item.status || 'pending') === 'converted' ? 'approved' : item.status;
   return {
     id: item.id,
     subject: item.subject,
     questionText: item.questionText,
+    questionDescription: item.questionDescription,
+    questionSource: item.questionSource,
+    submissionReason: item.submissionReason,
     attachments: item.attachments,
-    status: item.status,
-    convertedTo: item.convertedTo,
+    status: normalizedStatus,
+    queuedForBank: item.queuedForBank,
     submittedByName: item.submittedByName,
     submittedByEmail: item.submittedByEmail,
     submittedByUserId: item.submittedByUserId,
@@ -995,6 +1002,9 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const db = readDb();
     const subject = String(body.subject || '').trim();
     const questionText = String(body.questionText || '').trim();
+    const questionDescription = String(body.questionDescription || '').trim();
+    const questionSource = String(body.questionSource || '').trim();
+    const submissionReason = String(body.submissionReason || '').trim();
     const submittedByName = String(body.submittedByName || '').trim();
     const submittedByEmail = String(body.submittedByEmail || '').trim();
     const submittedByUserId = String(body.submittedByUserId || '').trim();
@@ -1012,6 +1022,9 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     }
     if (!questionText && !attachments.length) {
       throw new Error('Please provide a typed/pasted question or at least one attachment.');
+    }
+    if (!submissionReason) {
+      throw new Error('Please explain why this question should be added.');
     }
 
     const allowedMimeTypes = new Set([
@@ -1042,9 +1055,12 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       id: `qs-${Date.now()}`,
       subject,
       questionText,
+      questionDescription,
+      questionSource,
+      submissionReason,
       attachments,
       status: 'pending',
-      convertedTo: '',
+      queuedForBank: false,
       submittedByName,
       submittedByEmail,
       submittedByUserId,
@@ -1058,6 +1074,26 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     db.questionSubmissions.unshift(submission);
     writeDb(db);
     return { submission: serializeQuestionSubmission(submission) } as T;
+  }
+
+  if (url.pathname === '/api/question-submissions/history' && method === 'GET') {
+    const db = readDb();
+    const rawIds = String(url.searchParams.get('ids') || '').trim();
+    if (!rawIds) {
+      return { submissions: [] } as T;
+    }
+
+    const ids = rawIds
+      .split(',')
+      .map((value) => String(value || '').trim())
+      .filter(Boolean)
+      .slice(0, 100);
+
+    const submissions = db.questionSubmissions
+      .filter((item) => ids.includes(item.id))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    return { submissions: submissions.map(serializeQuestionSubmission) } as T;
   }
 
   if (url.pathname === '/api/practice/analyze' && method === 'POST') {
@@ -1520,28 +1556,18 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     }
 
     const status = String(body.status || '').trim().toLowerCase();
-    const convertedTo = String(body.convertedTo || '').trim().toLowerCase() as '' | 'mcq' | 'practice';
     const reviewNotes = String(body.reviewNotes || '').trim();
 
-    if (!['approved', 'rejected', 'converted'].includes(status)) {
-      throw new Error('status must be approved, rejected, or converted.');
+    if (!['approved', 'rejected'].includes(status)) {
+      throw new Error('status must be approved or rejected.');
     }
 
-    if (status === 'converted') {
-      if (!['mcq', 'practice'].includes(convertedTo)) {
-        throw new Error('convertedTo must be mcq or practice when status is converted.');
-      }
-      if (submission.status !== 'approved' && submission.status !== 'converted') {
-        throw new Error('Only approved submissions can be marked as converted.');
-      }
-      submission.convertedTo = convertedTo;
-    }
-
-    if (status === 'approved') {
-      submission.convertedTo = '';
+    if (status === 'rejected' && !reviewNotes) {
+      throw new Error('Please provide a short explanation for rejection.');
     }
 
     submission.status = status as LocalQuestionSubmission['status'];
+    submission.queuedForBank = status === 'approved';
     submission.reviewNotes = reviewNotes;
     submission.reviewedByEmail = user.email;
     submission.reviewedAt = new Date().toISOString();

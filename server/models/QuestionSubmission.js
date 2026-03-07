@@ -14,18 +14,17 @@ const questionSubmissionSchema = new mongoose.Schema(
   {
     subject: { type: String, required: true, index: true },
     questionText: { type: String, default: '' },
+    questionDescription: { type: String, default: '' },
+    questionSource: { type: String, default: '' },
+    submissionReason: { type: String, default: '' },
     attachments: { type: [attachmentSchema], default: [] },
     status: {
       type: String,
-      enum: ['pending', 'approved', 'rejected', 'converted'],
+      enum: ['pending', 'approved', 'rejected'],
       default: 'pending',
       index: true,
     },
-    convertedTo: {
-      type: String,
-      enum: ['', 'mcq', 'practice'],
-      default: '',
-    },
+    queuedForBank: { type: Boolean, default: false, index: true },
     submittedByName: { type: String, default: '' },
     submittedByEmail: { type: String, default: '' },
     submittedByUserId: { type: String, default: '' },

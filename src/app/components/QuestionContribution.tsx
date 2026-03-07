@@ -1,4 +1,4 @@
-import { type ChangeEvent, useMemo, useState } from 'react';
+import { type ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { Upload, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiRequest } from '../lib/api';
@@ -15,6 +15,20 @@ interface SubmissionAttachment {
   mimeType: string;
   size: number;
   dataUrl: string;
+}
+
+interface UserSubmission {
+  id: string;
+  subject: string;
+  questionText: string;
+  questionDescription: string;
+  questionSource: string;
+  submissionReason: string;
+  attachments: SubmissionAttachment[];
+  status: 'pending' | 'approved' | 'rejected';
+  queuedForBank?: boolean;
+  reviewNotes?: string;
+  createdAt?: string | null;
 }
 
 const SUBJECT_OPTIONS = [
@@ -37,6 +51,41 @@ const ACCEPTED_TYPES = new Set([
 
 const MAX_FILES = 3;
 const MAX_FILE_SIZE_BYTES = Math.floor(2.5 * 1024 * 1024);
+const SUBMISSION_IDS_STORAGE_KEY = 'net360-question-submission-ids';
+
+function statusPillClass(status: UserSubmission['status']) {
+  if (status === 'approved') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+  if (status === 'rejected') return 'bg-rose-50 text-rose-700 border-rose-200';
+  return 'bg-amber-50 text-amber-700 border-amber-200';
+}
+
+function statusDotClass(status: UserSubmission['status']) {
+  if (status === 'approved') return 'bg-emerald-500';
+  if (status === 'rejected') return 'bg-rose-500';
+  return 'bg-amber-500';
+}
+
+function statusLabel(status: UserSubmission['status']) {
+  if (status === 'approved') return 'Approved';
+  if (status === 'rejected') return 'Rejected';
+  return 'Pending Review';
+}
+
+function readTrackedSubmissionIds() {
+  const raw = localStorage.getItem(SUBMISSION_IDS_STORAGE_KEY);
+  if (!raw) return [] as string[];
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((item) => String(item || '').trim()).filter(Boolean).slice(0, 100);
+  } catch {
+    return [];
+  }
+}
+
+function writeTrackedSubmissionIds(ids: string[]) {
+  localStorage.setItem(SUBMISSION_IDS_STORAGE_KEY, JSON.stringify(ids.slice(0, 100)));
+}
 
 function toDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -51,7 +100,12 @@ export function QuestionContribution() {
   const { user } = useAuth();
   const [subject, setSubject] = useState('Mathematics');
   const [questionText, setQuestionText] = useState('');
+  const [questionDescription, setQuestionDescription] = useState('');
+  const [questionSource, setQuestionSource] = useState('');
+  const [submissionReason, setSubmissionReason] = useState('');
   const [attachments, setAttachments] = useState<SubmissionAttachment[]>([]);
+  const [submissions, setSubmissions] = useState<UserSubmission[]>([]);
+  const [loadingSubmissions, setLoadingSubmissions] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   const submitterName = useMemo(() => {
@@ -59,6 +113,30 @@ export function QuestionContribution() {
     const last = String(user?.lastName || '').trim();
     return [first, last].filter(Boolean).join(' ');
   }, [user]);
+
+  const loadTrackedSubmissions = async () => {
+    const ids = readTrackedSubmissionIds();
+    if (!ids.length) {
+      setSubmissions([]);
+      return;
+    }
+
+    try {
+      setLoadingSubmissions(true);
+      const payload = await apiRequest<{ submissions: UserSubmission[] }>(
+        `/api/question-submissions/history?ids=${encodeURIComponent(ids.join(','))}`,
+      );
+      setSubmissions(Array.isArray(payload?.submissions) ? payload.submissions : []);
+    } catch {
+      setSubmissions([]);
+    } finally {
+      setLoadingSubmissions(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadTrackedSubmissions();
+  }, []);
 
   const onSelectFiles = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(event.target.files || []);
@@ -115,13 +193,21 @@ export function QuestionContribution() {
       return;
     }
 
+    if (!submissionReason.trim()) {
+      toast.error('Please explain why this question should be added.');
+      return;
+    }
+
     try {
       setSubmitting(true);
-      await apiRequest('/api/question-submissions', {
+      const payload = await apiRequest<{ submission: UserSubmission }>('/api/question-submissions', {
         method: 'POST',
         body: JSON.stringify({
           subject: subject.trim(),
           questionText: questionText.trim(),
+          questionDescription: questionDescription.trim(),
+          questionSource: questionSource.trim(),
+          submissionReason: submissionReason.trim(),
           attachments,
           submittedByName: submitterName,
           submittedByEmail: user?.email || '',
@@ -129,9 +215,20 @@ export function QuestionContribution() {
         }),
       });
 
+      const submissionId = String(payload?.submission?.id || '').trim();
+      if (submissionId) {
+        const current = readTrackedSubmissionIds();
+        const merged = Array.from(new Set([submissionId, ...current]));
+        writeTrackedSubmissionIds(merged);
+      }
+
       setQuestionText('');
+      setQuestionDescription('');
+      setQuestionSource('');
+      setSubmissionReason('');
       setAttachments([]);
       toast.success('Question submitted for admin review. Thank you for contributing.');
+      await loadTrackedSubmissions();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not submit your question.');
     } finally {
@@ -178,6 +275,41 @@ export function QuestionContribution() {
           </div>
 
           <div className="space-y-1.5">
+            <Label htmlFor="question-description">Question Description</Label>
+            <Textarea
+              id="question-description"
+              value={questionDescription}
+              onChange={(e) => setQuestionDescription(e.target.value)}
+              className="min-h-[110px]"
+              placeholder="Explain the context of the question in your own words..."
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="question-source">Source of the Question</Label>
+            <Input
+              id="question-source"
+              value={questionSource}
+              onChange={(e) => setQuestionSource(e.target.value)}
+              placeholder="Book name, past paper year, personal notes, coaching sheet, etc."
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="submission-reason">Reason for Submission</Label>
+            <Textarea
+              id="submission-reason"
+              value={submissionReason}
+              onChange={(e) => setSubmissionReason(e.target.value)}
+              className="min-h-[120px]"
+              placeholder="Why should this be added? How will it help NET preparation?"
+            />
+            <p className="text-xs text-muted-foreground">
+              Prompts: who created this question, why it is important, and how it helps students prepare.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
             <Label htmlFor="question-file-upload">Upload Image / PDF / Word</Label>
             <Input
               id="question-file-upload"
@@ -221,6 +353,9 @@ export function QuestionContribution() {
               variant="outline"
               onClick={() => {
                 setQuestionText('');
+                setQuestionDescription('');
+                setQuestionSource('');
+                setSubmissionReason('');
                 setAttachments([]);
               }}
               disabled={submitting}
@@ -229,6 +364,58 @@ export function QuestionContribution() {
               Clear
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="rounded-2xl border-indigo-100 bg-white/95 shadow-[0_10px_24px_rgba(98,113,202,0.10)]">
+        <CardHeader>
+          <CardTitle className="text-indigo-950">Your Submission Status</CardTitle>
+          <CardDescription>
+            Track pending, approved, or rejected submissions. Rejected items include the admin explanation.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {loadingSubmissions ? (
+            <p className="text-sm text-muted-foreground">Loading your submissions...</p>
+          ) : null}
+
+          {!loadingSubmissions && !submissions.length ? (
+            <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
+              No submissions tracked yet from this browser.
+            </div>
+          ) : null}
+
+          {submissions.map((item) => (
+            <div key={item.id} className="rounded-lg border p-3 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm font-medium">{item.subject}</p>
+                <div className={`inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-xs ${statusPillClass(item.status)}`}>
+                  <span className={`h-2 w-2 rounded-full ${statusDotClass(item.status)}`} />
+                  {statusLabel(item.status)}
+                </div>
+              </div>
+
+              <p className="text-sm text-slate-700 whitespace-pre-wrap">
+                {item.questionText || item.questionDescription || 'Submission with file attachments only.'}
+              </p>
+
+              {item.status === 'rejected' && item.reviewNotes ? (
+                <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                  Admin feedback: {item.reviewNotes}
+                </div>
+              ) : null}
+
+              {item.status === 'approved' ? (
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+                  Approved and queued for future question bank processing.
+                </div>
+              ) : null}
+
+              <p className="text-xs text-muted-foreground">
+                {item.createdAt ? `Submitted on ${new Date(item.createdAt).toLocaleString()}` : ''}
+              </p>
+            </div>
+          ))}
         </CardContent>
       </Card>
     </div>
