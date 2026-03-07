@@ -31,6 +31,7 @@ const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
 const AI_DAILY_LIMIT = Number(process.env.AI_DAILY_LIMIT || 50);
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const SIGNUP_TOKEN_TTL_HOURS = Number(process.env.SIGNUP_TOKEN_TTL_HOURS || 24);
+const NUST_UPDATES_CACHE_MS = Number(process.env.NUST_UPDATES_CACHE_MS || 60 * 1000);
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .split(',')
   .map((item) => item.trim().toLowerCase())
@@ -67,6 +68,11 @@ app.use(
     message: { error: 'Too many auth attempts. Please try again shortly.' },
   }),
 );
+
+const nustUpdatesCache = {
+  fetchedAt: 0,
+  updates: [],
+};
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
@@ -284,6 +290,94 @@ function serializeAttempt(attempt) {
     submittedAt: new Date(attempt.submittedAt).toISOString(),
     metadata: attempt.metadata || {},
   };
+}
+
+function decodeHtmlEntities(text) {
+  return String(text || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&#(\d+);/g, (_, code) => {
+      const value = Number(code);
+      if (!Number.isFinite(value)) return '';
+      return String.fromCharCode(value);
+    });
+}
+
+function stripHtml(text) {
+  return decodeHtmlEntities(String(text || '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
+}
+
+function sliceNoticeBlock(html) {
+  const source = String(html || '');
+  const lower = source.toLowerCase();
+  const start = lower.indexOf('important notice');
+  if (start < 0) return source;
+
+  const ends = ['salients of net', 'nust entry test', 'act/sat basis', 'related links', '</footer>']
+    .map((needle) => lower.indexOf(needle, start + 5))
+    .filter((index) => index > start);
+  const end = ends.length ? Math.min(...ends) : Math.min(source.length, start + 14000);
+  return source.slice(start, end);
+}
+
+function toAbsoluteUrl(href) {
+  try {
+    return new URL(href, 'https://ugadmissions.nust.edu.pk/').toString();
+  } catch {
+    return 'https://ugadmissions.nust.edu.pk/';
+  }
+}
+
+function parseNustUpdates(html) {
+  const block = sliceNoticeBlock(html);
+  const anchorRegex = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  const ignoredTitles = new Set([
+    'home',
+    'contact us',
+    'nust home',
+    'brochure',
+    'sample test',
+    'forgot password?',
+    'new registration for net',
+  ]);
+
+  const items = [];
+  const seen = new Set();
+
+  for (const match of block.matchAll(anchorRegex)) {
+    const href = String(match[1] || '').trim();
+    const title = stripHtml(match[2] || '').slice(0, 180);
+    if (!href || !title || title.length < 6) continue;
+    if (ignoredTitles.has(title.toLowerCase())) continue;
+
+    const absoluteUrl = toAbsoluteUrl(href);
+    const key = `${title.toLowerCase()}|${absoluteUrl}`;
+    if (seen.has(key)) continue;
+
+    // Capture nearby sentence fragments for subtitle context.
+    const index = Number(match.index || 0);
+    const nearbyRaw = block.slice(Math.max(0, index - 180), Math.min(block.length, index + 360));
+    const nearbyText = stripHtml(nearbyRaw).replace(title, '').trim();
+
+    let subtitle = nearbyText.slice(0, 180);
+    if (!subtitle) {
+      subtitle = 'Tap to view full update on NUST admissions portal.';
+    }
+
+    items.push({
+      title,
+      subtitle,
+      url: absoluteUrl,
+    });
+    seen.add(key);
+    if (items.length >= 8) break;
+  }
+
+  return items;
 }
 
 function pdfEscape(value) {
@@ -570,6 +664,70 @@ async function refreshUserProgress(userId) {
 
 app.get('/api/health', async (req, res) => {
   res.json({ status: 'ok', service: 'net360-api', mongo: 'connected' });
+});
+
+app.get('/api/public/nust-updates', async (req, res) => {
+  const now = Date.now();
+  const hasFreshCache =
+    nustUpdatesCache.fetchedAt > 0
+    && (now - nustUpdatesCache.fetchedAt) < NUST_UPDATES_CACHE_MS
+    && Array.isArray(nustUpdatesCache.updates)
+    && nustUpdatesCache.updates.length > 0;
+
+  if (hasFreshCache) {
+    res.json({
+      source: 'cache',
+      fetchedAt: new Date(nustUpdatesCache.fetchedAt).toISOString(),
+      updates: nustUpdatesCache.updates,
+    });
+    return;
+  }
+
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
+
+    const response = await fetch('https://ugadmissions.nust.edu.pk/', {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'NET360-App/1.0 (+https://ugadmissions.nust.edu.pk)',
+        Accept: 'text/html,application/xhtml+xml',
+      },
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      throw new Error(`NUST source returned status ${response.status}.`);
+    }
+
+    const html = await response.text();
+    const updates = parseNustUpdates(html);
+    if (!updates.length) {
+      throw new Error('No update items found on NUST page.');
+    }
+
+    nustUpdatesCache.fetchedAt = Date.now();
+    nustUpdatesCache.updates = updates;
+
+    res.json({
+      source: 'live',
+      fetchedAt: new Date(nustUpdatesCache.fetchedAt).toISOString(),
+      updates,
+    });
+  } catch (error) {
+    if (nustUpdatesCache.updates.length) {
+      res.json({
+        source: 'stale-cache',
+        fetchedAt: new Date(nustUpdatesCache.fetchedAt).toISOString(),
+        updates: nustUpdatesCache.updates,
+        warning: 'Showing last cached updates because live fetch failed.',
+      });
+      return;
+    }
+
+    res.status(502).json({ error: 'Could not fetch live updates from NUST admissions website.' });
+  }
 });
 
 app.post('/api/auth/signup-request', async (req, res) => {

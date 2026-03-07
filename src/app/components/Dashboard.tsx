@@ -1,4 +1,4 @@
-import { type ComponentType, useMemo } from 'react';
+import { type ComponentType, useEffect, useMemo, useState } from 'react';
 import {
   Calendar,
   Flame,
@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { Progress } from './ui/progress';
 import { useAppData } from '../context/AppDataContext';
+import { apiRequest } from '../lib/api';
 
 interface DashboardProps {
   onNavigate: (section: string) => void;
@@ -21,8 +22,24 @@ interface DashboardProps {
 
 const TEST_DATE = new Date('2026-06-30T00:00:00');
 
+interface LiveUpdateItem {
+  title: string;
+  subtitle: string;
+  url: string;
+}
+
+const FALLBACK_UPDATES: LiveUpdateItem[] = [
+  {
+    title: 'NUST Undergraduate Admissions',
+    subtitle: 'Open the official portal for latest announcements and deadlines.',
+    url: 'https://ugadmissions.nust.edu.pk/',
+  },
+];
+
 export function Dashboard({ onNavigate }: DashboardProps) {
   const { mcqsBySubject, attempts, profile } = useAppData();
+  const [liveUpdates, setLiveUpdates] = useState<LiveUpdateItem[]>(FALLBACK_UPDATES);
+  const [updatesStatus, setUpdatesStatus] = useState<'live' | 'cache' | 'stale-cache' | 'fallback'>('fallback');
 
   const daysUntilNET = useMemo(() => {
     const userTestDate = profile.testDate ? new Date(profile.testDate) : TEST_DATE;
@@ -130,6 +147,42 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       height: 18 + Math.round((value / maxCount) * 68),
     }));
   }, [attempts]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadUpdates = async () => {
+      try {
+        const payload = await apiRequest<{
+          source: 'live' | 'cache' | 'stale-cache';
+          updates: LiveUpdateItem[];
+        }>('/api/public/nust-updates');
+
+        if (cancelled) return;
+
+        const safeItems = Array.isArray(payload.updates) && payload.updates.length
+          ? payload.updates.slice(0, 6)
+          : FALLBACK_UPDATES;
+
+        setLiveUpdates(safeItems);
+        setUpdatesStatus(payload.source || 'cache');
+      } catch {
+        if (cancelled) return;
+        setLiveUpdates(FALLBACK_UPDATES);
+        setUpdatesStatus('fallback');
+      }
+    };
+
+    void loadUpdates();
+    const timer = window.setInterval(() => {
+      void loadUpdates();
+    }, 60000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   return (
     <div className="space-y-4 sm:space-y-5">
@@ -242,12 +295,16 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         </div>
 
         <div className="space-y-3">
-          <h3 className="px-1 text-xl text-indigo-950">Latest Updates</h3>
+          <div className="flex items-center justify-between px-1">
+            <h3 className="text-xl text-indigo-950">Latest Updates</h3>
+            <span className="rounded-full bg-indigo-50 px-2 py-1 text-[11px] text-indigo-700">
+              {updatesStatus === 'live' ? 'LIVE' : updatesStatus === 'cache' ? 'CACHE' : updatesStatus === 'stale-cache' ? 'STALE' : 'FALLBACK'}
+            </span>
+          </div>
           <div className="rounded-2xl border border-indigo-100 bg-white/90 p-2 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
-            <UpdateItem title="NET Registration Open" subtitle="Deadline: February 1, 2026" />
-            <UpdateItem title="New Mock Test Available" subtitle="200 Questions - NET Engineering" />
-            <UpdateItem title="AI Tutor Updated" subtitle="Updated with new solving techniques" />
-            <UpdateItem title="Merit Predictor" subtitle="Updated with new seat trend model" />
+            {liveUpdates.map((item) => (
+              <UpdateItem key={`${item.title}-${item.url}`} title={item.title} subtitle={item.subtitle} href={item.url} />
+            ))}
           </div>
         </div>
       </section>
@@ -300,10 +357,12 @@ function QuickActionCard({
   );
 }
 
-function UpdateItem({ title, subtitle }: { title: string; subtitle: string }) {
+function UpdateItem({ title, subtitle, href }: { title: string; subtitle: string; href?: string }) {
   return (
-    <button
-      type="button"
+    <a
+      href={href || '#'}
+      target="_blank"
+      rel="noreferrer"
       className="flex w-full items-center justify-between rounded-xl px-3 py-3 text-left transition hover:bg-indigo-50/70"
     >
       <div>
@@ -311,6 +370,6 @@ function UpdateItem({ title, subtitle }: { title: string; subtitle: string }) {
         <p className="text-xs text-slate-500">{subtitle}</p>
       </div>
       <ArrowRight className="h-4 w-4 text-slate-400" />
-    </button>
+    </a>
   );
 }
