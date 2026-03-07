@@ -1,6 +1,8 @@
 import { localApiRequest, localDownloadReport } from './localApi';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+const TOKEN_STORAGE_KEY = 'net360-auth-token';
+const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
 
 function resolveApiPath(path: string) {
   if (/^https?:\/\//i.test(path)) {
@@ -35,19 +37,51 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
     return localApiRequest<T>(path, options, token);
   }
 
-  const headers = new Headers(options.headers || {});
-  if (!headers.has('Content-Type') && options.body) {
-    headers.set('Content-Type', 'application/json');
-  }
-  if (token) {
-    headers.set('Authorization', `Bearer ${token}`);
-  }
+  const buildHeaders = (authToken?: string | null) => {
+    const headers = new Headers(options.headers || {});
+    if (!headers.has('Content-Type') && options.body) {
+      headers.set('Content-Type', 'application/json');
+    }
+    if (authToken) {
+      headers.set('Authorization', `Bearer ${authToken}`);
+    }
+    return headers;
+  };
+
+  const tryRefreshAccessToken = async () => {
+    if (path.startsWith('/api/auth/refresh')) return null;
+    const refreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+    if (!refreshToken) return null;
+
+    try {
+      const response = await fetch(resolveApiPath('/api/auth/refresh'), {
+        method: 'POST',
+        headers: new Headers({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ refreshToken }),
+      });
+      if (!response.ok) return null;
+
+      const payload = await response.json() as { token?: string; refreshToken?: string };
+      if (!payload?.token) return null;
+
+      localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
+      if (payload.refreshToken) {
+        localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
+      }
+
+      return payload.token;
+    } catch {
+      return null;
+    }
+  };
+
+  const initialToken = token || localStorage.getItem(TOKEN_STORAGE_KEY);
 
   let response: Response;
   try {
     response = await fetch(resolveApiPath(path), {
       ...options,
-      headers,
+      headers: buildHeaders(initialToken),
     });
   } catch (error) {
     // If backend is unreachable, transparently fall back to browser-local mode.
@@ -55,6 +89,22 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
   }
 
   if (!response.ok) {
+    if (response.status === 401) {
+      const refreshedToken = await tryRefreshAccessToken();
+      if (refreshedToken) {
+        const retryResponse = await fetch(resolveApiPath(path), {
+          ...options,
+          headers: buildHeaders(refreshedToken),
+        });
+
+        if (retryResponse.ok) {
+          return retryResponse.json() as Promise<T>;
+        }
+
+        response = retryResponse;
+      }
+    }
+
     if (shouldFallbackFromHttpError(path, response.status)) {
       return localApiRequest<T>(path, options, token);
     }
