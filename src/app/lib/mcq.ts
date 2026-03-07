@@ -4,8 +4,12 @@ export type Difficulty = 'Easy' | 'Medium' | 'Hard';
 export interface MCQ {
 	id: string;
 	subject: SubjectKey;
+	part?: string;
+	chapter?: string;
+	section?: string;
 	topic: string;
 	question: string;
+	questionImageUrl?: string;
 	options: string[];
 	answer: string;
 	tip: string;

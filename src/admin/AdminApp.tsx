@@ -9,6 +9,8 @@ import { Badge } from '../app/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../app/components/ui/select';
 import { Textarea } from '../app/components/ui/textarea';
 import { toast } from 'sonner';
+import { Preparation } from '../app/components/Preparation';
+import type { SubjectKey } from '../app/lib/mcq';
 
 interface AdminUser {
   id: string;
@@ -45,8 +47,12 @@ interface SignupRequest {
 interface AdminMCQ {
   id: string;
   subject: string;
+  part?: string;
+  chapter?: string;
+  section?: string;
   topic: string;
   question: string;
+  questionImageUrl?: string;
   options: string[];
   answer: string;
   tip: string;
@@ -104,8 +110,12 @@ function emptyForm() {
   return {
     id: '',
     subject: 'mathematics',
+    part: 'part1',
+    chapter: '',
+    section: '',
     topic: 'General',
     question: '',
+    questionImageUrl: '',
     options: 'Option A\nOption B\nOption C\nOption D',
     answer: '',
     tip: '',
@@ -127,6 +137,12 @@ export default function AdminApp() {
   const [issuedTokens, setIssuedTokens] = useState<Record<string, string>>({});
   const [query, setQuery] = useState('');
   const [form, setForm] = useState(emptyForm());
+  const [selectedHierarchy, setSelectedHierarchy] = useState<{
+    subject: SubjectKey;
+    part: 'part1' | 'part2';
+    chapterTitle: string;
+    sectionTitle: string;
+  } | null>(null);
   const [subscriptionOverview, setSubscriptionOverview] = useState<AdminSubscriptionOverview | null>(null);
   const [subscriptionUsers, setSubscriptionUsers] = useState<AdminSubscriptionUser[]>([]);
   const [subscriptionFilter, setSubscriptionFilter] = useState('all');
@@ -135,7 +151,10 @@ export default function AdminApp() {
     if (!query.trim()) return mcqs;
     const needle = query.toLowerCase();
     return mcqs.filter((item) =>
-      [item.subject, item.topic, item.question, item.difficulty].join(' ').toLowerCase().includes(needle),
+      [item.subject, item.part, item.chapter, item.section, item.topic, item.question, item.difficulty]
+        .join(' ')
+        .toLowerCase()
+        .includes(needle),
     );
   }, [mcqs, query]);
 
@@ -170,6 +189,21 @@ export default function AdminApp() {
     setMcqs(mcqPayload.mcqs || []);
     setSubscriptionOverview(subscriptionOverviewPayload);
     setSubscriptionUsers(subscriptionUsersPayload.users || []);
+  };
+
+  const loadSectionMcqs = async (
+    activeToken: string,
+    sectionPath: { subject: SubjectKey; part: 'part1' | 'part2'; chapterTitle: string; sectionTitle: string },
+  ) => {
+    const params = new URLSearchParams({
+      subject: sectionPath.subject,
+      part: sectionPath.part,
+      chapter: sectionPath.chapterTitle,
+      section: sectionPath.sectionTitle,
+    });
+
+    const payload = await apiRequest<{ mcqs: AdminMCQ[] }>(`/api/admin/mcqs?${params.toString()}`, {}, activeToken);
+    setMcqs(payload.mcqs || []);
   };
 
   useEffect(() => {
@@ -358,7 +392,17 @@ export default function AdminApp() {
     window.location.href = smsUrl;
   };
 
-  const resetForm = () => setForm(emptyForm());
+  const resetForm = () => {
+    const fresh = emptyForm();
+    if (selectedHierarchy) {
+      fresh.subject = selectedHierarchy.subject;
+      fresh.part = selectedHierarchy.part;
+      fresh.chapter = selectedHierarchy.chapterTitle;
+      fresh.section = selectedHierarchy.sectionTitle;
+      fresh.topic = `${selectedHierarchy.chapterTitle} - ${selectedHierarchy.sectionTitle}`;
+    }
+    setForm(fresh);
+  };
 
   const saveMcq = async () => {
     if (!authToken) return;
@@ -368,15 +412,24 @@ export default function AdminApp() {
       .map((line) => line.trim())
       .filter(Boolean);
 
-    if (!form.question.trim() || !form.answer.trim() || options.length < 2) {
-      toast.error('Question, answer, and at least 2 options are required.');
+    if (!form.question.trim() || !form.answer.trim() || options.length < 4) {
+      toast.error('Question, answer, and at least 4 options are required.');
+      return;
+    }
+
+    if (!form.subject || !form.part || !form.chapter.trim() || !form.section.trim()) {
+      toast.error('Select subject, part, chapter, and section before adding MCQs.');
       return;
     }
 
     const payload = {
       subject: form.subject,
+      part: form.part,
+      chapter: form.chapter,
+      section: form.section,
       topic: form.topic,
       question: form.question,
+      questionImageUrl: form.questionImageUrl,
       options,
       answer: form.answer,
       tip: form.tip,
@@ -399,9 +452,30 @@ export default function AdminApp() {
       }
 
       resetForm();
-      await loadAdminData(authToken);
+      if (selectedHierarchy) {
+        await loadSectionMcqs(authToken, selectedHierarchy);
+      } else {
+        await loadAdminData(authToken);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not save MCQ.');
+    }
+  };
+
+  const deleteMcq = async (mcqId: string) => {
+    if (!authToken) return;
+    if (!window.confirm('Delete this MCQ from the bank?')) return;
+
+    try {
+      await apiRequest(`/api/admin/mcqs/${mcqId}`, { method: 'DELETE' }, authToken);
+      toast.success('MCQ removed.');
+      if (selectedHierarchy) {
+        await loadSectionMcqs(authToken, selectedHierarchy);
+      } else {
+        await loadAdminData(authToken);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not delete MCQ.');
     }
   };
 
@@ -424,6 +498,31 @@ export default function AdminApp() {
       await loadAdminData(authToken);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update subscription.');
+    }
+  };
+
+  const handleSectionSelection = async (selection: {
+    subject: SubjectKey;
+    part: 'part1' | 'part2';
+    chapterTitle: string;
+    sectionTitle: string;
+  }) => {
+    if (!authToken) return;
+
+    setSelectedHierarchy(selection);
+    setForm((prev) => ({
+      ...prev,
+      subject: selection.subject,
+      part: selection.part,
+      chapter: selection.chapterTitle,
+      section: selection.sectionTitle,
+      topic: `${selection.chapterTitle} - ${selection.sectionTitle}`,
+    }));
+
+    try {
+      await loadSectionMcqs(authToken, selection);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not load section MCQs.');
     }
   };
 
@@ -601,101 +700,159 @@ export default function AdminApp() {
         </TabsContent>
 
         <TabsContent value="mcqs" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>MCQ Management</CardTitle>
-              <CardDescription>Add or edit MCQs</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label>Subject</Label>
-                  <Select value={form.subject} onValueChange={(value) => setForm((prev) => ({ ...prev, subject: value }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="mathematics">Mathematics</SelectItem>
-                      <SelectItem value="physics">Physics</SelectItem>
-                      <SelectItem value="chemistry">Chemistry</SelectItem>
-                      <SelectItem value="english">English</SelectItem>
-                      <SelectItem value="intelligence">Intelligence</SelectItem>
-                      <SelectItem value="general-knowledge">General Knowledge</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Difficulty</Label>
-                  <Select value={form.difficulty} onValueChange={(value) => setForm((prev) => ({ ...prev, difficulty: value }))}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Easy">Easy</SelectItem>
-                      <SelectItem value="Medium">Medium</SelectItem>
-                      <SelectItem value="Hard">Hard</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
+          <div className="grid gap-4 xl:grid-cols-[1.25fr_1.75fr]">
+            <Card>
+              <CardHeader>
+                <CardTitle>PTB Syllabus Browser (Admin)</CardTitle>
+                <CardDescription>
+                  Select Subject / Part / Chapter / Section to open section-specific MCQ management.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="max-h-[860px] overflow-auto">
+                <Preparation onSelectSection={(payload) => void handleSectionSelection(payload)} />
+              </CardContent>
+            </Card>
 
-              <div className="space-y-1.5">
-                <Label>Topic</Label>
-                <Input value={form.topic} onChange={(e) => setForm((prev) => ({ ...prev, topic: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Question</Label>
-                <Textarea value={form.question} onChange={(e) => setForm((prev) => ({ ...prev, question: e.target.value }))} />
-              </div>
-              <div className="space-y-1.5">
-                <Label>Options (one per line)</Label>
-                <Textarea value={form.options} onChange={(e) => setForm((prev) => ({ ...prev, options: e.target.value }))} />
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label>Answer</Label>
-                  <Input value={form.answer} onChange={(e) => setForm((prev) => ({ ...prev, answer: e.target.value }))} />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Explanation</Label>
-                  <Input value={form.tip} onChange={(e) => setForm((prev) => ({ ...prev, tip: e.target.value }))} />
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <Button onClick={() => void saveMcq()}>{form.id ? 'Update' : 'Add'} MCQ</Button>
-                <Button variant="outline" onClick={resetForm}>Clear</Button>
-              </div>
-            </CardContent>
-          </Card>
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Section MCQ Editor</CardTitle>
+                  <CardDescription>
+                    {selectedHierarchy
+                      ? `${selectedHierarchy.subject} / ${selectedHierarchy.part} / ${selectedHierarchy.chapterTitle} / ${selectedHierarchy.sectionTitle}`
+                      : 'Pick a section from the syllabus browser first.'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Subject</Label>
+                      <Input value={form.subject} readOnly />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Part</Label>
+                      <Input value={form.part} readOnly />
+                    </div>
+                  </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>MCQ Catalog</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Input placeholder="Search MCQs" value={query} onChange={(e) => setQuery(e.target.value)} />
-              <div className="space-y-2 max-h-[420px] overflow-auto">
-                {filteredMcqs.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className="w-full rounded-lg border p-3 text-left hover:bg-slate-50"
-                    onClick={() => {
-                      setForm({
-                        id: item.id,
-                        subject: item.subject,
-                        topic: item.topic,
-                        question: item.question,
-                        options: item.options.join('\n'),
-                        answer: item.answer,
-                        tip: item.tip,
-                        difficulty: item.difficulty,
-                      });
-                    }}
-                  >
-                    <p className="line-clamp-2 text-sm">{item.question}</p>
-                    <p className="text-xs text-muted-foreground mt-1">{item.subject} • {item.topic}</p>
-                  </button>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Chapter</Label>
+                      <Input value={form.chapter} readOnly />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Section</Label>
+                      <Input value={form.section} readOnly />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Question</Label>
+                    <Textarea
+                      value={form.question}
+                      onChange={(e) => setForm((prev) => ({ ...prev, question: e.target.value }))}
+                      className="min-h-[95px]"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Optional Image URL (diagram/equation)</Label>
+                    <Input
+                      value={form.questionImageUrl}
+                      onChange={(e) => setForm((prev) => ({ ...prev, questionImageUrl: e.target.value }))}
+                      placeholder="https://..."
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Options (one per line, minimum 4)</Label>
+                    <Textarea
+                      value={form.options}
+                      onChange={(e) => setForm((prev) => ({ ...prev, options: e.target.value }))}
+                      className="min-h-[120px]"
+                    />
+                  </div>
+
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Correct Answer</Label>
+                      <Input value={form.answer} onChange={(e) => setForm((prev) => ({ ...prev, answer: e.target.value }))} />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Difficulty</Label>
+                      <Select value={form.difficulty} onValueChange={(value) => setForm((prev) => ({ ...prev, difficulty: value }))}>
+                        <SelectTrigger><SelectValue /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="Easy">Easy</SelectItem>
+                          <SelectItem value="Medium">Medium</SelectItem>
+                          <SelectItem value="Hard">Hard</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Explanation (optional)</Label>
+                    <Textarea value={form.tip} onChange={(e) => setForm((prev) => ({ ...prev, tip: e.target.value }))} className="min-h-[90px]" />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={() => void saveMcq()} disabled={!selectedHierarchy}>{form.id ? 'Update' : 'Add'} MCQ</Button>
+                    <Button variant="outline" onClick={resetForm}>Clear</Button>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Section MCQ Bank</CardTitle>
+                  <CardDescription>Edit or remove questions for the selected section.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Input placeholder="Search MCQs in this view" value={query} onChange={(e) => setQuery(e.target.value)} />
+                  <div className="space-y-2 max-h-[460px] overflow-auto">
+                    {filteredMcqs.map((item) => (
+                      <div key={item.id} className="rounded-lg border p-3">
+                        <button
+                          type="button"
+                          className="w-full text-left"
+                          onClick={() => {
+                            setForm({
+                              id: item.id,
+                              subject: item.subject,
+                              part: item.part || form.part,
+                              chapter: item.chapter || '',
+                              section: item.section || '',
+                              topic: item.topic,
+                              question: item.question,
+                              questionImageUrl: item.questionImageUrl || '',
+                              options: item.options.join('\n'),
+                              answer: item.answer,
+                              tip: item.tip,
+                              difficulty: item.difficulty,
+                            });
+                          }}
+                        >
+                          <p className="line-clamp-2 text-sm">{item.question}</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {item.subject} • {item.part || '-'} • {item.chapter || '-'} • {item.section || item.topic}
+                          </p>
+                        </button>
+                        <div className="mt-2 flex justify-end">
+                          <Button variant="destructive" size="sm" onClick={() => void deleteMcq(item.id)}>Delete</Button>
+                        </div>
+                      </div>
+                    ))}
+                    {!filteredMcqs.length ? (
+                      <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
+                        No MCQs in this section yet.
+                      </div>
+                    ) : null}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
         </TabsContent>
 
         <TabsContent value="subscriptions" className="space-y-4">

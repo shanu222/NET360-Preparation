@@ -7,13 +7,13 @@ import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 type AcademicPart = 'part1' | 'part2';
 type TabKey = SubjectKey | 'quantitative-mathematics' | 'design-aptitude';
 
-interface ChapterItem {
+export interface ChapterItem {
   id: string;
   title: string;
   sections: string[];
 }
 
-interface PartItem {
+export interface PartItem {
   label: string;
   chapters: ChapterItem[];
 }
@@ -40,7 +40,7 @@ const FLAT_TOPIC_TABS: Record<'quantitative-mathematics' | 'design-aptitude', { 
   },
 };
 
-const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
+export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
   mathematics: {
     part1: {
       label: 'Mathematics Part 1 (FSc 1st Year - Punjab Textbook Board)',
@@ -188,7 +188,16 @@ const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
   },
 };
 
-export function Preparation() {
+interface PreparationProps {
+  onSelectSection?: (payload: {
+    subject: SubjectKey;
+    part: AcademicPart;
+    chapterTitle: string;
+    sectionTitle: string;
+  }) => void;
+}
+
+export function Preparation({ onSelectSection }: PreparationProps = {}) {
   const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<SubjectKey, AcademicPart | null>>({
     mathematics: null,
     physics: null,
@@ -314,8 +323,25 @@ export function Preparation() {
                               <div className="border-t border-indigo-100 px-3 pb-3 pt-2">
                                 <ul className="space-y-2 text-sm">
                                   {chapter.sections.map((section) => (
-                                    <li key={section} className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-slate-700">
-                                      {section}
+                                    <li key={section}>
+                                      {onSelectSection ? (
+                                        <button
+                                          type="button"
+                                          className="w-full rounded-lg border border-indigo-100 bg-white px-3 py-2 text-left text-slate-700 transition hover:bg-indigo-50"
+                                          onClick={() => onSelectSection({
+                                            subject,
+                                            part: selectedPart,
+                                            chapterTitle: chapter.title,
+                                            sectionTitle: section,
+                                          })}
+                                        >
+                                          {section}
+                                        </button>
+                                      ) : (
+                                        <div className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-slate-700">
+                                          {section}
+                                        </div>
+                                      )}
                                     </li>
                                   ))}
                                 </ul>

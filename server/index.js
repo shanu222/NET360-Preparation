@@ -472,6 +472,26 @@ function serializeAttempt(attempt) {
   };
 }
 
+function serializeMcq(item) {
+  const chapter = String(item.chapter || '').trim();
+  const section = String(item.section || '').trim() || String(item.topic || '').trim();
+  const topic = String(item.topic || '').trim() || section || chapter || 'General';
+  return {
+    id: String(item._id),
+    subject: item.subject,
+    part: String(item.part || '').trim(),
+    chapter,
+    section,
+    topic,
+    question: item.question,
+    questionImageUrl: String(item.questionImageUrl || '').trim(),
+    options: item.options,
+    answer: item.answer,
+    tip: item.tip,
+    difficulty: item.difficulty,
+  };
+}
+
 function decodeHtmlEntities(text) {
   return String(text || '')
     .replace(/&nbsp;/gi, ' ')
@@ -1471,7 +1491,7 @@ app.put('/api/auth/preferences', authMiddleware, async (req, res) => {
 
 app.get('/api/mcqs', async (req, res) => {
   try {
-    const { subject, difficulty, topic, limit = '10000' } = req.query;
+    const { subject, part, chapter, section, difficulty, topic, limit = '10000' } = req.query;
     const filter = {};
 
     if (subject) {
@@ -1482,6 +1502,15 @@ app.get('/api/mcqs', async (req, res) => {
       const title = normalized.charAt(0).toUpperCase() + normalized.slice(1);
       filter.difficulty = title;
     }
+    if (part) {
+      filter.part = String(part).toLowerCase().trim();
+    }
+    if (chapter) {
+      filter.chapter = { $regex: String(chapter), $options: 'i' };
+    }
+    if (section) {
+      filter.section = { $regex: String(section), $options: 'i' };
+    }
     if (topic) {
       filter.topic = { $regex: String(topic), $options: 'i' };
     }
@@ -1490,16 +1519,7 @@ app.get('/api/mcqs', async (req, res) => {
     const mcqs = await MCQModel.find(filter).limit(max).lean();
 
     res.json({
-      mcqs: mcqs.map((item) => ({
-        id: String(item._id),
-        subject: item.subject,
-        topic: item.topic,
-        question: item.question,
-        options: item.options,
-        answer: item.answer,
-        tip: item.tip,
-        difficulty: item.difficulty,
-      })),
+      mcqs: mcqs.map((item) => serializeMcq(item)),
       total: mcqs.length,
     });
   } catch {
@@ -1899,6 +1919,9 @@ app.get('/api/study-plans/latest', authMiddleware, async (req, res) => {
 app.post('/api/tests/start', authMiddleware, async (req, res) => {
   const {
     subject,
+    part,
+    chapter,
+    section,
     difficulty,
     topic,
     mode,
@@ -1953,6 +1976,15 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
       difficulty: normalizedDifficulty,
     };
 
+    if (part) {
+      filter.part = String(part).toLowerCase().trim();
+    }
+    if (chapter && chapter !== 'All Chapters') {
+      filter.chapter = { $regex: String(chapter), $options: 'i' };
+    }
+    if (section && section !== 'All Sections') {
+      filter.section = { $regex: String(section), $options: 'i' };
+    }
     if (topic && topic !== 'All Topics') {
       filter.topic = { $regex: String(topic), $options: 'i' };
     }
@@ -1969,8 +2001,12 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
   const questions = selected.map((question) => ({
     id: String(question._id),
     subject: question.subject,
+    part: String(question.part || '').trim(),
+    chapter: String(question.chapter || '').trim(),
+    section: String(question.section || '').trim(),
     topic: question.topic,
     question: question.question,
+    questionImageUrl: String(question.questionImageUrl || '').trim(),
     options: question.options,
     difficulty: question.difficulty,
     explanation: question.tip || '',
@@ -2424,28 +2460,56 @@ app.delete('/api/admin/users/:userId', authMiddleware, requireAdmin, async (req,
   res.json({ ok: true, removedUserId: userId });
 });
 
+app.get('/api/admin/mcq-bank/structure', authMiddleware, requireAdmin, async (req, res) => {
+  const subject = String(req.query.subject || '').trim().toLowerCase();
+  const filter = subject ? { subject } : {};
+
+  const rows = await MCQModel.aggregate([
+    { $match: filter },
+    {
+      $group: {
+        _id: {
+          subject: '$subject',
+          part: '$part',
+          chapter: '$chapter',
+          section: '$section',
+        },
+        count: { $sum: 1 },
+      },
+    },
+    { $sort: { '_id.subject': 1, '_id.part': 1, '_id.chapter': 1, '_id.section': 1 } },
+  ]);
+
+  res.json({
+    structure: rows.map((item) => ({
+      subject: String(item._id?.subject || ''),
+      part: String(item._id?.part || ''),
+      chapter: String(item._id?.chapter || ''),
+      section: String(item._id?.section || ''),
+      count: Number(item.count || 0),
+    })),
+  });
+});
+
 app.get('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const subject = String(req.query.subject || '').trim().toLowerCase();
+  const part = String(req.query.part || '').trim().toLowerCase();
+  const chapter = String(req.query.chapter || '').trim();
+  const section = String(req.query.section || '').trim();
   const topic = String(req.query.topic || '').trim();
   const difficulty = String(req.query.difficulty || '').trim();
 
   const filter = {};
   if (subject) filter.subject = subject;
+  if (part) filter.part = part;
+  if (chapter) filter.chapter = { $regex: chapter, $options: 'i' };
+  if (section) filter.section = { $regex: section, $options: 'i' };
   if (topic) filter.topic = { $regex: topic, $options: 'i' };
   if (difficulty) filter.difficulty = difficulty;
 
   const mcqs = await MCQModel.find(filter).sort({ createdAt: -1 }).limit(200).lean();
   res.json({
-    mcqs: mcqs.map((item) => ({
-      id: String(item._id),
-      subject: item.subject,
-      topic: item.topic,
-      question: item.question,
-      options: item.options,
-      answer: item.answer,
-      tip: item.tip,
-      difficulty: item.difficulty,
-    })),
+    mcqs: mcqs.map((item) => serializeMcq(item)),
   });
 });
 
@@ -2467,46 +2531,77 @@ app.delete('/api/admin/mcqs/purge-all', authMiddleware, requireAdmin, async (_re
 });
 
 app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
-  const { question, options, answer, subject, topic, difficulty = 'Medium', tip = '' } = req.body || {};
-  if (!question || !Array.isArray(options) || options.length < 2 || !answer || !subject || !topic) {
-    res.status(400).json({ error: 'question, options, answer, subject, and topic are required.' });
+  const {
+    question,
+    questionImageUrl = '',
+    options,
+    answer,
+    subject,
+    part,
+    chapter,
+    section,
+    topic,
+    difficulty = 'Medium',
+    tip = '',
+  } = req.body || {};
+
+  if (!question || !Array.isArray(options) || options.length < 4 || !answer || !subject || !part || !chapter || !section) {
+    res.status(400).json({ error: 'question, options (min 4), answer, subject, part, chapter, and section are required.' });
     return;
   }
 
+  const cleanOptions = options
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+  if (cleanOptions.length < 4) {
+    res.status(400).json({ error: 'At least four non-empty options are required.' });
+    return;
+  }
+
+  const resolvedTopic = String(topic || `${chapter} - ${section}`).trim();
+
   const mcq = await MCQModel.create({
     question: String(question),
-    options: options.map((item) => String(item)),
+    questionImageUrl: String(questionImageUrl || '').trim(),
+    options: cleanOptions,
     answer: String(answer),
     subject: String(subject).toLowerCase(),
-    topic: String(topic),
+    part: String(part).toLowerCase().trim(),
+    chapter: String(chapter).trim(),
+    section: String(section).trim(),
+    topic: resolvedTopic,
     difficulty: String(difficulty),
     tip: String(tip),
     source: 'Admin',
   });
 
   res.status(201).json({
-    mcq: {
-      id: String(mcq._id),
-      subject: mcq.subject,
-      topic: mcq.topic,
-      question: mcq.question,
-      options: mcq.options,
-      answer: mcq.answer,
-      tip: mcq.tip,
-      difficulty: mcq.difficulty,
-    },
+    mcq: serializeMcq(mcq),
   });
 });
 
 app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res) => {
   const payload = {};
-  ['question', 'answer', 'subject', 'topic', 'difficulty', 'tip'].forEach((field) => {
+  ['question', 'questionImageUrl', 'answer', 'subject', 'part', 'chapter', 'section', 'topic', 'difficulty', 'tip'].forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(req.body, field)) {
-      payload[field] = String(req.body[field] ?? '');
+      const value = String(req.body[field] ?? '');
+      payload[field] = ['subject', 'part'].includes(field) ? value.toLowerCase().trim() : value;
     }
   });
   if (Array.isArray(req.body?.options)) {
-    payload.options = req.body.options.map((item) => String(item));
+    payload.options = req.body.options
+      .map((item) => String(item || '').trim())
+      .filter(Boolean);
+    if (payload.options.length < 4) {
+      res.status(400).json({ error: 'At least four non-empty options are required.' });
+      return;
+    }
+  }
+
+  if (!payload.topic && (payload.chapter || payload.section)) {
+    const chapterText = String(payload.chapter || '').trim();
+    const sectionText = String(payload.section || '').trim();
+    payload.topic = `${chapterText} - ${sectionText}`.trim();
   }
 
   const mcq = await MCQModel.findByIdAndUpdate(req.params.mcqId, { $set: payload }, { new: true });
@@ -2516,17 +2611,24 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
   }
 
   res.json({
-    mcq: {
-      id: String(mcq._id),
-      subject: mcq.subject,
-      topic: mcq.topic,
-      question: mcq.question,
-      options: mcq.options,
-      answer: mcq.answer,
-      tip: mcq.tip,
-      difficulty: mcq.difficulty,
-    },
+    mcq: serializeMcq(mcq),
   });
+});
+
+app.delete('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res) => {
+  const mcqId = String(req.params.mcqId || '').trim();
+  if (!mcqId) {
+    res.status(400).json({ error: 'MCQ id is required.' });
+    return;
+  }
+
+  const removed = await MCQModel.findByIdAndDelete(mcqId).lean();
+  if (!removed) {
+    res.status(404).json({ error: 'MCQ not found.' });
+    return;
+  }
+
+  res.json({ ok: true, removedMcqId: mcqId });
 });
 
 async function bootstrap() {

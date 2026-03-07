@@ -66,8 +66,12 @@ interface LocalUser {
 interface SessionQuestion {
   id: string;
   subject: SubjectKey;
+  part?: string;
+  chapter?: string;
+  section?: string;
   topic: string;
   question: string;
+  questionImageUrl?: string;
   options: string[];
   difficulty: Difficulty;
   explanation?: string;
@@ -828,6 +832,9 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
   if (url.pathname === '/api/mcqs' && method === 'GET') {
     const mcqs = await loadMcqs();
     const subject = url.searchParams.get('subject');
+    const part = url.searchParams.get('part');
+    const chapter = url.searchParams.get('chapter');
+    const section = url.searchParams.get('section');
     const difficulty = url.searchParams.get('difficulty');
     const topic = url.searchParams.get('topic');
     const limit = Number(url.searchParams.get('limit') || '10000');
@@ -839,6 +846,15 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     if (difficulty) {
       const expected = difficulty.toLowerCase();
       results = results.filter((item) => item.difficulty.toLowerCase() === expected);
+    }
+    if (part) {
+      results = results.filter((item) => String(item.part || '').toLowerCase() === part.toLowerCase());
+    }
+    if (chapter) {
+      results = results.filter((item) => String(item.chapter || '').toLowerCase().includes(chapter.toLowerCase()));
+    }
+    if (section) {
+      results = results.filter((item) => String(item.section || '').toLowerCase().includes(section.toLowerCase()));
     }
     if (topic) {
       const expected = topic.toLowerCase();
@@ -1033,6 +1049,9 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const subject = String(body.subject || 'mathematics').toLowerCase() as SubjectKey;
     const difficulty = String(body.difficulty || 'Medium') as Difficulty;
     const topic = String(body.topic || 'All Topics');
+    const part = String(body.part || '').toLowerCase();
+    const chapter = String(body.chapter || '').toLowerCase();
+    const section = String(body.section || '').toLowerCase();
     const mode = String(body.mode || '') as TestMode;
     const netType = normalizeNetType(body.netType);
     const testType = String(body.testType || '').toLowerCase() as TestType | '';
@@ -1073,6 +1092,16 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         (item) => item.subject === subject && item.difficulty.toLowerCase() === difficulty.toLowerCase(),
       );
 
+      if (part) {
+        pool = pool.filter((item) => String(item.part || '').toLowerCase() === part);
+      }
+      if (chapter) {
+        pool = pool.filter((item) => String(item.chapter || '').toLowerCase().includes(chapter));
+      }
+      if (section) {
+        pool = pool.filter((item) => String(item.section || '').toLowerCase().includes(section));
+      }
+
       if (topic && topic !== 'All Topics') {
         const byTopic = pool.filter((item) => item.topic.toLowerCase().includes(topic.toLowerCase()));
         if (byTopic.length) {
@@ -1090,8 +1119,12 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const questions: SessionQuestion[] = selected.map((item) => ({
       id: item.id,
       subject: item.subject,
+      part: item.part,
+      chapter: item.chapter,
+      section: item.section,
       topic: item.topic,
       question: item.question,
+      questionImageUrl: item.questionImageUrl,
       options: item.options,
       difficulty: item.difficulty,
       explanation: item.tip,
@@ -1270,12 +1303,18 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
   if (url.pathname === '/api/admin/mcqs' && method === 'GET') {
     requireAdmin(token);
     const subject = String(url.searchParams.get('subject') || '').toLowerCase();
+    const part = String(url.searchParams.get('part') || '').toLowerCase();
+    const chapter = String(url.searchParams.get('chapter') || '').toLowerCase();
+    const section = String(url.searchParams.get('section') || '').toLowerCase();
     const topic = String(url.searchParams.get('topic') || '').toLowerCase();
     const difficulty = String(url.searchParams.get('difficulty') || '');
 
     const mcqs = await loadMcqs();
     const filtered = mcqs.filter((item) => {
       if (subject && item.subject !== subject) return false;
+      if (part && String(item.part || '').toLowerCase() !== part) return false;
+      if (chapter && !String(item.chapter || '').toLowerCase().includes(chapter)) return false;
+      if (section && !String(item.section || '').toLowerCase().includes(section)) return false;
       if (topic && !item.topic.toLowerCase().includes(topic)) return false;
       if (difficulty && item.difficulty !== difficulty) return false;
       return true;
@@ -1285,8 +1324,12 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       mcqs: filtered.slice(0, 200).map((item) => ({
         id: item.id,
         subject: item.subject,
+        part: item.part || '',
+        chapter: item.chapter || '',
+        section: item.section || '',
         topic: item.topic,
         question: item.question,
+        questionImageUrl: item.questionImageUrl || '',
         options: item.options,
         answer: item.answer,
         tip: item.tip,
@@ -1301,16 +1344,20 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const payload = {
       id: `admin-${Date.now()}`,
       subject: String(body.subject || 'mathematics') as SubjectKey,
+      part: String(body.part || '').toLowerCase(),
+      chapter: String(body.chapter || ''),
+      section: String(body.section || ''),
       topic: String(body.topic || 'General'),
       question: String(body.question || ''),
+      questionImageUrl: String(body.questionImageUrl || ''),
       options: Array.isArray(body.options) ? body.options.map((item: unknown) => String(item)) : [],
       answer: String(body.answer || ''),
       tip: String(body.tip || ''),
       difficulty: String(body.difficulty || 'Medium') as Difficulty,
     };
 
-    if (!payload.question || payload.options.length < 2 || !payload.answer) {
-      throw new Error('question, options, and answer are required.');
+    if (!payload.question || payload.options.length < 4 || !payload.answer || !payload.part || !payload.chapter || !payload.section) {
+      throw new Error('question, options (min 4), answer, part, chapter, and section are required.');
     }
 
     cachedMcqs = [payload as MCQ, ...mcqs];
@@ -1331,17 +1378,34 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const updated: MCQ = {
       ...target,
       subject: Object.prototype.hasOwnProperty.call(body, 'subject') ? String(body.subject) as SubjectKey : target.subject,
+      part: Object.prototype.hasOwnProperty.call(body, 'part') ? String(body.part) : target.part,
+      chapter: Object.prototype.hasOwnProperty.call(body, 'chapter') ? String(body.chapter) : target.chapter,
+      section: Object.prototype.hasOwnProperty.call(body, 'section') ? String(body.section) : target.section,
       topic: Object.prototype.hasOwnProperty.call(body, 'topic') ? String(body.topic) : target.topic,
       question: Object.prototype.hasOwnProperty.call(body, 'question') ? String(body.question) : target.question,
+      questionImageUrl: Object.prototype.hasOwnProperty.call(body, 'questionImageUrl') ? String(body.questionImageUrl) : target.questionImageUrl,
       answer: Object.prototype.hasOwnProperty.call(body, 'answer') ? String(body.answer) : target.answer,
       tip: Object.prototype.hasOwnProperty.call(body, 'tip') ? String(body.tip) : target.tip,
       difficulty: Object.prototype.hasOwnProperty.call(body, 'difficulty') ? String(body.difficulty) as Difficulty : target.difficulty,
       options: Array.isArray(body.options) ? body.options.map((item: unknown) => String(item)) : target.options,
     };
 
+    if (!updated.question || !updated.answer || !updated.options || updated.options.length < 4) {
+      throw new Error('question, answer, and at least 4 options are required.');
+    }
+
     mcqs[index] = updated;
     cachedMcqs = [...mcqs];
     return { mcq: updated } as T;
+  }
+
+  if (/^\/api\/admin\/mcqs\/[^/]+$/.test(url.pathname) && method === 'DELETE') {
+    requireAdmin(token);
+    const mcqId = url.pathname.split('/')[4];
+    const mcqs = await loadMcqs();
+    const remaining = mcqs.filter((item) => item.id !== mcqId);
+    cachedMcqs = [...remaining];
+    return { ok: true, removedMcqId: mcqId } as T;
   }
 
   throw new Error('Endpoint not available in local mode.');

@@ -5,7 +5,6 @@ import { Dashboard } from './components/Dashboard';
 import { NUSTGuide } from './components/NUSTGuide';
 import { ProgramExplorer } from './components/ProgramExplorer';
 import { NETTypes } from './components/NETTypes';
-import { Preparation } from './components/Preparation';
 import { PracticeBoard } from './components/PracticeBoard';
 import { AIMentor } from './components/AIMentor';
 import { Tests } from './components/Tests';
@@ -17,7 +16,6 @@ import {
   BookOpen, 
   GraduationCap, 
   FlaskConical,
-  BookMarked,
   Pencil,
   Brain,
   FileText,
@@ -44,7 +42,6 @@ export default function App() {
       'guide',
       'programs',
       'net-types',
-      'preparation',
       'practice-board',
       'smart-mentor',
       'tests',
@@ -61,7 +58,6 @@ export default function App() {
     { id: 'guide', label: 'NUST Guide', icon: BookOpen },
     { id: 'programs', label: 'Programs', icon: GraduationCap },
     { id: 'net-types', label: 'NET Types', icon: FlaskConical },
-    { id: 'preparation', label: 'Preparation', icon: BookMarked },
     { id: 'practice-board', label: 'Practice Board', icon: Pencil },
     { id: 'smart-mentor', label: 'Smart Study Mentor', icon: Brain },
     { id: 'tests', label: 'Tests', icon: FileText },
@@ -181,10 +177,6 @@ export default function App() {
 
                 <TabsContent value="net-types" className="mt-0 net360-page">
                   <NETTypes />
-                </TabsContent>
-
-                <TabsContent value="preparation" className="mt-0 net360-page">
-                  <Preparation />
                 </TabsContent>
 
                 <TabsContent value="practice-board" className="mt-0 net360-page">

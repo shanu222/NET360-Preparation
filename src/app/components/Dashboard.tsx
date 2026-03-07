@@ -279,7 +279,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         <div className="space-y-3">
           <h3 className="px-1 text-xl text-indigo-950">Quick Actions</h3>
           <div className="grid grid-cols-2 gap-3">
-            <QuickActionCard icon={Sparkles} title="Start Practice" tone="from-cyan-100 to-white" onClick={() => onNavigate('preparation')} />
+            <QuickActionCard icon={Sparkles} title="Start Practice" tone="from-cyan-100 to-white" onClick={() => onNavigate('tests')} />
             <QuickActionCard icon={FileText} title="Mock Test" tone="from-indigo-100 to-white" onClick={() => onNavigate('tests')} />
             <QuickActionCard icon={Brain} title="Study Assistant" tone="from-sky-100 to-white" onClick={() => onNavigate('smart-mentor')} />
             <QuickActionCard icon={Calculator} title="Merit Predictor" tone="from-amber-100 to-white" onClick={() => onNavigate('merit-calculator')} />
