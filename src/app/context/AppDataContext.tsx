@@ -90,6 +90,9 @@ interface AppDataContextValue {
     topic: string;
     mode: 'topic' | 'mock' | 'adaptive';
     questionCount?: number;
+    part?: string;
+    chapter?: string;
+    section?: string;
     netType?: string;
     testType?: 'subject-wise' | 'full-mock' | 'adaptive';
     selectedSubject?: SubjectKey;
@@ -258,6 +261,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     topic,
     mode,
     questionCount = 20,
+    part,
+    chapter,
+    section,
     netType,
     testType,
     selectedSubject,
@@ -271,7 +277,19 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       '/api/tests/start',
       {
         method: 'POST',
-        body: JSON.stringify({ subject, difficulty, topic, mode, questionCount, netType, testType, selectedSubject }),
+        body: JSON.stringify({
+          subject,
+          difficulty,
+          topic,
+          mode,
+          questionCount,
+          part,
+          chapter,
+          section,
+          netType,
+          testType,
+          selectedSubject,
+        }),
       },
       authToken,
     );

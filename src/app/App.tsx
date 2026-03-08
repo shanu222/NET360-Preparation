@@ -9,6 +9,7 @@ import { NETTypes } from './components/NETTypes';
 import { PracticeBoard } from './components/PracticeBoard';
 import { QuestionContribution } from './components/QuestionContribution';
 import { AIMentor } from './components/AIMentor';
+import { Preparation } from './components/Preparation';
 import { Tests } from './components/Tests';
 import { Analytics } from './components/Analytics';
 import { MeritCalculator } from './components/MeritCalculator';
@@ -50,6 +51,7 @@ export default function App() {
       'practice-board',
       'question-contribution',
       'smart-mentor',
+      'preparation',
       'tests',
       'analytics',
       'merit-calculator',
@@ -68,6 +70,7 @@ export default function App() {
     { id: 'practice-board', label: 'Practice Board', icon: Pencil },
     { id: 'question-contribution', label: 'Question Contribution', icon: Upload },
     { id: 'smart-mentor', label: 'Smart Study Mentor', icon: Brain },
+    { id: 'preparation', label: 'Preparation Materials', icon: BookOpen },
     { id: 'tests', label: 'Tests', icon: FileText },
     { id: 'analytics', label: 'Analytics', icon: TrendingUp },
     { id: 'merit-calculator', label: 'Merit Calculator', icon: Calculator },
@@ -204,6 +207,10 @@ export default function App() {
 
                 <TabsContent value="smart-mentor" className="mt-0 net360-page">
                   <AIMentor onNavigate={setActiveTab} />
+                </TabsContent>
+
+                <TabsContent value="preparation" className="mt-0 net360-page">
+                  <Preparation />
                 </TabsContent>
 
                 <TabsContent value="tests" className="mt-0 net360-page">

@@ -1,7 +1,12 @@
 import { useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { toast } from 'sonner';
+import { useAppData } from '../context/AppDataContext';
+import { useAuth } from '../context/AuthContext';
+import { apiRequest } from '../lib/api';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 
 type AcademicPart = 'part1' | 'part2';
@@ -198,6 +203,9 @@ interface PreparationProps {
 }
 
 export function Preparation({ onSelectSection }: PreparationProps = {}) {
+  const { startTestSession } = useAppData();
+  const { token } = useAuth();
+
   const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<SubjectKey, AcademicPart | null>>({
     mathematics: null,
     physics: null,
@@ -213,6 +221,112 @@ export function Preparation({ onSelectSection }: PreparationProps = {}) {
     biology: null,
     chemistry: null,
   });
+
+  const [selectedSectionBySubject, setSelectedSectionBySubject] = useState<Record<SubjectKey, string | null>>({
+    mathematics: null,
+    physics: null,
+    english: null,
+    biology: null,
+    chemistry: null,
+  });
+  const [launchingSectionKey, setLaunchingSectionKey] = useState<string | null>(null);
+
+  const resolveLaunchToken = async () => {
+    const inMemory = token;
+    if (inMemory) return inMemory;
+
+    const stored = localStorage.getItem('net360-auth-token');
+    if (stored) return stored;
+
+    const refreshToken = localStorage.getItem('net360-auth-refresh-token');
+    if (!refreshToken) return null;
+
+    try {
+      const refreshed = await apiRequest<{ token: string; refreshToken: string }>(
+        '/api/auth/refresh',
+        {
+          method: 'POST',
+          body: JSON.stringify({ refreshToken }),
+        },
+      );
+
+      if (refreshed?.token) {
+        localStorage.setItem('net360-auth-token', refreshed.token);
+      }
+      if (refreshed?.refreshToken) {
+        localStorage.setItem('net360-auth-refresh-token', refreshed.refreshToken);
+      }
+
+      return refreshed?.token || null;
+    } catch {
+      return null;
+    }
+  };
+
+  const openExamWindow = (params: { sessionId: string; token: string; examWindow: Window | null }) => {
+    const { sessionId, token: authToken, examWindow } = params;
+    if (!examWindow) {
+      toast.error('Popup blocked. Please allow popups and try again.');
+      return;
+    }
+
+    localStorage.setItem(
+      'net360-exam-launch',
+      JSON.stringify({
+        sessionId,
+        testType: 'topic',
+        authToken,
+        launchedAt: Date.now(),
+      }),
+    );
+
+    const url = `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=topic&authToken=${encodeURIComponent(authToken)}`;
+    examWindow.location.href = url;
+  };
+
+  const handleStartSectionTest = async (payload: {
+    subject: SubjectKey;
+    part: AcademicPart;
+    chapterTitle: string;
+    sectionTitle: string;
+  }) => {
+    const authToken = await resolveLaunchToken();
+    if (!authToken) {
+      toast.error('Please login first to start a section test from Preparation Materials.');
+      return;
+    }
+
+    // Open popup synchronously from button click to avoid browser popup blockers.
+    const examWindow = window.open('/exam-interface', '_blank', 'width=1400,height=900');
+    if (!examWindow) {
+      toast.error('Popup blocked. Please allow popups and try again.');
+      return;
+    }
+
+    const launchKey = `${payload.subject}|${payload.part}|${payload.chapterTitle}|${payload.sectionTitle}`;
+
+    try {
+      setLaunchingSectionKey(launchKey);
+      const session = await startTestSession({
+        subject: payload.subject,
+        difficulty: 'Medium',
+        topic: payload.sectionTitle,
+        mode: 'topic',
+        questionCount: 20,
+        part: payload.part,
+        chapter: payload.chapterTitle,
+        section: payload.sectionTitle,
+      });
+
+      openExamWindow({ sessionId: session.id, token: authToken, examWindow });
+      toast.success('Section test launched in a new window.');
+    } catch (error) {
+      examWindow.close();
+      toast.error(error instanceof Error ? error.message : 'Could not start section test.');
+    } finally {
+      setLaunchingSectionKey(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -277,6 +391,7 @@ export function Preparation({ onSelectSection }: PreparationProps = {}) {
                           onClick={() => {
                             setSelectedPartBySubject((prev) => ({ ...prev, [subject]: part }));
                             setSelectedChapterBySubject((prev) => ({ ...prev, [subject]: null }));
+                            setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
                           }}
                           className={`rounded-xl border p-3 text-left transition ${isSelected ? 'border-indigo-300 bg-indigo-50/60' : 'border-indigo-100 bg-white hover:bg-indigo-50/40'}`}
                         >
@@ -308,6 +423,7 @@ export function Preparation({ onSelectSection }: PreparationProps = {}) {
                                   ...prev,
                                   [subject]: prev[subject] === chapter.id ? null : chapter.id,
                                 }));
+                                setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
                               }}
                             >
                               <div className="flex items-start justify-between gap-3">
@@ -324,27 +440,55 @@ export function Preparation({ onSelectSection }: PreparationProps = {}) {
                                 <ul className="space-y-2 text-sm">
                                   {chapter.sections.map((section) => (
                                     <li key={section}>
-                                      {onSelectSection ? (
-                                        <button
-                                          type="button"
-                                          className="w-full rounded-lg border border-indigo-100 bg-white px-3 py-2 text-left text-slate-700 transition hover:bg-indigo-50"
-                                          onClick={() => onSelectSection({
+                                      <button
+                                        type="button"
+                                        className={`w-full rounded-lg border px-3 py-2 text-left transition ${selectedSectionBySubject[subject] === `${chapter.id}::${section}` ? 'border-indigo-300 bg-indigo-50 text-indigo-900' : 'border-indigo-100 bg-white text-slate-700 hover:bg-indigo-50'}`}
+                                        onClick={() => {
+                                          const selection = {
                                             subject,
                                             part: selectedPart,
                                             chapterTitle: chapter.title,
                                             sectionTitle: section,
-                                          })}
-                                        >
-                                          {section}
-                                        </button>
-                                      ) : (
-                                        <div className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-slate-700">
-                                          {section}
-                                        </div>
-                                      )}
+                                          };
+                                          setSelectedSectionBySubject((prev) => ({
+                                            ...prev,
+                                            [subject]: `${chapter.id}::${section}`,
+                                          }));
+                                          onSelectSection?.(selection);
+                                        }}
+                                      >
+                                        {section}
+                                      </button>
                                     </li>
                                   ))}
                                 </ul>
+
+                                {selectedSectionBySubject[subject]?.startsWith(`${chapter.id}::`) ? (
+                                  <div className="mt-3 rounded-lg border border-indigo-200 bg-white p-3">
+                                    <p className="mb-2 text-xs text-slate-500">
+                                      Selected section:{' '}
+                                      <span className="font-medium text-indigo-900">
+                                        {selectedSectionBySubject[subject]?.slice(`${chapter.id}::`.length)}
+                                      </span>
+                                    </p>
+                                    <Button
+                                      className="bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
+                                      disabled={Boolean(launchingSectionKey)}
+                                      onClick={() => {
+                                        const selectedSection = selectedSectionBySubject[subject]?.slice(`${chapter.id}::`.length) || '';
+                                        if (!selectedSection) return;
+                                        void handleStartSectionTest({
+                                          subject,
+                                          part: selectedPart,
+                                          chapterTitle: chapter.title,
+                                          sectionTitle: selectedSection,
+                                        });
+                                      }}
+                                    >
+                                      {launchingSectionKey === `${subject}|${selectedPart}|${chapter.title}|${selectedSectionBySubject[subject]?.slice(`${chapter.id}::`.length) || ''}` ? 'Starting...' : 'Start Test'}
+                                    </Button>
+                                  </div>
+                                ) : null}
                               </div>
                             ) : null}
                           </div>
