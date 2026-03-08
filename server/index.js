@@ -144,6 +144,7 @@ function sanitizePayload(value) {
 function isAllowedOrigin(origin) {
   if (!origin) return true;
   if (!IS_PRODUCTION) return true;
+  if (CORS_ALLOWED_ORIGINS.length === 0) return true;
   return CORS_ALLOWED_ORIGINS.includes(origin);
 }
 
@@ -5120,6 +5121,7 @@ app.use((err, req, res, next) => {
 
 function validateCriticalConfiguration() {
   const problems = [];
+  const warnings = [];
 
   if (IS_PRODUCTION && (!JWT_SECRET || JWT_SECRET === 'dev-secret-change-me' || JWT_SECRET.length < 32)) {
     problems.push('JWT_SECRET must be set to a strong random value with at least 32 characters in production.');
@@ -5130,12 +5132,14 @@ function validateCriticalConfiguration() {
   }
 
   if (IS_PRODUCTION && CORS_ALLOWED_ORIGINS.length === 0) {
-    problems.push('CORS_ALLOWED_ORIGINS must be configured in production.');
+    warnings.push('CORS_ALLOWED_ORIGINS is not configured in production. Falling back to allow-all CORS; configure this env var as soon as possible.');
   }
 
   if (problems.length) {
     throw new Error(`Security configuration validation failed: ${problems.join(' ')}`);
   }
+
+  warnings.forEach((message) => console.warn(`Security warning: ${message}`));
 }
 
 async function bootstrap() {
