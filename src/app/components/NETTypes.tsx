@@ -8,7 +8,6 @@ import {
   CircleHelp,
   FlaskConical,
   Link as LinkIcon,
-  Lightbulb,
   MapPin,
   Ruler,
 } from 'lucide-react';
@@ -265,35 +264,6 @@ export function NETTypes() {
         ))}
       </div>
 
-      <Card className="max-w-none">
-        <CardHeader>
-          <CardTitle className="inline-flex items-center gap-2">
-            <Lightbulb className="h-5 w-5 text-sky-500" />
-            Important Notes
-          </CardTitle>
-          <CardDescription>General NET policy reminders</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <ul className="space-y-2 text-sm text-slate-600">
-            <li className="flex items-start gap-2">
-              <Check className="mt-0.5 h-4 w-4 text-emerald-500" />
-              <span>All NET tests are computer-based and conducted at designated test centers.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="mt-0.5 h-4 w-4 text-emerald-500" />
-              <span>Each question carries equal marks and you should manage time by section.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="mt-0.5 h-4 w-4 text-emerald-500" />
-              <span>You can appear in multiple NET series and your best score is considered.</span>
-            </li>
-            <li className="flex items-start gap-2">
-              <Check className="mt-0.5 h-4 w-4 text-emerald-500" />
-              <span>Each exam has 200 MCQs with a total duration of 180 minutes.</span>
-            </li>
-          </ul>
-        </CardContent>
-      </Card>
     </div>
   );
 }

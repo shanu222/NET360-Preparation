@@ -20,10 +20,23 @@ import {
   Target,
 } from 'lucide-react';
 
+type GuideTab = 'overview' | 'policy' | 'dates' | 'eligibility';
+
 export function NUSTGuide() {
+  const [activeTab, setActiveTab] = useState<GuideTab>('overview');
   const [sscMarks, setSscMarks] = useState('');
   const [hsscMarks, setHsscMarks] = useState('');
   const [eligibilityResult, setEligibilityResult] = useState<string[]>([]);
+
+  const navigateTo = (tab: GuideTab, sectionId?: string) => {
+    setActiveTab(tab);
+
+    if (sectionId) {
+      window.setTimeout(() => {
+        document.getElementById(sectionId)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 80);
+    }
+  };
 
   const checkEligibility = () => {
     const ssc = parseFloat(sscMarks);
@@ -46,6 +59,8 @@ export function NUSTGuide() {
       subtitle: 'Most Popular',
       points: ['Computer-based test', 'Multiple attempts allowed', '4 series every year'],
       action: 'View NET Details',
+      actionTab: 'policy' as GuideTab,
+      actionTargetId: 'net-policy-card',
       tone: 'from-violet-500 via-indigo-500 to-blue-500',
       buttonTone: 'from-violet-500 to-indigo-500',
       icon: GraduationCap,
@@ -55,6 +70,8 @@ export function NUSTGuide() {
       subtitle: 'Alternative Route',
       points: ['Accepted for overseas applicants', 'Minimum score requirement', 'Direct merit consideration'],
       action: 'View SAT Requirements',
+      actionTab: 'policy' as GuideTab,
+      actionTargetId: 'sat-policy-card',
       tone: 'from-cyan-400 via-sky-400 to-indigo-500',
       buttonTone: 'from-blue-500 to-cyan-500',
       icon: Globe,
@@ -64,6 +81,8 @@ export function NUSTGuide() {
       subtitle: 'Alternative Route',
       points: ['International admission route', 'Minimum ACT score required', 'Accepted by NUST for certain programs'],
       action: 'View ACT Requirements',
+      actionTab: 'policy' as GuideTab,
+      actionTargetId: 'act-policy-card',
       tone: 'from-orange-400 via-amber-400 to-rose-400',
       buttonTone: 'from-amber-500 to-orange-500',
       icon: Sparkles,
@@ -95,7 +114,7 @@ export function NUSTGuide() {
         </div>
       </section>
 
-      <Tabs defaultValue="overview" className="space-y-4">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as GuideTab)} className="space-y-4">
         <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 !bg-white/70 !border-indigo-100">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="policy">Admission Policy</TabsTrigger>
@@ -134,7 +153,11 @@ export function NUSTGuide() {
                         </li>
                       ))}
                     </ul>
-                    <Button className={`h-10 w-full bg-gradient-to-r ${route.buttonTone} text-white sm:w-auto`}>
+                    <Button
+                      type="button"
+                      onClick={() => navigateTo(route.actionTab, route.actionTargetId)}
+                      className={`h-10 w-full bg-gradient-to-r ${route.buttonTone} text-white sm:w-auto`}
+                    >
                       {route.action}
                       <ArrowRight className="ml-2 h-4 w-4" />
                     </Button>
@@ -188,7 +211,15 @@ export function NUSTGuide() {
                     <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-blue-500" /> NET score requirements</li>
                     <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-blue-500" /> Subject combination criteria</li>
                   </ul>
-                  <Button variant="outline" className="w-full justify-between">See Criteria <ArrowRight className="h-4 w-4" /></Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full justify-between"
+                    onClick={() => navigateTo('eligibility')}
+                  >
+                    See Criteria
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
                 </CardContent>
               </Card>
 
@@ -204,7 +235,15 @@ export function NUSTGuide() {
                     <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-indigo-500" /> Weightage formula</li>
                     <li className="flex items-center gap-2"><CheckCircle2 className="h-4 w-4 text-indigo-500" /> Program specific quotas</li>
                   </ul>
-                  <Button variant="outline" className="w-full justify-between">Learn More <ArrowRight className="h-4 w-4" /></Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full justify-between"
+                    onClick={() => navigateTo('policy', 'net-policy-card')}
+                  >
+                    Learn More
+                    <ArrowRight className="h-4 w-4" />
+                  </Button>
                 </CardContent>
               </Card>
             </div>
@@ -219,7 +258,7 @@ export function NUSTGuide() {
             </CardHeader>
             <CardContent className="space-y-5">
               <div className="grid gap-4 md:grid-cols-2">
-                <div className="flex items-start gap-3">
+                <div id="net-policy-card" className="flex scroll-mt-24 items-start gap-3">
                   <Target className="w-5 h-5 text-blue-500 mt-1" />
                   <div>
                     <h4>Merit-Based Admission</h4>
@@ -259,6 +298,28 @@ export function NUSTGuide() {
                     <p className="text-sm text-muted-foreground">
                       All NET tests are computer-based. Make sure to practice on computer
                       to get familiar with the interface.
+                    </p>
+                  </div>
+                </div>
+
+                <div id="sat-policy-card" className="flex scroll-mt-24 items-start gap-3">
+                  <Globe className="w-5 h-5 text-sky-500 mt-1" />
+                  <div>
+                    <h4>SAT Route Guidance</h4>
+                    <p className="text-sm text-muted-foreground">
+                      SAT-based applications are considered for eligible categories. Always verify the latest minimum score
+                      and submission timeline from NUST undergraduate admissions before applying.
+                    </p>
+                  </div>
+                </div>
+
+                <div id="act-policy-card" className="flex scroll-mt-24 items-start gap-3">
+                  <Sparkles className="w-5 h-5 text-amber-500 mt-1" />
+                  <div>
+                    <h4>ACT Route Guidance</h4>
+                    <p className="text-sm text-muted-foreground">
+                      ACT can be used as an alternate admission route for specific applicants. Confirm latest required composite
+                      score and accepted categories from the official NUST policy notice.
                     </p>
                   </div>
                 </div>
