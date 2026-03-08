@@ -1955,6 +1955,68 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     return { mcq: payload } as T;
   }
 
+  if (url.pathname === '/api/admin/mcqs/bulk-delete' && method === 'POST') {
+    requireAdmin(token);
+    const mode = String(body.mode || '').trim().toLowerCase();
+    const subject = String(body.subject || '').trim().toLowerCase();
+    const chapter = String(body.chapter || '').trim().toLowerCase();
+    const sectionOrTopic = String(body.sectionOrTopic || '').trim().toLowerCase();
+
+    if (!['all', 'subject', 'chapter', 'section-topic'].includes(mode)) {
+      throw new Error('mode must be one of: all, subject, chapter, section-topic.');
+    }
+
+    if (mode === 'subject' && !subject) {
+      throw new Error('subject is required for subject deletion.');
+    }
+
+    if (mode === 'chapter' && (!subject || !chapter)) {
+      throw new Error('subject and chapter are required for chapter deletion.');
+    }
+
+    if (mode === 'section-topic' && (!subject || !sectionOrTopic)) {
+      throw new Error('subject and section/topic are required for section/topic deletion.');
+    }
+
+    const mcqs = await loadMcqs();
+    const shouldDelete = (item: MCQ) => {
+      if (mode === 'all') return true;
+      const itemSubject = String(item.subject || '').toLowerCase();
+      const itemChapter = String(item.chapter || '').toLowerCase();
+      const itemSection = String(item.section || '').toLowerCase();
+      const itemTopic = String(item.topic || '').toLowerCase();
+
+      if (mode === 'subject') {
+        return itemSubject === subject;
+      }
+
+      if (mode === 'chapter') {
+        return itemSubject === subject && itemChapter === chapter;
+      }
+
+      if (mode === 'section-topic') {
+        const sectionTopicMatch = itemSection === sectionOrTopic || itemTopic === sectionOrTopic;
+        if (!sectionTopicMatch) return false;
+        if (!chapter) {
+          return itemSubject === subject;
+        }
+        return itemSubject === subject && itemChapter === chapter;
+      }
+
+      return false;
+    };
+
+    const before = mcqs.length;
+    cachedMcqs = mcqs.filter((item) => !shouldDelete(item));
+    const removed = Math.max(0, before - cachedMcqs.length);
+
+    return {
+      ok: true,
+      mode,
+      removed,
+    } as T;
+  }
+
   if (url.pathname === '/api/admin/practice-board/questions' && method === 'GET') {
     const { db } = requireAdmin(token);
     const subject = String(url.searchParams.get('subject') || '').trim().toLowerCase();

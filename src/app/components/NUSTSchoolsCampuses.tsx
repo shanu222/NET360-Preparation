@@ -40,13 +40,13 @@ const SCHOOL_CARDS: SchoolCard[] = [
     type: 'school',
   },
   {
-    id: 'scee',
-    shortName: 'SCEE',
-    fullName: 'School of Civil & Environmental Engineering',
+    id: 'seecs-school',
+    shortName: 'SEECS',
+    fullName: 'School of Electrical Engineering & Computer Science',
     imageCandidates: ['/schools/scee.png'],
     imageSourceLabel: 'scee.png',
     location: 'NUST H-12 Main Campus, Islamabad',
-    programmes: ['Civil Engineering', 'Environmental Engineering', 'Construction Engineering & Management'],
+    programmes: ['Electrical Engineering', 'Computer Science', 'Software Engineering', 'Artificial Intelligence'],
     type: 'school',
   },
   {

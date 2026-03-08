@@ -3137,6 +3137,62 @@ app.get('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   });
 });
 
+app.post('/api/admin/mcqs/bulk-delete', authMiddleware, requireAdmin, async (req, res) => {
+  const mode = String(req.body?.mode || '').trim().toLowerCase();
+  const subject = String(req.body?.subject || '').trim().toLowerCase();
+  const chapter = String(req.body?.chapter || '').trim();
+  const sectionOrTopic = String(req.body?.sectionOrTopic || '').trim();
+
+  if (!['all', 'subject', 'chapter', 'section-topic'].includes(mode)) {
+    res.status(400).json({ error: 'mode must be one of: all, subject, chapter, section-topic.' });
+    return;
+  }
+
+  const filter = {};
+
+  if (mode === 'subject') {
+    if (!subject) {
+      res.status(400).json({ error: 'subject is required for subject deletion.' });
+      return;
+    }
+    filter.subject = subject;
+  }
+
+  if (mode === 'chapter') {
+    if (!subject || !chapter) {
+      res.status(400).json({ error: 'subject and chapter are required for chapter deletion.' });
+      return;
+    }
+    filter.subject = subject;
+    filter.chapter = { $regex: `^${chapter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' };
+  }
+
+  if (mode === 'section-topic') {
+    if (!subject || !sectionOrTopic) {
+      res.status(400).json({ error: 'subject and section/topic are required for section/topic deletion.' });
+      return;
+    }
+    filter.subject = subject;
+    if (chapter) {
+      filter.chapter = { $regex: `^${chapter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' };
+    }
+
+    const escapedSectionOrTopic = sectionOrTopic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    filter.$or = [
+      { section: { $regex: `^${escapedSectionOrTopic}$`, $options: 'i' } },
+      { topic: { $regex: `^${escapedSectionOrTopic}$`, $options: 'i' } },
+    ];
+  }
+
+  const result = await MCQModel.deleteMany(filter);
+
+  res.json({
+    ok: true,
+    mode,
+    removed: result.deletedCount || 0,
+  });
+});
+
 app.delete('/api/admin/mcqs/purge-all', authMiddleware, requireAdmin, async (_req, res) => {
   const [mcqResult, sessionResult, attemptResult] = await Promise.all([
     MCQModel.deleteMany({}),

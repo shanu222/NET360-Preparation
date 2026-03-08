@@ -185,6 +185,8 @@ interface ParsedBulkMcq {
   difficulty: 'Easy' | 'Medium' | 'Hard';
 }
 
+type BulkDeleteMode = 'all' | 'subject' | 'chapter' | 'section-topic';
+
 const TOKEN_KEY = 'net360-admin-access-token';
 const REFRESH_TOKEN_KEY = 'net360-admin-refresh-token';
 
@@ -376,6 +378,11 @@ export default function AdminApp() {
   const [practiceForm, setPracticeForm] = useState(emptyPracticeForm());
   const [bulkInput, setBulkInput] = useState('');
   const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkDeleteMode, setBulkDeleteMode] = useState<BulkDeleteMode>('section-topic');
+  const [bulkDeleteSubject, setBulkDeleteSubject] = useState('mathematics');
+  const [bulkDeleteChapter, setBulkDeleteChapter] = useState('');
+  const [bulkDeleteSectionOrTopic, setBulkDeleteSectionOrTopic] = useState('');
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [questionSubmissions, setQuestionSubmissions] = useState<AdminQuestionSubmission[]>([]);
   const [submissionStatusFilter, setSubmissionStatusFilter] = useState('all');
   const [submissionSubjectFilter, setSubmissionSubjectFilter] = useState('all');
@@ -577,6 +584,18 @@ export default function AdminApp() {
       cancelled = true;
     };
   }, [authToken, refreshToken, subscriptionFilter]);
+
+  useEffect(() => {
+    if (!selectedHierarchy) return;
+    setBulkDeleteSubject(selectedHierarchy.subject);
+    if (selectedHierarchy.kind === 'section') {
+      setBulkDeleteChapter(selectedHierarchy.chapterTitle);
+      setBulkDeleteSectionOrTopic(selectedHierarchy.sectionTitle);
+    } else {
+      setBulkDeleteChapter('');
+      setBulkDeleteSectionOrTopic(selectedHierarchy.sectionTitle);
+    }
+  }, [selectedHierarchy]);
 
   const login = async () => {
     if (!authForm.email || !authForm.password) {
@@ -874,6 +893,68 @@ export default function AdminApp() {
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not delete MCQ.');
+    }
+  };
+
+  const bulkDeleteMcqs = async () => {
+    if (!authToken) return;
+
+    const subject = String(bulkDeleteSubject || '').trim().toLowerCase();
+    const chapter = String(bulkDeleteChapter || '').trim();
+    const sectionOrTopic = String(bulkDeleteSectionOrTopic || '').trim();
+
+    if (bulkDeleteMode === 'subject' && !subject) {
+      toast.error('Select or type a subject for subject-level deletion.');
+      return;
+    }
+
+    if (bulkDeleteMode === 'chapter' && (!subject || !chapter)) {
+      toast.error('Subject and chapter are required for chapter-level deletion.');
+      return;
+    }
+
+    if (bulkDeleteMode === 'section-topic' && (!subject || !sectionOrTopic)) {
+      toast.error('Subject and section/topic are required for section/topic deletion.');
+      return;
+    }
+
+    const summary =
+      bulkDeleteMode === 'all'
+        ? 'all MCQs in the application'
+        : bulkDeleteMode === 'subject'
+          ? `all MCQs in subject "${subject}"`
+          : bulkDeleteMode === 'chapter'
+            ? `all MCQs in chapter "${chapter}" under subject "${subject}"`
+            : `all MCQs in section/topic "${sectionOrTopic}"${chapter ? ` under chapter "${chapter}"` : ''} and subject "${subject}"`;
+
+    const confirmed = window.confirm(`Are you sure you want to permanently delete ${summary}? This action cannot be undone.`);
+    if (!confirmed) return;
+
+    try {
+      setBulkDeleting(true);
+      const payload = await apiRequest<{ ok: boolean; removed: number }>(
+        '/api/admin/mcqs/bulk-delete',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            mode: bulkDeleteMode,
+            subject,
+            chapter,
+            sectionOrTopic,
+          }),
+        },
+        authToken,
+      );
+
+      toast.success(`${payload.removed || 0} MCQ(s) deleted.`);
+      await loadAdminData(authToken);
+      if (selectedHierarchy) {
+        await loadSectionMcqs(authToken, selectedHierarchy);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not bulk delete MCQs.');
+    } finally {
+      setBulkDeleting(false);
     }
   };
 
@@ -1293,6 +1374,68 @@ export default function AdminApp() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  <div className="space-y-3 rounded-lg border border-rose-200 bg-rose-50/40 p-3">
+                    <p className="text-sm font-medium text-rose-800">Bulk Delete MCQs (Admin Only)</p>
+
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label>Deletion Scope</Label>
+                        <Select value={bulkDeleteMode} onValueChange={(value: BulkDeleteMode) => setBulkDeleteMode(value)}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="all">Delete all MCQs</SelectItem>
+                            <SelectItem value="subject">Delete by subject</SelectItem>
+                            <SelectItem value="chapter">Delete by chapter</SelectItem>
+                            <SelectItem value="section-topic">Delete by section/topic</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {bulkDeleteMode !== 'all' ? (
+                        <div className="space-y-1.5">
+                          <Label>Subject</Label>
+                          <Input
+                            value={bulkDeleteSubject}
+                            onChange={(e) => setBulkDeleteSubject(e.target.value)}
+                            placeholder="e.g. mathematics"
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {bulkDeleteMode === 'chapter' || bulkDeleteMode === 'section-topic' ? (
+                      <div className="space-y-1.5">
+                        <Label>Chapter</Label>
+                        <Input
+                          value={bulkDeleteChapter}
+                          onChange={(e) => setBulkDeleteChapter(e.target.value)}
+                          placeholder="Exact chapter title (optional for section/topic mode)"
+                        />
+                      </div>
+                    ) : null}
+
+                    {bulkDeleteMode === 'section-topic' ? (
+                      <div className="space-y-1.5">
+                        <Label>Section / Topic</Label>
+                        <Input
+                          value={bulkDeleteSectionOrTopic}
+                          onChange={(e) => setBulkDeleteSectionOrTopic(e.target.value)}
+                          placeholder="Exact section or topic title"
+                        />
+                      </div>
+                    ) : null}
+
+                    <div className="flex justify-end">
+                      <Button
+                        variant="destructive"
+                        onClick={() => void bulkDeleteMcqs()}
+                        disabled={bulkDeleting}
+                      >
+                        {bulkDeleting ? 'Deleting...' : 'Delete in Bulk'}
+                      </Button>
+                    </div>
+                  </div>
+
                   {selectedHierarchy?.kind === 'flat-topic' ? (
                     <div className="grid gap-3 md:grid-cols-2">
                       <div className="space-y-1.5">
