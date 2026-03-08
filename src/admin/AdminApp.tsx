@@ -12,6 +12,23 @@ import { toast } from 'sonner';
 import { Preparation } from '../app/components/Preparation';
 import type { SubjectKey } from '../app/lib/mcq';
 
+const FLAT_TOPIC_SUBJECTS = new Set(['quantitative-mathematics', 'design-aptitude']);
+
+type SelectedHierarchy =
+  | {
+      kind: 'section';
+      subject: SubjectKey;
+      part: 'part1' | 'part2';
+      chapterTitle: string;
+      sectionTitle: string;
+    }
+  | {
+      kind: 'flat-topic';
+      subject: 'quantitative-mathematics' | 'design-aptitude';
+      chapterTitle: '';
+      sectionTitle: string;
+    };
+
 interface AdminUser {
   id: string;
   email: string;
@@ -207,12 +224,7 @@ export default function AdminApp() {
   const [issuedTokens, setIssuedTokens] = useState<Record<string, string>>({});
   const [query, setQuery] = useState('');
   const [form, setForm] = useState(emptyForm());
-  const [selectedHierarchy, setSelectedHierarchy] = useState<{
-    subject: SubjectKey;
-    part: 'part1' | 'part2';
-    chapterTitle: string;
-    sectionTitle: string;
-  } | null>(null);
+  const [selectedHierarchy, setSelectedHierarchy] = useState<SelectedHierarchy | null>(null);
   const [subscriptionOverview, setSubscriptionOverview] = useState<AdminSubscriptionOverview | null>(null);
   const [subscriptionUsers, setSubscriptionUsers] = useState<AdminSubscriptionUser[]>([]);
   const [subscriptionFilter, setSubscriptionFilter] = useState('all');
@@ -344,14 +356,16 @@ export default function AdminApp() {
 
   const loadSectionMcqs = async (
     activeToken: string,
-    sectionPath: { subject: SubjectKey; part: 'part1' | 'part2'; chapterTitle: string; sectionTitle: string },
+    sectionPath: SelectedHierarchy,
   ) => {
-    const params = new URLSearchParams({
-      subject: sectionPath.subject,
-      part: sectionPath.part,
-      chapter: sectionPath.chapterTitle,
-      section: sectionPath.sectionTitle,
-    });
+    const params = new URLSearchParams({ subject: sectionPath.subject });
+    if (sectionPath.kind === 'section') {
+      params.set('part', sectionPath.part);
+      params.set('chapter', sectionPath.chapterTitle);
+      params.set('section', sectionPath.sectionTitle);
+    } else {
+      params.set('topic', sectionPath.sectionTitle);
+    }
 
     const payload = await apiRequest<{ mcqs: AdminMCQ[] }>(`/api/admin/mcqs?${params.toString()}`, {}, activeToken);
     setMcqs(payload.mcqs || []);
@@ -547,10 +561,17 @@ export default function AdminApp() {
     const fresh = emptyForm();
     if (selectedHierarchy) {
       fresh.subject = selectedHierarchy.subject;
-      fresh.part = selectedHierarchy.part;
-      fresh.chapter = selectedHierarchy.chapterTitle;
-      fresh.section = selectedHierarchy.sectionTitle;
-      fresh.topic = `${selectedHierarchy.chapterTitle} - ${selectedHierarchy.sectionTitle}`;
+      if (selectedHierarchy.kind === 'section') {
+        fresh.part = selectedHierarchy.part;
+        fresh.chapter = selectedHierarchy.chapterTitle;
+        fresh.section = selectedHierarchy.sectionTitle;
+        fresh.topic = `${selectedHierarchy.chapterTitle} - ${selectedHierarchy.sectionTitle}`;
+      } else {
+        fresh.part = '';
+        fresh.chapter = '';
+        fresh.section = selectedHierarchy.sectionTitle;
+        fresh.topic = selectedHierarchy.sectionTitle;
+      }
     }
     setForm(fresh);
   };
@@ -568,16 +589,29 @@ export default function AdminApp() {
       return;
     }
 
-    if (!form.subject || !form.part || !form.chapter.trim() || !form.section.trim()) {
+    const normalizedSubject = String(form.subject || '').toLowerCase().trim();
+    const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizedSubject);
+
+    if (!normalizedSubject) {
+      toast.error('Subject is required before adding MCQs.');
+      return;
+    }
+
+    if (!isFlatTopicSubject && (!form.part || !form.chapter.trim() || !form.section.trim())) {
       toast.error('Select subject, part, chapter, and section before adding MCQs.');
       return;
     }
 
+    if (isFlatTopicSubject && !form.topic.trim()) {
+      toast.error('Topic is required for this subject.');
+      return;
+    }
+
     const payload = {
-      subject: form.subject,
-      part: form.part,
-      chapter: form.chapter,
-      section: form.section,
+      subject: normalizedSubject,
+      part: isFlatTopicSubject ? '' : form.part,
+      chapter: isFlatTopicSubject ? '' : form.chapter,
+      section: isFlatTopicSubject ? (form.section || form.topic) : form.section,
       topic: form.topic,
       question: form.question,
       questionImageUrl: form.questionImageUrl,
@@ -780,7 +814,11 @@ export default function AdminApp() {
   }) => {
     if (!authToken) return;
 
-    setSelectedHierarchy(selection);
+    const normalizedSelection: SelectedHierarchy = {
+      kind: 'section',
+      ...selection,
+    };
+    setSelectedHierarchy(normalizedSelection);
     setForm((prev) => ({
       ...prev,
       subject: selection.subject,
@@ -791,9 +829,40 @@ export default function AdminApp() {
     }));
 
     try {
-      await loadSectionMcqs(authToken, selection);
+      await loadSectionMcqs(authToken, normalizedSelection);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not load section MCQs.');
+    }
+  };
+
+  const handleFlatTopicSelection = async (selection: {
+    tabKey: 'quantitative-mathematics' | 'design-aptitude';
+    subject: 'quantitative-mathematics' | 'design-aptitude';
+    topicTitle: string;
+  }) => {
+    if (!authToken) return;
+
+    const normalizedSelection: SelectedHierarchy = {
+      kind: 'flat-topic',
+      subject: selection.subject,
+      chapterTitle: '',
+      sectionTitle: selection.topicTitle,
+    };
+
+    setSelectedHierarchy(normalizedSelection);
+    setForm((prev) => ({
+      ...prev,
+      subject: selection.subject,
+      part: '',
+      chapter: '',
+      section: selection.topicTitle,
+      topic: selection.topicTitle,
+    }));
+
+    try {
+      await loadSectionMcqs(authToken, normalizedSelection);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not load topic MCQs.');
     }
   };
 
@@ -984,11 +1053,14 @@ export default function AdminApp() {
               <CardHeader>
                 <CardTitle>PTB Syllabus Browser (Admin)</CardTitle>
                 <CardDescription>
-                  Select Subject / Part / Chapter / Section to open section-specific MCQ management.
+                  Select Subject / Part / Chapter / Section, or choose Quantitative Mathematics/Design Aptitude topics.
                 </CardDescription>
               </CardHeader>
               <CardContent className="max-h-[860px] overflow-auto">
-                <Preparation onSelectSection={(payload) => void handleSectionSelection(payload)} />
+                <Preparation
+                  onSelectSection={(payload) => void handleSectionSelection(payload)}
+                  onSelectFlatTopic={(payload) => void handleFlatTopicSelection(payload)}
+                />
               </CardContent>
             </Card>
 
@@ -998,32 +1070,49 @@ export default function AdminApp() {
                   <CardTitle>Section MCQ Editor</CardTitle>
                   <CardDescription>
                     {selectedHierarchy
-                      ? `${selectedHierarchy.subject} / ${selectedHierarchy.part} / ${selectedHierarchy.chapterTitle} / ${selectedHierarchy.sectionTitle}`
+                      ? selectedHierarchy.kind === 'section'
+                        ? `${selectedHierarchy.subject} / ${selectedHierarchy.part} / ${selectedHierarchy.chapterTitle} / ${selectedHierarchy.sectionTitle}`
+                        : `${selectedHierarchy.subject} / ${selectedHierarchy.sectionTitle}`
                       : 'Pick a section from the syllabus browser first.'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label>Subject</Label>
-                      <Input value={form.subject} readOnly />
+                  {selectedHierarchy?.kind === 'flat-topic' ? (
+                    <div className="grid gap-3 md:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label>Subject</Label>
+                        <Input value={form.subject} readOnly />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label>Topic</Label>
+                        <Input value={form.topic || form.section} readOnly />
+                      </div>
                     </div>
-                    <div className="space-y-1.5">
-                      <Label>Part</Label>
-                      <Input value={form.part} readOnly />
-                    </div>
-                  </div>
+                  ) : (
+                    <>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label>Subject</Label>
+                          <Input value={form.subject} readOnly />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Part</Label>
+                          <Input value={form.part} readOnly />
+                        </div>
+                      </div>
 
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label>Chapter</Label>
-                      <Input value={form.chapter} readOnly />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Section</Label>
-                      <Input value={form.section} readOnly />
-                    </div>
-                  </div>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div className="space-y-1.5">
+                          <Label>Chapter</Label>
+                          <Input value={form.chapter} readOnly />
+                        </div>
+                        <div className="space-y-1.5">
+                          <Label>Section</Label>
+                          <Input value={form.section} readOnly />
+                        </div>
+                      </div>
+                    </>
+                  )}
 
                   <div className="space-y-1.5">
                     <Label>Question</Label>

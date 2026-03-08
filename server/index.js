@@ -3169,8 +3169,25 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
     tip = '',
   } = req.body || {};
 
-  if (!question || !Array.isArray(options) || options.length < 4 || !answer || !subject || !part || !chapter || !section) {
-    res.status(400).json({ error: 'question, options (min 4), answer, subject, part, chapter, and section are required.' });
+  const normalizedSubject = String(subject || '').toLowerCase().trim();
+  const normalizedPart = String(part || '').toLowerCase().trim();
+  const normalizedChapter = String(chapter || '').trim();
+  const normalizedSection = String(section || '').trim();
+  const normalizedTopic = String(topic || '').trim();
+  const isFlatTopicSubject = normalizedSubject === 'quantitative-mathematics' || normalizedSubject === 'design-aptitude';
+
+  if (!question || !Array.isArray(options) || options.length < 4 || !answer || !normalizedSubject) {
+    res.status(400).json({ error: 'question, options (min 4), answer, and subject are required.' });
+    return;
+  }
+
+  if (!isFlatTopicSubject && (!normalizedPart || !normalizedChapter || !normalizedSection)) {
+    res.status(400).json({ error: 'part, chapter, and section are required for this subject.' });
+    return;
+  }
+
+  if (isFlatTopicSubject && !normalizedTopic && !normalizedSection) {
+    res.status(400).json({ error: 'topic is required for this subject.' });
     return;
   }
 
@@ -3182,17 +3199,20 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
     return;
   }
 
-  const resolvedTopic = String(topic || `${chapter} - ${section}`).trim();
+  const resolvedTopic = isFlatTopicSubject
+    ? (normalizedTopic || normalizedSection)
+    : String(normalizedTopic || `${normalizedChapter} - ${normalizedSection}`).trim();
+  const resolvedSection = isFlatTopicSubject ? (normalizedSection || resolvedTopic) : normalizedSection;
 
   const mcq = await MCQModel.create({
     question: String(question),
     questionImageUrl: String(questionImageUrl || '').trim(),
     options: cleanOptions,
     answer: String(answer),
-    subject: String(subject).toLowerCase(),
-    part: String(part).toLowerCase().trim(),
-    chapter: String(chapter).trim(),
-    section: String(section).trim(),
+    subject: normalizedSubject,
+    part: isFlatTopicSubject ? '' : normalizedPart,
+    chapter: isFlatTopicSubject ? '' : normalizedChapter,
+    section: resolvedSection,
     topic: resolvedTopic,
     difficulty: String(difficulty),
     tip: String(tip),

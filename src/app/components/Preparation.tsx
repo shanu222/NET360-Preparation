@@ -205,9 +205,14 @@ interface PreparationProps {
     chapterTitle: string;
     sectionTitle: string;
   }) => void;
+  onSelectFlatTopic?: (payload: {
+    tabKey: 'quantitative-mathematics' | 'design-aptitude';
+    subject: 'quantitative-mathematics' | 'design-aptitude';
+    topicTitle: string;
+  }) => void;
 }
 
-export function Preparation({ onSelectSection }: PreparationProps = {}) {
+export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationProps = {}) {
   const { startTestSession } = useAppData();
   const { token } = useAuth();
 
@@ -402,10 +407,11 @@ export function Preparation({ onSelectSection }: PreparationProps = {}) {
 
         {tabItems.map((tab) => {
           if (tab.key === 'quantitative-mathematics' || tab.key === 'design-aptitude') {
-            const content = FLAT_TOPIC_TABS[tab.key];
-            const selectedFlatTopic = selectedFlatTopicByTab[tab.key];
+            const flatKey: 'quantitative-mathematics' | 'design-aptitude' = tab.key;
+            const content = FLAT_TOPIC_TABS[flatKey];
+            const selectedFlatTopic = selectedFlatTopicByTab[flatKey];
             return (
-              <TabsContent key={tab.key} value={tab.key} className="space-y-4">
+              <TabsContent key={flatKey} value={flatKey} className="space-y-4">
                 <Card>
                   <CardHeader>
                     <CardTitle>{content.title}</CardTitle>
@@ -419,7 +425,12 @@ export function Preparation({ onSelectSection }: PreparationProps = {}) {
                             type="button"
                             className={`w-full rounded-lg border px-3 py-2 text-left transition ${selectedFlatTopic === topic ? 'border-indigo-300 bg-indigo-50 text-indigo-900' : 'border-indigo-100 bg-white text-slate-700 hover:bg-indigo-50'}`}
                             onClick={() => {
-                              setSelectedFlatTopicByTab((prev) => ({ ...prev, [tab.key]: topic }));
+                              setSelectedFlatTopicByTab((prev) => ({ ...prev, [flatKey]: topic }));
+                              onSelectFlatTopic?.({
+                                tabKey: flatKey,
+                                subject: flatKey,
+                                topicTitle: topic,
+                              });
                             }}
                           >
                             {topic}
@@ -428,7 +439,7 @@ export function Preparation({ onSelectSection }: PreparationProps = {}) {
                       ))}
                     </ul>
 
-                    {selectedFlatTopic ? (
+                    {!onSelectFlatTopic && selectedFlatTopic ? (
                       <div className="mt-3 rounded-lg border border-indigo-200 bg-white p-3">
                         <p className="mb-2 text-xs text-slate-500">
                           Selected topic: <span className="font-medium text-indigo-900">{selectedFlatTopic}</span>
@@ -437,10 +448,10 @@ export function Preparation({ onSelectSection }: PreparationProps = {}) {
                           className="bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
                           disabled={Boolean(launchingSectionKey)}
                           onClick={() => {
-                            void handleStartFlatTopicTest(tab.key, selectedFlatTopic);
+                            void handleStartFlatTopicTest(flatKey, selectedFlatTopic);
                           }}
                         >
-                          {launchingSectionKey === `${tab.key}|${selectedFlatTopic}` ? 'Starting...' : 'Start Test'}
+                          {launchingSectionKey === `${flatKey}|${selectedFlatTopic}` ? 'Starting...' : 'Start Test'}
                         </Button>
                       </div>
                     ) : null}
