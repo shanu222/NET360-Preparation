@@ -413,13 +413,15 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
       </div>
 
       <Tabs defaultValue="mathematics">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7">
-          {tabItems.map((tab) => (
-            <TabsTrigger key={tab.key} value={tab.key} className="text-[12px] sm:text-sm">
-              {tab.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+        <div className="overflow-x-auto pb-1">
+          <TabsList className="inline-flex h-auto min-w-max gap-1">
+            {tabItems.map((tab) => (
+              <TabsTrigger key={tab.key} value={tab.key} className="min-w-[150px] text-[12px] sm:text-sm">
+                {tab.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
 
         {tabItems.map((tab) => {
           if (tab.key === 'quantitative-mathematics' || tab.key === 'design-aptitude') {
