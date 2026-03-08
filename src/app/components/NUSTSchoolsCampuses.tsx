@@ -1,7 +1,5 @@
-import { useState } from 'react';
-import { MapPin, School } from 'lucide-react';
-import { Button } from './ui/button';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from './ui/card';
+import { MapPin } from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 
 type SchoolCard = {
@@ -17,14 +15,19 @@ type SchoolCard = {
 
 const SCHOOL_CARDS: SchoolCard[] = [
   {
-    id: 'seecs',
-    shortName: 'SEECS',
-    fullName: 'School of Electrical Engineering & Computer Science',
-    imageCandidates: ['/schools/seecs.png', '/schools/islamabad-main-campus.png'],
-    imageSourceLabel: 'seecs.png',
+    id: 'main-campus',
+    shortName: 'NUST Main Campus',
+    fullName: 'National University of Sciences and Technology (H-12, Islamabad)',
+    imageCandidates: ['/schools/islamabad-main-campus.png'],
+    imageSourceLabel: 'islamabad-main-campus.png',
     location: 'NUST H-12 Main Campus, Islamabad',
-    programmes: ['Electrical Engineering', 'Computer Science', 'Software Engineering', 'Artificial Intelligence'],
-    type: 'school',
+    programmes: [
+      'SEECS (Electrical, Computer Science, Software Engineering, AI)',
+      'SMME, SCEE, SCME and SNS programs',
+      'NBS, S3H, SADA and NLS programs',
+      'Interdisciplinary and applied science tracks',
+    ],
+    type: 'campus',
   },
   {
     id: 'smme',
@@ -186,8 +189,6 @@ function resolveImagePath(card: SchoolCard) {
 }
 
 export function NUSTSchoolsCampuses() {
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
-
   return (
     <div className="space-y-4">
       <div>
@@ -199,8 +200,6 @@ export function NUSTSchoolsCampuses() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {SCHOOL_CARDS.map((school) => {
-          const isExpanded = Boolean(expanded[school.id]);
-          const visibleProgrammes = isExpanded ? school.programmes : school.programmes.slice(0, 3);
           const imagePath = resolveImagePath(school);
           return (
             <Card
@@ -224,7 +223,7 @@ export function NUSTSchoolsCampuses() {
                 <div>
                   <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Programmes Offered</p>
                   <ul className="list-disc space-y-1 pl-5 text-sm text-slate-700">
-                    {visibleProgrammes.map((programme) => (
+                    {school.programmes.map((programme) => (
                       <li key={programme}>{programme}</li>
                     ))}
                   </ul>
@@ -234,22 +233,7 @@ export function NUSTSchoolsCampuses() {
                   <MapPin className="mt-0.5 h-4 w-4 text-indigo-600" />
                   <span>{school.location}</span>
                 </div>
-
-                <div className="flex items-start gap-2 text-xs text-muted-foreground">
-                  <School className="mt-0.5 h-3.5 w-3.5" />
-                  <span>Image Source: {school.imageSourceLabel}</span>
-                </div>
               </CardContent>
-
-              <CardFooter>
-                <Button
-                  variant="outline"
-                  className="w-full border-indigo-200 text-indigo-700 hover:bg-indigo-50"
-                  onClick={() => setExpanded((prev) => ({ ...prev, [school.id]: !isExpanded }))}
-                >
-                  {isExpanded ? 'Hide Programmes' : 'View Programmes'}
-                </Button>
-              </CardFooter>
             </Card>
           );
         })}
