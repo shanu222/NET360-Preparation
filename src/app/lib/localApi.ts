@@ -194,6 +194,67 @@ interface LocalSubmissionRestriction {
   lastViolationAt: string | null;
 }
 
+interface LocalCommunityProfile {
+  userId: string;
+  username: string;
+  profilePictureUrl: string;
+  shareProfilePicture: boolean;
+  favoriteSubjects: string[];
+}
+
+interface LocalCommunityConnectionRequest {
+  id: string;
+  fromUserId: string;
+  toUserId: string;
+  status: 'pending' | 'accepted' | 'rejected';
+  createdAt: string;
+}
+
+interface LocalCommunityConnection {
+  id: string;
+  participantA: string;
+  participantB: string;
+  participantKey: string;
+  createdAt: string;
+}
+
+interface LocalCommunityMessage {
+  id: string;
+  connectionId: string;
+  senderUserId: string;
+  text: string;
+  readByUserIds: string[];
+  createdAt: string;
+}
+
+interface LocalCommunityReport {
+  id: string;
+  connectionId: string;
+  reporterUserId: string;
+  reportedUserId: string;
+  reason: string;
+  status: 'open' | 'actioned' | 'dismissed';
+  moderation: {
+    result: 'safe' | 'harmful';
+    reasons: string[];
+    score: number;
+    violatorUserId: string;
+    autoBlocked: boolean;
+    reviewedAt: string | null;
+    reviewedByEmail: string;
+  };
+  chatSnapshot: Array<{ senderUserId: string; text: string; createdAt: string }>;
+  createdAt: string;
+}
+
+interface LocalCommunityBlock {
+  userId: string;
+  blocked: boolean;
+  reason: string;
+  blockedAt: string;
+  sourceReportId: string;
+}
+
 interface LocalDb {
   users: LocalUser[];
   sessions: LocalSession[];
@@ -203,6 +264,12 @@ interface LocalDb {
   questionSubmissions: LocalQuestionSubmission[];
   contributionPolicy: LocalContributionPolicy;
   submissionRestrictions: LocalSubmissionRestriction[];
+  communityProfiles: LocalCommunityProfile[];
+  communityConnectionRequests: LocalCommunityConnectionRequest[];
+  communityConnections: LocalCommunityConnection[];
+  communityMessages: LocalCommunityMessage[];
+  communityReports: LocalCommunityReport[];
+  communityBlocks: LocalCommunityBlock[];
 }
 
 const DB_STORAGE_KEY = 'net360-local-db-v7';
@@ -543,6 +610,12 @@ function readDb(): LocalDb {
       questionSubmissions: [],
       contributionPolicy: { ...DEFAULT_CONTRIBUTION_POLICY },
       submissionRestrictions: [],
+      communityProfiles: [],
+      communityConnectionRequests: [],
+      communityConnections: [],
+      communityMessages: [],
+      communityReports: [],
+      communityBlocks: [],
     };
   }
 
@@ -560,6 +633,12 @@ function readDb(): LocalDb {
         ...(parsed.contributionPolicy || {}),
       },
       submissionRestrictions: parsed.submissionRestrictions || [],
+      communityProfiles: parsed.communityProfiles || [],
+      communityConnectionRequests: parsed.communityConnectionRequests || [],
+      communityConnections: parsed.communityConnections || [],
+      communityMessages: parsed.communityMessages || [],
+      communityReports: parsed.communityReports || [],
+      communityBlocks: parsed.communityBlocks || [],
     };
   } catch {
     return {
@@ -571,6 +650,12 @@ function readDb(): LocalDb {
       questionSubmissions: [],
       contributionPolicy: { ...DEFAULT_CONTRIBUTION_POLICY },
       submissionRestrictions: [],
+      communityProfiles: [],
+      communityConnectionRequests: [],
+      communityConnections: [],
+      communityMessages: [],
+      communityReports: [],
+      communityBlocks: [],
     };
   }
 }
@@ -920,6 +1005,99 @@ function serializeQuestionSubmission(item: LocalQuestionSubmission) {
   };
 }
 
+function localConnectionKey(a: string, b: string) {
+  return [String(a), String(b)].sort().join(':');
+}
+
+function localNormalizeUsername(input: string) {
+  return String(input || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 32);
+}
+
+function getOrCreateLocalCommunityProfile(db: LocalDb, user: LocalUser) {
+  let profile = db.communityProfiles.find((item) => item.userId === user.id);
+  if (!profile) {
+    const base = [user.firstName, user.lastName].filter(Boolean).join('.').toLowerCase() || user.email.split('@')[0] || `student-${user.id}`;
+    profile = {
+      userId: user.id,
+      username: localNormalizeUsername(base) || `student-${Date.now()}`,
+      profilePictureUrl: '',
+      shareProfilePicture: false,
+      favoriteSubjects: [],
+    };
+    db.communityProfiles.push(profile);
+  }
+  return profile;
+}
+
+function serializeLocalCommunityUser(user: LocalUser, profile?: LocalCommunityProfile) {
+  const resolvedProfile = profile || {
+    userId: user.id,
+    username: localNormalizeUsername(user.firstName || user.email.split('@')[0] || 'student'),
+    profilePictureUrl: '',
+    shareProfilePicture: false,
+    favoriteSubjects: [],
+  };
+
+  return {
+    id: user.id,
+    firstName: user.firstName,
+    lastName: user.lastName,
+    targetProgram: user.targetProgram,
+    city: user.city,
+    score: Number(user.progress?.averageScore || 0),
+    weakTopics: Array.isArray(user.progress?.weakTopics) ? user.progress.weakTopics : [],
+    username: resolvedProfile.username,
+    shareProfilePicture: resolvedProfile.shareProfilePicture,
+    profilePictureUrl: resolvedProfile.shareProfilePicture ? resolvedProfile.profilePictureUrl : '',
+    favoriteSubjects: resolvedProfile.favoriteSubjects || [],
+  };
+}
+
+function moderateLocalCommunityConversation(messages: LocalCommunityMessage[]) {
+  const reasons: string[] = [];
+  let score = 0;
+  let violatorUserId = '';
+
+  const harmfulPatterns = [
+    /(abuse|harass|threat|kill|suicide|terror|extort)/i,
+    /(porn|adult|escort|nude|sex)/i,
+    /(hack|malware|steal password|phish|bank otp)/i,
+    /(scam|crypto signal|betting|casino|loan fraud)/i,
+  ];
+
+  messages.forEach((item) => {
+    const text = String(item.text || '').toLowerCase();
+    harmfulPatterns.forEach((pattern) => {
+      if (pattern.test(text)) {
+        score += 45;
+        violatorUserId = item.senderUserId;
+      }
+    });
+  });
+
+  if (score >= 45) {
+    reasons.push('Detected potentially harmful content in the reported conversation.');
+  }
+
+  return {
+    result: score >= 70 ? 'harmful' : 'safe',
+    reasons,
+    score,
+    violatorUserId,
+  };
+}
+
+function isLocalCommunityBlocked(db: LocalDb, userId: string) {
+  const block = db.communityBlocks.find((item) => item.userId === userId && item.blocked);
+  return block || null;
+}
+
 export async function localApiRequest<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
   const method = (options.method || 'GET').toUpperCase();
   const url = new URL(path, window.location.origin);
@@ -1122,6 +1300,413 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     };
     writeDb(db);
     return { user: toPublicUser(user) } as T;
+  }
+
+  if (url.pathname === '/api/community/profile' && method === 'GET') {
+    const { db, user } = requireAuth(token);
+    const block = isLocalCommunityBlocked(db, user.id);
+    if (block) {
+      const blockedError = new Error(block.reason || 'Community access blocked.') as Error & { status?: number; code?: string };
+      blockedError.status = 403;
+      blockedError.code = 'COMMUNITY_BLOCKED';
+      throw blockedError;
+    }
+    const profile = getOrCreateLocalCommunityProfile(db, user);
+    writeDb(db);
+    return { profile: serializeLocalCommunityUser(user, profile) } as T;
+  }
+
+  if (url.pathname === '/api/community/profile' && method === 'PUT') {
+    const { db, user } = requireAuth(token);
+    const profile = getOrCreateLocalCommunityProfile(db, user);
+    const username = localNormalizeUsername(String(body.username || profile.username));
+    if (!username) throw new Error('username is required.');
+    const taken = db.communityProfiles.some((item) => item.userId !== user.id && item.username === username);
+    if (taken) throw new Error('Username is already taken.');
+    profile.username = username;
+    profile.profilePictureUrl = String(body.profilePictureUrl || '').trim();
+    profile.shareProfilePicture = Boolean(body.shareProfilePicture);
+    writeDb(db);
+    return { profile: serializeLocalCommunityUser(user, profile) } as T;
+  }
+
+  if (url.pathname === '/api/community/users/search' && method === 'GET') {
+    const { db, user } = requireAuth(token);
+    const q = String(url.searchParams.get('q') || '').toLowerCase().trim();
+    const me = user.id;
+
+    const rows = db.users
+      .filter((item) => item.role === 'student' && item.id !== me)
+      .map((candidate) => {
+        const profile = getOrCreateLocalCommunityProfile(db, candidate);
+        const connection = db.communityConnections.find((entry) => entry.participantKey === localConnectionKey(me, candidate.id));
+        const pendingTo = db.communityConnectionRequests.find((entry) => entry.fromUserId === me && entry.toUserId === candidate.id && entry.status === 'pending');
+        const pendingFrom = db.communityConnectionRequests.find((entry) => entry.fromUserId === candidate.id && entry.toUserId === me && entry.status === 'pending');
+        return {
+          ...serializeLocalCommunityUser(candidate, profile),
+          connectionStatus: connection ? 'connected' : pendingTo ? 'pending-sent' : pendingFrom ? 'pending-received' : 'none',
+        };
+      })
+      .filter((entry) => {
+        if (!q) return true;
+        const blob = [entry.username, entry.firstName, entry.lastName, entry.targetProgram, entry.city].join(' ').toLowerCase();
+        return blob.includes(q);
+      })
+      .slice(0, 20);
+
+    writeDb(db);
+    return { users: rows } as T;
+  }
+
+  if (url.pathname === '/api/community/connections/request' && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const toUserId = String(body.toUserId || '').trim();
+    if (!toUserId || toUserId === user.id) throw new Error('Valid target user id is required.');
+
+    const target = db.users.find((item) => item.id === toUserId && item.role === 'student');
+    if (!target) throw new Error('User not found.');
+
+    const existingConnection = db.communityConnections.find((item) => item.participantKey === localConnectionKey(user.id, toUserId));
+    if (existingConnection) throw new Error('You are already connected.');
+
+    const existingPending = db.communityConnectionRequests.find((item) => (
+      ((item.fromUserId === user.id && item.toUserId === toUserId) || (item.fromUserId === toUserId && item.toUserId === user.id))
+      && item.status === 'pending'
+    ));
+    if (existingPending) throw new Error('A pending connection request already exists.');
+
+    db.communityConnectionRequests.push({
+      id: `conn-req-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+      fromUserId: user.id,
+      toUserId,
+      status: 'pending',
+      createdAt: new Date().toISOString(),
+    });
+
+    writeDb(db);
+    return { ok: true } as T;
+  }
+
+  if (url.pathname === '/api/community/connections/requests' && method === 'GET') {
+    const { db, user } = requireAuth(token);
+    const incoming = db.communityConnectionRequests.filter((item) => item.toUserId === user.id && item.status === 'pending');
+    const outgoing = db.communityConnectionRequests.filter((item) => item.fromUserId === user.id && item.status === 'pending');
+
+    const mapRequest = (item: LocalCommunityConnectionRequest, direction: 'incoming' | 'outgoing') => {
+      const otherUserId = direction === 'incoming' ? item.fromUserId : item.toUserId;
+      const otherUser = db.users.find((entry) => entry.id === otherUserId);
+      if (!otherUser) return null;
+      const profile = getOrCreateLocalCommunityProfile(db, otherUser);
+      return {
+        id: item.id,
+        direction,
+        status: item.status,
+        createdAt: item.createdAt,
+        user: serializeLocalCommunityUser(otherUser, profile),
+      };
+    };
+
+    writeDb(db);
+    return {
+      incoming: incoming.map((item) => mapRequest(item, 'incoming')).filter(Boolean),
+      outgoing: outgoing.map((item) => mapRequest(item, 'outgoing')).filter(Boolean),
+    } as T;
+  }
+
+  if (/^\/api\/community\/connections\/requests\/[^/]+\/respond$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const requestId = url.pathname.split('/')[5];
+    const action = String(body.action || '').toLowerCase().trim();
+    if (!['accept', 'reject'].includes(action)) throw new Error('action must be accept or reject.');
+
+    const request = db.communityConnectionRequests.find((item) => item.id === requestId && item.toUserId === user.id);
+    if (!request) throw new Error('Connection request not found.');
+    if (request.status !== 'pending') throw new Error('Request is already handled.');
+
+    if (action === 'accept') {
+      const key = localConnectionKey(request.fromUserId, request.toUserId);
+      if (!db.communityConnections.some((item) => item.participantKey === key)) {
+        const [a, b] = [request.fromUserId, request.toUserId].sort();
+        db.communityConnections.push({
+          id: `connection-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+          participantA: a,
+          participantB: b,
+          participantKey: key,
+          createdAt: new Date().toISOString(),
+        });
+      }
+      request.status = 'accepted';
+    } else {
+      request.status = 'rejected';
+    }
+
+    writeDb(db);
+    return { ok: true, status: request.status } as T;
+  }
+
+  if (url.pathname === '/api/community/connections' && method === 'GET') {
+    const { db, user } = requireAuth(token);
+    const rows = db.communityConnections
+      .filter((item) => item.participantA === user.id || item.participantB === user.id)
+      .map((item) => {
+        const otherUserId = item.participantA === user.id ? item.participantB : item.participantA;
+        const otherUser = db.users.find((entry) => entry.id === otherUserId);
+        if (!otherUser) return null;
+        const profile = getOrCreateLocalCommunityProfile(db, otherUser);
+        const unreadCount = db.communityMessages.filter((msg) => (
+          msg.connectionId === item.id && msg.senderUserId !== user.id && !msg.readByUserIds.includes(user.id)
+        )).length;
+
+        return {
+          connectionId: item.id,
+          connectedAt: item.createdAt,
+          user: serializeLocalCommunityUser(otherUser, profile),
+          unreadCount,
+        };
+      })
+      .filter(Boolean);
+
+    writeDb(db);
+    return { connections: rows } as T;
+  }
+
+  if (/^\/api\/community\/messages\/.+/.test(url.pathname) && method === 'GET') {
+    const { db, user } = requireAuth(token);
+    const connectionId = url.pathname.split('/')[4];
+    const connection = db.communityConnections.find((item) => item.id === connectionId);
+    if (!connection) throw new Error('Connection not found.');
+    if (![connection.participantA, connection.participantB].includes(user.id)) throw new Error('Access denied for this chat.');
+
+    db.communityMessages.forEach((msg) => {
+      if (msg.connectionId === connectionId && msg.senderUserId !== user.id && !msg.readByUserIds.includes(user.id)) {
+        msg.readByUserIds.push(user.id);
+      }
+    });
+
+    const messages = db.communityMessages
+      .filter((item) => item.connectionId === connectionId)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      .map((item) => ({
+        id: item.id,
+        connectionId: item.connectionId,
+        senderUserId: item.senderUserId,
+        text: item.text,
+        createdAt: item.createdAt,
+      }));
+
+    writeDb(db);
+    return { messages } as T;
+  }
+
+  if (/^\/api\/community\/messages\/.+/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const connectionId = url.pathname.split('/')[4];
+    const text = String(body.text || '').trim();
+    if (!text) throw new Error('Message text is required.');
+
+    const connection = db.communityConnections.find((item) => item.id === connectionId);
+    if (!connection) throw new Error('Connection not found.');
+    if (![connection.participantA, connection.participantB].includes(user.id)) throw new Error('Access denied for this chat.');
+
+    const created: LocalCommunityMessage = {
+      id: `message-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+      connectionId,
+      senderUserId: user.id,
+      text,
+      readByUserIds: [user.id],
+      createdAt: new Date().toISOString(),
+    };
+    db.communityMessages.push(created);
+    writeDb(db);
+    return {
+      message: {
+        id: created.id,
+        connectionId: created.connectionId,
+        senderUserId: created.senderUserId,
+        text: created.text,
+        createdAt: created.createdAt,
+      },
+    } as T;
+  }
+
+  if (url.pathname === '/api/community/report' && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const connectionId = String(body.connectionId || '').trim();
+    const reportedUserId = String(body.reportedUserId || '').trim();
+    const reason = String(body.reason || '').trim();
+    if (!connectionId || !reportedUserId) throw new Error('Valid connection id and reported user id are required.');
+
+    const connection = db.communityConnections.find((item) => item.id === connectionId);
+    if (!connection) throw new Error('Connection not found.');
+    if (![connection.participantA, connection.participantB].includes(user.id)) throw new Error('Access denied for this chat.');
+
+    const messages = db.communityMessages.filter((item) => item.connectionId === connectionId);
+    const moderation = moderateLocalCommunityConversation(messages);
+    const report: LocalCommunityReport = {
+      id: `community-report-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+      connectionId,
+      reporterUserId: user.id,
+      reportedUserId,
+      reason,
+      status: moderation.result === 'harmful' ? 'actioned' : 'open',
+      moderation: {
+        result: moderation.result,
+        reasons: moderation.reasons,
+        score: moderation.score,
+        violatorUserId: moderation.violatorUserId,
+        autoBlocked: moderation.result === 'harmful',
+        reviewedAt: moderation.result === 'harmful' ? new Date().toISOString() : null,
+        reviewedByEmail: moderation.result === 'harmful' ? 'system@net360.local' : '',
+      },
+      chatSnapshot: messages.slice(-150).map((item) => ({ senderUserId: item.senderUserId, text: item.text, createdAt: item.createdAt })),
+      createdAt: new Date().toISOString(),
+    };
+    db.communityReports.unshift(report);
+
+    if (moderation.result === 'harmful' && moderation.violatorUserId) {
+      const existingBlock = db.communityBlocks.find((item) => item.userId === moderation.violatorUserId);
+      if (existingBlock) {
+        existingBlock.blocked = true;
+        existingBlock.reason = moderation.reasons.join(' ') || 'Harmful community behavior detected.';
+        existingBlock.blockedAt = new Date().toISOString();
+        existingBlock.sourceReportId = report.id;
+      } else {
+        db.communityBlocks.push({
+          userId: moderation.violatorUserId,
+          blocked: true,
+          reason: moderation.reasons.join(' ') || 'Harmful community behavior detected.',
+          blockedAt: new Date().toISOString(),
+          sourceReportId: report.id,
+        });
+      }
+    }
+
+    writeDb(db);
+    return {
+      ok: true,
+      reportId: report.id,
+      moderation: {
+        result: moderation.result,
+        reasons: moderation.reasons,
+        score: moderation.score,
+      },
+    } as T;
+  }
+
+  if (url.pathname === '/api/community/leaderboard' && method === 'GET') {
+    const { db } = requireAuth(token);
+    const leaderboard = db.users
+      .filter((item) => item.role === 'student')
+      .sort((a, b) => Number(b.progress?.averageScore || 0) - Number(a.progress?.averageScore || 0))
+      .slice(0, 20)
+      .map((entry, index) => {
+        const profile = getOrCreateLocalCommunityProfile(db, entry);
+        return {
+          rank: index + 1,
+          ...serializeLocalCommunityUser(entry, profile),
+        };
+      });
+    writeDb(db);
+    return { leaderboard } as T;
+  }
+
+  if (url.pathname === '/api/community/groups' && method === 'GET') {
+    requireAuth(token);
+    return {
+      groups: [
+        { id: 'math-core', title: 'Mathematics Problem Solvers', subject: 'mathematics', members: 24, description: 'Subject-focused discussion and study support for NET aspirants in Pakistan.' },
+        { id: 'physics-lab', title: 'Physics Concept Lab', subject: 'physics', members: 21, description: 'Subject-focused discussion and study support for NET aspirants in Pakistan.' },
+        { id: 'chem-crackers', title: 'Chemistry MCQ Crackers', subject: 'chemistry', members: 19, description: 'Subject-focused discussion and study support for NET aspirants in Pakistan.' },
+        { id: 'bio-circle', title: 'Biology Revision Circle', subject: 'biology', members: 17, description: 'Subject-focused discussion and study support for NET aspirants in Pakistan.' },
+        { id: 'english-boost', title: 'English NET Boosters', subject: 'english', members: 20, description: 'Subject-focused discussion and study support for NET aspirants in Pakistan.' },
+      ],
+    } as T;
+  }
+
+  if (url.pathname === '/api/community/study-partners' && method === 'GET') {
+    const { db, user } = requireAuth(token);
+    const meWeak = new Set((user.progress?.weakTopics || []).map((item) => String(item).toLowerCase()));
+
+    const studyPartners = db.users
+      .filter((item) => item.role === 'student' && item.id !== user.id)
+      .map((entry) => {
+        const profile = getOrCreateLocalCommunityProfile(db, entry);
+        const weakTopics = (entry.progress?.weakTopics || []).map((item) => String(item).toLowerCase());
+        const overlap = weakTopics.filter((topic) => meWeak.has(topic)).length;
+        const scoreGap = Math.abs(Number(entry.progress?.averageScore || 0) - Number(user.progress?.averageScore || 0));
+        const compatibility = Math.max(0, 100 - scoreGap + overlap * 8);
+        return {
+          compatibility,
+          user: serializeLocalCommunityUser(entry, profile),
+        };
+      })
+      .sort((a, b) => b.compatibility - a.compatibility)
+      .slice(0, 12);
+
+    writeDb(db);
+    return { studyPartners } as T;
+  }
+
+  if (url.pathname === '/api/admin/community/reports' && method === 'GET') {
+    requireAdmin(token);
+    const db = readDb();
+    return {
+      reports: db.communityReports.slice(0, 300),
+    } as T;
+  }
+
+  if (/^\/api\/admin\/community\/reports\/[^/]+\/review$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAdmin(token);
+    const reportId = url.pathname.split('/')[5];
+    const action = String(body.action || '').trim().toLowerCase();
+    const notes = String(body.notes || '').trim();
+    const violatorUserId = String(body.violatorUserId || '').trim();
+    if (!['block', 'dismiss'].includes(action)) throw new Error('action must be block or dismiss.');
+
+    const report = db.communityReports.find((item) => item.id === reportId);
+    if (!report) throw new Error('Report not found.');
+
+    if (action === 'dismiss') {
+      report.status = 'dismissed';
+      report.moderation.reviewedAt = new Date().toISOString();
+      report.moderation.reviewedByEmail = user.email;
+      if (notes) {
+        report.moderation.reasons = [...(report.moderation.reasons || []), `Admin note: ${notes}`];
+      }
+      writeDb(db);
+      return { ok: true, status: report.status } as T;
+    }
+
+    const target = violatorUserId || report.moderation.violatorUserId || report.reportedUserId;
+    if (!target) throw new Error('A valid violator user id is required to block.');
+    const existingBlock = db.communityBlocks.find((item) => item.userId === target);
+    if (existingBlock) {
+      existingBlock.blocked = true;
+      existingBlock.reason = notes || 'Blocked by admin after community report review.';
+      existingBlock.blockedAt = new Date().toISOString();
+      existingBlock.sourceReportId = report.id;
+    } else {
+      db.communityBlocks.push({
+        userId: target,
+        blocked: true,
+        reason: notes || 'Blocked by admin after community report review.',
+        blockedAt: new Date().toISOString(),
+        sourceReportId: report.id,
+      });
+    }
+
+    report.status = 'actioned';
+    report.moderation.result = 'harmful';
+    report.moderation.violatorUserId = target;
+    report.moderation.autoBlocked = true;
+    report.moderation.reviewedAt = new Date().toISOString();
+    report.moderation.reviewedByEmail = user.email;
+    if (notes) {
+      report.moderation.reasons = [...(report.moderation.reasons || []), `Admin note: ${notes}`];
+    }
+
+    writeDb(db);
+    return { ok: true, status: report.status } as T;
   }
 
   if (url.pathname === '/api/mcqs' && method === 'GET') {

@@ -14,6 +14,7 @@ import { Tests } from './components/Tests';
 import { Analytics } from './components/Analytics';
 import { MeritCalculator } from './components/MeritCalculator';
 import { Profile } from './components/Profile';
+import { Community } from './components/Community';
 import { 
   Home, 
   BookOpen, 
@@ -30,6 +31,7 @@ import {
   Menu,
   Bell,
   MessageSquare,
+  Users,
   ChevronDown,
   Sparkles,
 } from 'lucide-react';
@@ -55,6 +57,7 @@ export default function App() {
       'tests',
       'analytics',
       'merit-calculator',
+      'community',
       'profile',
     ]);
     return tab && allowed.has(tab) ? tab : 'home';
@@ -74,6 +77,7 @@ export default function App() {
     { id: 'tests', label: 'Tests', icon: FileText },
     { id: 'analytics', label: 'Analytics', icon: TrendingUp },
     { id: 'merit-calculator', label: 'Merit Calculator', icon: Calculator },
+    { id: 'community', label: 'Community', icon: Users },
     { id: 'profile', label: 'Profile', icon: User }
   ];
 
@@ -227,6 +231,10 @@ export default function App() {
 
                 <TabsContent value="profile" className="mt-0 net360-page">
                   <Profile onNavigate={setActiveTab} />
+                </TabsContent>
+
+                <TabsContent value="community" className="mt-0 net360-page">
+                  <Community />
                 </TabsContent>
               </Tabs>
             </main>

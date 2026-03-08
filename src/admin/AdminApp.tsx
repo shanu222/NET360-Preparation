@@ -171,6 +171,30 @@ interface AdminSubscriptionUser {
   };
 }
 
+interface AdminCommunityReport {
+  id: string;
+  connectionId: string;
+  reporterUserId: string;
+  reportedUserId: string;
+  reason: string;
+  status: string;
+  moderation?: {
+    result?: string;
+    reasons?: string[];
+    score?: number;
+    violatorUserId?: string;
+    autoBlocked?: boolean;
+    reviewedAt?: string | null;
+    reviewedByEmail?: string;
+  };
+  chatSnapshot: Array<{
+    senderUserId: string;
+    text: string;
+    createdAt?: string | null;
+  }>;
+  createdAt: string | null;
+}
+
 interface LoginUser {
   id: string;
   role?: 'student' | 'admin';
@@ -388,6 +412,8 @@ export default function AdminApp() {
   const [submissionSubjectFilter, setSubmissionSubjectFilter] = useState('all');
   const [submissionQuery, setSubmissionQuery] = useState('');
   const [submissionReviewNotes, setSubmissionReviewNotes] = useState<Record<string, string>>({});
+  const [communityReports, setCommunityReports] = useState<AdminCommunityReport[]>([]);
+  const [communityReportNotes, setCommunityReportNotes] = useState<Record<string, string>>({});
   const [contributionPolicy, setContributionPolicy] = useState<AdminContributionPolicy>({
     maxSubmissionsPerDay: 5,
     maxFilesPerSubmission: 3,
@@ -465,6 +491,7 @@ export default function AdminApp() {
       policyPayload,
       subscriptionOverviewPayload,
       subscriptionUsersPayload,
+      communityReportsPayload,
     ] = await Promise.all([
       apiRequest<AdminOverview>('/api/admin/overview', {}, activeToken),
       apiRequest<{ users: AdminUser[] }>('/api/admin/users', {}, activeToken),
@@ -488,6 +515,7 @@ export default function AdminApp() {
         dailyUsage: [],
       })),
       apiRequest<{ users: AdminSubscriptionUser[] }>(`/api/admin/subscriptions/users?status=${subscriptionFilter}`, {}, activeToken).catch(() => ({ users: [] })),
+      apiRequest<{ reports: AdminCommunityReport[] }>('/api/admin/community/reports', {}, activeToken).catch(() => ({ reports: [] })),
     ]);
 
     setOverview(overviewPayload);
@@ -504,6 +532,7 @@ export default function AdminApp() {
     });
     setSubscriptionOverview(subscriptionOverviewPayload);
     setSubscriptionUsers(subscriptionUsersPayload.users || []);
+    setCommunityReports(communityReportsPayload.reports || []);
   };
 
   const loadSectionMcqs = async (
@@ -1100,6 +1129,32 @@ export default function AdminApp() {
     }
   };
 
+  const reviewCommunityReport = async (report: AdminCommunityReport, action: 'block' | 'dismiss') => {
+    if (!authToken) return;
+
+    const notes = String(communityReportNotes[report.id] || '').trim();
+    const defaultViolator = String(report.moderation?.violatorUserId || report.reportedUserId || '').trim();
+
+    try {
+      await apiRequest(
+        `/api/admin/community/reports/${report.id}/review`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            action,
+            notes,
+            violatorUserId: defaultViolator,
+          }),
+        },
+        authToken,
+      );
+      toast.success(action === 'block' ? 'User blocked from community.' : 'Report dismissed.');
+      await loadAdminData(authToken);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not review community report.');
+    }
+  };
+
   const handleSectionSelection = async (selection: {
     subject: SubjectKey;
     part: 'part1' | 'part2';
@@ -1250,6 +1305,7 @@ export default function AdminApp() {
             <TabsTrigger className="min-w-[120px]" value="mcqs">MCQs</TabsTrigger>
             <TabsTrigger className="min-w-[150px]" value="practice-board">Practice Board</TabsTrigger>
             <TabsTrigger className="min-w-[140px]" value="submissions">Submissions</TabsTrigger>
+            <TabsTrigger className="min-w-[190px]" value="community-moderation">Community Moderation</TabsTrigger>
             <TabsTrigger className="min-w-[150px]" value="subscriptions">Subscriptions</TabsTrigger>
           </TabsList>
         </div>
@@ -2070,6 +2126,88 @@ export default function AdminApp() {
                 {!filteredQuestionSubmissions.length ? (
                   <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
                     No submissions found for current filters.
+                  </div>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="community-moderation" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Community Safety Reports</CardTitle>
+              <CardDescription>
+                Review flagged private chats, then block harmful users or dismiss false reports.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-3 max-h-[760px] overflow-auto">
+                {communityReports.map((report) => (
+                  <div key={report.id} className="rounded-lg border p-3 space-y-3">
+                    <div className="flex flex-wrap items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium">Report #{report.id.slice(-6)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Reporter: {report.reporterUserId} • Reported: {report.reportedUserId}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {report.createdAt ? new Date(report.createdAt).toLocaleString() : 'Unknown time'}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={report.status === 'open' ? 'default' : 'outline'}>{report.status}</Badge>
+                        <Badge variant="outline">{report.moderation?.result || 'pending'}</Badge>
+                      </div>
+                    </div>
+
+                    <div className="rounded-md border bg-slate-50 p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                      <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Reporter reason</p>
+                      {report.reason || 'No reason provided.'}
+                    </div>
+
+                    {report.moderation?.reasons?.length ? (
+                      <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                        <p className="mb-1 text-xs uppercase tracking-wide">Auto moderation findings</p>
+                        <p>{report.moderation.reasons.join(' ')}</p>
+                      </div>
+                    ) : null}
+
+                    <div className="rounded-md border bg-white p-3">
+                      <p className="mb-2 text-xs uppercase tracking-wide text-muted-foreground">Chat snapshot</p>
+                      <div className="space-y-2 max-h-[220px] overflow-auto">
+                        {(report.chatSnapshot || []).map((row, idx) => (
+                          <div key={`${report.id}-${idx}`} className="rounded border px-2 py-1.5 text-xs">
+                            <p className="text-muted-foreground">{row.senderUserId}</p>
+                            <p className="whitespace-pre-wrap">{row.text}</p>
+                          </div>
+                        ))}
+                        {!report.chatSnapshot?.length ? (
+                          <p className="text-xs text-muted-foreground">No snapshot available.</p>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label>Admin Notes</Label>
+                      <Textarea
+                        value={communityReportNotes[report.id] || ''}
+                        onChange={(e) => setCommunityReportNotes((prev) => ({ ...prev, [report.id]: e.target.value }))}
+                        placeholder="Add your moderation note (optional but recommended)."
+                        className="min-h-[80px]"
+                      />
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button size="sm" onClick={() => void reviewCommunityReport(report, 'block')}>Block User</Button>
+                      <Button size="sm" variant="outline" onClick={() => void reviewCommunityReport(report, 'dismiss')}>Dismiss</Button>
+                    </div>
+                  </div>
+                ))}
+
+                {!communityReports.length ? (
+                  <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
+                    No community reports found.
                   </div>
                 ) : null}
               </div>

@@ -19,6 +19,12 @@ import { PracticeBoardQuestionModel } from './models/PracticeBoardQuestion.js';
 import { QuestionSubmissionModel } from './models/QuestionSubmission.js';
 import { ContributionPolicyModel } from './models/ContributionPolicy.js';
 import { SubmissionRestrictionModel } from './models/SubmissionRestriction.js';
+import { CommunityProfileModel } from './models/CommunityProfile.js';
+import { CommunityConnectionRequestModel } from './models/CommunityConnectionRequest.js';
+import { CommunityConnectionModel } from './models/CommunityConnection.js';
+import { CommunityMessageModel } from './models/CommunityMessage.js';
+import { CommunityReportModel } from './models/CommunityReport.js';
+import { CommunityBlockModel } from './models/CommunityBlock.js';
 import { SignupRequestModel } from './models/SignupRequest.js';
 import { SignupTokenModel } from './models/SignupToken.js';
 
@@ -704,6 +710,124 @@ function serializePracticeBoardQuestion(item) {
     questionImageUrl: String(item.questionImageUrl || '').trim(),
     solutionText: String(item.solutionText || '').trim(),
     solutionImageUrl: String(item.solutionImageUrl || '').trim(),
+  };
+}
+
+function makeCommunityUsername(user) {
+  const first = String(user?.firstName || '').trim();
+  const last = String(user?.lastName || '').trim();
+  const full = [first, last].filter(Boolean).join(' ').trim();
+  if (full) return full;
+  const email = String(user?.email || '').trim().toLowerCase();
+  if (email.includes('@')) return email.split('@')[0];
+  return `student-${String(user?._id || '').slice(-6)}`;
+}
+
+function normalizeUsername(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 40);
+}
+
+async function getOrCreateCommunityProfile(user) {
+  const existing = await CommunityProfileModel.findOne({ userId: user._id });
+  if (existing) return existing;
+
+  const base = normalizeUsername(makeCommunityUsername(user)) || `student-${String(user._id).slice(-6)}`;
+  let candidate = base;
+  let suffix = 1;
+  while (await CommunityProfileModel.findOne({ username: candidate })) {
+    suffix += 1;
+    candidate = `${base}-${suffix}`.slice(0, 40);
+  }
+
+  return CommunityProfileModel.create({
+    userId: user._id,
+    username: candidate,
+    shareProfilePicture: false,
+    profilePictureUrl: '',
+    favoriteSubjects: [],
+  });
+}
+
+function connectionKey(userIdA, userIdB) {
+  return [String(userIdA), String(userIdB)].sort().join(':');
+}
+
+async function ensureCommunityAccess(userId) {
+  const block = await CommunityBlockModel.findOne({ userId, blocked: true }).lean();
+  if (!block) return null;
+  return {
+    blocked: true,
+    reason: String(block.reason || 'Community access restricted due to moderation action.').trim(),
+  };
+}
+
+function serializeCommunityUser(params) {
+  const profile = params?.profile || {};
+  const user = params?.user || {};
+  const showPicture = Boolean(profile.shareProfilePicture && profile.profilePictureUrl);
+  return {
+    id: String(user._id || ''),
+    userId: String(user._id || ''),
+    firstName: String(user.firstName || ''),
+    lastName: String(user.lastName || ''),
+    city: String(user.city || ''),
+    username: String(profile.username || makeCommunityUsername(user)),
+    profilePictureUrl: showPicture ? String(profile.profilePictureUrl || '') : '',
+    shareProfilePicture: Boolean(profile.shareProfilePicture),
+    targetProgram: String(user.targetProgram || ''),
+    score: Number(user.progress?.averageScore || 0),
+    testsCompleted: Number(user.progress?.testsCompleted || 0),
+    questionsSolved: Number(user.progress?.questionsSolved || 0),
+  };
+}
+
+function moderateCommunityConversation(messages) {
+  const harmfulPattern = /(abuse|idiot|stupid|hate|kill|threat|harass|scam|fraud|porn|adult|nude|hack|malware|terror)/i;
+  const spamPattern = /(buy now|click here|free money|join now|whatsapp group|crypto signal)/i;
+
+  const offenderScore = new Map();
+  const reasons = [];
+
+  for (const message of messages || []) {
+    const sender = String(message.senderUserId || '');
+    const text = String(message.text || '').trim();
+    if (!sender || !text) continue;
+
+    let score = offenderScore.get(sender) || 0;
+    if (harmfulPattern.test(text)) {
+      score += 55;
+      reasons.push('Detected abusive or harmful wording in chat.');
+    }
+    if (spamPattern.test(text)) {
+      score += 45;
+      reasons.push('Detected spam-like or malicious promotional patterns.');
+    }
+    if (text.length > 0 && text.length < 2) {
+      score += 5;
+    }
+    offenderScore.set(sender, score);
+  }
+
+  let violatorUserId = '';
+  let topScore = 0;
+  offenderScore.forEach((score, sender) => {
+    if (score > topScore) {
+      topScore = score;
+      violatorUserId = sender;
+    }
+  });
+
+  return {
+    result: topScore >= 50 ? 'harmful' : 'clean',
+    score: Math.min(100, topScore),
+    reasons: Array.from(new Set(reasons)),
+    violatorUserId,
   };
 }
 
@@ -1740,6 +1864,575 @@ app.put('/api/auth/preferences', authMiddleware, async (req, res) => {
 
   await req.user.save();
   res.json({ user: userPublic(req.user) });
+});
+
+async function communityGuard(req, res) {
+  const blocked = await ensureCommunityAccess(req.user._id);
+  if (!blocked) return false;
+  res.status(403).json({ error: blocked.reason, code: 'COMMUNITY_BLOCKED' });
+  return true;
+}
+
+app.get('/api/community/profile', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const profile = await getOrCreateCommunityProfile(req.user);
+  res.json({ profile: serializeCommunityUser({ user: req.user, profile }) });
+});
+
+app.put('/api/community/profile', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const profile = await getOrCreateCommunityProfile(req.user);
+
+  const nextUsername = normalizeUsername(req.body?.username || profile.username);
+  if (!nextUsername) {
+    res.status(400).json({ error: 'username is required.' });
+    return;
+  }
+
+  const taken = await CommunityProfileModel.findOne({
+    username: nextUsername,
+    userId: { $ne: req.user._id },
+  }).lean();
+  if (taken) {
+    res.status(400).json({ error: 'Username is already taken.' });
+    return;
+  }
+
+  profile.username = nextUsername;
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'shareProfilePicture')) {
+    profile.shareProfilePicture = Boolean(req.body?.shareProfilePicture);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'profilePictureUrl')) {
+    profile.profilePictureUrl = String(req.body?.profilePictureUrl || '').trim();
+  }
+  if (Array.isArray(req.body?.favoriteSubjects)) {
+    profile.favoriteSubjects = req.body.favoriteSubjects.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean).slice(0, 8);
+  }
+
+  await profile.save();
+  res.json({ profile: serializeCommunityUser({ user: req.user, profile }) });
+});
+
+app.get('/api/community/users/search', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const q = String(req.query.q || '').trim().toLowerCase();
+  const me = String(req.user._id);
+
+  const profiles = await CommunityProfileModel.find(q ? { username: { $regex: q, $options: 'i' } } : {})
+    .limit(30)
+    .lean();
+
+  const userIds = profiles.map((item) => String(item.userId));
+  const users = await UserModel.find({ _id: { $in: userIds }, role: 'student' }).lean();
+  const usersById = new Map(users.map((item) => [String(item._id), item]));
+
+  const rows = [];
+  for (const profile of profiles) {
+    const userId = String(profile.userId);
+    if (userId === me) continue;
+    const user = usersById.get(userId);
+    if (!user) continue;
+
+    const connected = await CommunityConnectionModel.findOne({ participantKey: connectionKey(req.user._id, userId) }).lean();
+    const pendingTo = await CommunityConnectionRequestModel.findOne({ fromUserId: req.user._id, toUserId: userId, status: 'pending' }).lean();
+    const pendingFrom = await CommunityConnectionRequestModel.findOne({ fromUserId: userId, toUserId: req.user._id, status: 'pending' }).lean();
+
+    rows.push({
+      ...serializeCommunityUser({ user, profile }),
+      connectionStatus: connected ? 'connected' : pendingTo ? 'pending-sent' : pendingFrom ? 'pending-received' : 'none',
+    });
+  }
+
+  res.json({ users: rows.slice(0, 20) });
+});
+
+app.post('/api/community/connections/request', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const toUserId = String(req.body?.toUserId || '').trim();
+  if (!isValidObjectId(toUserId)) {
+    res.status(400).json({ error: 'Valid target user id is required.' });
+    return;
+  }
+  if (String(req.user._id) === toUserId) {
+    res.status(400).json({ error: 'You cannot connect to yourself.' });
+    return;
+  }
+
+  const target = await UserModel.findById(toUserId).lean();
+  if (!target || target.role !== 'student') {
+    res.status(404).json({ error: 'User not found.' });
+    return;
+  }
+
+  const targetBlocked = await ensureCommunityAccess(toUserId);
+  if (targetBlocked) {
+    res.status(403).json({ error: 'This user is not available in community right now.' });
+    return;
+  }
+
+  const key = connectionKey(req.user._id, toUserId);
+  const existingConnection = await CommunityConnectionModel.findOne({ participantKey: key }).lean();
+  if (existingConnection) {
+    res.status(400).json({ error: 'You are already connected.' });
+    return;
+  }
+
+  const existingPending = await CommunityConnectionRequestModel.findOne({
+    $or: [
+      { fromUserId: req.user._id, toUserId, status: 'pending' },
+      { fromUserId: toUserId, toUserId: req.user._id, status: 'pending' },
+    ],
+  }).lean();
+  if (existingPending) {
+    res.status(400).json({ error: 'A pending connection request already exists.' });
+    return;
+  }
+
+  const created = await CommunityConnectionRequestModel.create({
+    fromUserId: req.user._id,
+    toUserId,
+    status: 'pending',
+  });
+
+  res.status(201).json({ requestId: String(created._id) });
+});
+
+app.get('/api/community/connections/requests', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const [incoming, outgoing] = await Promise.all([
+    CommunityConnectionRequestModel.find({ toUserId: req.user._id, status: 'pending' }).sort({ createdAt: -1 }).lean(),
+    CommunityConnectionRequestModel.find({ fromUserId: req.user._id, status: 'pending' }).sort({ createdAt: -1 }).lean(),
+  ]);
+
+  const relatedUserIds = Array.from(new Set([
+    ...incoming.map((item) => String(item.fromUserId)),
+    ...outgoing.map((item) => String(item.toUserId)),
+  ]));
+
+  const [users, profiles] = await Promise.all([
+    UserModel.find({ _id: { $in: relatedUserIds } }).lean(),
+    CommunityProfileModel.find({ userId: { $in: relatedUserIds } }).lean(),
+  ]);
+  const usersById = new Map(users.map((item) => [String(item._id), item]));
+  const profilesByUserId = new Map(profiles.map((item) => [String(item.userId), item]));
+
+  const mapRequest = (item, direction) => {
+    const otherUserId = direction === 'incoming' ? String(item.fromUserId) : String(item.toUserId);
+    const user = usersById.get(otherUserId);
+    const profile = profilesByUserId.get(otherUserId);
+    if (!user) return null;
+    return {
+      id: String(item._id),
+      direction,
+      status: String(item.status || 'pending'),
+      createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+      user: serializeCommunityUser({ user, profile }),
+    };
+  };
+
+  res.json({
+    incoming: incoming.map((item) => mapRequest(item, 'incoming')).filter(Boolean),
+    outgoing: outgoing.map((item) => mapRequest(item, 'outgoing')).filter(Boolean),
+  });
+});
+
+app.post('/api/community/connections/requests/:requestId/respond', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const requestId = String(req.params.requestId || '').trim();
+  const action = String(req.body?.action || '').trim().toLowerCase();
+  if (!isValidObjectId(requestId)) {
+    res.status(400).json({ error: 'Valid request id is required.' });
+    return;
+  }
+  if (!['accept', 'reject'].includes(action)) {
+    res.status(400).json({ error: 'action must be accept or reject.' });
+    return;
+  }
+
+  const request = await CommunityConnectionRequestModel.findById(requestId);
+  if (!request || String(request.toUserId) !== String(req.user._id)) {
+    res.status(404).json({ error: 'Connection request not found.' });
+    return;
+  }
+  if (request.status !== 'pending') {
+    res.status(400).json({ error: 'Request is already handled.' });
+    return;
+  }
+
+  if (action === 'accept') {
+    const key = connectionKey(request.fromUserId, request.toUserId);
+    await CommunityConnectionModel.findOneAndUpdate(
+      { participantKey: key },
+      {
+        $setOnInsert: {
+          participantA: String(request.fromUserId) < String(request.toUserId) ? request.fromUserId : request.toUserId,
+          participantB: String(request.fromUserId) < String(request.toUserId) ? request.toUserId : request.fromUserId,
+          participantKey: key,
+        },
+      },
+      { upsert: true, new: true },
+    );
+    request.status = 'accepted';
+  } else {
+    request.status = 'rejected';
+  }
+
+  await request.save();
+  res.json({ ok: true, status: request.status });
+});
+
+app.get('/api/community/connections', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const myId = String(req.user._id);
+  const connections = await CommunityConnectionModel.find({
+    $or: [{ participantA: myId }, { participantB: myId }],
+  }).sort({ createdAt: -1 }).lean();
+
+  const otherUserIds = connections.map((item) => (String(item.participantA) === myId ? String(item.participantB) : String(item.participantA)));
+
+  const [users, profiles] = await Promise.all([
+    UserModel.find({ _id: { $in: otherUserIds } }).lean(),
+    CommunityProfileModel.find({ userId: { $in: otherUserIds } }).lean(),
+  ]);
+  const usersById = new Map(users.map((item) => [String(item._id), item]));
+  const profilesById = new Map(profiles.map((item) => [String(item.userId), item]));
+
+  const rows = [];
+  for (const connection of connections) {
+    const otherUserId = String(connection.participantA) === myId ? String(connection.participantB) : String(connection.participantA);
+    const user = usersById.get(otherUserId);
+    if (!user) continue;
+    const profile = profilesById.get(otherUserId);
+
+    const unreadCount = await CommunityMessageModel.countDocuments({
+      connectionId: connection._id,
+      senderUserId: { $ne: myId },
+      readByUserIds: { $ne: req.user._id },
+    });
+
+    rows.push({
+      connectionId: String(connection._id),
+      connectedAt: connection.createdAt ? new Date(connection.createdAt).toISOString() : null,
+      user: serializeCommunityUser({ user, profile }),
+      unreadCount,
+    });
+  }
+
+  res.json({ connections: rows });
+});
+
+app.get('/api/community/messages/:connectionId', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const connectionId = String(req.params.connectionId || '').trim();
+  if (!isValidObjectId(connectionId)) {
+    res.status(400).json({ error: 'Valid connection id is required.' });
+    return;
+  }
+
+  const connection = await CommunityConnectionModel.findById(connectionId).lean();
+  if (!connection) {
+    res.status(404).json({ error: 'Connection not found.' });
+    return;
+  }
+  const myId = String(req.user._id);
+  if (![String(connection.participantA), String(connection.participantB)].includes(myId)) {
+    res.status(403).json({ error: 'Access denied for this chat.' });
+    return;
+  }
+
+  const messages = await CommunityMessageModel.find({ connectionId }).sort({ createdAt: 1 }).limit(500).lean();
+
+  await CommunityMessageModel.updateMany(
+    {
+      connectionId,
+      senderUserId: { $ne: req.user._id },
+      readByUserIds: { $ne: req.user._id },
+    },
+    { $addToSet: { readByUserIds: req.user._id } },
+  );
+
+  res.json({
+    messages: messages.map((item) => ({
+      id: String(item._id),
+      connectionId: String(item.connectionId),
+      senderUserId: String(item.senderUserId),
+      text: String(item.text || ''),
+      createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+    })),
+  });
+});
+
+app.post('/api/community/messages/:connectionId', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const connectionId = String(req.params.connectionId || '').trim();
+  const text = String(req.body?.text || '').trim();
+  if (!isValidObjectId(connectionId)) {
+    res.status(400).json({ error: 'Valid connection id is required.' });
+    return;
+  }
+  if (!text) {
+    res.status(400).json({ error: 'Message text is required.' });
+    return;
+  }
+  if (text.length > 1200) {
+    res.status(400).json({ error: 'Message is too long.' });
+    return;
+  }
+
+  const connection = await CommunityConnectionModel.findById(connectionId).lean();
+  if (!connection) {
+    res.status(404).json({ error: 'Connection not found.' });
+    return;
+  }
+  const myId = String(req.user._id);
+  if (![String(connection.participantA), String(connection.participantB)].includes(myId)) {
+    res.status(403).json({ error: 'Access denied for this chat.' });
+    return;
+  }
+
+  const created = await CommunityMessageModel.create({
+    connectionId,
+    senderUserId: req.user._id,
+    text,
+    readByUserIds: [req.user._id],
+  });
+
+  res.status(201).json({
+    message: {
+      id: String(created._id),
+      connectionId,
+      senderUserId: String(created.senderUserId),
+      text: String(created.text || ''),
+      createdAt: created.createdAt ? new Date(created.createdAt).toISOString() : null,
+    },
+  });
+});
+
+app.post('/api/community/report', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const connectionId = String(req.body?.connectionId || '').trim();
+  const reportedUserId = String(req.body?.reportedUserId || '').trim();
+  const reason = String(req.body?.reason || '').trim();
+
+  if (!isValidObjectId(connectionId) || !isValidObjectId(reportedUserId)) {
+    res.status(400).json({ error: 'Valid connection id and reported user id are required.' });
+    return;
+  }
+
+  const connection = await CommunityConnectionModel.findById(connectionId).lean();
+  if (!connection) {
+    res.status(404).json({ error: 'Connection not found.' });
+    return;
+  }
+  const myId = String(req.user._id);
+  if (![String(connection.participantA), String(connection.participantB)].includes(myId)) {
+    res.status(403).json({ error: 'Access denied for this chat.' });
+    return;
+  }
+
+  const messages = await CommunityMessageModel.find({ connectionId }).sort({ createdAt: 1 }).limit(300).lean();
+  const moderation = moderateCommunityConversation(messages);
+  const snapshot = messages.map((item) => ({
+    senderUserId: String(item.senderUserId),
+    text: String(item.text || ''),
+    createdAt: item.createdAt || null,
+  }));
+
+  const report = await CommunityReportModel.create({
+    connectionId,
+    reporterUserId: req.user._id,
+    reportedUserId,
+    reason,
+    status: moderation.result === 'harmful' ? 'actioned' : 'open',
+    moderation: {
+      result: moderation.result,
+      reasons: moderation.reasons,
+      score: moderation.score,
+      violatorUserId: moderation.violatorUserId,
+      autoBlocked: moderation.result === 'harmful',
+      reviewedAt: moderation.result === 'harmful' ? new Date() : null,
+    },
+    chatSnapshot: snapshot,
+  });
+
+  if (moderation.result === 'harmful' && moderation.violatorUserId) {
+    await CommunityBlockModel.findOneAndUpdate(
+      { userId: moderation.violatorUserId },
+      {
+        $set: {
+          blocked: true,
+          reason: moderation.reasons.join(' ') || 'Harmful community behavior detected.',
+          sourceReportId: String(report._id),
+          blockedAt: new Date(),
+        },
+      },
+      { upsert: true, new: true },
+    );
+  }
+
+  res.status(201).json({
+    ok: true,
+    reportId: String(report._id),
+    moderation: {
+      result: moderation.result,
+      reasons: moderation.reasons,
+      score: moderation.score,
+    },
+  });
+});
+
+app.get('/api/community/leaderboard', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const users = await UserModel.find({ role: 'student' }).sort({ 'progress.averageScore': -1, 'progress.testsCompleted': -1 }).limit(20).lean();
+  const profiles = await CommunityProfileModel.find({ userId: { $in: users.map((item) => item._id) } }).lean();
+  const profilesByUserId = new Map(profiles.map((item) => [String(item.userId), item]));
+
+  res.json({
+    leaderboard: users.map((item, index) => ({
+      rank: index + 1,
+      ...serializeCommunityUser({ user: item, profile: profilesByUserId.get(String(item._id)) }),
+    })),
+  });
+});
+
+app.get('/api/community/groups', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const groups = [
+    { id: 'math-core', title: 'Mathematics Problem Solvers', subject: 'mathematics' },
+    { id: 'physics-lab', title: 'Physics Concept Lab', subject: 'physics' },
+    { id: 'chem-crackers', title: 'Chemistry MCQ Crackers', subject: 'chemistry' },
+    { id: 'bio-circle', title: 'Biology Revision Circle', subject: 'biology' },
+    { id: 'english-boost', title: 'English NET Boosters', subject: 'english' },
+  ];
+
+  const users = await UserModel.find({ role: 'student' }, { progress: 1 }).lean();
+  const ranked = users.length;
+
+  res.json({
+    groups: groups.map((group) => ({
+      ...group,
+      members: Math.max(8, Math.round(ranked * 0.18)),
+      description: 'Subject-focused discussion and study support for NET aspirants in Pakistan.',
+    })),
+  });
+});
+
+app.get('/api/community/study-partners', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const subject = String(req.query.subject || '').trim().toLowerCase();
+  const me = await UserModel.findById(req.user._id).lean();
+  if (!me) {
+    res.status(404).json({ error: 'User not found.' });
+    return;
+  }
+
+  const profiles = await CommunityProfileModel.find().limit(80).lean();
+  const profileMap = new Map(profiles.map((item) => [String(item.userId), item]));
+  const candidates = await UserModel.find({ _id: { $ne: req.user._id }, role: 'student' }).limit(80).lean();
+
+  const matches = candidates
+    .map((item) => {
+      const profile = profileMap.get(String(item._id));
+      const weakTopics = Array.isArray(item.progress?.weakTopics) ? item.progress.weakTopics.map((x) => String(x).toLowerCase()) : [];
+      const meWeak = Array.isArray(me.progress?.weakTopics) ? me.progress.weakTopics.map((x) => String(x).toLowerCase()) : [];
+      const overlap = meWeak.filter((topic) => weakTopics.includes(topic)).length;
+      const subjectBonus = subject && (weakTopics.some((t) => t.includes(subject)) || String(item.targetProgram || '').toLowerCase().includes(subject)) ? 15 : 0;
+      const scoreGap = Math.abs((Number(item.progress?.averageScore || 0) - Number(me.progress?.averageScore || 0)));
+      const compatibility = Math.max(0, 100 - scoreGap + overlap * 8 + subjectBonus);
+      return {
+        compatibility,
+        user: serializeCommunityUser({ user: item, profile }),
+      };
+    })
+    .sort((a, b) => b.compatibility - a.compatibility)
+    .slice(0, 12);
+
+  res.json({ studyPartners: matches });
+});
+
+app.get('/api/admin/community/reports', authMiddleware, requireAdmin, async (_req, res) => {
+  const reports = await CommunityReportModel.find().sort({ createdAt: -1 }).limit(300).lean();
+  res.json({
+    reports: reports.map((item) => ({
+      id: String(item._id),
+      connectionId: String(item.connectionId),
+      reporterUserId: String(item.reporterUserId),
+      reportedUserId: String(item.reportedUserId),
+      reason: String(item.reason || ''),
+      status: String(item.status || 'open'),
+      moderation: item.moderation || {},
+      chatSnapshot: Array.isArray(item.chatSnapshot) ? item.chatSnapshot : [],
+      createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+    })),
+  });
+});
+
+app.post('/api/admin/community/reports/:reportId/review', authMiddleware, requireAdmin, async (req, res) => {
+  const reportId = String(req.params.reportId || '').trim();
+  const action = String(req.body?.action || '').trim().toLowerCase();
+  const violatorUserId = String(req.body?.violatorUserId || '').trim();
+  const notes = String(req.body?.notes || '').trim();
+
+  if (!isValidObjectId(reportId)) {
+    res.status(400).json({ error: 'Valid report id is required.' });
+    return;
+  }
+  if (!['block', 'dismiss'].includes(action)) {
+    res.status(400).json({ error: 'action must be block or dismiss.' });
+    return;
+  }
+
+  const report = await CommunityReportModel.findById(reportId);
+  if (!report) {
+    res.status(404).json({ error: 'Report not found.' });
+    return;
+  }
+
+  if (action === 'dismiss') {
+    report.status = 'dismissed';
+    report.moderation.reviewedByEmail = req.user.email;
+    report.moderation.reviewedAt = new Date();
+    if (notes) {
+      const reasons = Array.isArray(report.moderation.reasons) ? report.moderation.reasons : [];
+      report.moderation.reasons = [...reasons, `Admin note: ${notes}`];
+    }
+    await report.save();
+    res.json({ ok: true, status: report.status });
+    return;
+  }
+
+  const targetUserId = violatorUserId || String(report.moderation?.violatorUserId || report.reportedUserId || '');
+  if (!isValidObjectId(targetUserId)) {
+    res.status(400).json({ error: 'A valid violator user id is required to block.' });
+    return;
+  }
+
+  await CommunityBlockModel.findOneAndUpdate(
+    { userId: targetUserId },
+    {
+      $set: {
+        blocked: true,
+        reason: notes || 'Blocked by admin after community report review.',
+        sourceReportId: reportId,
+        blockedAt: new Date(),
+      },
+    },
+    { upsert: true, new: true },
+  );
+
+  report.status = 'actioned';
+  report.moderation.result = 'harmful';
+  report.moderation.violatorUserId = targetUserId;
+  report.moderation.autoBlocked = true;
+  report.moderation.reviewedByEmail = req.user.email;
+  report.moderation.reviewedAt = new Date();
+  if (notes) {
+    const reasons = Array.isArray(report.moderation.reasons) ? report.moderation.reasons : [];
+    report.moderation.reasons = [...reasons, `Admin note: ${notes}`];
+  }
+  await report.save();
+
+  res.json({ ok: true, status: report.status });
 });
 
 app.get('/api/mcqs', async (req, res) => {
