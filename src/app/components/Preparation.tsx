@@ -4,8 +4,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from 'sonner';
-import { useAppData } from '../context/AppDataContext';
-import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 
@@ -213,9 +211,6 @@ interface PreparationProps {
 }
 
 export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationProps = {}) {
-  const { startTestSession } = useAppData();
-  const { token } = useAuth();
-
   const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<SubjectKey, AcademicPart | null>>({
     mathematics: null,
     physics: null,
@@ -245,10 +240,31 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
     'design-aptitude': null,
   });
 
-  const resolveLaunchToken = async () => {
-    const inMemory = token;
-    if (inMemory) return inMemory;
+  const createTestSession = async (
+    authToken: string,
+    payload: {
+      subject: string;
+      difficulty: 'Easy' | 'Medium' | 'Hard';
+      topic: string;
+      mode: 'topic' | 'mock' | 'adaptive';
+      questionCount: number;
+      part?: string;
+      chapter?: string;
+      section?: string;
+    },
+  ) => {
+    const response = await apiRequest<{ session: { id: string } }>(
+      '/api/tests/start',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      },
+      authToken,
+    );
+    return response.session;
+  };
 
+  const resolveLaunchToken = async () => {
     const stored = localStorage.getItem('net360-auth-token');
     if (stored) return stored;
 
@@ -321,7 +337,7 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
 
     try {
       setLaunchingSectionKey(launchKey);
-      const session = await startTestSession({
+      const session = await createTestSession(authToken, {
         subject: payload.subject,
         difficulty: 'Medium',
         topic: payload.sectionTitle,
@@ -364,7 +380,7 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
 
       for (const candidateSubject of candidateSubjects) {
         try {
-          const session = await startTestSession({
+          const session = await createTestSession(authToken, {
             subject: candidateSubject,
             difficulty: 'Medium',
             topic: topicTitle,
