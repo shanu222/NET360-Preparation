@@ -95,14 +95,14 @@ export default function App() {
               setActiveTab(item.id);
               setMobileMenuOpen(false);
             }}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all duration-200 ${
+            className={`w-full grid grid-cols-[18px_minmax(0,1fr)] items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 ${
               activeTab === item.id
                 ? 'bg-white/22 text-white shadow-[0_8px_20px_rgba(26,24,89,0.38)]'
                 : 'text-indigo-100 hover:bg-white/12'
             }`}
           >
-            <Icon className="w-4 h-4" />
-            <span className="text-sm font-medium">{item.label}</span>
+            <Icon className="w-4 h-4 shrink-0" />
+            <span className="min-w-0 text-sm font-medium leading-5 break-words">{item.label}</span>
           </button>
         );
       })}
