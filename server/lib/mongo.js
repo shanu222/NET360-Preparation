@@ -10,7 +10,6 @@ export async function connectMongo(uri) {
   }
 
   mongoose.set('strictQuery', true);
-  mongoose.set('sanitizeFilter', true);
 
   await mongoose.connect(uri, {
     minPoolSize: 2,
