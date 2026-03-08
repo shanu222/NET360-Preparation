@@ -21,5 +21,6 @@ const mcqSchema = new mongoose.Schema(
 
 mcqSchema.index({ subject: 1, topic: 1, difficulty: 1 });
 mcqSchema.index({ subject: 1, part: 1, chapter: 1, section: 1, difficulty: 1 });
+mcqSchema.index({ subject: 1, difficulty: 1, createdAt: -1 });
 
 export const MCQModel = mongoose.models.MCQ || mongoose.model('MCQ', mcqSchema);

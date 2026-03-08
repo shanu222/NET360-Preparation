@@ -24,5 +24,6 @@ const attemptSchema = new mongoose.Schema(
 
 attemptSchema.index({ userId: 1, attemptedAt: -1 });
 attemptSchema.index({ userId: 1, subject: 1, attemptedAt: -1 });
+attemptSchema.index({ attemptedAt: -1, userId: 1 });
 
 export const AttemptModel = mongoose.models.Attempt || mongoose.model('Attempt', attemptSchema);

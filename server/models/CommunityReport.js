@@ -36,6 +36,7 @@ const communityReportSchema = new mongoose.Schema(
 );
 
 communityReportSchema.index({ status: 1, createdAt: -1 });
+communityReportSchema.index({ reportedUserId: 1, createdAt: -1 });
 
 export const CommunityReportModel =
   mongoose.models.CommunityReport || mongoose.model('CommunityReport', communityReportSchema);

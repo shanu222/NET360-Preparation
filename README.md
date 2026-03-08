@@ -17,6 +17,25 @@ https://www.figma.com/design/y9bYMsJLVtoN2SMwfEKBLc/NET360-Preparation-App
 
 Frontend runs on Vite, backend runs on Express.
 
+## Android App (Capacitor)
+
+This repository includes a native Android shell that runs the same frontend and connects to the same backend APIs/database.
+
+1. Build and sync Android project:
+`npm run mobile:build`
+
+2. Open Android Studio:
+`npm run android:open`
+
+3. Optional sync after frontend updates:
+`npm run android:sync`
+
+Full manual setup and release steps are documented in `ANDROID_SETUP.md`.
+
+Optional native plugin support is included for splash screen, status bar styling, haptics, and push notifications.
+
+The app now includes a first-time onboarding gate that requires users to accept Terms and Conditions and acknowledge/request required permissions before entering the platform.
+
 ## Required External Setup (Production)
 
 These are required for the new production-grade features:
@@ -39,6 +58,9 @@ Create environment variables for backend service:
 - `SMART_DAILY_LIMIT` = optional, default `50`
 - `ADMIN_EMAILS` = comma-separated admin emails, for example `admin@net360.pk,ops@net360.pk`
 - `API_PORT` = optional, default `4000`
+- `CORS_ALLOWED_ORIGINS` = comma-separated allowed frontend origins in production
+- `MAX_JSON_BODY_MB` = optional request body limit, default `10`
+- `REQUEST_TIMEOUT_MS` = optional API request timeout in milliseconds, default `30000`
 
 Frontend environment variable:
 
@@ -63,6 +85,10 @@ Deploy as two Render services:
 - MongoDB model-based persistence with indexes
 - JWT access + refresh token auth flow
 - Rate limiting and helmet hardening
+- Input payload sanitization and prototype pollution key stripping
+- Security startup validation for weak secrets/CORS in production
+- Additional endpoint-level abuse rate limits (auth + AI routes)
+- Mongo query hardening (`strictQuery` + `sanitizeFilter`) and connection stability tuning
 - Smart Study Mentor backend integration with daily usage limits
 - Study plan generation API with account persistence
 - Admin APIs + Admin Panel UI for MCQ and analytics oversight

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">NET360 Preparation</string>
+    <string name="title_activity_main">NET360 Preparation</string>
+    <string name="package_name">com.net360.preparation</string>
+    <string name="custom_url_scheme">com.net360.preparation</string>
+</resources>

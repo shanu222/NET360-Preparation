@@ -11,6 +11,7 @@ const communityMessageSchema = new mongoose.Schema(
 );
 
 communityMessageSchema.index({ connectionId: 1, createdAt: -1 });
+communityMessageSchema.index({ connectionId: 1, senderUserId: 1, createdAt: -1 });
 
 export const CommunityMessageModel =
   mongoose.models.CommunityMessage || mongoose.model('CommunityMessage', communityMessageSchema);

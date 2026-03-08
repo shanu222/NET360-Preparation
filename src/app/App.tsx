@@ -15,6 +15,7 @@ import { Analytics } from './components/Analytics';
 import { MeritCalculator } from './components/MeritCalculator';
 import { Profile } from './components/Profile';
 import { Community } from './components/Community';
+import { FirstTimeSetup, isTermsAccepted } from './components/FirstTimeSetup';
 import { 
   Home, 
   BookOpen, 
@@ -42,6 +43,7 @@ import { AuthProvider } from './context/AuthContext';
 import { Toaster } from 'sonner';
 
 export default function App() {
+  const [setupCompleted, setSetupCompleted] = useState(() => isTermsAccepted());
   const [activeTab, setActiveTab] = useState(() => {
     const tab = new URLSearchParams(window.location.search).get('tab');
     const allowed = new Set([
@@ -63,6 +65,10 @@ export default function App() {
     return tab && allowed.has(tab) ? tab : 'home';
   });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  if (!setupCompleted) {
+    return <FirstTimeSetup onComplete={() => setSetupCompleted(true)} />;
+  }
 
   const navigationItems = [
     { id: 'home', label: 'Dashboard', icon: Home },

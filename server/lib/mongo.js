@@ -9,9 +9,16 @@ export async function connectMongo(uri) {
     return mongoose.connection;
   }
 
+  mongoose.set('strictQuery', true);
+  mongoose.set('sanitizeFilter', true);
+
   await mongoose.connect(uri, {
+    minPoolSize: 2,
     maxPoolSize: 20,
+    maxIdleTimeMS: 30_000,
+    socketTimeoutMS: 45_000,
     serverSelectionTimeoutMS: 15000,
+    autoIndex: process.env.NODE_ENV !== 'production',
   });
 
   return mongoose.connection;

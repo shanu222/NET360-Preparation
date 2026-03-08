@@ -27,6 +27,8 @@ const communityRoomPostSchema = new mongoose.Schema(
 );
 
 communityRoomPostSchema.index({ roomId: 1, createdAt: -1 });
+communityRoomPostSchema.index({ roomId: 1, type: 1, createdAt: -1 });
+communityRoomPostSchema.index({ authorUserId: 1, createdAt: -1 });
 
 export const CommunityRoomPostModel =
   mongoose.models.CommunityRoomPost || mongoose.model('CommunityRoomPost', communityRoomPostSchema);

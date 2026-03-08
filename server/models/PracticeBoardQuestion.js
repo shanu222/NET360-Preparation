@@ -16,6 +16,8 @@ const practiceBoardQuestionSchema = new mongoose.Schema(
 );
 
 practiceBoardQuestionSchema.index({ subject: 1, chapter: 1, section: 1, difficulty: 1 });
+practiceBoardQuestionSchema.index({ subject: 1, difficulty: 1, createdAt: -1 });
+practiceBoardQuestionSchema.index({ chapter: 1, section: 1, createdAt: -1 });
 
 export const PracticeBoardQuestionModel =
   mongoose.models.PracticeBoardQuestion || mongoose.model('PracticeBoardQuestion', practiceBoardQuestionSchema);

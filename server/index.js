@@ -36,15 +36,23 @@ const PORT = Number(process.env.PORT || process.env.API_PORT || 4000);
 const MONGODB_URI = process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO_URI || '';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || `${JWT_SECRET}-refresh`;
+const NODE_ENV = String(process.env.NODE_ENV || 'development').toLowerCase();
+const IS_PRODUCTION = NODE_ENV === 'production';
 const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '15m';
 const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
 const AI_DAILY_LIMIT = Number(process.env.SMART_DAILY_LIMIT || process.env.AI_DAILY_LIMIT || 50);
 const OPENAI_MODEL = process.env.MODEL_PROVIDER_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const SIGNUP_TOKEN_TTL_HOURS = Number(process.env.SIGNUP_TOKEN_TTL_HOURS || 24);
 const NUST_UPDATES_CACHE_MS = Number(process.env.NUST_UPDATES_CACHE_MS || 60 * 1000);
+const MAX_JSON_BODY_MB = clamp(Number(process.env.MAX_JSON_BODY_MB || 10), 1, 20);
+const REQUEST_TIMEOUT_MS = clamp(Number(process.env.REQUEST_TIMEOUT_MS || 30_000), 5_000, 120_000);
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .split(',')
   .map((item) => item.trim().toLowerCase())
+  .filter(Boolean);
+const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((item) => item.trim())
   .filter(Boolean);
 
 const MODEL_PROVIDER_KEY = process.env.MODEL_PROVIDER_API_KEY || process.env.OPENAI_API_KEY || '';
@@ -99,9 +107,67 @@ const SUBSCRIPTION_PLANS = {
 const app = express();
 // Render sits behind a proxy and forwards client IP in X-Forwarded-For.
 app.set('trust proxy', 1);
-app.use(helmet());
-app.use(cors({ origin: true, credentials: true }));
-app.use(express.json({ limit: '10mb' }));
+app.disable('x-powered-by');
+app.set('query parser', 'simple');
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    referrerPolicy: { policy: 'no-referrer' },
+  }),
+);
+
+function sanitizePrimitive(value) {
+  if (typeof value !== 'string') return value;
+  return value.replace(/\u0000/g, '');
+}
+
+function sanitizePayload(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizePayload(item));
+  }
+
+  if (value && typeof value === 'object') {
+    const out = {};
+    Object.entries(value).forEach(([key, nested]) => {
+      const safeKey = String(key || '').trim();
+      if (!safeKey) return;
+      if (safeKey === '__proto__' || safeKey === 'constructor' || safeKey === 'prototype') return;
+      if (safeKey.startsWith('$')) return;
+      out[safeKey] = sanitizePayload(nested);
+    });
+    return out;
+  }
+
+  return sanitizePrimitive(value);
+}
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (!IS_PRODUCTION) return true;
+  return CORS_ALLOWED_ORIGINS.includes(origin);
+}
+
+app.use(cors({
+  origin(origin, callback) {
+    if (isAllowedOrigin(origin)) {
+      callback(null, true);
+      return;
+    }
+    callback(new Error('CORS origin denied.'));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+app.use(express.json({ limit: `${MAX_JSON_BODY_MB}mb` }));
+app.use(express.urlencoded({ extended: false, limit: `${MAX_JSON_BODY_MB}mb` }));
+app.use((req, res, next) => {
+  req.body = sanitizePayload(req.body);
+  req.query = sanitizePayload(req.query);
+  req.params = sanitizePayload(req.params);
+  res.setTimeout(REQUEST_TIMEOUT_MS);
+  next();
+});
 
 app.use(
   '/api',
@@ -122,6 +188,50 @@ app.use(
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many auth attempts. Please try again shortly.' },
+  }),
+);
+
+app.use(
+  '/api/auth/login',
+  rateLimit({
+    windowMs: 10 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many login attempts. Please try again shortly.' },
+  }),
+);
+
+app.use(
+  '/api/auth/forgot-password',
+  rateLimit({
+    windowMs: 30 * 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many reset requests. Please wait before retrying.' },
+  }),
+);
+
+app.use(
+  '/api/auth/reset-password',
+  rateLimit({
+    windowMs: 30 * 60 * 1000,
+    max: 15,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many password reset attempts. Please try again later.' },
+  }),
+);
+
+app.use(
+  '/api/ai',
+  rateLimit({
+    windowMs: 5 * 60 * 1000,
+    max: 40,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'AI endpoint rate limit reached. Please wait a moment and retry.' },
   }),
 );
 
@@ -157,6 +267,42 @@ const DEFAULT_CONTRIBUTION_POLICY = {
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
+
+function parsePositiveInt(value, fallback, min = 1, max = 500) {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (Number.isNaN(parsed)) return fallback;
+  return clamp(parsed, min, max);
+}
+
+function readPagination(query, options = {}) {
+  const defaultLimit = options.defaultLimit ?? 50;
+  const maxLimit = options.maxLimit ?? 200;
+  const page = parsePositiveInt(query?.page, 1, 1, 10_000);
+  const limit = parsePositiveInt(query?.limit, defaultLimit, 1, maxLimit);
+  const skip = (page - 1) * limit;
+  return { page, limit, skip };
+}
+
+function escapeRegexLiteral(value, maxLen = 80) {
+  const normalized = String(value || '').trim().slice(0, maxLen);
+  if (!normalized) return '';
+  return normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function containsRegex(value, maxLen = 80) {
+  const escaped = escapeRegexLiteral(value, maxLen);
+  if (!escaped) return null;
+  return { $regex: escaped, $options: 'i' };
+}
+
+const COMMUNITY_PROFILE_SELECT = 'userId username shareProfilePicture profilePictureUrl favoriteSubjects targetNetType subjectsNeedHelp preparationLevel studyTimePreference testScoreRange bio createdAt';
+const COMMUNITY_USER_SELECT = 'firstName lastName targetProgram city progress.averageScore progress.weakTopics role';
+const COMMUNITY_CONNECTION_SELECT = 'participantA participantB createdAt';
+const COMMUNITY_REQUEST_SELECT = 'fromUserId toUserId status createdAt';
+const COMMUNITY_MESSAGE_SELECT = 'connectionId senderUserId text createdAt readByUserIds';
+const COMMUNITY_ROOM_POST_SELECT = 'roomId authorUserId type title text subject upvotes answers flagged createdAt';
+const MCQ_SELECT = 'subject part chapter section topic question questionImageUrl options answer tip difficulty source createdAt';
+const PRACTICE_BOARD_SELECT = 'subject chapter section difficulty questionText questionImageUrl solutionText solutionImageUrl source createdAt';
 
 function shuffle(array) {
   const copy = [...array];
@@ -386,6 +532,27 @@ function makeRefreshToken(user) {
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+function isValidEmail(value) {
+  const normalized = normalizeEmail(value);
+  if (!normalized || normalized.length > 254) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(normalized);
+}
+
+function sanitizeHumanName(value, maxLen = 80) {
+  return String(value || '')
+    .replace(/[<>]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+function sanitizePlainText(value, maxLen = 240) {
+  return String(value || '')
+    .replace(/[\u0000<>]/g, '')
+    .trim()
+    .slice(0, maxLen);
 }
 
 function normalizeMobileNumber(value) {
@@ -1672,14 +1839,19 @@ app.get('/api/public/nust-updates', async (req, res) => {
 app.post('/api/auth/signup-request', async (req, res) => {
   try {
     const email = normalizeEmail(req.body?.email);
-    const firstName = String(req.body?.firstName || '').trim();
-    const lastName = String(req.body?.lastName || '').trim();
+    const firstName = sanitizeHumanName(req.body?.firstName || '');
+    const lastName = sanitizeHumanName(req.body?.lastName || '');
     const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber);
     const paymentMethod = String(req.body?.paymentMethod || '').trim().toLowerCase();
-    const paymentTransactionId = String(req.body?.paymentTransactionId || '').trim();
+    const paymentTransactionId = sanitizePlainText(req.body?.paymentTransactionId || '', 120);
 
     if (!email || !mobileNumber || !paymentTransactionId || !paymentMethod) {
       res.status(400).json({ error: 'Email, mobile number, payment method, and transaction ID are required.' });
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      res.status(400).json({ error: 'Enter a valid email address.' });
       return;
     }
 
@@ -1734,12 +1906,17 @@ app.post('/api/auth/register-with-token', async (req, res) => {
     const email = normalizeEmail(req.body?.email);
     const password = String(req.body?.password || '');
     const tokenCode = String(req.body?.tokenCode || '').trim().toUpperCase();
-    const firstName = String(req.body?.firstName || '').trim();
-    const lastName = String(req.body?.lastName || '').trim();
+    const firstName = sanitizeHumanName(req.body?.firstName || '');
+    const lastName = sanitizeHumanName(req.body?.lastName || '');
     const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
 
     if (!email || !password || !tokenCode) {
       res.status(400).json({ error: 'Email, password, and token code are required.' });
+      return;
+    }
+
+    if (!isValidEmail(email)) {
+      res.status(400).json({ error: 'Enter a valid email address.' });
       return;
     }
 
@@ -1837,7 +2014,8 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const { email, password } = req.body || {};
+    const email = normalizeEmail(req.body?.email);
+    const password = String(req.body?.password || '');
     const forceLogoutOtherDevice = Boolean(req.body?.forceLogoutOtherDevice);
     const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
     if (!email || !password) {
@@ -1845,7 +2023,12 @@ app.post('/api/auth/login', async (req, res) => {
       return;
     }
 
-    const user = await UserModel.findOne({ email: normalizeEmail(email) });
+    if (!isValidEmail(email)) {
+      res.status(400).json({ error: 'Enter a valid email address.' });
+      return;
+    }
+
+    const user = await UserModel.findOne({ email });
     if (!user) {
       res.status(401).json({ error: 'Invalid credentials.' });
       return;
@@ -1974,6 +2157,11 @@ app.post('/api/auth/forgot-password', async (req, res) => {
     return;
   }
 
+  if (!isValidEmail(email)) {
+    res.status(400).json({ error: 'Enter a valid email address.' });
+    return;
+  }
+
   const user = await UserModel.findOne({ email });
   if (user) {
     const resetToken = crypto.randomBytes(24).toString('hex');
@@ -2029,12 +2217,33 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 });
 
 app.put('/api/auth/profile', authMiddleware, async (req, res) => {
-  const allowed = ['firstName', 'lastName', 'phone', 'city', 'targetProgram', 'testSeries', 'sscPercentage', 'hsscPercentage', 'testDate'];
-  allowed.forEach((field) => {
-    if (Object.prototype.hasOwnProperty.call(req.body, field)) {
-      req.user[field] = String(req.body[field] ?? '');
-    }
-  });
+  if (Object.prototype.hasOwnProperty.call(req.body, 'firstName')) {
+    req.user.firstName = sanitizeHumanName(req.body.firstName || '');
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'lastName')) {
+    req.user.lastName = sanitizeHumanName(req.body.lastName || '');
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'phone')) {
+    req.user.phone = sanitizePlainText(req.body.phone || '', 30);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'city')) {
+    req.user.city = sanitizePlainText(req.body.city || '', 80);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'targetProgram')) {
+    req.user.targetProgram = sanitizePlainText(req.body.targetProgram || '', 120);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'testSeries')) {
+    req.user.testSeries = sanitizePlainText(req.body.testSeries || '', 50);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'sscPercentage')) {
+    req.user.sscPercentage = sanitizePlainText(req.body.sscPercentage || '', 12);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'hsscPercentage')) {
+    req.user.hsscPercentage = sanitizePlainText(req.body.hsscPercentage || '', 12);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body, 'testDate')) {
+    req.user.testDate = sanitizePlainText(req.body.testDate || '', 40);
+  }
 
   await req.user.save();
   res.json({ user: userPublic(req.user) });
@@ -2131,13 +2340,39 @@ app.get('/api/community/users/search', authMiddleware, async (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
   const me = String(req.user._id);
 
-  const profiles = await CommunityProfileModel.find(q ? { username: { $regex: q, $options: 'i' } } : {})
+  const profiles = await CommunityProfileModel.find(q ? { username: containsRegex(q, 50) } : {})
+    .select(COMMUNITY_PROFILE_SELECT)
     .limit(30)
     .lean();
 
   const userIds = profiles.map((item) => String(item.userId));
-  const users = await UserModel.find({ _id: { $in: userIds }, role: 'student' }).lean();
+  const users = await UserModel.find({ _id: { $in: userIds }, role: 'student' })
+    .select(COMMUNITY_USER_SELECT)
+    .lean();
   const usersById = new Map(users.map((item) => [String(item._id), item]));
+
+  const candidateIds = profiles
+    .map((item) => String(item.userId))
+    .filter((id) => id !== me && usersById.has(id));
+
+  const participantKeys = candidateIds.map((userId) => connectionKey(req.user._id, userId));
+  const [connections, pendingToRows, pendingFromRows] = await Promise.all([
+    CommunityConnectionModel.find({ participantKey: { $in: participantKeys } }).select('participantKey').lean(),
+    CommunityConnectionRequestModel.find({
+      fromUserId: req.user._id,
+      toUserId: { $in: candidateIds },
+      status: 'pending',
+    }).select('toUserId').lean(),
+    CommunityConnectionRequestModel.find({
+      fromUserId: { $in: candidateIds },
+      toUserId: req.user._id,
+      status: 'pending',
+    }).select('fromUserId').lean(),
+  ]);
+
+  const connectedKeys = new Set(connections.map((item) => String(item.participantKey)));
+  const pendingTo = new Set(pendingToRows.map((item) => String(item.toUserId)));
+  const pendingFrom = new Set(pendingFromRows.map((item) => String(item.fromUserId)));
 
   const rows = [];
   for (const profile of profiles) {
@@ -2146,13 +2381,17 @@ app.get('/api/community/users/search', authMiddleware, async (req, res) => {
     const user = usersById.get(userId);
     if (!user) continue;
 
-    const connected = await CommunityConnectionModel.findOne({ participantKey: connectionKey(req.user._id, userId) }).lean();
-    const pendingTo = await CommunityConnectionRequestModel.findOne({ fromUserId: req.user._id, toUserId: userId, status: 'pending' }).lean();
-    const pendingFrom = await CommunityConnectionRequestModel.findOne({ fromUserId: userId, toUserId: req.user._id, status: 'pending' }).lean();
+    const status = connectedKeys.has(connectionKey(req.user._id, userId))
+      ? 'connected'
+      : pendingTo.has(userId)
+        ? 'pending-sent'
+        : pendingFrom.has(userId)
+          ? 'pending-received'
+          : 'none';
 
     rows.push({
       ...serializeCommunityUser({ user, profile }),
-      connectionStatus: connected ? 'connected' : pendingTo ? 'pending-sent' : pendingFrom ? 'pending-received' : 'none',
+      connectionStatus: status,
     });
   }
 
@@ -2213,9 +2452,21 @@ app.post('/api/community/connections/request', authMiddleware, async (req, res) 
 
 app.get('/api/community/connections/requests', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
+  const { page, limit, skip } = readPagination(req.query, { defaultLimit: 50, maxLimit: 100 });
+
   const [incoming, outgoing] = await Promise.all([
-    CommunityConnectionRequestModel.find({ toUserId: req.user._id, status: 'pending' }).sort({ createdAt: -1 }).lean(),
-    CommunityConnectionRequestModel.find({ fromUserId: req.user._id, status: 'pending' }).sort({ createdAt: -1 }).lean(),
+    CommunityConnectionRequestModel.find({ toUserId: req.user._id, status: 'pending' })
+      .select(COMMUNITY_REQUEST_SELECT)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    CommunityConnectionRequestModel.find({ fromUserId: req.user._id, status: 'pending' })
+      .select(COMMUNITY_REQUEST_SELECT)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
   ]);
 
   const relatedUserIds = Array.from(new Set([
@@ -2224,8 +2475,8 @@ app.get('/api/community/connections/requests', authMiddleware, async (req, res) 
   ]));
 
   const [users, profiles] = await Promise.all([
-    UserModel.find({ _id: { $in: relatedUserIds } }).lean(),
-    CommunityProfileModel.find({ userId: { $in: relatedUserIds } }).lean(),
+    UserModel.find({ _id: { $in: relatedUserIds } }).select(COMMUNITY_USER_SELECT).lean(),
+    CommunityProfileModel.find({ userId: { $in: relatedUserIds } }).select(COMMUNITY_PROFILE_SELECT).lean(),
   ]);
   const usersById = new Map(users.map((item) => [String(item._id), item]));
   const profilesByUserId = new Map(profiles.map((item) => [String(item.userId), item]));
@@ -2245,6 +2496,8 @@ app.get('/api/community/connections/requests', authMiddleware, async (req, res) 
   };
 
   res.json({
+    page,
+    limit,
     incoming: incoming.map((item) => mapRequest(item, 'incoming')).filter(Boolean),
     outgoing: outgoing.map((item) => mapRequest(item, 'outgoing')).filter(Boolean),
   });
@@ -2299,18 +2552,36 @@ app.post('/api/community/connections/requests/:requestId/respond', authMiddlewar
 app.get('/api/community/connections', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const myId = String(req.user._id);
+  const { page, limit, skip } = readPagination(req.query, { defaultLimit: 50, maxLimit: 120 });
   const connections = await CommunityConnectionModel.find({
     $or: [{ participantA: myId }, { participantB: myId }],
-  }).sort({ createdAt: -1 }).lean();
+  })
+    .select(COMMUNITY_CONNECTION_SELECT)
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
 
   const otherUserIds = connections.map((item) => (String(item.participantA) === myId ? String(item.participantB) : String(item.participantA)));
+  const connectionIds = connections.map((item) => item._id);
 
-  const [users, profiles] = await Promise.all([
-    UserModel.find({ _id: { $in: otherUserIds } }).lean(),
-    CommunityProfileModel.find({ userId: { $in: otherUserIds } }).lean(),
+  const [users, profiles, unreadRows] = await Promise.all([
+    UserModel.find({ _id: { $in: otherUserIds } }).select(COMMUNITY_USER_SELECT).lean(),
+    CommunityProfileModel.find({ userId: { $in: otherUserIds } }).select(COMMUNITY_PROFILE_SELECT).lean(),
+    CommunityMessageModel.aggregate([
+      {
+        $match: {
+          connectionId: { $in: connectionIds },
+          senderUserId: { $ne: req.user._id },
+          readByUserIds: { $ne: req.user._id },
+        },
+      },
+      { $group: { _id: '$connectionId', count: { $sum: 1 } } },
+    ]),
   ]);
   const usersById = new Map(users.map((item) => [String(item._id), item]));
   const profilesById = new Map(profiles.map((item) => [String(item.userId), item]));
+  const unreadByConnection = new Map(unreadRows.map((item) => [String(item._id), Number(item.count || 0)]));
 
   const rows = [];
   for (const connection of connections) {
@@ -2319,25 +2590,20 @@ app.get('/api/community/connections', authMiddleware, async (req, res) => {
     if (!user) continue;
     const profile = profilesById.get(otherUserId);
 
-    const unreadCount = await CommunityMessageModel.countDocuments({
-      connectionId: connection._id,
-      senderUserId: { $ne: myId },
-      readByUserIds: { $ne: req.user._id },
-    });
-
     rows.push({
       connectionId: String(connection._id),
       connectedAt: connection.createdAt ? new Date(connection.createdAt).toISOString() : null,
       user: serializeCommunityUser({ user, profile }),
-      unreadCount,
+      unreadCount: unreadByConnection.get(String(connection._id)) || 0,
     });
   }
 
-  res.json({ connections: rows });
+  res.json({ page, limit, connections: rows });
 });
 
 app.get('/api/community/messages/:connectionId', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
+  const { page, limit, skip } = readPagination(req.query, { defaultLimit: 120, maxLimit: 300 });
   const connectionId = String(req.params.connectionId || '').trim();
   if (!isValidObjectId(connectionId)) {
     res.status(400).json({ error: 'Valid connection id is required.' });
@@ -2355,7 +2621,12 @@ app.get('/api/community/messages/:connectionId', authMiddleware, async (req, res
     return;
   }
 
-  const messages = await CommunityMessageModel.find({ connectionId }).sort({ createdAt: 1 }).limit(500).lean();
+  const messages = await CommunityMessageModel.find({ connectionId })
+    .select(COMMUNITY_MESSAGE_SELECT)
+    .sort({ createdAt: 1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
 
   await CommunityMessageModel.updateMany(
     {
@@ -2367,6 +2638,8 @@ app.get('/api/community/messages/:connectionId', authMiddleware, async (req, res
   );
 
   res.json({
+    page,
+    limit,
     messages: messages.map((item) => ({
       id: String(item._id),
       connectionId: String(item.connectionId),
@@ -2447,7 +2720,11 @@ app.post('/api/community/report', authMiddleware, async (req, res) => {
     return;
   }
 
-  const messages = await CommunityMessageModel.find({ connectionId }).sort({ createdAt: 1 }).limit(300).lean();
+  const messages = await CommunityMessageModel.find({ connectionId })
+    .select('senderUserId text createdAt')
+    .sort({ createdAt: 1 })
+    .limit(300)
+    .lean();
   const moderation = moderateCommunityConversation(messages);
   const snapshot = messages.map((item) => ({
     senderUserId: String(item.senderUserId),
@@ -2608,6 +2885,7 @@ app.get('/api/community/discussion-rooms', authMiddleware, async (req, res) => {
 
 app.get('/api/community/discussion-rooms/:roomId/posts', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
+  const { page, limit, skip } = readPagination(req.query, { defaultLimit: 80, maxLimit: 180 });
   const roomId = String(req.params.roomId || '').trim();
   const room = COMMUNITY_ROOM_DEFINITIONS.find((item) => item.id === roomId);
   if (!room) {
@@ -2615,14 +2893,19 @@ app.get('/api/community/discussion-rooms/:roomId/posts', authMiddleware, async (
     return;
   }
 
-  const posts = await CommunityRoomPostModel.find({ roomId }).sort({ createdAt: -1 }).limit(150).lean();
+  const posts = await CommunityRoomPostModel.find({ roomId })
+    .select(COMMUNITY_ROOM_POST_SELECT)
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
   const userIds = Array.from(new Set([
     ...posts.map((item) => String(item.authorUserId)),
     ...posts.flatMap((item) => (item.answers || []).map((answer) => String(answer.authorUserId))),
   ]));
   const [users, profiles] = await Promise.all([
-    UserModel.find({ _id: { $in: userIds } }).lean(),
-    CommunityProfileModel.find({ userId: { $in: userIds } }).lean(),
+    UserModel.find({ _id: { $in: userIds } }).select(COMMUNITY_USER_SELECT).lean(),
+    CommunityProfileModel.find({ userId: { $in: userIds } }).select(COMMUNITY_PROFILE_SELECT).lean(),
   ]);
   const usersById = new Map(users.map((item) => [String(item._id), item]));
   const profilesById = new Map(profiles.map((item) => [String(item.userId), item]));
@@ -2654,7 +2937,7 @@ app.get('/api/community/discussion-rooms/:roomId/posts', authMiddleware, async (
     };
   });
 
-  res.json({ room, posts: payload });
+  res.json({ room, page, limit, posts: payload });
 });
 
 app.post('/api/community/discussion-rooms/:roomId/posts', authMiddleware, async (req, res) => {
@@ -2875,16 +3158,19 @@ app.get('/api/community/achievements', authMiddleware, async (req, res) => {
 app.get('/api/community/study-partners', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const subject = String(req.query.subject || '').trim().toLowerCase();
-  const me = await UserModel.findById(req.user._id).lean();
+  const me = await UserModel.findById(req.user._id).select(COMMUNITY_USER_SELECT).lean();
   if (!me) {
     res.status(404).json({ error: 'User not found.' });
     return;
   }
 
-  const profiles = await CommunityProfileModel.find().limit(200).lean();
+  const profiles = await CommunityProfileModel.find().select(COMMUNITY_PROFILE_SELECT).limit(200).lean();
   const profileMap = new Map(profiles.map((item) => [String(item.userId), item]));
   const meProfile = profileMap.get(String(req.user._id)) || await getOrCreateCommunityProfile(req.user);
-  const candidates = await UserModel.find({ _id: { $ne: req.user._id }, role: 'student' }).limit(80).lean();
+  const candidates = await UserModel.find({ _id: { $ne: req.user._id }, role: 'student' })
+    .select(COMMUNITY_USER_SELECT)
+    .limit(80)
+    .lean();
 
   const matches = candidates
     .map((item) => {
@@ -2948,8 +3234,16 @@ app.get('/api/community/study-partners', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/admin/community/reports', authMiddleware, requireAdmin, async (_req, res) => {
-  const reports = await CommunityReportModel.find().sort({ createdAt: -1 }).limit(300).lean();
+  const { page, limit, skip } = readPagination(_req.query, { defaultLimit: 100, maxLimit: 300 });
+  const reports = await CommunityReportModel.find()
+    .select('connectionId reporterUserId reportedUserId reason status moderation chatSnapshot createdAt')
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
   res.json({
+    page,
+    limit,
     reports: reports.map((item) => ({
       id: String(item._id),
       connectionId: String(item.connectionId),
@@ -3034,7 +3328,8 @@ app.post('/api/admin/community/reports/:reportId/review', authMiddleware, requir
 
 app.get('/api/mcqs', async (req, res) => {
   try {
-    const { subject, part, chapter, section, difficulty, topic, limit = '10000' } = req.query;
+    const { subject, part, chapter, section, difficulty, topic } = req.query;
+    const { page, limit, skip } = readPagination(req.query, { defaultLimit: 500, maxLimit: 2000 });
     const filter = {};
 
     if (subject) {
@@ -3049,19 +3344,28 @@ app.get('/api/mcqs', async (req, res) => {
       filter.part = String(part).toLowerCase().trim();
     }
     if (chapter) {
-      filter.chapter = { $regex: String(chapter), $options: 'i' };
+      const expr = containsRegex(chapter, 100);
+      if (expr) filter.chapter = expr;
     }
     if (section) {
-      filter.section = { $regex: String(section), $options: 'i' };
+      const expr = containsRegex(section, 100);
+      if (expr) filter.section = expr;
     }
     if (topic) {
-      filter.topic = { $regex: String(topic), $options: 'i' };
+      const expr = containsRegex(topic, 100);
+      if (expr) filter.topic = expr;
     }
 
-    const max = clamp(Number(limit) || 10000, 1, 10000);
-    const mcqs = await MCQModel.find(filter).limit(max).lean();
+    const mcqs = await MCQModel.find(filter)
+      .select(MCQ_SELECT)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
 
     res.json({
+      page,
+      limit,
       mcqs: mcqs.map((item) => serializeMcq(item)),
       total: mcqs.length,
     });
@@ -3135,16 +3439,27 @@ app.get('/api/practice-board/questions', async (req, res) => {
     const chapter = String(req.query.chapter || '').trim();
     const section = String(req.query.section || '').trim();
     const difficulty = String(req.query.difficulty || '').trim();
-    const limit = clamp(Number(req.query.limit) || 100, 1, 500);
+    const { page, limit, skip } = readPagination(req.query, { defaultLimit: 100, maxLimit: 500 });
 
     const filter = {};
     if (subject) filter.subject = subject;
-    if (chapter) filter.chapter = { $regex: chapter, $options: 'i' };
-    if (section) filter.section = { $regex: section, $options: 'i' };
+    if (chapter) {
+      const expr = containsRegex(chapter, 100);
+      if (expr) filter.chapter = expr;
+    }
+    if (section) {
+      const expr = containsRegex(section, 100);
+      if (expr) filter.section = expr;
+    }
     if (difficulty) filter.difficulty = difficulty;
 
-    const questions = await PracticeBoardQuestionModel.find(filter).sort({ createdAt: -1 }).limit(limit).lean();
-    res.json({ questions: questions.map((item) => serializePracticeBoardQuestion(item)), total: questions.length });
+    const questions = await PracticeBoardQuestionModel.find(filter)
+      .select(PRACTICE_BOARD_SELECT)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+    res.json({ page, limit, questions: questions.map((item) => serializePracticeBoardQuestion(item)), total: questions.length });
   } catch {
     res.status(500).json({ error: 'Failed to load practice board questions.' });
   }
@@ -4412,17 +4727,34 @@ app.get('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const section = String(req.query.section || '').trim();
   const topic = String(req.query.topic || '').trim();
   const difficulty = String(req.query.difficulty || '').trim();
+  const { page, limit, skip } = readPagination(req.query, { defaultLimit: 200, maxLimit: 500 });
 
   const filter = {};
   if (subject) filter.subject = subject;
   if (part) filter.part = part;
-  if (chapter) filter.chapter = { $regex: chapter, $options: 'i' };
-  if (section) filter.section = { $regex: section, $options: 'i' };
-  if (topic) filter.topic = { $regex: topic, $options: 'i' };
+  if (chapter) {
+    const expr = containsRegex(chapter, 100);
+    if (expr) filter.chapter = expr;
+  }
+  if (section) {
+    const expr = containsRegex(section, 100);
+    if (expr) filter.section = expr;
+  }
+  if (topic) {
+    const expr = containsRegex(topic, 100);
+    if (expr) filter.topic = expr;
+  }
   if (difficulty) filter.difficulty = difficulty;
 
-  const mcqs = await MCQModel.find(filter).sort({ createdAt: -1 }).limit(200).lean();
+  const mcqs = await MCQModel.find(filter)
+    .select(MCQ_SELECT)
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
   res.json({
+    page,
+    limit,
     mcqs: mcqs.map((item) => serializeMcq(item)),
   });
 });
@@ -4627,21 +4959,34 @@ app.get('/api/admin/practice-board/questions', authMiddleware, requireAdmin, asy
   const section = String(req.query.section || '').trim();
   const difficulty = String(req.query.difficulty || '').trim();
   const search = String(req.query.search || '').trim();
+  const { page, limit, skip } = readPagination(req.query, { defaultLimit: 200, maxLimit: 500 });
 
   const filter = {};
   if (subject) filter.subject = subject;
-  if (chapter) filter.chapter = { $regex: chapter, $options: 'i' };
-  if (section) filter.section = { $regex: section, $options: 'i' };
+  if (chapter) {
+    const expr = containsRegex(chapter, 100);
+    if (expr) filter.chapter = expr;
+  }
+  if (section) {
+    const expr = containsRegex(section, 100);
+    if (expr) filter.section = expr;
+  }
   if (difficulty) filter.difficulty = difficulty;
   if (search) {
+    const expr = containsRegex(search, 120);
     filter.$or = [
-      { questionText: { $regex: search, $options: 'i' } },
-      { solutionText: { $regex: search, $options: 'i' } },
+      { questionText: expr },
+      { solutionText: expr },
     ];
   }
 
-  const questions = await PracticeBoardQuestionModel.find(filter).sort({ createdAt: -1 }).limit(500).lean();
-  res.json({ questions: questions.map((item) => serializePracticeBoardQuestion(item)) });
+  const questions = await PracticeBoardQuestionModel.find(filter)
+    .select(PRACTICE_BOARD_SELECT)
+    .sort({ createdAt: -1 })
+    .skip(skip)
+    .limit(limit)
+    .lean();
+  res.json({ page, limit, questions: questions.map((item) => serializePracticeBoardQuestion(item)) });
 });
 
 app.post('/api/admin/practice-board/questions', authMiddleware, requireAdmin, async (req, res) => {
@@ -4758,13 +5103,53 @@ app.delete('/api/admin/practice-board/questions/:questionId', authMiddleware, re
   res.json({ ok: true, removedQuestionId: questionId });
 });
 
+app.use((err, req, res, next) => {
+  console.error('Unhandled API error:', {
+    path: req.path,
+    method: req.method,
+    message: err?.message,
+  });
+
+  if (res.headersSent) {
+    next(err);
+    return;
+  }
+
+  res.status(500).json({ error: 'Internal server error.' });
+});
+
+function validateCriticalConfiguration() {
+  const problems = [];
+
+  if (IS_PRODUCTION && (!JWT_SECRET || JWT_SECRET === 'dev-secret-change-me' || JWT_SECRET.length < 32)) {
+    problems.push('JWT_SECRET must be set to a strong random value with at least 32 characters in production.');
+  }
+
+  if (IS_PRODUCTION && (!JWT_REFRESH_SECRET || JWT_REFRESH_SECRET.length < 32)) {
+    problems.push('JWT_REFRESH_SECRET must be set to a strong random value with at least 32 characters in production.');
+  }
+
+  if (IS_PRODUCTION && CORS_ALLOWED_ORIGINS.length === 0) {
+    problems.push('CORS_ALLOWED_ORIGINS must be configured in production.');
+  }
+
+  if (problems.length) {
+    throw new Error(`Security configuration validation failed: ${problems.join(' ')}`);
+  }
+}
+
 async function bootstrap() {
+  validateCriticalConfiguration();
   await connectMongo(MONGODB_URI);
   await bootstrapAdminAccounts();
 
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`NET360 API running on http://localhost:${PORT}`);
   });
+
+  server.headersTimeout = clamp(REQUEST_TIMEOUT_MS + 5_000, 10_000, 180_000);
+  server.requestTimeout = REQUEST_TIMEOUT_MS;
+  server.keepAliveTimeout = 15_000;
 }
 
 bootstrap().catch((error) => {

@@ -15,6 +15,8 @@ const communityConnectionRequestSchema = new mongoose.Schema(
 );
 
 communityConnectionRequestSchema.index({ fromUserId: 1, toUserId: 1, status: 1 });
+communityConnectionRequestSchema.index({ toUserId: 1, status: 1, createdAt: -1 });
+communityConnectionRequestSchema.index({ fromUserId: 1, status: 1, createdAt: -1 });
 
 export const CommunityConnectionRequestModel =
   mongoose.models.CommunityConnectionRequest || mongoose.model('CommunityConnectionRequest', communityConnectionRequestSchema);

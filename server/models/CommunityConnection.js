@@ -9,5 +9,8 @@ const communityConnectionSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+communityConnectionSchema.index({ participantA: 1, createdAt: -1 });
+communityConnectionSchema.index({ participantB: 1, createdAt: -1 });
+
 export const CommunityConnectionModel =
   mongoose.models.CommunityConnection || mongoose.model('CommunityConnection', communityConnectionSchema);

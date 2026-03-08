@@ -1,31 +1,62 @@
 import { localApiRequest, localDownloadReport } from './localApi';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
+const MOBILE_API_BASE_URL = import.meta.env.VITE_MOBILE_API_BASE_URL || '';
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
 
+function isNativeCapacitorRuntime() {
+  const runtime = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
+  return Boolean(runtime?.isNativePlatform?.());
+}
+
+function getEffectiveApiBaseUrl() {
+  // Native Android should call a real backend URL to keep data in sync.
+  if (isNativeCapacitorRuntime()) {
+    return MOBILE_API_BASE_URL || API_BASE_URL;
+  }
+  return API_BASE_URL;
+}
+
+function canFallbackToLocalMode() {
+  if (import.meta.env.VITE_FORCE_LOCAL_API === 'true') {
+    return true;
+  }
+  if (import.meta.env.VITE_DISABLE_LOCAL_API_FALLBACK === 'true') {
+    return false;
+  }
+  return !isNativeCapacitorRuntime();
+}
+
 function resolveApiPath(path: string) {
+  const effectiveBaseUrl = getEffectiveApiBaseUrl();
   if (/^https?:\/\//i.test(path)) {
     return path;
   }
-  if (!API_BASE_URL) {
+  if (!effectiveBaseUrl) {
     return path;
   }
-  return `${API_BASE_URL.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+  return `${effectiveBaseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
 function shouldUseForcedLocalMode() {
-  return import.meta.env.VITE_FORCE_LOCAL_API === 'true';
+  return import.meta.env.VITE_FORCE_LOCAL_API === 'true' && canFallbackToLocalMode();
 }
 
 function shouldFallbackFromHttpError(path: string, status: number) {
+  if (!canFallbackToLocalMode()) {
+    return false;
+  }
+
+  const effectiveBaseUrl = getEffectiveApiBaseUrl();
+
   // 5xx usually means upstream/proxy/backend is unavailable.
   if (status >= 500) {
     return true;
   }
 
   // If no explicit backend URL is configured, /api 404 indicates frontend-only hosting.
-  if (!API_BASE_URL && status === 404 && path.startsWith('/api/')) {
+  if (!effectiveBaseUrl && status === 404 && path.startsWith('/api/')) {
     return true;
   }
 
@@ -35,6 +66,10 @@ function shouldFallbackFromHttpError(path: string, status: number) {
 export async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
   if (shouldUseForcedLocalMode()) {
     return localApiRequest<T>(path, options, token);
+  }
+
+  if (isNativeCapacitorRuntime() && !getEffectiveApiBaseUrl() && path.startsWith('/api/')) {
+    throw new Error('Mobile API is not configured. Set VITE_API_BASE_URL or VITE_MOBILE_API_BASE_URL before building Android app.');
   }
 
   const buildHeaders = (authToken?: string | null) => {
@@ -85,7 +120,10 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
     });
   } catch (error) {
     // If backend is unreachable, transparently fall back to browser-local mode.
-    return localApiRequest<T>(path, options, token);
+    if (canFallbackToLocalMode()) {
+      return localApiRequest<T>(path, options, token);
+    }
+    throw error;
   }
 
   if (!response.ok) {
@@ -148,6 +186,10 @@ export async function downloadReport(path: string, token?: string | null): Promi
     return localDownloadReport(format, token);
   }
 
+  if (isNativeCapacitorRuntime() && !getEffectiveApiBaseUrl() && path.startsWith('/api/')) {
+    throw new Error('Mobile API is not configured. Set VITE_API_BASE_URL or VITE_MOBILE_API_BASE_URL before building Android app.');
+  }
+
   const headers = new Headers();
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
@@ -157,6 +199,9 @@ export async function downloadReport(path: string, token?: string | null): Promi
   try {
     response = await fetch(resolveApiPath(path), { headers });
   } catch {
+    if (!canFallbackToLocalMode()) {
+      throw new Error('Unable to reach report service. Check mobile network and API base URL configuration.');
+    }
     const url = new URL(path, window.location.origin);
     const format = (url.searchParams.get('format') || 'pdf') as 'pdf';
     return localDownloadReport(format, token);
