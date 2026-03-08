@@ -1059,7 +1059,12 @@ function serializeLocalCommunityUser(user: LocalUser, profile?: LocalCommunityPr
   };
 }
 
-function moderateLocalCommunityConversation(messages: LocalCommunityMessage[]) {
+function moderateLocalCommunityConversation(messages: LocalCommunityMessage[]): {
+  result: 'safe' | 'harmful';
+  reasons: string[];
+  score: number;
+  violatorUserId: string;
+} {
   const reasons: string[] = [];
   let score = 0;
   let violatorUserId = '';
@@ -1085,8 +1090,10 @@ function moderateLocalCommunityConversation(messages: LocalCommunityMessage[]) {
     reasons.push('Detected potentially harmful content in the reported conversation.');
   }
 
+  const result: 'safe' | 'harmful' = score >= 70 ? 'harmful' : 'safe';
+
   return {
-    result: score >= 70 ? 'harmful' : 'safe',
+    result,
     reasons,
     score,
     violatorUserId,
