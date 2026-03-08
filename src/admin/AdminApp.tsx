@@ -176,6 +176,15 @@ interface LoginUser {
   role?: 'student' | 'admin';
 }
 
+interface ParsedBulkMcq {
+  question: string;
+  questionImageUrl: string;
+  options: string[];
+  answer: string;
+  tip: string;
+  difficulty: 'Easy' | 'Medium' | 'Hard';
+}
+
 const TOKEN_KEY = 'net360-admin-access-token';
 const REFRESH_TOKEN_KEY = 'net360-admin-refresh-token';
 
@@ -210,6 +219,140 @@ function emptyPracticeForm() {
   };
 }
 
+function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[] } {
+  const text = String(raw || '').replace(/\r\n/g, '\n').trim();
+  if (!text) return { parsed: [], errors: ['Paste questions before uploading.'] };
+
+  const starts: Array<{ index: number; number: string }> = [];
+  const startRegex = /^\s*(\d{1,3})\s*[\).:-]\s+/gm;
+  let match: RegExpExecArray | null;
+  while ((match = startRegex.exec(text))) {
+    starts.push({ index: match.index, number: match[1] });
+  }
+
+  if (!starts.length) {
+    return {
+      parsed: [],
+      errors: ['Could not detect question numbering. Use format like "1. ...", "2) ...", etc.'],
+    };
+  }
+
+  const blocks: Array<{ number: string; content: string }> = starts.map((entry, idx) => {
+    const end = idx + 1 < starts.length ? starts[idx + 1].index : text.length;
+    return {
+      number: entry.number,
+      content: text.slice(entry.index, end).trim(),
+    };
+  });
+
+  const errors: string[] = [];
+  const parsed: ParsedBulkMcq[] = [];
+
+  blocks.forEach((block) => {
+    const lines = block.content
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (!lines.length) {
+      errors.push(`Q${block.number}: empty block.`);
+      return;
+    }
+
+    lines[0] = lines[0].replace(/^\d{1,3}\s*[\).:-]\s*/, '').trim();
+
+    let questionImageUrl = '';
+    let answer = '';
+    let explanation = '';
+    let difficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium';
+    const questionLines: string[] = [];
+    const options: string[] = [];
+    let capturingExplanation = false;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      const imageMatch = line.match(/^(?:image|img|question\s*image)\s*[:=-]\s*(https?:\/\/\S+)$/i) ||
+        line.match(/^!\[[^\]]*\]\((https?:\/\/[^\)\s]+)\)$/i);
+      if (imageMatch) {
+        questionImageUrl = imageMatch[1].trim();
+        continue;
+      }
+
+      const answerMatch = line.match(/^(?:correct\s*answer|answer)\s*[:=-]\s*(.+)$/i);
+      if (answerMatch) {
+        answer = answerMatch[1].trim();
+        capturingExplanation = false;
+        continue;
+      }
+
+      const explanationMatch = line.match(/^(?:explanation|solution|reason)\s*[:=-]\s*(.*)$/i);
+      if (explanationMatch) {
+        explanation = explanationMatch[1].trim();
+        capturingExplanation = true;
+        continue;
+      }
+
+      const difficultyMatch = line.match(/^difficulty\s*[:=-]\s*(easy|medium|hard)$/i);
+      if (difficultyMatch) {
+        const normalized = difficultyMatch[1].toLowerCase();
+        difficulty = normalized === 'easy' ? 'Easy' : normalized === 'hard' ? 'Hard' : 'Medium';
+        continue;
+      }
+
+      const optionMatch = line.match(/^(?:option\s*)?([A-Fa-f]|\d{1,2})\s*[\).:-]\s*(.+)$/);
+      if (optionMatch) {
+        options.push(optionMatch[2].trim());
+        capturingExplanation = false;
+        continue;
+      }
+
+      if (capturingExplanation) {
+        explanation = explanation ? `${explanation}\n${line}` : line;
+      } else {
+        questionLines.push(line);
+      }
+    }
+
+    const question = questionLines.join(' ').trim();
+    if (!question) {
+      errors.push(`Q${block.number}: question text is missing.`);
+      return;
+    }
+    if (options.length < 4) {
+      errors.push(`Q${block.number}: at least 4 options are required.`);
+      return;
+    }
+
+    const normalizedAnswer = answer.trim();
+    if (!normalizedAnswer) {
+      errors.push(`Q${block.number}: correct answer is missing.`);
+      return;
+    }
+
+    let resolvedAnswer = normalizedAnswer;
+    const answerLetter = normalizedAnswer.match(/^([A-Fa-f])(?:\b|\)|\.)?/);
+    if (answerLetter) {
+      const idx = answerLetter[1].toUpperCase().charCodeAt(0) - 65;
+      if (idx >= 0 && idx < options.length) {
+        resolvedAnswer = options[idx];
+      }
+    }
+
+    parsed.push({
+      question,
+      questionImageUrl,
+      options,
+      answer: resolvedAnswer,
+      tip: explanation,
+      difficulty,
+    });
+  });
+
+  return { parsed, errors };
+}
+
 export default function AdminApp() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_KEY));
@@ -231,6 +374,8 @@ export default function AdminApp() {
   const [practiceQuestions, setPracticeQuestions] = useState<AdminPracticeBoardQuestion[]>([]);
   const [practiceQuery, setPracticeQuery] = useState('');
   const [practiceForm, setPracticeForm] = useState(emptyPracticeForm());
+  const [bulkInput, setBulkInput] = useState('');
+  const [bulkUploading, setBulkUploading] = useState(false);
   const [questionSubmissions, setQuestionSubmissions] = useState<AdminQuestionSubmission[]>([]);
   const [submissionStatusFilter, setSubmissionStatusFilter] = useState('all');
   const [submissionSubjectFilter, setSubmissionSubjectFilter] = useState('all');
@@ -647,6 +792,74 @@ export default function AdminApp() {
     }
   };
 
+  const uploadBulkMcqs = async () => {
+    if (!authToken) return;
+    if (!selectedHierarchy) {
+      toast.error('Select a section/topic first before bulk upload.');
+      return;
+    }
+
+    const { parsed, errors } = parseBulkMcqs(bulkInput);
+    if (errors.length) {
+      toast.error(errors[0]);
+      return;
+    }
+
+    if (!parsed.length) {
+      toast.error('No questions were parsed.');
+      return;
+    }
+
+    if (parsed.length > 50) {
+      toast.error('You can upload at most 50 questions at once.');
+      return;
+    }
+
+    const contextPayload =
+      selectedHierarchy.kind === 'section'
+        ? {
+            subject: selectedHierarchy.subject,
+            part: selectedHierarchy.part,
+            chapter: selectedHierarchy.chapterTitle,
+            section: selectedHierarchy.sectionTitle,
+            topic: `${selectedHierarchy.chapterTitle} - ${selectedHierarchy.sectionTitle}`,
+          }
+        : {
+            subject: selectedHierarchy.subject,
+            part: '',
+            chapter: '',
+            section: selectedHierarchy.sectionTitle,
+            topic: selectedHierarchy.sectionTitle,
+          };
+
+    try {
+      setBulkUploading(true);
+
+      for (const item of parsed) {
+        await apiRequest('/api/admin/mcqs', {
+          method: 'POST',
+          body: JSON.stringify({
+            ...contextPayload,
+            question: item.question,
+            questionImageUrl: item.questionImageUrl,
+            options: item.options,
+            answer: item.answer,
+            tip: item.tip,
+            difficulty: item.difficulty,
+          }),
+        }, authToken);
+      }
+
+      toast.success(`${parsed.length} MCQ(s) uploaded successfully.`);
+      setBulkInput('');
+      await loadSectionMcqs(authToken, selectedHierarchy);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Bulk upload failed.');
+    } finally {
+      setBulkUploading(false);
+    }
+  };
+
   const deleteMcq = async (mcqId: string) => {
     if (!authToken) return;
     if (!window.confirm('Delete this MCQ from the bank?')) return;
@@ -913,8 +1126,9 @@ export default function AdminApp() {
   }
 
   return (
-    <div className="min-h-screen p-5 space-y-5">
-      <header className="flex items-center justify-between gap-3">
+    <div className="min-h-screen p-3 sm:p-5">
+      <div className="mx-auto w-full max-w-[1700px] space-y-4 sm:space-y-5">
+      <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1>NET360 Admin Management</h1>
           <p className="text-sm text-muted-foreground">Manage users and MCQs from this separate panel</p>
@@ -922,40 +1136,42 @@ export default function AdminApp() {
         <Button variant="outline" onClick={logout}>Logout</Button>
       </header>
 
-      <div className="grid gap-4 md:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric title="Registered Users" value={String(overview?.usersCount || 0)} />
         <Metric title="Question Bank" value={String(overview?.mcqCount || 0)} />
         <Metric title="Attempts" value={String(overview?.attemptsCount || 0)} />
         <Metric title="Average Score" value={`${overview?.averageScore || 0}%`} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Metric title="Pending Signup Requests" value={String(overview?.pendingSignupRequests || 0)} />
         <Metric title="Approved Requests" value={String(signupRequests.filter((item) => item.status === 'approved').length)} />
         <Metric title="Completed Signups" value={String(signupRequests.filter((item) => item.status === 'completed').length)} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Metric title="Pending User Submissions" value={String(overview?.pendingQuestionSubmissions || 0)} />
         <Metric title="Approved Submissions" value={String(questionSubmissions.filter((item) => item.status === 'approved').length)} />
         <Metric title="Rejected Submissions" value={String(questionSubmissions.filter((item) => item.status === 'rejected').length)} />
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Metric title="Active Subscriptions" value={String(subscriptionOverview?.activeUsers || 0)} />
         <Metric title="Expired/Inactive" value={String(subscriptionOverview?.expiredUsers || 0)} />
         <Metric title="Tracked Users" value={String(subscriptionOverview?.totalUsers || 0)} />
       </div>
 
-      <Tabs defaultValue="users" className="space-y-4">
-        <TabsList className="grid grid-cols-6 w-full max-w-5xl">
-          <TabsTrigger value="users">Users</TabsTrigger>
-          <TabsTrigger value="requests">Signup Requests</TabsTrigger>
-          <TabsTrigger value="mcqs">MCQs</TabsTrigger>
-          <TabsTrigger value="practice-board">Practice Board</TabsTrigger>
-          <TabsTrigger value="submissions">Submissions</TabsTrigger>
-          <TabsTrigger value="subscriptions">Subscriptions</TabsTrigger>
-        </TabsList>
+      <Tabs defaultValue="users" className="w-full min-w-0 space-y-4">
+        <div className="overflow-x-auto pb-1">
+          <TabsList className="inline-flex h-auto min-w-max gap-1">
+            <TabsTrigger className="min-w-[150px]" value="users">Users</TabsTrigger>
+            <TabsTrigger className="min-w-[170px]" value="requests">Signup Requests</TabsTrigger>
+            <TabsTrigger className="min-w-[120px]" value="mcqs">MCQs</TabsTrigger>
+            <TabsTrigger className="min-w-[150px]" value="practice-board">Practice Board</TabsTrigger>
+            <TabsTrigger className="min-w-[140px]" value="submissions">Submissions</TabsTrigger>
+            <TabsTrigger className="min-w-[150px]" value="subscriptions">Subscriptions</TabsTrigger>
+          </TabsList>
+        </div>
 
         <TabsContent value="users" className="space-y-3">
           <Card>
@@ -965,7 +1181,7 @@ export default function AdminApp() {
             </CardHeader>
             <CardContent className="space-y-2 max-h-[520px] overflow-auto">
               {users.map((user) => (
-                <div key={user.id} className="flex items-center justify-between rounded-lg border p-3">
+                <div key={user.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3">
                   <div>
                     <p className="text-sm">{user.email}</p>
                     <p className="text-xs text-muted-foreground">
@@ -1048,8 +1264,8 @@ export default function AdminApp() {
         </TabsContent>
 
         <TabsContent value="mcqs" className="space-y-4">
-          <div className="grid gap-4 xl:grid-cols-[1.25fr_1.75fr]">
-            <Card>
+          <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1.8fr)]">
+            <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>PTB Syllabus Browser (Admin)</CardTitle>
                 <CardDescription>
@@ -1064,8 +1280,8 @@ export default function AdminApp() {
               </CardContent>
             </Card>
 
-            <div className="space-y-4">
-              <Card>
+            <div className="min-w-0 space-y-4">
+              <Card className="min-w-0">
                 <CardHeader>
                   <CardTitle>Section MCQ Editor</CardTitle>
                   <CardDescription>
@@ -1164,6 +1380,34 @@ export default function AdminApp() {
                     <Textarea value={form.tip} onChange={(e) => setForm((prev) => ({ ...prev, tip: e.target.value }))} className="min-h-[90px]" />
                   </div>
 
+                  <div className="space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/30 p-3">
+                    <Label>Bulk Paste (1-50 questions)</Label>
+                    <Textarea
+                      value={bulkInput}
+                      onChange={(e) => setBulkInput(e.target.value)}
+                      className="min-h-[180px]"
+                      placeholder={[
+                        '1. Question text here',
+                        'Image: https://example.com/q1.png',
+                        'A) Option A',
+                        'B) Option B',
+                        'C) Option C',
+                        'D) Option D',
+                        'Answer: B',
+                        'Explanation: Why option B is correct',
+                        '',
+                        '2) Next question...',
+                      ].join('\n')}
+                    />
+                    <Button
+                      variant="outline"
+                      onClick={() => void uploadBulkMcqs()}
+                      disabled={!selectedHierarchy || bulkUploading}
+                    >
+                      {bulkUploading ? 'Uploading...' : 'Upload'}
+                    </Button>
+                  </div>
+
                   <div className="flex flex-wrap gap-2">
                     <Button onClick={() => void saveMcq()} disabled={!selectedHierarchy}>{form.id ? 'Update' : 'Add'} MCQ</Button>
                     <Button variant="outline" onClick={resetForm}>Clear</Button>
@@ -1171,7 +1415,7 @@ export default function AdminApp() {
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className="min-w-0">
                 <CardHeader>
                   <CardTitle>Section MCQ Bank</CardTitle>
                   <CardDescription>Edit or remove questions for the selected section.</CardDescription>
@@ -1326,8 +1570,8 @@ export default function AdminApp() {
         </TabsContent>
 
         <TabsContent value="practice-board" className="space-y-4">
-          <div className="grid gap-4 xl:grid-cols-[1.1fr_1.9fr]">
-            <Card>
+          <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.9fr)]">
+            <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>Practice Board Question Editor</CardTitle>
                 <CardDescription>
@@ -1435,7 +1679,7 @@ export default function AdminApp() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>Practice Board Question Bank</CardTitle>
                 <CardDescription>Edit or remove existing conceptual questions.</CardDescription>
@@ -1690,6 +1934,7 @@ export default function AdminApp() {
           </Card>
         </TabsContent>
       </Tabs>
+      </div>
     </div>
   );
 }
