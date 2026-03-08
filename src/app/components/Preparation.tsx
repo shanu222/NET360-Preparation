@@ -45,6 +45,11 @@ const FLAT_TOPIC_TABS: Record<'quantitative-mathematics' | 'design-aptitude', { 
   },
 };
 
+const FLAT_TAB_SUBJECT_FALLBACKS: Record<'quantitative-mathematics' | 'design-aptitude', SubjectKey[]> = {
+  'quantitative-mathematics': ['mathematics'],
+  'design-aptitude': ['english', 'physics', 'mathematics'],
+};
+
 export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
   mathematics: {
     part1: {
@@ -230,6 +235,10 @@ export function Preparation({ onSelectSection }: PreparationProps = {}) {
     chemistry: null,
   });
   const [launchingSectionKey, setLaunchingSectionKey] = useState<string | null>(null);
+  const [selectedFlatTopicByTab, setSelectedFlatTopicByTab] = useState<Record<'quantitative-mathematics' | 'design-aptitude', string | null>>({
+    'quantitative-mathematics': null,
+    'design-aptitude': null,
+  });
 
   const resolveLaunchToken = async () => {
     const inMemory = token;
@@ -328,6 +337,53 @@ export function Preparation({ onSelectSection }: PreparationProps = {}) {
     }
   };
 
+  const handleStartFlatTopicTest = async (tabKey: 'quantitative-mathematics' | 'design-aptitude', topicTitle: string) => {
+    const authToken = await resolveLaunchToken();
+    if (!authToken) {
+      toast.error('Please login first to start a topic test from Preparation Materials.');
+      return;
+    }
+
+    const examWindow = window.open('/exam-interface', '_blank', 'width=1400,height=900');
+    if (!examWindow) {
+      toast.error('Popup blocked. Please allow popups and try again.');
+      return;
+    }
+
+    const launchKey = `${tabKey}|${topicTitle}`;
+    const candidateSubjects = FLAT_TAB_SUBJECT_FALLBACKS[tabKey];
+    let lastError: unknown = null;
+
+    try {
+      setLaunchingSectionKey(launchKey);
+
+      for (const candidateSubject of candidateSubjects) {
+        try {
+          const session = await startTestSession({
+            subject: candidateSubject,
+            difficulty: 'Medium',
+            topic: topicTitle,
+            mode: 'topic',
+            questionCount: 20,
+          });
+
+          openExamWindow({ sessionId: session.id, token: authToken, examWindow });
+          toast.success('Topic test launched in a new window.');
+          return;
+        } catch (error) {
+          lastError = error;
+        }
+      }
+
+      throw lastError instanceof Error ? lastError : new Error('No questions available for this topic.');
+    } catch (error) {
+      examWindow.close();
+      toast.error(error instanceof Error ? error.message : 'Could not start topic test.');
+    } finally {
+      setLaunchingSectionKey(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div>
@@ -347,6 +403,7 @@ export function Preparation({ onSelectSection }: PreparationProps = {}) {
         {tabItems.map((tab) => {
           if (tab.key === 'quantitative-mathematics' || tab.key === 'design-aptitude') {
             const content = FLAT_TOPIC_TABS[tab.key];
+            const selectedFlatTopic = selectedFlatTopicByTab[tab.key];
             return (
               <TabsContent key={tab.key} value={tab.key} className="space-y-4">
                 <Card>
@@ -357,11 +414,36 @@ export function Preparation({ onSelectSection }: PreparationProps = {}) {
                   <CardContent>
                     <ul className="space-y-2 text-sm">
                       {content.topics.map((topic) => (
-                        <li key={topic} className="rounded-lg border border-indigo-100 bg-white px-3 py-2 text-slate-700">
-                          {topic}
+                        <li key={topic}>
+                          <button
+                            type="button"
+                            className={`w-full rounded-lg border px-3 py-2 text-left transition ${selectedFlatTopic === topic ? 'border-indigo-300 bg-indigo-50 text-indigo-900' : 'border-indigo-100 bg-white text-slate-700 hover:bg-indigo-50'}`}
+                            onClick={() => {
+                              setSelectedFlatTopicByTab((prev) => ({ ...prev, [tab.key]: topic }));
+                            }}
+                          >
+                            {topic}
+                          </button>
                         </li>
                       ))}
                     </ul>
+
+                    {selectedFlatTopic ? (
+                      <div className="mt-3 rounded-lg border border-indigo-200 bg-white p-3">
+                        <p className="mb-2 text-xs text-slate-500">
+                          Selected topic: <span className="font-medium text-indigo-900">{selectedFlatTopic}</span>
+                        </p>
+                        <Button
+                          className="bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
+                          disabled={Boolean(launchingSectionKey)}
+                          onClick={() => {
+                            void handleStartFlatTopicTest(tab.key, selectedFlatTopic);
+                          }}
+                        >
+                          {launchingSectionKey === `${tab.key}|${selectedFlatTopic}` ? 'Starting...' : 'Start Test'}
+                        </Button>
+                      </div>
+                    ) : null}
                   </CardContent>
                 </Card>
               </TabsContent>
