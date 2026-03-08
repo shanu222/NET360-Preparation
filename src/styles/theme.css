@@ -130,6 +130,8 @@
   body,
   #root {
     min-height: 100%;
+    width: 100%;
+    max-width: 100%;
   }
 
   body {
@@ -141,6 +143,10 @@
       radial-gradient(circle at 90% 8%, rgba(252, 214, 178, 0.35), transparent 28%),
       linear-gradient(180deg, #eeedf9 0%, #e8eaf8 100%);
     background-attachment: fixed;
+  }
+
+  #root {
+    overflow-x: clip;
   }
 
   img,
@@ -187,6 +193,11 @@
     line-height: 1.5;
   }
 
+  p {
+    line-height: 1.6;
+    color: #465273;
+  }
+
   label {
     font-size: var(--text-base);
     font-weight: var(--font-weight-medium);
@@ -225,11 +236,30 @@
   .net360-page {
     padding-top: 0.25rem;
     min-width: 0;
+    max-width: 100%;
     overflow-x: clip;
   }
 
   .net360-page > * {
     min-width: 0;
+    max-width: 100%;
+  }
+
+  .net360-page p,
+  .net360-page h1,
+  .net360-page h2,
+  .net360-page h3,
+  .net360-page h4,
+  .net360-page span,
+  .net360-page label,
+  .net360-page button,
+  .net360-page a {
+    overflow-wrap: anywhere;
+  }
+
+  .net360-page .overflow-x-auto,
+  .net360-page [data-slot='scroll-area'] {
+    max-width: 100%;
   }
 
   .net360-page .recharts-responsive-container,
@@ -281,6 +311,12 @@
     color: #3d4f99;
   }
 
+  /* Force readable text on light button surfaces in auth/forms. */
+  .net360-page [data-slot='button'][class*='bg-white'],
+  .net360-page [data-slot='button'][class*='bg-white/'] {
+    color: #33437a;
+  }
+
   .net360-page [data-slot='button'][class*='variant-outline']:hover,
   .net360-page [data-slot='button'].border:hover {
     border-color: rgba(98, 120, 230, 0.5);
@@ -323,7 +359,19 @@
     display: inline-flex;
     min-width: max-content;
     align-items: center;
-    animation: net360-updates-slide-ltr 20s linear infinite;
+    will-change: transform;
+    animation: net360-updates-slide-ltr 36s linear infinite;
+  }
+
+  .net360-updates-marquee-track:hover {
+    animation-play-state: paused;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .net360-updates-marquee-track {
+      animation: none;
+      transform: none;
+    }
   }
 
   @media (max-width: 1024px) {
@@ -345,6 +393,10 @@
 
     .net360-page [data-slot='card'] {
       border-radius: 0.9rem;
+    }
+
+    .net360-updates-marquee-track {
+      animation-duration: 46s;
     }
   }
 }

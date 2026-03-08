@@ -237,14 +237,14 @@ export function Profile({ onNavigate }: ProfileProps) {
       <div className="space-y-5">
         <div>
           <h1>Account Access</h1>
-          <p className="text-muted-foreground">Login or register to enable server-backed sessions, auth, and report export</p>
+          <p className="text-slate-600">Login or register to enable server-backed sessions, auth, and report export</p>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[1fr_1.5fr] xl:grid-cols-[1fr_1.65fr]">
           <Card className="rounded-2xl border-indigo-100 bg-white/92 shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
             <CardHeader className="pb-3">
-              <CardTitle>{isRegisterMode ? 'Create Account' : 'Login'}</CardTitle>
-              <CardDescription>
+              <CardTitle className="text-slate-800">{isRegisterMode ? 'Create Account' : 'Login'}</CardTitle>
+              <CardDescription className="text-slate-600">
                 {isRegisterMode
                   ? 'Pay via Easypaisa/JazzCash/HBL, submit transaction ID, then complete signup with admin-issued token.'
                   : 'Users can only stay logged in on one device at a time.'}
@@ -439,7 +439,7 @@ export function Profile({ onNavigate }: ProfileProps) {
 
               <div className="relative py-1 text-center text-sm text-slate-500">
                 <div className="absolute left-0 right-0 top-1/2 h-px bg-indigo-100" />
-                <span className="relative bg-white px-3">or continue with</span>
+                <span className="relative bg-white px-3 text-slate-500">or continue with</span>
               </div>
 
               <div className="flex flex-wrap justify-center gap-3">
@@ -455,8 +455,8 @@ export function Profile({ onNavigate }: ProfileProps) {
             <div className="pointer-events-none absolute -left-24 -bottom-16 h-56 w-80 rounded-full bg-indigo-400/12 blur-3xl" />
             <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-72 rounded-full bg-violet-300/14 blur-3xl" />
             <CardHeader>
-              <CardTitle>Your Result</CardTitle>
-              <CardDescription>Login or register to sync your email, account access, and progress.</CardDescription>
+              <CardTitle className="text-slate-800">Your Result</CardTitle>
+              <CardDescription className="text-slate-600">Login or register to sync your email, account access, and progress.</CardDescription>
             </CardHeader>
             <CardContent className="relative pb-7">
               <div className="mx-auto mt-4 flex h-56 max-w-md items-end justify-center gap-3 rounded-2xl bg-gradient-to-b from-[#f9faff] to-[#edf1ff] p-4">

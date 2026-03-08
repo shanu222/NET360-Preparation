@@ -291,7 +291,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <span className="rounded-full bg-indigo-50 px-2 py-1 text-xs text-indigo-700">7D</span>
             </div>
             <div className="overflow-x-auto">
-              <div className="grid min-w-[380px] grid-cols-7 items-end gap-2 rounded-xl bg-slate-50 p-3">
+              <div className="grid min-w-[300px] sm:min-w-[360px] grid-cols-7 items-end gap-2 rounded-xl bg-slate-50 p-3">
                 {weekChart.map((point) => (
                   <div key={point.label} className="text-center">
                     <div
@@ -328,7 +328,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
 
           <div className="rounded-2xl border border-indigo-100 bg-white/95 p-3 shadow-[0_10px_25px_rgba(98,113,202,0.11)] space-y-3">
             <div className="overflow-hidden rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-900 via-indigo-700 to-sky-600 px-2 py-2 text-white">
-              <div className="net360-updates-marquee-track whitespace-nowrap text-sm">
+              <div className="net360-updates-marquee-track whitespace-nowrap text-sm leading-relaxed">
                 <span className="inline-flex items-center gap-2 pr-10">
                   <Megaphone className="h-4 w-4" />
                   {tickerText}
