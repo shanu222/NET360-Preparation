@@ -25,6 +25,7 @@ import { CommunityConnectionModel } from './models/CommunityConnection.js';
 import { CommunityMessageModel } from './models/CommunityMessage.js';
 import { CommunityReportModel } from './models/CommunityReport.js';
 import { CommunityBlockModel } from './models/CommunityBlock.js';
+import { CommunityRoomPostModel } from './models/CommunityRoomPost.js';
 import { SignupRequestModel } from './models/SignupRequest.js';
 import { SignupTokenModel } from './models/SignupToken.js';
 
@@ -723,6 +724,55 @@ function makeCommunityUsername(user) {
   return `student-${String(user?._id || '').slice(-6)}`;
 }
 
+const COMMUNITY_ROOM_DEFINITIONS = [
+  { id: 'mathematics', title: 'Math Problem Solving', subject: 'mathematics' },
+  { id: 'physics', title: 'Physics Concepts', subject: 'physics' },
+  { id: 'chemistry', title: 'Chemistry Discussion', subject: 'chemistry' },
+  { id: 'biology', title: 'Biology Revision Circle', subject: 'biology' },
+  { id: 'english', title: 'English NET Boosters', subject: 'english' },
+  { id: 'quantitative-mathematics', title: 'Quantitative Mathematics', subject: 'quantitative mathematics' },
+  { id: 'design-aptitude', title: 'Design Aptitude Lab', subject: 'design aptitude' },
+  { id: 'past-mcqs', title: 'NET Past MCQs Discussion', subject: 'mixed' },
+  { id: 'quick-doubt', title: 'Quick Doubt Help', subject: 'mixed' },
+  { id: 'study-motivation', title: 'Study Motivation', subject: 'mixed' },
+];
+
+function normalizeSubjectList(values, limit = 8) {
+  if (!Array.isArray(values)) return [];
+  return values
+    .map((item) => String(item || '').trim().toLowerCase())
+    .filter(Boolean)
+    .slice(0, limit);
+}
+
+function normalizeCommunityNetType(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  const allowed = new Set([
+    'net-engineering',
+    'net-applied-sciences',
+    'net-business-social-sciences',
+    'net-architecture',
+    'net-natural-sciences',
+  ]);
+  return allowed.has(raw) ? raw : 'net-engineering';
+}
+
+function normalizePreparationLevel(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  return ['beginner', 'intermediate', 'advanced'].includes(raw) ? raw : 'intermediate';
+}
+
+function normalizeStudyTimePreference(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  return ['morning', 'evening', 'night', 'flexible'].includes(raw) ? raw : 'flexible';
+}
+
+function levelRank(level) {
+  if (level === 'advanced') return 3;
+  if (level === 'intermediate') return 2;
+  return 1;
+}
+
 function normalizeUsername(value) {
   return String(value || '')
     .trim()
@@ -751,6 +801,12 @@ async function getOrCreateCommunityProfile(user) {
     shareProfilePicture: false,
     profilePictureUrl: '',
     favoriteSubjects: [],
+    targetNetType: 'net-engineering',
+    subjectsNeedHelp: [],
+    preparationLevel: 'intermediate',
+    studyTimePreference: 'flexible',
+    testScoreRange: { min: 0, max: 200 },
+    bio: '',
   });
 }
 
@@ -758,13 +814,99 @@ function connectionKey(userIdA, userIdB) {
   return [String(userIdA), String(userIdB)].sort().join(':');
 }
 
+async function getCommunityRestriction(userId) {
+  const block = await CommunityBlockModel.findOne({ userId }).lean();
+  if (!block) {
+    return {
+      blocked: false,
+      muted: false,
+      warningCount: 0,
+      reason: '',
+      action: 'none',
+    };
+  }
+
+  const now = Date.now();
+  const bannedUntil = block.bannedUntil ? new Date(block.bannedUntil).getTime() : 0;
+  const mutedUntil = block.mutedUntil ? new Date(block.mutedUntil).getTime() : 0;
+  const blocked = Boolean(block.blocked && (!bannedUntil || bannedUntil > now));
+  const muted = Boolean(mutedUntil && mutedUntil > now);
+
+  return {
+    blocked,
+    muted,
+    warningCount: Number(block.warningCount || 0),
+    reason: String(block.reason || 'Community access restricted due to moderation action.').trim(),
+    action: String(block.lastAction || 'none'),
+    mutedUntil: block.mutedUntil ? new Date(block.mutedUntil).toISOString() : null,
+    bannedUntil: block.bannedUntil ? new Date(block.bannedUntil).toISOString() : null,
+  };
+}
+
 async function ensureCommunityAccess(userId) {
-  const block = await CommunityBlockModel.findOne({ userId, blocked: true }).lean();
-  if (!block) return null;
+  const restriction = await getCommunityRestriction(userId);
+  if (!restriction.blocked) return null;
   return {
     blocked: true,
-    reason: String(block.reason || 'Community access restricted due to moderation action.').trim(),
+    reason: restriction.reason,
+    code: 'COMMUNITY_BANNED',
   };
+}
+
+async function ensureCommunityWritable(userId) {
+  const restriction = await getCommunityRestriction(userId);
+  if (restriction.blocked) {
+    return {
+      blocked: true,
+      reason: restriction.reason,
+      code: 'COMMUNITY_BANNED',
+      restriction,
+    };
+  }
+  if (restriction.muted) {
+    return {
+      blocked: true,
+      reason: `You are temporarily muted in community until ${restriction.mutedUntil}.`,
+      code: 'COMMUNITY_MUTED',
+      restriction,
+    };
+  }
+  return null;
+}
+
+async function applyCommunityViolation(userId, reason, sourceReportId = '') {
+  const current = await CommunityBlockModel.findOne({ userId });
+  const warningCount = Number(current?.warningCount || 0) + 1;
+  const next = {
+    warningCount,
+    reason: String(reason || 'Community policy violation detected.').trim(),
+    sourceReportId: String(sourceReportId || current?.sourceReportId || ''),
+  };
+
+  if (warningCount >= 5) {
+    next.blocked = true;
+    next.lastAction = 'ban';
+    next.bannedUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+    next.blockedAt = new Date();
+  } else if (warningCount >= 3) {
+    next.blocked = false;
+    next.lastAction = 'mute';
+    next.mutedUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  } else {
+    next.blocked = false;
+    next.lastAction = 'warning';
+  }
+
+  await CommunityBlockModel.findOneAndUpdate(
+    { userId },
+    {
+      $set: next,
+      $setOnInsert: { blockedAt: new Date() },
+    },
+    { upsert: true, new: true },
+  );
+
+  return warningCount;
 }
 
 function serializeCommunityUser(params) {
@@ -784,11 +926,21 @@ function serializeCommunityUser(params) {
     score: Number(user.progress?.averageScore || 0),
     testsCompleted: Number(user.progress?.testsCompleted || 0),
     questionsSolved: Number(user.progress?.questionsSolved || 0),
+    targetNetType: String(profile.targetNetType || 'net-engineering'),
+    subjectsNeedHelp: normalizeSubjectList(profile.subjectsNeedHelp || []),
+    preparationLevel: normalizePreparationLevel(profile.preparationLevel),
+    studyTimePreference: normalizeStudyTimePreference(profile.studyTimePreference),
+    testScoreRange: {
+      min: Number(profile.testScoreRange?.min || 0),
+      max: Number(profile.testScoreRange?.max || 200),
+    },
+    favoriteSubjects: normalizeSubjectList(profile.favoriteSubjects || []),
+    bio: String(profile.bio || ''),
   };
 }
 
 function moderateCommunityConversation(messages) {
-  const harmfulPattern = /(abuse|idiot|stupid|hate|kill|threat|harass|scam|fraud|porn|adult|nude|hack|malware|terror)/i;
+  const harmfulPattern = /(abuse|idiot|stupid|hate|kill|threat|harass|scam|fraud|porn|adult|nude|hack|malware|terror|fuck|bitch|slur)/i;
   const spamPattern = /(buy now|click here|free money|join now|whatsapp group|crypto signal)/i;
 
   const offenderScore = new Map();
@@ -829,6 +981,40 @@ function moderateCommunityConversation(messages) {
     reasons: Array.from(new Set(reasons)),
     violatorUserId,
   };
+}
+
+function getPeriodBounds(period) {
+  const now = new Date();
+  const start = new Date(now);
+  if (period === 'monthly') {
+    start.setMonth(start.getMonth() - 1);
+  } else {
+    start.setDate(start.getDate() - 7);
+  }
+  return { start, end: now };
+}
+
+function dayKey(date) {
+  const d = new Date(date);
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-${String(d.getUTCDate()).padStart(2, '0')}`;
+}
+
+function longestRecentStreak(dates) {
+  const unique = Array.from(new Set((dates || []).map((item) => dayKey(item)))).sort();
+  if (!unique.length) return 0;
+  let best = 1;
+  let current = 1;
+  for (let i = 1; i < unique.length; i += 1) {
+    const prev = new Date(`${unique[i - 1]}T00:00:00Z`).getTime();
+    const next = new Date(`${unique[i]}T00:00:00Z`).getTime();
+    if ((next - prev) === 24 * 60 * 60 * 1000) {
+      current += 1;
+      best = Math.max(best, current);
+    } else {
+      current = 1;
+    }
+  }
+  return best;
 }
 
 function serializeQuestionSubmission(item) {
@@ -1869,7 +2055,14 @@ app.put('/api/auth/preferences', authMiddleware, async (req, res) => {
 async function communityGuard(req, res) {
   const blocked = await ensureCommunityAccess(req.user._id);
   if (!blocked) return false;
-  res.status(403).json({ error: blocked.reason, code: 'COMMUNITY_BLOCKED' });
+  res.status(403).json({ error: blocked.reason, code: blocked.code || 'COMMUNITY_BLOCKED' });
+  return true;
+}
+
+async function communityWriteGuard(req, res) {
+  const blocked = await ensureCommunityWritable(req.user._id);
+  if (!blocked) return false;
+  res.status(403).json({ error: blocked.reason, code: blocked.code || 'COMMUNITY_BLOCKED', restriction: blocked.restriction || null });
   return true;
 }
 
@@ -1906,7 +2099,27 @@ app.put('/api/community/profile', authMiddleware, async (req, res) => {
     profile.profilePictureUrl = String(req.body?.profilePictureUrl || '').trim();
   }
   if (Array.isArray(req.body?.favoriteSubjects)) {
-    profile.favoriteSubjects = req.body.favoriteSubjects.map((item) => String(item || '').trim().toLowerCase()).filter(Boolean).slice(0, 8);
+    profile.favoriteSubjects = normalizeSubjectList(req.body.favoriteSubjects, 8);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'targetNetType')) {
+    profile.targetNetType = normalizeCommunityNetType(req.body?.targetNetType);
+  }
+  if (Array.isArray(req.body?.subjectsNeedHelp)) {
+    profile.subjectsNeedHelp = normalizeSubjectList(req.body.subjectsNeedHelp, 10);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'preparationLevel')) {
+    profile.preparationLevel = normalizePreparationLevel(req.body?.preparationLevel);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'studyTimePreference')) {
+    profile.studyTimePreference = normalizeStudyTimePreference(req.body?.studyTimePreference);
+  }
+  if (req.body?.testScoreRange && typeof req.body.testScoreRange === 'object') {
+    const min = Math.max(0, Math.min(200, Number(req.body.testScoreRange?.min ?? profile.testScoreRange?.min ?? 0)));
+    const max = Math.max(min, Math.min(200, Number(req.body.testScoreRange?.max ?? profile.testScoreRange?.max ?? 200)));
+    profile.testScoreRange = { min, max };
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'bio')) {
+    profile.bio = String(req.body?.bio || '').trim().slice(0, 280);
   }
 
   await profile.save();
@@ -1948,6 +2161,7 @@ app.get('/api/community/users/search', authMiddleware, async (req, res) => {
 
 app.post('/api/community/connections/request', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
   const toUserId = String(req.body?.toUserId || '').trim();
   if (!isValidObjectId(toUserId)) {
     res.status(400).json({ error: 'Valid target user id is required.' });
@@ -2038,6 +2252,7 @@ app.get('/api/community/connections/requests', authMiddleware, async (req, res) 
 
 app.post('/api/community/connections/requests/:requestId/respond', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
   const requestId = String(req.params.requestId || '').trim();
   const action = String(req.body?.action || '').trim().toLowerCase();
   if (!isValidObjectId(requestId)) {
@@ -2164,6 +2379,7 @@ app.get('/api/community/messages/:connectionId', authMiddleware, async (req, res
 
 app.post('/api/community/messages/:connectionId', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
   const connectionId = String(req.params.connectionId || '').trim();
   const text = String(req.body?.text || '').trim();
   if (!isValidObjectId(connectionId)) {
@@ -2210,6 +2426,7 @@ app.post('/api/community/messages/:connectionId', authMiddleware, async (req, re
 
 app.post('/api/community/report', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
   const connectionId = String(req.body?.connectionId || '').trim();
   const reportedUserId = String(req.body?.reportedUserId || '').trim();
   const reason = String(req.body?.reason || '').trim();
@@ -2255,19 +2472,20 @@ app.post('/api/community/report', authMiddleware, async (req, res) => {
     chatSnapshot: snapshot,
   });
 
+  let enforcement = null;
   if (moderation.result === 'harmful' && moderation.violatorUserId) {
-    await CommunityBlockModel.findOneAndUpdate(
-      { userId: moderation.violatorUserId },
-      {
-        $set: {
-          blocked: true,
-          reason: moderation.reasons.join(' ') || 'Harmful community behavior detected.',
-          sourceReportId: String(report._id),
-          blockedAt: new Date(),
-        },
-      },
-      { upsert: true, new: true },
+    const warnings = await applyCommunityViolation(
+      moderation.violatorUserId,
+      moderation.reasons.join(' ') || 'Harmful community behavior detected.',
+      String(report._id),
     );
+    const state = await getCommunityRestriction(moderation.violatorUserId);
+    enforcement = {
+      warningCount: warnings,
+      action: state.action,
+      mutedUntil: state.mutedUntil || null,
+      bannedUntil: state.bannedUntil || null,
+    };
   }
 
   res.status(201).json({
@@ -2278,42 +2496,379 @@ app.post('/api/community/report', authMiddleware, async (req, res) => {
       reasons: moderation.reasons,
       score: moderation.score,
     },
+    enforcement,
   });
 });
 
 app.get('/api/community/leaderboard', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
-  const users = await UserModel.find({ role: 'student' }).sort({ 'progress.averageScore': -1, 'progress.testsCompleted': -1 }).limit(20).lean();
-  const profiles = await CommunityProfileModel.find({ userId: { $in: users.map((item) => item._id) } }).lean();
-  const profilesByUserId = new Map(profiles.map((item) => [String(item.userId), item]));
+  const period = String(req.query.period || 'weekly').toLowerCase() === 'monthly' ? 'monthly' : 'weekly';
+  const { start } = getPeriodBounds(period);
+  const attempts = await AttemptModel.find({ attemptedAt: { $gte: start } }).lean();
+  const previousWindowStart = new Date(start);
+  previousWindowStart.setTime(start.getTime() - (period === 'monthly' ? 30 : 7) * 24 * 60 * 60 * 1000);
+  const previousAttempts = await AttemptModel.find({ attemptedAt: { $gte: previousWindowStart, $lt: start } }).lean();
 
-  res.json({
-    leaderboard: users.map((item, index) => ({
-      rank: index + 1,
-      ...serializeCommunityUser({ user: item, profile: profilesByUserId.get(String(item._id)) }),
-    })),
-  });
+  const periodStats = new Map();
+  for (const attempt of attempts) {
+    const key = String(attempt.userId);
+    const row = periodStats.get(key) || {
+      userId: key,
+      tests: 0,
+      scoreSum: 0,
+      correctSum: 0,
+      totalQuestions: 0,
+    };
+    row.tests += 1;
+    row.scoreSum += Number(attempt.score || 0);
+    row.correctSum += Number(attempt.correctAnswers || 0);
+    row.totalQuestions += Number(attempt.totalQuestions || 0);
+    periodStats.set(key, row);
+  }
+
+  const previousStats = new Map();
+  for (const attempt of previousAttempts) {
+    const key = String(attempt.userId);
+    const row = previousStats.get(key) || { tests: 0, scoreSum: 0 };
+    row.tests += 1;
+    row.scoreSum += Number(attempt.score || 0);
+    previousStats.set(key, row);
+  }
+
+  const userIds = Array.from(periodStats.keys());
+  const users = await UserModel.find({ _id: { $in: userIds } }).lean();
+  const profiles = await CommunityProfileModel.find({ userId: { $in: userIds } }).lean();
+  const userById = new Map(users.map((item) => [String(item._id), item]));
+  const profileById = new Map(profiles.map((item) => [String(item.userId), item]));
+
+  const leaderboard = Array.from(periodStats.values())
+    .map((stats) => {
+      const user = userById.get(stats.userId);
+      if (!user) return null;
+      const profile = profileById.get(stats.userId);
+      const averageScore = stats.tests ? (stats.scoreSum / stats.tests) : 0;
+      const accuracy = stats.totalQuestions ? (stats.correctSum / stats.totalQuestions) * 100 : 0;
+      const prev = previousStats.get(stats.userId);
+      const previousAverage = prev?.tests ? (prev.scoreSum / prev.tests) : averageScore;
+      const improvement = averageScore - previousAverage;
+      const competitionScore = (averageScore * 0.55) + (accuracy * 0.25) + (Math.max(0, improvement) * 0.2);
+
+      return {
+        ...serializeCommunityUser({ user, profile }),
+        averageScore: Number(averageScore.toFixed(1)),
+        tests: stats.tests,
+        accuracy: Number(accuracy.toFixed(1)),
+        improvement: Number(improvement.toFixed(1)),
+        competitionScore,
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.competitionScore - a.competitionScore)
+    .slice(0, 20)
+    .map((item, index) => ({ ...item, rank: index + 1 }));
+
+  res.json({ leaderboard, period });
 });
 
 app.get('/api/community/groups', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
-  const groups = [
-    { id: 'math-core', title: 'Mathematics Problem Solvers', subject: 'mathematics' },
-    { id: 'physics-lab', title: 'Physics Concept Lab', subject: 'physics' },
-    { id: 'chem-crackers', title: 'Chemistry MCQ Crackers', subject: 'chemistry' },
-    { id: 'bio-circle', title: 'Biology Revision Circle', subject: 'biology' },
-    { id: 'english-boost', title: 'English NET Boosters', subject: 'english' },
-  ];
-
-  const users = await UserModel.find({ role: 'student' }, { progress: 1 }).lean();
-  const ranked = users.length;
+  const roomIds = COMMUNITY_ROOM_DEFINITIONS.map((room) => room.id);
+  const counts = await CommunityRoomPostModel.aggregate([
+    { $match: { roomId: { $in: roomIds } } },
+    { $group: { _id: '$roomId', posts: { $sum: 1 } } },
+  ]);
+  const countByRoom = new Map(counts.map((row) => [String(row._id), Number(row.posts || 0)]));
 
   res.json({
-    groups: groups.map((group) => ({
-      ...group,
-      members: Math.max(8, Math.round(ranked * 0.18)),
+    groups: COMMUNITY_ROOM_DEFINITIONS.map((room) => ({
+      ...room,
+      members: Math.max(8, Math.round(15 + (countByRoom.get(room.id) || 0) * 1.4)),
+      posts: countByRoom.get(room.id) || 0,
       description: 'Subject-focused discussion and study support for NET aspirants in Pakistan.',
     })),
+  });
+});
+
+app.get('/api/community/discussion-rooms', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const roomIds = COMMUNITY_ROOM_DEFINITIONS.map((room) => room.id);
+  const counts = await CommunityRoomPostModel.aggregate([
+    { $match: { roomId: { $in: roomIds } } },
+    { $group: { _id: '$roomId', posts: { $sum: 1 } } },
+  ]);
+  const countByRoom = new Map(counts.map((row) => [String(row._id), Number(row.posts || 0)]));
+
+  res.json({
+    rooms: COMMUNITY_ROOM_DEFINITIONS.map((room) => ({
+      ...room,
+      posts: countByRoom.get(room.id) || 0,
+    })),
+  });
+});
+
+app.get('/api/community/discussion-rooms/:roomId/posts', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const roomId = String(req.params.roomId || '').trim();
+  const room = COMMUNITY_ROOM_DEFINITIONS.find((item) => item.id === roomId);
+  if (!room) {
+    res.status(404).json({ error: 'Discussion room not found.' });
+    return;
+  }
+
+  const posts = await CommunityRoomPostModel.find({ roomId }).sort({ createdAt: -1 }).limit(150).lean();
+  const userIds = Array.from(new Set([
+    ...posts.map((item) => String(item.authorUserId)),
+    ...posts.flatMap((item) => (item.answers || []).map((answer) => String(answer.authorUserId))),
+  ]));
+  const [users, profiles] = await Promise.all([
+    UserModel.find({ _id: { $in: userIds } }).lean(),
+    CommunityProfileModel.find({ userId: { $in: userIds } }).lean(),
+  ]);
+  const usersById = new Map(users.map((item) => [String(item._id), item]));
+  const profilesById = new Map(profiles.map((item) => [String(item.userId), item]));
+
+  const payload = posts.map((post) => {
+    const author = usersById.get(String(post.authorUserId));
+    const authorProfile = profilesById.get(String(post.authorUserId));
+    return {
+      id: String(post._id),
+      roomId: post.roomId,
+      type: String(post.type || 'discussion'),
+      title: String(post.title || ''),
+      text: String(post.text || ''),
+      subject: String(post.subject || room.subject || ''),
+      upvotes: Number(post.upvotes || 0),
+      createdAt: post.createdAt ? new Date(post.createdAt).toISOString() : null,
+      author: author ? serializeCommunityUser({ user: author, profile: authorProfile }) : null,
+      answers: Array.isArray(post.answers) ? post.answers.map((answer) => {
+        const answerAuthor = usersById.get(String(answer.authorUserId));
+        const answerProfile = profilesById.get(String(answer.authorUserId));
+        return {
+          id: String(answer._id),
+          text: String(answer.text || ''),
+          upvotes: Number(answer.upvotes || 0),
+          createdAt: answer.createdAt ? new Date(answer.createdAt).toISOString() : null,
+          author: answerAuthor ? serializeCommunityUser({ user: answerAuthor, profile: answerProfile }) : null,
+        };
+      }) : [],
+    };
+  });
+
+  res.json({ room, posts: payload });
+});
+
+app.post('/api/community/discussion-rooms/:roomId/posts', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
+
+  const roomId = String(req.params.roomId || '').trim();
+  const room = COMMUNITY_ROOM_DEFINITIONS.find((item) => item.id === roomId);
+  if (!room) {
+    res.status(404).json({ error: 'Discussion room not found.' });
+    return;
+  }
+
+  const type = String(req.body?.type || 'discussion').trim().toLowerCase() === 'doubt' ? 'doubt' : 'discussion';
+  const title = String(req.body?.title || '').trim().slice(0, 120);
+  const text = String(req.body?.text || '').trim().slice(0, 2500);
+  const subject = String(req.body?.subject || room.subject || '').trim().toLowerCase();
+  if (!text) {
+    res.status(400).json({ error: 'Post text is required.' });
+    return;
+  }
+
+  const moderation = moderateCommunityConversation([{ senderUserId: req.user._id, text }]);
+  if (moderation.result === 'harmful') {
+    const warnings = await applyCommunityViolation(req.user._id, moderation.reasons.join(' ') || 'Policy violation in discussion post.');
+    const state = await getCommunityRestriction(req.user._id);
+    res.status(403).json({
+      error: 'Your message violates community rules and could not be posted.',
+      code: 'COMMUNITY_POLICY_BLOCK',
+      moderation,
+      enforcement: {
+        warningCount: warnings,
+        action: state.action,
+        mutedUntil: state.mutedUntil || null,
+        bannedUntil: state.bannedUntil || null,
+      },
+    });
+    return;
+  }
+
+  const created = await CommunityRoomPostModel.create({
+    roomId,
+    authorUserId: req.user._id,
+    type,
+    title,
+    text,
+    subject,
+  });
+
+  res.status(201).json({ postId: String(created._id) });
+});
+
+app.post('/api/community/discussion-posts/:postId/answers', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
+
+  const postId = String(req.params.postId || '').trim();
+  if (!isValidObjectId(postId)) {
+    res.status(400).json({ error: 'Valid post id is required.' });
+    return;
+  }
+  const text = String(req.body?.text || '').trim().slice(0, 1800);
+  if (!text) {
+    res.status(400).json({ error: 'Answer text is required.' });
+    return;
+  }
+
+  const moderation = moderateCommunityConversation([{ senderUserId: req.user._id, text }]);
+  if (moderation.result === 'harmful') {
+    const warnings = await applyCommunityViolation(req.user._id, moderation.reasons.join(' ') || 'Policy violation in doubt answer.');
+    const state = await getCommunityRestriction(req.user._id);
+    res.status(403).json({
+      error: 'Your answer violates community rules and could not be posted.',
+      code: 'COMMUNITY_POLICY_BLOCK',
+      moderation,
+      enforcement: {
+        warningCount: warnings,
+        action: state.action,
+        mutedUntil: state.mutedUntil || null,
+        bannedUntil: state.bannedUntil || null,
+      },
+    });
+    return;
+  }
+
+  const post = await CommunityRoomPostModel.findById(postId);
+  if (!post) {
+    res.status(404).json({ error: 'Discussion post not found.' });
+    return;
+  }
+
+  post.answers.push({
+    authorUserId: req.user._id,
+    text,
+    upvotes: 0,
+    upvotedByUserIds: [],
+  });
+  await post.save();
+
+  const answer = post.answers[post.answers.length - 1];
+  res.status(201).json({ answerId: String(answer._id) });
+});
+
+app.post('/api/community/discussion-posts/:postId/upvote', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
+
+  const postId = String(req.params.postId || '').trim();
+  if (!isValidObjectId(postId)) {
+    res.status(400).json({ error: 'Valid post id is required.' });
+    return;
+  }
+
+  const targetType = String(req.body?.targetType || 'post').trim().toLowerCase();
+  const answerId = String(req.body?.answerId || '').trim();
+  const post = await CommunityRoomPostModel.findById(postId);
+  if (!post) {
+    res.status(404).json({ error: 'Discussion post not found.' });
+    return;
+  }
+
+  if (targetType === 'answer') {
+    const answer = post.answers.id(answerId);
+    if (!answer) {
+      res.status(404).json({ error: 'Answer not found.' });
+      return;
+    }
+    const voted = answer.upvotedByUserIds.some((item) => String(item) === String(req.user._id));
+    if (voted) {
+      answer.upvotedByUserIds = answer.upvotedByUserIds.filter((item) => String(item) !== String(req.user._id));
+      answer.upvotes = Math.max(0, Number(answer.upvotes || 0) - 1);
+    } else {
+      answer.upvotedByUserIds.push(req.user._id);
+      answer.upvotes = Number(answer.upvotes || 0) + 1;
+    }
+    await post.save();
+    res.json({ ok: true, targetType: 'answer', upvotes: Number(answer.upvotes || 0) });
+    return;
+  }
+
+  const voted = post.upvotedByUserIds.some((item) => String(item) === String(req.user._id));
+  if (voted) {
+    post.upvotedByUserIds = post.upvotedByUserIds.filter((item) => String(item) !== String(req.user._id));
+    post.upvotes = Math.max(0, Number(post.upvotes || 0) - 1);
+  } else {
+    post.upvotedByUserIds.push(req.user._id);
+    post.upvotes = Number(post.upvotes || 0) + 1;
+  }
+  await post.save();
+  res.json({ ok: true, targetType: 'post', upvotes: Number(post.upvotes || 0) });
+});
+
+app.get('/api/community/achievements', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+
+  const me = await UserModel.findById(req.user._id).lean();
+  if (!me) {
+    res.status(404).json({ error: 'User not found.' });
+    return;
+  }
+
+  const attempts = await AttemptModel.find({ userId: req.user._id }).sort({ attemptedAt: -1 }).limit(300).lean();
+  const physicsAttempts = attempts.filter((item) => String(item.subject || '').toLowerCase() === 'physics');
+  const physicsAverage = physicsAttempts.length
+    ? physicsAttempts.reduce((sum, item) => sum + Number(item.score || 0), 0) / physicsAttempts.length
+    : 0;
+
+  const weeklyBoard = await (async () => {
+    const { start } = getPeriodBounds('weekly');
+    const rows = await AttemptModel.find({ attemptedAt: { $gte: start } }).lean();
+    const scoreMap = new Map();
+    for (const row of rows) {
+      const key = String(row.userId);
+      const bucket = scoreMap.get(key) || { scoreSum: 0, tests: 0 };
+      bucket.scoreSum += Number(row.score || 0);
+      bucket.tests += 1;
+      scoreMap.set(key, bucket);
+    }
+    return Array.from(scoreMap.entries())
+      .map(([userId, bucket]) => ({ userId, score: bucket.tests ? bucket.scoreSum / bucket.tests : 0 }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 10);
+  })();
+  const top10Ids = new Set(weeklyBoard.map((item) => String(item.userId)));
+
+  const streak = longestRecentStreak(attempts.map((item) => item.attemptedAt));
+  const solved = Number(me.progress?.questionsSolved || 0);
+  const avg = Number(me.progress?.averageScore || 0);
+
+  const myAnswers = await CommunityRoomPostModel.aggregate([
+    { $unwind: '$answers' },
+    { $match: { 'answers.authorUserId': req.user._id } },
+    { $group: { _id: null, totalUpvotes: { $sum: '$answers.upvotes' }, answersCount: { $sum: 1 } } },
+  ]);
+  const answerStats = myAnswers[0] || { totalUpvotes: 0, answersCount: 0 };
+
+  const badges = [
+    { id: 'practice-master', label: 'Practice Master', icon: '📘', earned: solved >= 1000, progress: solved, target: 1000 },
+    { id: 'accuracy-king', label: 'Accuracy King', icon: '🎯', earned: avg >= 90, progress: Number(avg.toFixed(1)), target: 90 },
+    { id: 'physics-expert', label: 'Physics Expert', icon: '🧠', earned: physicsAttempts.length >= 5 && physicsAverage >= 85, progress: Number(physicsAverage.toFixed(1)), target: 85 },
+    { id: 'study-streak-7', label: '7-Day Study Streak', icon: '🔥', earned: streak >= 7, progress: streak, target: 7 },
+    { id: 'leaderboard-top10', label: 'Top 10 Leaderboard', icon: '🏆', earned: top10Ids.has(String(req.user._id)), progress: top10Ids.has(String(req.user._id)) ? 10 : 0, target: 10 },
+    { id: 'doubt-contributor', label: 'Contributor Badge', icon: '🏅', earned: Number(answerStats.totalUpvotes || 0) >= 10, progress: Number(answerStats.totalUpvotes || 0), target: 10 },
+  ];
+
+  res.json({
+    badges,
+    stats: {
+      solved,
+      averageScore: Number(avg.toFixed(1)),
+      streak,
+      contributorUpvotes: Number(answerStats.totalUpvotes || 0),
+      contributorAnswers: Number(answerStats.answersCount || 0),
+    },
   });
 });
 
@@ -2326,24 +2881,66 @@ app.get('/api/community/study-partners', authMiddleware, async (req, res) => {
     return;
   }
 
-  const profiles = await CommunityProfileModel.find().limit(80).lean();
+  const profiles = await CommunityProfileModel.find().limit(200).lean();
   const profileMap = new Map(profiles.map((item) => [String(item.userId), item]));
+  const meProfile = profileMap.get(String(req.user._id)) || await getOrCreateCommunityProfile(req.user);
   const candidates = await UserModel.find({ _id: { $ne: req.user._id }, role: 'student' }).limit(80).lean();
 
   const matches = candidates
     .map((item) => {
       const profile = profileMap.get(String(item._id));
+      if (!profile) return null;
       const weakTopics = Array.isArray(item.progress?.weakTopics) ? item.progress.weakTopics.map((x) => String(x).toLowerCase()) : [];
       const meWeak = Array.isArray(me.progress?.weakTopics) ? me.progress.weakTopics.map((x) => String(x).toLowerCase()) : [];
       const overlap = meWeak.filter((topic) => weakTopics.includes(topic)).length;
-      const subjectBonus = subject && (weakTopics.some((t) => t.includes(subject)) || String(item.targetProgram || '').toLowerCase().includes(subject)) ? 15 : 0;
-      const scoreGap = Math.abs((Number(item.progress?.averageScore || 0) - Number(me.progress?.averageScore || 0)));
-      const compatibility = Math.max(0, 100 - scoreGap + overlap * 8 + subjectBonus);
+
+      const meNeeds = normalizeSubjectList(meProfile.subjectsNeedHelp || []);
+      const candidateNeeds = normalizeSubjectList(profile.subjectsNeedHelp || []);
+      const subjectNeedOverlap = meNeeds.filter((topic) => candidateNeeds.includes(topic)).length;
+
+      const netTypeMatch = String(meProfile.targetNetType || '') === String(profile.targetNetType || '') ? 18 : 0;
+      const levelDistance = Math.abs(levelRank(normalizePreparationLevel(meProfile.preparationLevel)) - levelRank(normalizePreparationLevel(profile.preparationLevel)));
+      const levelScore = levelDistance === 0 ? 12 : levelDistance === 1 ? 6 : 0;
+      const timeMatch = normalizeStudyTimePreference(meProfile.studyTimePreference) === normalizeStudyTimePreference(profile.studyTimePreference) ? 12 : 4;
+
+      const score = Number(item.progress?.averageScore || 0);
+      const myScore = Number(me.progress?.averageScore || 0);
+      const scoreGap = Math.abs(score - myScore);
+      const scoreGapScore = Math.max(0, 22 - Math.round(scoreGap / 4));
+
+      const requestedSubjectBonus = subject && (
+        meNeeds.some((x) => x.includes(subject)) ||
+        candidateNeeds.some((x) => x.includes(subject)) ||
+        weakTopics.some((t) => t.includes(subject))
+      ) ? 10 : 0;
+
+      const rangeMin = Number(meProfile.testScoreRange?.min ?? 0);
+      const rangeMax = Number(meProfile.testScoreRange?.max ?? 200);
+      const rangeMatch = score >= rangeMin && score <= rangeMax ? 10 : 0;
+
+      const compatibility = Math.max(0, Math.min(100,
+        netTypeMatch
+        + levelScore
+        + timeMatch
+        + scoreGapScore
+        + overlap * 4
+        + subjectNeedOverlap * 6
+        + requestedSubjectBonus
+        + rangeMatch
+      ));
+
       return {
         compatibility,
         user: serializeCommunityUser({ user: item, profile }),
+        reasons: [
+          netTypeMatch ? 'Same NET type' : null,
+          levelScore >= 6 ? 'Similar preparation level' : null,
+          timeMatch >= 12 ? 'Same study time preference' : null,
+          rangeMatch ? 'Within preferred score range' : null,
+        ].filter(Boolean),
       };
     })
+    .filter(Boolean)
     .sort((a, b) => b.compatibility - a.compatibility)
     .slice(0, 12);
 

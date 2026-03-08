@@ -7,6 +7,10 @@ const communityBlockSchema = new mongoose.Schema(
     reason: { type: String, default: '' },
     sourceReportId: { type: String, default: '' },
     blockedAt: { type: Date, default: Date.now },
+    warningCount: { type: Number, default: 0 },
+    mutedUntil: { type: Date, default: null, index: true },
+    bannedUntil: { type: Date, default: null, index: true },
+    lastAction: { type: String, enum: ['none', 'warning', 'mute', 'ban'], default: 'none' },
   },
   { timestamps: true },
 );
