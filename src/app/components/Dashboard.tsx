@@ -11,6 +11,7 @@ import {
   Trophy,
   Sparkles,
   Megaphone,
+  ExternalLink,
 } from 'lucide-react';
 import { Progress } from './ui/progress';
 import { useAppData } from '../context/AppDataContext';
@@ -26,6 +27,13 @@ interface LiveUpdateItem {
   title: string;
   subtitle: string;
   url: string;
+}
+
+interface DashboardUpdateItem extends LiveUpdateItem {
+  cleanTitle: string;
+  cleanSubtitle: string;
+  linkTarget: string;
+  linkLabel: string;
 }
 
 const FALLBACK_UPDATES: LiveUpdateItem[] = [
@@ -149,16 +157,37 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     }));
   }, [attempts]);
 
-  const tickerText = useMemo(() => {
-    const items = (liveUpdates.length ? liveUpdates : FALLBACK_UPDATES)
-      .map((item) => `${item.title} - ${item.subtitle}`);
-    return items.join('   |   ');
+  const sanitizedUpdates = useMemo<DashboardUpdateItem[]>(() => {
+    const source = liveUpdates.length ? liveUpdates : FALLBACK_UPDATES;
+    return source.map((item, index) => {
+      const cleanTitle = sanitizeUpdateCopy(item.title, 140) || 'NUST Admissions Update';
+      const cleanSubtitle = sanitizeUpdateCopy(item.subtitle, 240) || 'Latest admissions update available on the official portal.';
+      const detectedUrl = detectUrl(`${item.title} ${item.subtitle}`);
+      const linkTarget = item.url || detectedUrl || 'https://ugadmissions.nust.edu.pk/';
+      return {
+        ...item,
+        cleanTitle,
+        cleanSubtitle,
+        linkTarget,
+        linkLabel: linkLabelForIndex(index),
+      };
+    });
   }, [liveUpdates]);
 
   const featuredUpdate = useMemo(() => {
-    if (!liveUpdates.length) return FALLBACK_UPDATES[0];
-    return liveUpdates[adIndex % liveUpdates.length];
-  }, [adIndex, liveUpdates]);
+    if (!sanitizedUpdates.length) {
+      return {
+        title: 'NUST Undergraduate Admissions',
+        subtitle: 'Latest verified notices are available on the official admissions portal.',
+        url: 'https://ugadmissions.nust.edu.pk/',
+        cleanTitle: 'NUST Undergraduate Admissions',
+        cleanSubtitle: 'Latest verified notices are available on the official admissions portal.',
+        linkTarget: 'https://ugadmissions.nust.edu.pk/',
+        linkLabel: 'Open admissions page',
+      } satisfies DashboardUpdateItem;
+    }
+    return sanitizedUpdates[adIndex % sanitizedUpdates.length];
+  }, [adIndex, sanitizedUpdates]);
 
   useEffect(() => {
     let cancelled = false;
@@ -327,30 +356,48 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           </div>
 
           <div className="rounded-2xl border border-indigo-100 bg-white/95 p-3 shadow-[0_10px_25px_rgba(98,113,202,0.11)] space-y-3">
-            <div className="overflow-hidden rounded-xl border border-indigo-100 bg-gradient-to-r from-indigo-900 via-indigo-700 to-sky-600 px-2 py-2 text-white">
-              <div className="net360-updates-marquee-track whitespace-nowrap text-sm leading-relaxed">
-                <span className="inline-flex items-center gap-2 pr-10">
-                  <Megaphone className="h-4 w-4" />
-                  {tickerText}
-                </span>
-                <span className="inline-flex items-center gap-2 pr-10">
-                  <Megaphone className="h-4 w-4" />
-                  {tickerText}
-                </span>
+            <div className="overflow-hidden rounded-xl border border-indigo-200/70 bg-gradient-to-r from-[#24358f] via-[#304ab7] to-[#2c7dac] px-3 py-2.5 text-white">
+              <div className="flex min-w-0 items-center gap-2 text-sm leading-relaxed">
+                <Megaphone className="h-4 w-4 shrink-0 text-cyan-100" />
+                <p className="min-w-0 flex-1 truncate text-cyan-50">{featuredUpdate.cleanTitle}</p>
+                <a
+                  href={featuredUpdate.linkTarget}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md bg-white/16 px-2 py-1 text-[11px] text-white hover:bg-white/24"
+                >
+                  Open admissions page
+                  <ExternalLink className="h-3 w-3" />
+                </a>
               </div>
             </div>
 
             <div className="rounded-xl border border-indigo-100 bg-indigo-50/55 p-2 max-h-[210px] overflow-auto">
-              {liveUpdates.map((item) => (
-                <UpdateTextItem key={`${item.title}-${item.url}`} title={item.title} subtitle={item.subtitle} />
+              {sanitizedUpdates.map((item, index) => (
+                <UpdateTextItem
+                  key={`${item.cleanTitle}-${item.linkTarget}-${index}`}
+                  title={item.cleanTitle}
+                  subtitle={item.cleanSubtitle}
+                  href={item.linkTarget}
+                  linkLabel={item.linkLabel}
+                />
               ))}
             </div>
 
-            <div className="relative overflow-hidden rounded-xl p-3 text-white shadow-[0_12px_28px_rgba(52,76,184,0.35)] bg-gradient-to-r from-[#1f2f8f] via-[#384dbe] to-[#3aa7d7]">
+            <div className="relative overflow-hidden rounded-xl p-3 text-white shadow-[0_12px_28px_rgba(52,76,184,0.35)] bg-gradient-to-r from-[#1f2f8f] via-[#334cb7] to-[#2f7ea9]">
               <div className="absolute -right-12 -top-10 h-28 w-28 rounded-full bg-white/20 blur-2xl" />
-              <p className="text-[11px] uppercase tracking-[0.18em] text-blue-100">Admissions Spotlight</p>
-              <p className="mt-1 text-sm font-semibold">{featuredUpdate.title}</p>
-              <p className="text-xs text-blue-100/95">{featuredUpdate.subtitle}</p>
+              <p className="text-[11px] uppercase tracking-[0.18em] text-cyan-100">Admissions Spotlight</p>
+              <p className="mt-1 break-words text-sm font-semibold leading-snug text-white">{featuredUpdate.cleanTitle}</p>
+              <p className="mt-1 text-xs leading-relaxed text-blue-50 break-words">{featuredUpdate.cleanSubtitle}</p>
+              <a
+                href={featuredUpdate.linkTarget}
+                target="_blank"
+                rel="noreferrer"
+                className="mt-2 inline-flex items-center gap-1 rounded-md bg-white/18 px-2 py-1 text-[11px] text-white hover:bg-white/28"
+              >
+                Visit official portal
+                <ExternalLink className="h-3 w-3" />
+              </a>
             </div>
           </div>
         </div>
@@ -404,13 +451,53 @@ function QuickActionCard({
   );
 }
 
-function UpdateTextItem({ title, subtitle }: { title: string; subtitle: string }) {
+function UpdateTextItem({
+  title,
+  subtitle,
+  href,
+  linkLabel,
+}: {
+  title: string;
+  subtitle: string;
+  href: string;
+  linkLabel: string;
+}) {
   return (
-    <div className="rounded-xl px-3 py-2 text-left transition hover:bg-indigo-50/70">
+    <div className="rounded-xl border border-indigo-100/80 bg-white/85 px-3 py-2 text-left transition hover:bg-indigo-50/70">
       <div>
-        <p className="text-sm font-medium text-slate-800">{title}</p>
-        <p className="text-xs text-slate-500">{subtitle}</p>
+        <p className="break-words text-sm font-semibold leading-snug text-slate-800">{title}</p>
+        <p className="mt-1 break-words text-xs leading-relaxed text-slate-600">{subtitle}</p>
+        <a
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-indigo-700 hover:text-indigo-900"
+        >
+          {linkLabel}
+          <ExternalLink className="h-3 w-3" />
+        </a>
       </div>
     </div>
   );
+}
+
+function sanitizeUpdateCopy(value: string, maxLen = 220) {
+  return String(value || '')
+    .replace(/\bhttps?:\/\/\S+/gi, ' ')
+    .replace(/\b\w+>/g, ' ')
+    .replace(/[<>]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
+function detectUrl(value: string) {
+  const match = String(value || '').match(/https?:\/\/\S+/i);
+  return match ? match[0].replace(/[),.;]+$/, '') : '';
+}
+
+function linkLabelForIndex(index: number) {
+  if (index % 3 === 0) return 'Visit official portal';
+  if (index % 3 === 1) return 'Learn more';
+  return 'Open admissions page';
 }

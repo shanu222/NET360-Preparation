@@ -1242,6 +1242,16 @@ function stripHtml(text) {
   return decodeHtmlEntities(String(text || '').replace(/<[^>]*>/g, ' ')).replace(/\s+/g, ' ').trim();
 }
 
+function sanitizeUpdateText(text, maxLen = 220) {
+  return String(text || '')
+    .replace(/\bhttps?:\/\/\S+/gi, ' ')
+    .replace(/\b\w+>/g, ' ')
+    .replace(/[<>]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLen);
+}
+
 function sliceNoticeBlock(html) {
   const source = String(html || '');
   const lower = source.toLowerCase();
@@ -1281,7 +1291,7 @@ function parseNustUpdates(html) {
 
   for (const match of block.matchAll(anchorRegex)) {
     const href = String(match[1] || '').trim();
-    const title = stripHtml(match[2] || '').slice(0, 180);
+    const title = sanitizeUpdateText(stripHtml(match[2] || ''), 180);
     if (!href || !title || title.length < 6) continue;
     if (ignoredTitles.has(title.toLowerCase())) continue;
 
@@ -1292,7 +1302,7 @@ function parseNustUpdates(html) {
     // Capture nearby sentence fragments for subtitle context.
     const index = Number(match.index || 0);
     const nearbyRaw = block.slice(Math.max(0, index - 180), Math.min(block.length, index + 360));
-    const nearbyText = stripHtml(nearbyRaw).replace(title, '').trim();
+    const nearbyText = sanitizeUpdateText(stripHtml(nearbyRaw).replace(title, ''), 220);
 
     let subtitle = nearbyText.slice(0, 180);
     if (!subtitle) {

@@ -348,33 +348,6 @@
     background: rgba(255, 255, 255, 0.82);
   }
 
-  @keyframes net360-updates-slide-ltr {
-    0% {
-      transform: translateX(-100%);
-    }
-    100% {
-      transform: translateX(100%);
-    }
-  }
-
-  .net360-updates-marquee-track {
-    display: inline-flex;
-    min-width: max-content;
-    align-items: center;
-    will-change: transform;
-    animation: net360-updates-slide-ltr 36s linear infinite;
-  }
-
-  .net360-updates-marquee-track:hover {
-    animation-play-state: paused;
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .net360-updates-marquee-track {
-      animation: none;
-      transform: none;
-    }
-  }
 
   @media (max-width: 1024px) {
     body {
@@ -397,8 +370,5 @@
       border-radius: 0.9rem;
     }
 
-    .net360-updates-marquee-track {
-      animation-duration: 46s;
-    }
   }
 }
