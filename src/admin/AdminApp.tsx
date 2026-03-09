@@ -131,13 +131,21 @@ interface AdminMcqBankStructureItem {
 interface AdminPracticeBoardQuestion {
   id: string;
   subject: string;
-  chapter: string;
-  section: string;
   difficulty: string;
   questionText: string;
-  questionImageUrl?: string;
+  questionFile?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
   solutionText: string;
-  solutionImageUrl?: string;
+  solutionFile?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
 }
 
 interface AdminSubscriptionPlan {
@@ -248,13 +256,11 @@ function emptyPracticeForm() {
   return {
     id: '',
     subject: 'mathematics',
-    chapter: '',
-    section: '',
     difficulty: 'Medium',
     questionText: '',
-    questionImageUrl: '',
+    questionFile: null as AdminPracticeBoardQuestion['questionFile'],
     solutionText: '',
-    solutionImageUrl: '',
+    solutionFile: null as AdminPracticeBoardQuestion['solutionFile'],
   };
 }
 
@@ -472,8 +478,26 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+const PRACTICE_FILE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
+
+const PRACTICE_FILE_NAME_PATTERN = /\.(jpe?g|png|pdf|doc|docx)$/i;
+const PRACTICE_FILE_MAX_BYTES = 8 * 1024 * 1024;
+
+function isSupportedPracticeFile(file: File) {
+  const mime = String(file.type || '').toLowerCase();
+  return PRACTICE_FILE_MIME_TYPES.has(mime) || PRACTICE_FILE_NAME_PATTERN.test(file.name || '');
+}
+
 export default function AdminApp() {
-  const isQuestionBankView = new URLSearchParams(window.location.search).get('view') === 'question-bank';
+  const activeView = new URLSearchParams(window.location.search).get('view');
+  const isQuestionBankView = activeView === 'question-bank';
+  const isPracticeBoardBankView = activeView === 'practice-board-bank';
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_KEY));
   const [loading, setLoading] = useState(false);
@@ -499,7 +523,10 @@ export default function AdminApp() {
   const [subscriptionFilter, setSubscriptionFilter] = useState('all');
   const [practiceQuestions, setPracticeQuestions] = useState<AdminPracticeBoardQuestion[]>([]);
   const [practiceQuery, setPracticeQuery] = useState('');
+  const [practiceBankSubjectKey, setPracticeBankSubjectKey] = useState('');
   const [practiceForm, setPracticeForm] = useState(emptyPracticeForm());
+  const [practiceQuestionUpload, setPracticeQuestionUpload] = useState<File | null>(null);
+  const [practiceSolutionUpload, setPracticeSolutionUpload] = useState<File | null>(null);
   const [bulkInput, setBulkInput] = useState('');
   const [bulkFile, setBulkFile] = useState<File | null>(null);
   const [bulkParsed, setBulkParsed] = useState<ParsedBulkMcq[]>([]);
@@ -540,12 +567,64 @@ export default function AdminApp() {
     if (!practiceQuery.trim()) return practiceQuestions;
     const needle = practiceQuery.toLowerCase();
     return practiceQuestions.filter((item) =>
-      [item.subject, item.chapter, item.section, item.difficulty, item.questionText, item.solutionText]
+      [
+        item.subject,
+        item.difficulty,
+        item.questionText,
+        item.solutionText,
+        item.questionFile?.name || '',
+        item.solutionFile?.name || '',
+      ]
         .join(' ')
         .toLowerCase()
         .includes(needle),
     );
   }, [practiceQuestions, practiceQuery]);
+
+  const practiceQuestionsBySubject = useMemo(() => {
+    const grouped = new Map<string, AdminPracticeBoardQuestion[]>();
+    practiceQuestions.forEach((item) => {
+      const key = String(item.subject || 'general').trim().toLowerCase() || 'general';
+      if (!grouped.has(key)) {
+        grouped.set(key, []);
+      }
+      grouped.get(key)!.push(item);
+    });
+
+    return Array.from(grouped.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([subject, questions]) => ({
+        subject,
+        questions: questions.sort((a, b) => {
+          const aq = String(a.questionText || '').toLowerCase();
+          const bq = String(b.questionText || '').toLowerCase();
+          return aq.localeCompare(bq);
+        }),
+      }));
+  }, [practiceQuestions]);
+
+  const activePracticeBankSubject = useMemo(() => {
+    if (!practiceQuestionsBySubject.length) return null;
+    return practiceQuestionsBySubject.find((item) => item.subject === practiceBankSubjectKey) || practiceQuestionsBySubject[0];
+  }, [practiceQuestionsBySubject, practiceBankSubjectKey]);
+
+  const practiceBankVisibleQuestions = useMemo(() => {
+    const source = activePracticeBankSubject?.questions || [];
+    if (!practiceQuery.trim()) return source;
+    const needle = practiceQuery.toLowerCase();
+    return source.filter((item) => {
+      const blob = [
+        item.questionText,
+        item.solutionText,
+        item.difficulty,
+        item.questionFile?.name || '',
+        item.solutionFile?.name || '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      return blob.includes(needle);
+    });
+  }, [activePracticeBankSubject, practiceQuery]);
 
   const filteredQuestionSubmissions = useMemo(() => {
     const needle = submissionQuery.trim().toLowerCase();
@@ -664,6 +743,31 @@ export default function AdminApp() {
     const url = new URL(window.location.href);
     url.searchParams.set('view', 'question-bank');
     window.open(url.toString(), '_blank', 'noopener,noreferrer');
+  };
+
+  const openPracticeBoardBankWindow = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', 'practice-board-bank');
+    window.open(url.toString(), '_blank', 'noopener,noreferrer');
+  };
+
+  const openPracticeFile = (file?: { dataUrl: string } | null) => {
+    const dataUrl = String(file?.dataUrl || '').trim();
+    if (!dataUrl) return;
+    window.open(dataUrl, '_blank', 'noopener,noreferrer');
+  };
+
+  const downloadPracticeFile = (file?: { dataUrl: string; name: string } | null) => {
+    const dataUrl = String(file?.dataUrl || '').trim();
+    const name = String(file?.name || 'practice-file');
+    if (!dataUrl) return;
+
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = name;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
 
   const loadAdminData = async (activeToken: string) => {
@@ -1325,35 +1429,81 @@ export default function AdminApp() {
 
   const resetPracticeForm = () => {
     setPracticeForm(emptyPracticeForm());
+    setPracticeQuestionUpload(null);
+    setPracticeSolutionUpload(null);
   };
 
   const savePracticeQuestion = async () => {
     if (!authToken) return;
 
-    if (!practiceForm.subject.trim() || !practiceForm.chapter.trim() || !practiceForm.section.trim()) {
-      toast.error('Subject, chapter, and section are required.');
+    if (!practiceForm.subject.trim()) {
+      toast.error('Subject is required.');
       return;
     }
 
-    if (!practiceForm.questionText.trim() && !practiceForm.questionImageUrl.trim()) {
-      toast.error('Provide question text or question image URL.');
+    if (practiceQuestionUpload && !isSupportedPracticeFile(practiceQuestionUpload)) {
+      toast.error('Question file must be JPG, PNG, PDF, DOC, or DOCX.');
       return;
     }
 
-    if (!practiceForm.solutionText.trim() && !practiceForm.solutionImageUrl.trim()) {
-      toast.error('Provide solution text or solution image URL.');
+    if (practiceSolutionUpload && !isSupportedPracticeFile(practiceSolutionUpload)) {
+      toast.error('Solution file must be JPG, PNG, PDF, DOC, or DOCX.');
+      return;
+    }
+
+    if (practiceQuestionUpload && practiceQuestionUpload.size > PRACTICE_FILE_MAX_BYTES) {
+      toast.error('Question file exceeds 8MB limit.');
+      return;
+    }
+
+    if (practiceSolutionUpload && practiceSolutionUpload.size > PRACTICE_FILE_MAX_BYTES) {
+      toast.error('Solution file exceeds 8MB limit.');
+      return;
+    }
+
+    let questionFilePayload = practiceForm.questionFile || null;
+    let solutionFilePayload = practiceForm.solutionFile || null;
+
+    try {
+      if (practiceQuestionUpload) {
+        questionFilePayload = {
+          name: practiceQuestionUpload.name,
+          mimeType: practiceQuestionUpload.type || 'application/octet-stream',
+          size: practiceQuestionUpload.size,
+          dataUrl: await fileToDataUrl(practiceQuestionUpload),
+        };
+      }
+
+      if (practiceSolutionUpload) {
+        solutionFilePayload = {
+          name: practiceSolutionUpload.name,
+          mimeType: practiceSolutionUpload.type || 'application/octet-stream',
+          size: practiceSolutionUpload.size,
+          dataUrl: await fileToDataUrl(practiceSolutionUpload),
+        };
+      }
+    } catch {
+      toast.error('Could not read uploaded file. Please try again.');
+      return;
+    }
+
+    if (!practiceForm.questionText.trim() && !questionFilePayload) {
+      toast.error('Provide question text or upload a question file.');
+      return;
+    }
+
+    if (!practiceForm.solutionText.trim() && !solutionFilePayload) {
+      toast.error('Provide solution text or upload a solution file.');
       return;
     }
 
     const payload = {
       subject: practiceForm.subject.toLowerCase().trim(),
-      chapter: practiceForm.chapter.trim(),
-      section: practiceForm.section.trim(),
       difficulty: practiceForm.difficulty,
       questionText: practiceForm.questionText.trim(),
-      questionImageUrl: practiceForm.questionImageUrl.trim(),
+      questionFile: questionFilePayload,
       solutionText: practiceForm.solutionText.trim(),
-      solutionImageUrl: practiceForm.solutionImageUrl.trim(),
+      solutionFile: solutionFilePayload,
     };
 
     try {
@@ -1691,6 +1841,110 @@ export default function AdminApp() {
     );
   }
 
+  if (isPracticeBoardBankView) {
+    return (
+      <div className="min-h-screen p-3 sm:p-5">
+        <div className="mx-auto w-full max-w-[1700px] space-y-4 sm:space-y-5">
+          <header className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1>Practice Board Question Bank</h1>
+              <p className="text-sm text-muted-foreground">Browse conceptual questions by subject and open attached files directly.</p>
+            </div>
+            <Button variant="outline" onClick={() => {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('view');
+              window.location.href = url.toString();
+            }}>
+              Back to Admin Dashboard
+            </Button>
+          </header>
+
+          <div className="grid gap-4 lg:grid-cols-[280px_minmax(0,1fr)]">
+            <Card>
+              <CardHeader>
+                <CardTitle>Subjects</CardTitle>
+              </CardHeader>
+              <CardContent className="max-h-[72vh] space-y-2 overflow-auto">
+                {practiceQuestionsBySubject.map((entry) => (
+                  <button
+                    type="button"
+                    key={entry.subject}
+                    onClick={() => setPracticeBankSubjectKey(entry.subject)}
+                    className={`w-full rounded-md border px-3 py-2 text-left text-sm ${activePracticeBankSubject?.subject === entry.subject ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-muted'}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span>{entry.subject}</span>
+                      <Badge variant="outline">{entry.questions.length}</Badge>
+                    </div>
+                  </button>
+                ))}
+                {!practiceQuestionsBySubject.length ? (
+                  <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                    No practice board questions found.
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+
+            <Card className="min-w-0">
+              <CardHeader>
+                <CardTitle>Questions</CardTitle>
+                <CardDescription>
+                  {activePracticeBankSubject?.subject || 'Select a subject'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 max-h-[72vh] overflow-auto">
+                <Input
+                  placeholder="Search by text, difficulty, or file name..."
+                  value={practiceQuery}
+                  onChange={(e) => setPracticeQuery(e.target.value)}
+                />
+
+                {practiceBankVisibleQuestions.map((item, idx) => (
+                  <div key={item.id} className="rounded-md border p-3 text-sm space-y-2">
+                    <p className="font-medium">Q{idx + 1}. {item.questionText || '(File-based question)'}</p>
+                    <p className="text-xs text-muted-foreground">Difficulty: {item.difficulty || 'Medium'}</p>
+
+                    {item.questionFile ? (
+                      <div className="rounded-md bg-slate-50 p-2 text-xs space-y-1">
+                        <p>Question file: {item.questionFile.name}</p>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => openPracticeFile(item.questionFile)}>View</Button>
+                          <Button size="sm" variant="outline" onClick={() => downloadPracticeFile(item.questionFile)}>Download</Button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div className="rounded-md bg-emerald-50/60 p-2">
+                      <p className="text-xs uppercase tracking-wide text-emerald-700">Solution</p>
+                      <p className="mt-1 whitespace-pre-wrap text-xs text-slate-700">{item.solutionText || '(File-only solution)'}</p>
+                    </div>
+
+                    {item.solutionFile ? (
+                      <div className="rounded-md bg-slate-50 p-2 text-xs space-y-1">
+                        <p>Solution file: {item.solutionFile.name}</p>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => openPracticeFile(item.solutionFile)}>View</Button>
+                          <Button size="sm" variant="outline" onClick={() => downloadPracticeFile(item.solutionFile)}>Download</Button>
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+
+                {!practiceBankVisibleQuestions.length ? (
+                  <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
+                    No questions found for this subject.
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen p-3 sm:p-5">
       <div className="mx-auto w-full max-w-[1700px] space-y-4 sm:space-y-5">
@@ -1705,25 +1959,29 @@ export default function AdminApp() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric title="Registered Users" value={String(overview?.usersCount || 0)} />
         <Metric title="Question Bank" value={String(overview?.mcqCount || 0)} onClick={openQuestionBankWindow} />
+        <Metric title="Practice Board Question Bank" value={String(practiceQuestions.length)} onClick={openPracticeBoardBankWindow} />
         <Metric title="Attempts" value={String(overview?.attemptsCount || 0)} />
-        <Metric title="Average Score" value={`${overview?.averageScore || 0}%`} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <Metric title="Average Score" value={`${overview?.averageScore || 0}%`} />
         <Metric title="Pending Signup Requests" value={String(overview?.pendingSignupRequests || 0)} />
         <Metric title="Approved Requests" value={String(signupRequests.filter((item) => item.status === 'approved').length)} />
-        <Metric title="Completed Signups" value={String(signupRequests.filter((item) => item.status === 'completed').length)} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <Metric title="Completed Signups" value={String(signupRequests.filter((item) => item.status === 'completed').length)} />
         <Metric title="Pending User Submissions" value={String(overview?.pendingQuestionSubmissions || 0)} />
         <Metric title="Approved Submissions" value={String(questionSubmissions.filter((item) => item.status === 'approved').length)} />
-        <Metric title="Rejected Submissions" value={String(questionSubmissions.filter((item) => item.status === 'rejected').length)} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <Metric title="Rejected Submissions" value={String(questionSubmissions.filter((item) => item.status === 'rejected').length)} />
         <Metric title="Active Subscriptions" value={String(subscriptionOverview?.activeUsers || 0)} />
         <Metric title="Expired/Inactive" value={String(subscriptionOverview?.expiredUsers || 0)} />
+      </div>
+
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Metric title="Tracked Users" value={String(subscriptionOverview?.totalUsers || 0)} />
       </div>
 
@@ -2273,7 +2531,7 @@ export default function AdminApp() {
               <CardHeader>
                 <CardTitle>Practice Board Question Editor</CardTitle>
                 <CardDescription>
-                  Add long-form conceptual questions with text/image combinations for both prompt and solution.
+                  Add conceptual questions using text, optional file uploads, or both.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -2311,25 +2569,6 @@ export default function AdminApp() {
                   </div>
                 </div>
 
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label>Chapter</Label>
-                    <Input
-                      value={practiceForm.chapter}
-                      onChange={(e) => setPracticeForm((prev) => ({ ...prev, chapter: e.target.value }))}
-                      placeholder="e.g. Thermodynamics"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label>Section</Label>
-                    <Input
-                      value={practiceForm.section}
-                      onChange={(e) => setPracticeForm((prev) => ({ ...prev, section: e.target.value }))}
-                      placeholder="e.g. First Law Applications"
-                    />
-                  </div>
-                </div>
-
                 <div className="space-y-1.5">
                   <Label>Question Text</Label>
                   <Textarea
@@ -2341,12 +2580,27 @@ export default function AdminApp() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label>Question Image URL (optional)</Label>
+                  <Label>Upload Question File (optional)</Label>
                   <Input
-                    value={practiceForm.questionImageUrl}
-                    onChange={(e) => setPracticeForm((prev) => ({ ...prev, questionImageUrl: e.target.value }))}
-                    placeholder="https://..."
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.pdf,.doc,.docx,image/jpeg,image/png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    onChange={(e) => setPracticeQuestionUpload(e.target.files?.[0] || null)}
                   />
+                  {practiceQuestionUpload ? (
+                    <p className="text-xs text-muted-foreground">Selected: {practiceQuestionUpload.name}</p>
+                  ) : null}
+                  {!practiceQuestionUpload && practiceForm.questionFile?.name ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>Current file: {practiceForm.questionFile.name}</span>
+                      <button
+                        type="button"
+                        className="text-blue-600 underline underline-offset-2"
+                        onClick={() => setPracticeForm((prev) => ({ ...prev, questionFile: null }))}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="space-y-1.5">
@@ -2360,12 +2614,27 @@ export default function AdminApp() {
                 </div>
 
                 <div className="space-y-1.5">
-                  <Label>Solution Image URL (optional)</Label>
+                  <Label>Upload Solution File (optional)</Label>
                   <Input
-                    value={practiceForm.solutionImageUrl}
-                    onChange={(e) => setPracticeForm((prev) => ({ ...prev, solutionImageUrl: e.target.value }))}
-                    placeholder="https://..."
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.pdf,.doc,.docx,image/jpeg,image/png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    onChange={(e) => setPracticeSolutionUpload(e.target.files?.[0] || null)}
                   />
+                  {practiceSolutionUpload ? (
+                    <p className="text-xs text-muted-foreground">Selected: {practiceSolutionUpload.name}</p>
+                  ) : null}
+                  {!practiceSolutionUpload && practiceForm.solutionFile?.name ? (
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>Current file: {practiceForm.solutionFile.name}</span>
+                      <button
+                        type="button"
+                        className="text-blue-600 underline underline-offset-2"
+                        onClick={() => setPracticeForm((prev) => ({ ...prev, solutionFile: null }))}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ) : null}
                 </div>
 
                 <div className="flex flex-wrap gap-2">
@@ -2384,7 +2653,7 @@ export default function AdminApp() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <Input
-                  placeholder="Search by subject/chapter/section/question..."
+                  placeholder="Search by subject/difficulty/question/file..."
                   value={practiceQuery}
                   onChange={(e) => setPracticeQuery(e.target.value)}
                 />
@@ -2398,19 +2667,22 @@ export default function AdminApp() {
                           setPracticeForm({
                             id: item.id,
                             subject: item.subject,
-                            chapter: item.chapter || '',
-                            section: item.section || '',
                             difficulty: item.difficulty || 'Medium',
                             questionText: item.questionText || '',
-                            questionImageUrl: item.questionImageUrl || '',
+                            questionFile: item.questionFile || null,
                             solutionText: item.solutionText || '',
-                            solutionImageUrl: item.solutionImageUrl || '',
+                            solutionFile: item.solutionFile || null,
                           });
+                          setPracticeQuestionUpload(null);
+                          setPracticeSolutionUpload(null);
                         }}
                       >
-                        <p className="line-clamp-2 text-sm">{item.questionText || '(Image-only question)'}</p>
+                        <p className="line-clamp-2 text-sm">{item.questionText || '(File-based question)'}</p>
                         <p className="mt-1 text-xs text-muted-foreground">
-                          {item.subject} • {item.chapter || '-'} • {item.section || '-'} • {item.difficulty}
+                          {item.subject} • {item.difficulty}
+                        </p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          Question file: {item.questionFile?.name || 'None'} | Solution file: {item.solutionFile?.name || 'None'}
                         </p>
                       </button>
                       <div className="mt-2 flex justify-end">

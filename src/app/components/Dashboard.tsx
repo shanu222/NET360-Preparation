@@ -205,6 +205,17 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <QuickActionCard icon={Sparkles} title="Start Practice" tone="from-cyan-100 to-white" onClick={() => onNavigate('tests')} />
             <QuickActionCard icon={FileText} title="Mock Test" tone="from-indigo-100 to-white" onClick={() => onNavigate('tests')} />
+            <QuickActionCard
+              icon={BookOpen}
+              title="Practice Board Question Bank"
+              tone="from-violet-100 to-white"
+              onClick={() => {
+                const url = new URL(window.location.href);
+                url.searchParams.set('tab', 'practice-board');
+                url.searchParams.set('view', 'question-bank');
+                window.open(url.toString(), '_blank', 'noopener,noreferrer');
+              }}
+            />
             <QuickActionCard icon={Brain} title="Study Assistant" tone="from-sky-100 to-white" onClick={() => onNavigate('smart-mentor')} />
             <QuickActionCard icon={Calculator} title="Merit Predictor" tone="from-amber-100 to-white" onClick={() => onNavigate('merit-calculator')} />
           </div>

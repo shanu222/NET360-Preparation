@@ -3,6 +3,7 @@ import { Eraser, PenLine, RefreshCcw } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Input } from './ui/input';
 import { apiRequest } from '../lib/api';
 
 type Tool = 'pen' | 'eraser';
@@ -21,13 +22,42 @@ interface Stroke {
 interface BoardQuestion {
   id: string;
   subject: string;
-  chapter: string;
-  section: string;
   difficulty: string;
   questionText: string;
-  questionImageUrl?: string;
+  questionFile?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
   solutionText: string;
-  solutionImageUrl?: string;
+  solutionFile?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
+}
+
+function isImageMimeType(mimeType?: string | null) {
+  return /^image\/(png|jpeg)$/i.test(String(mimeType || ''));
+}
+
+function openDataUrlFile(file?: { dataUrl?: string | null } | null) {
+  const dataUrl = String(file?.dataUrl || '').trim();
+  if (!dataUrl) return;
+  window.open(dataUrl, '_blank', 'noopener,noreferrer');
+}
+
+function downloadDataUrlFile(file?: { dataUrl?: string | null; name?: string | null } | null) {
+  const dataUrl = String(file?.dataUrl || '').trim();
+  if (!dataUrl) return;
+  const link = document.createElement('a');
+  link.href = dataUrl;
+  link.download = String(file?.name || 'practice-file');
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
 
 const PEN_COLORS = [
@@ -39,9 +69,14 @@ const PEN_COLORS = [
 ];
 
 export function PracticeBoard() {
+  const isQuestionBankView = new URLSearchParams(window.location.search).get('view') === 'question-bank';
   const [activeQuestion, setActiveQuestion] = useState<BoardQuestion | null>(null);
   const [showAnswer, setShowAnswer] = useState(false);
   const [loadingQuestion, setLoadingQuestion] = useState(false);
+  const [questionBankLoading, setQuestionBankLoading] = useState(false);
+  const [questionBankQuery, setQuestionBankQuery] = useState('');
+  const [questionBankSubject, setQuestionBankSubject] = useState('');
+  const [questionBankQuestions, setQuestionBankQuestions] = useState<BoardQuestion[]>([]);
   const [tool, setTool] = useState<Tool>('pen');
   const [penColor, setPenColor] = useState(PEN_COLORS[0].value);
 
@@ -56,6 +91,45 @@ export function PracticeBoard() {
     if (!normalized) return 'General';
     return normalized.charAt(0).toUpperCase() + normalized.slice(1);
   }, []);
+
+  const questionBankBySubject = useMemo(() => {
+    const grouped = new Map<string, BoardQuestion[]>();
+    questionBankQuestions.forEach((item) => {
+      const key = String(item.subject || 'general').trim().toLowerCase() || 'general';
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key)!.push(item);
+    });
+
+    return Array.from(grouped.entries())
+      .sort((a, b) => a[0].localeCompare(b[0]))
+      .map(([subject, questions]) => ({
+        subject,
+        questions,
+      }));
+  }, [questionBankQuestions]);
+
+  const activeQuestionBankSubject = useMemo(() => {
+    if (!questionBankBySubject.length) return null;
+    return questionBankBySubject.find((item) => item.subject === questionBankSubject) || questionBankBySubject[0];
+  }, [questionBankBySubject, questionBankSubject]);
+
+  const visibleQuestionBankItems = useMemo(() => {
+    const items = activeQuestionBankSubject?.questions || [];
+    if (!questionBankQuery.trim()) return items;
+    const needle = questionBankQuery.toLowerCase();
+    return items.filter((item) => {
+      const blob = [
+        item.questionText,
+        item.solutionText,
+        item.difficulty,
+        item.questionFile?.name || '',
+        item.solutionFile?.name || '',
+      ]
+        .join(' ')
+        .toLowerCase();
+      return blob.includes(needle);
+    });
+  }, [activeQuestionBankSubject, questionBankQuery]);
 
   const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -175,9 +249,26 @@ export function PracticeBoard() {
     }
   }, []);
 
+  const fetchQuestionBank = useCallback(async () => {
+    setQuestionBankLoading(true);
+    try {
+      const payload = await apiRequest<{ questions: BoardQuestion[] }>('/api/practice-board/questions?limit=500');
+      setQuestionBankQuestions(payload?.questions || []);
+    } catch {
+      setQuestionBankQuestions([]);
+      toast.error('Could not load practice board question bank.');
+    } finally {
+      setQuestionBankLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
+    if (isQuestionBankView) {
+      void fetchQuestionBank();
+      return;
+    }
     void fetchRandomQuestion();
-  }, [fetchRandomQuestion]);
+  }, [fetchQuestionBank, fetchRandomQuestion, isQuestionBankView]);
 
   useEffect(() => {
     resizeCanvas();
@@ -186,15 +277,112 @@ export function PracticeBoard() {
     return () => window.removeEventListener('resize', onResize);
   }, [resizeCanvas]);
 
-  const questionImage = useMemo(() => {
-    if (!activeQuestion) return '';
-    return activeQuestion.questionImageUrl || '';
-  }, [activeQuestion]);
+  const questionFile = useMemo(() => activeQuestion?.questionFile || null, [activeQuestion]);
+  const solutionFile = useMemo(() => activeQuestion?.solutionFile || null, [activeQuestion]);
 
-  const solutionImage = useMemo(() => {
-    if (!activeQuestion) return '';
-    return activeQuestion.solutionImageUrl || '';
-  }, [activeQuestion]);
+  if (isQuestionBankView) {
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h1>Practice Board Question Bank</h1>
+            <p className="text-muted-foreground">Browse conceptual questions by subject and open files directly.</p>
+          </div>
+          <Button
+            variant="outline"
+            onClick={() => {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('view');
+              window.location.href = url.toString();
+            }}
+          >
+            Back to Practice Board
+          </Button>
+        </div>
+
+        <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
+          <Card>
+            <CardHeader>
+              <CardTitle>Subjects</CardTitle>
+            </CardHeader>
+            <CardContent className="max-h-[68vh] space-y-2 overflow-auto">
+              {questionBankBySubject.map((group) => (
+                <button
+                  type="button"
+                  key={group.subject}
+                  onClick={() => setQuestionBankSubject(group.subject)}
+                  className={`w-full rounded-md border px-3 py-2 text-left text-sm ${activeQuestionBankSubject?.subject === group.subject ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-muted'}`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span>{formatSubjectLabel(group.subject)}</span>
+                    <span className="text-xs text-muted-foreground">{group.questions.length}</span>
+                  </div>
+                </button>
+              ))}
+              {!questionBankBySubject.length && !questionBankLoading ? (
+                <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                  No questions found.
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+
+          <Card className="min-w-0">
+            <CardHeader>
+              <CardTitle>Questions</CardTitle>
+              <CardDescription>{formatSubjectLabel(activeQuestionBankSubject?.subject || 'general')}</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3 max-h-[68vh] overflow-auto">
+              <Input
+                value={questionBankQuery}
+                onChange={(event) => setQuestionBankQuery(event.target.value)}
+                placeholder="Search by text, difficulty, or file name..."
+              />
+              {questionBankLoading ? <p className="text-sm text-muted-foreground">Loading question bank...</p> : null}
+
+              {visibleQuestionBankItems.map((item, index) => (
+                <article key={item.id} className="rounded-xl border border-indigo-100 bg-white p-3 space-y-2">
+                  <p className="font-medium">Q{index + 1}. {item.questionText || '(File-based question)'}</p>
+                  <p className="text-xs text-muted-foreground">Difficulty: {item.difficulty || 'Medium'}</p>
+
+                  {item.questionFile ? (
+                    <div className="rounded-md bg-slate-50 p-2 text-xs">
+                      <p>Question file: {item.questionFile.name}</p>
+                      <div className="mt-1 flex gap-2">
+                        <Button size="sm" variant="outline" onClick={() => openDataUrlFile(item.questionFile)}>View</Button>
+                        <Button size="sm" variant="outline" onClick={() => downloadDataUrlFile(item.questionFile)}>Download</Button>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  <div className="rounded-md bg-emerald-50/70 p-2">
+                    <p className="text-[11px] uppercase tracking-wide text-emerald-700">Solution</p>
+                    <p className="whitespace-pre-wrap text-xs text-slate-700">{item.solutionText || '(File-only solution)'}</p>
+                  </div>
+
+                  {item.solutionFile ? (
+                    <div className="rounded-md bg-slate-50 p-2 text-xs">
+                      <p>Solution file: {item.solutionFile.name}</p>
+                      <div className="mt-1 flex gap-2">
+                        <Button size="sm" variant="outline" onClick={() => openDataUrlFile(item.solutionFile)}>View</Button>
+                        <Button size="sm" variant="outline" onClick={() => downloadDataUrlFile(item.solutionFile)}>Download</Button>
+                      </div>
+                    </div>
+                  ) : null}
+                </article>
+              ))}
+
+              {!questionBankLoading && !visibleQuestionBankItems.length ? (
+                <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
+                  No questions found for this subject.
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -210,7 +398,7 @@ export function PracticeBoard() {
               <CardTitle className="text-indigo-950">Question</CardTitle>
               <CardDescription>
                 {activeQuestion
-                  ? `${formatSubjectLabel(activeQuestion.subject)} • ${activeQuestion.chapter || 'General'} • ${activeQuestion.section || 'General'} • ${activeQuestion.difficulty}`
+                  ? `${formatSubjectLabel(activeQuestion.subject)} • ${activeQuestion.difficulty}`
                   : 'No question available. Import a new dataset to begin practice.'}
               </CardDescription>
             </div>
@@ -238,8 +426,18 @@ export function PracticeBoard() {
             <p className="text-base text-slate-800 sm:text-lg">
               {activeQuestion?.questionText || 'Question bank is empty right now.'}
             </p>
-            {questionImage ? (
-              <img src={questionImage} alt="Question diagram" className="mt-3 max-h-56 w-auto rounded-lg border border-indigo-100 bg-white object-contain" />
+            {questionFile ? (
+              isImageMimeType(questionFile.mimeType) ? (
+                <img src={questionFile.dataUrl} alt="Question diagram" className="mt-3 max-h-56 w-auto rounded-lg border border-indigo-100 bg-white object-contain" />
+              ) : (
+                <div className="mt-3 rounded-md border border-indigo-100 bg-white p-2 text-xs text-slate-600">
+                  <p>Question file: {questionFile.name}</p>
+                  <div className="mt-1 flex gap-2">
+                    <Button size="sm" variant="outline" onClick={() => openDataUrlFile(questionFile)}>View</Button>
+                    <Button size="sm" variant="outline" onClick={() => downloadDataUrlFile(questionFile)}>Download</Button>
+                  </div>
+                </div>
+              )
             ) : null}
           </div>
 
@@ -249,12 +447,22 @@ export function PracticeBoard() {
               <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">
                 {activeQuestion.solutionText || 'No text answer provided for this question.'}
               </p>
-              {solutionImage ? (
-                <img
-                  src={solutionImage}
-                  alt="Solution diagram"
-                  className="mt-3 max-h-56 w-auto rounded-lg border border-emerald-200 bg-white object-contain"
-                />
+              {solutionFile ? (
+                isImageMimeType(solutionFile.mimeType) ? (
+                  <img
+                    src={solutionFile.dataUrl}
+                    alt="Solution diagram"
+                    className="mt-3 max-h-56 w-auto rounded-lg border border-emerald-200 bg-white object-contain"
+                  />
+                ) : (
+                  <div className="mt-3 rounded-md border border-emerald-200 bg-white p-2 text-xs text-slate-600">
+                    <p>Solution file: {solutionFile.name}</p>
+                    <div className="mt-1 flex gap-2">
+                      <Button size="sm" variant="outline" onClick={() => openDataUrlFile(solutionFile)}>View</Button>
+                      <Button size="sm" variant="outline" onClick={() => downloadDataUrlFile(solutionFile)}>Download</Button>
+                    </div>
+                  </div>
+                )
               ) : null}
             </div>
           ) : null}

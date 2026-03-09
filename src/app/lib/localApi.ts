@@ -130,13 +130,21 @@ interface LocalAIUsage {
 interface LocalPracticeBoardQuestion {
   id: string;
   subject: string;
-  chapter: string;
-  section: string;
   difficulty: string;
   questionText: string;
-  questionImageUrl: string;
+  questionFile: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
   solutionText: string;
-  solutionImageUrl: string;
+  solutionFile: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
   source: string;
   createdAt: string;
   updatedAt: string;
@@ -1146,16 +1154,31 @@ function createRefreshToken(userId: string) {
 }
 
 function serializePracticeBoardQuestion(item: LocalPracticeBoardQuestion) {
+  const legacyQuestionUrl = String((item as any).questionImageUrl || '').trim();
+  const legacySolutionUrl = String((item as any).solutionImageUrl || '').trim();
+
   return {
     id: item.id,
     subject: item.subject,
-    chapter: item.chapter,
-    section: item.section,
     difficulty: item.difficulty,
     questionText: item.questionText,
-    questionImageUrl: item.questionImageUrl,
+    questionFile: item.questionFile || (legacyQuestionUrl
+      ? {
+        name: 'question-image',
+        mimeType: 'image/*',
+        size: 0,
+        dataUrl: legacyQuestionUrl,
+      }
+      : null),
     solutionText: item.solutionText,
-    solutionImageUrl: item.solutionImageUrl,
+    solutionFile: item.solutionFile || (legacySolutionUrl
+      ? {
+        name: 'solution-image',
+        mimeType: 'image/*',
+        size: 0,
+        dataUrl: legacySolutionUrl,
+      }
+      : null),
   };
 }
 
@@ -1944,16 +1967,24 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
   if (url.pathname === '/api/practice-board/questions' && method === 'GET') {
     const db = readDb();
     const subject = String(url.searchParams.get('subject') || '').trim().toLowerCase();
-    const chapter = String(url.searchParams.get('chapter') || '').trim().toLowerCase();
-    const section = String(url.searchParams.get('section') || '').trim().toLowerCase();
     const difficulty = String(url.searchParams.get('difficulty') || '').trim().toLowerCase();
+    const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
     const limit = clamp(Number(url.searchParams.get('limit') || '100'), 1, 500);
 
     const filtered = db.practiceBoardQuestions.filter((item) => {
       if (subject && item.subject !== subject) return false;
-      if (chapter && !item.chapter.toLowerCase().includes(chapter)) return false;
-      if (section && !item.section.toLowerCase().includes(section)) return false;
       if (difficulty && item.difficulty.toLowerCase() !== difficulty) return false;
+      if (search) {
+        const haystack = [
+          item.questionText,
+          item.solutionText,
+          item.questionFile?.name || '',
+          item.solutionFile?.name || '',
+        ]
+          .join(' ')
+          .toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
       return true;
     });
 
@@ -1966,15 +1997,11 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
   if (url.pathname === '/api/practice-board/questions/random' && method === 'GET') {
     const db = readDb();
     const subject = String(url.searchParams.get('subject') || '').trim().toLowerCase();
-    const chapter = String(url.searchParams.get('chapter') || '').trim().toLowerCase();
-    const section = String(url.searchParams.get('section') || '').trim().toLowerCase();
     const difficulty = String(url.searchParams.get('difficulty') || '').trim().toLowerCase();
     const excludeId = String(url.searchParams.get('excludeId') || '').trim();
 
     const filtered = db.practiceBoardQuestions.filter((item) => {
       if (subject && item.subject !== subject) return false;
-      if (chapter && !item.chapter.toLowerCase().includes(chapter)) return false;
-      if (section && !item.section.toLowerCase().includes(section)) return false;
       if (difficulty && item.difficulty.toLowerCase() !== difficulty) return false;
       if (excludeId && item.id === excludeId) return false;
       return true;
@@ -2823,19 +2850,20 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
   if (url.pathname === '/api/admin/practice-board/questions' && method === 'GET') {
     const { db } = requireAdmin(token);
     const subject = String(url.searchParams.get('subject') || '').trim().toLowerCase();
-    const chapter = String(url.searchParams.get('chapter') || '').trim().toLowerCase();
-    const section = String(url.searchParams.get('section') || '').trim().toLowerCase();
     const difficulty = String(url.searchParams.get('difficulty') || '').trim().toLowerCase();
     const search = String(url.searchParams.get('search') || '').trim().toLowerCase();
 
     const questions = db.practiceBoardQuestions
       .filter((item) => {
         if (subject && item.subject !== subject) return false;
-        if (chapter && !item.chapter.toLowerCase().includes(chapter)) return false;
-        if (section && !item.section.toLowerCase().includes(section)) return false;
         if (difficulty && item.difficulty.toLowerCase() !== difficulty) return false;
         if (search) {
-          const haystack = [item.questionText, item.solutionText, item.chapter, item.section].join(' ').toLowerCase();
+          const haystack = [
+            item.questionText,
+            item.solutionText,
+            item.questionFile?.name || '',
+            item.solutionFile?.name || '',
+          ].join(' ').toLowerCase();
           if (!haystack.includes(search)) return false;
         }
         return true;
@@ -2848,35 +2876,45 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
   if (url.pathname === '/api/admin/practice-board/questions' && method === 'POST') {
     const { db } = requireAdmin(token);
     const subject = String(body.subject || '').trim().toLowerCase();
-    const chapter = String(body.chapter || '').trim();
-    const section = String(body.section || '').trim();
     const difficulty = String(body.difficulty || 'Medium').trim() || 'Medium';
     const questionText = String(body.questionText || '').trim();
-    const questionImageUrl = String(body.questionImageUrl || '').trim();
+    const questionFile = body.questionFile && typeof body.questionFile === 'object'
+      ? {
+        name: String(body.questionFile.name || '').trim(),
+        mimeType: String(body.questionFile.mimeType || '').trim(),
+        size: Number(body.questionFile.size || 0),
+        dataUrl: String(body.questionFile.dataUrl || '').trim(),
+      }
+      : null;
     const solutionText = String(body.solutionText || '').trim();
-    const solutionImageUrl = String(body.solutionImageUrl || '').trim();
+    const solutionFile = body.solutionFile && typeof body.solutionFile === 'object'
+      ? {
+        name: String(body.solutionFile.name || '').trim(),
+        mimeType: String(body.solutionFile.mimeType || '').trim(),
+        size: Number(body.solutionFile.size || 0),
+        dataUrl: String(body.solutionFile.dataUrl || '').trim(),
+      }
+      : null;
 
-    if (!subject || !chapter || !section) {
-      throw new Error('subject, chapter, and section are required.');
+    if (!subject) {
+      throw new Error('subject is required.');
     }
-    if (!questionText && !questionImageUrl) {
-      throw new Error('Provide question text or question image.');
+    if (!questionText && !questionFile) {
+      throw new Error('Provide question text or a question file.');
     }
-    if (!solutionText && !solutionImageUrl) {
-      throw new Error('Provide solution text or solution image.');
+    if (!solutionText && !solutionFile) {
+      throw new Error('Provide solution text or a solution file.');
     }
 
     const now = new Date().toISOString();
     const question: LocalPracticeBoardQuestion = {
       id: `pbq-${Date.now()}`,
       subject,
-      chapter,
-      section,
       difficulty,
       questionText,
-      questionImageUrl,
+      questionFile,
       solutionText,
-      solutionImageUrl,
+      solutionFile,
       source: 'Admin',
       createdAt: now,
       updatedAt: now,
@@ -2899,24 +2937,40 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const updated: LocalPracticeBoardQuestion = {
       ...target,
       subject: Object.prototype.hasOwnProperty.call(body, 'subject') ? String(body.subject || '').trim().toLowerCase() : target.subject,
-      chapter: Object.prototype.hasOwnProperty.call(body, 'chapter') ? String(body.chapter || '').trim() : target.chapter,
-      section: Object.prototype.hasOwnProperty.call(body, 'section') ? String(body.section || '').trim() : target.section,
       difficulty: Object.prototype.hasOwnProperty.call(body, 'difficulty') ? String(body.difficulty || '').trim() : target.difficulty,
       questionText: Object.prototype.hasOwnProperty.call(body, 'questionText') ? String(body.questionText || '').trim() : target.questionText,
-      questionImageUrl: Object.prototype.hasOwnProperty.call(body, 'questionImageUrl') ? String(body.questionImageUrl || '').trim() : target.questionImageUrl,
+      questionFile: Object.prototype.hasOwnProperty.call(body, 'questionFile')
+        ? (body.questionFile && typeof body.questionFile === 'object'
+          ? {
+            name: String(body.questionFile.name || '').trim(),
+            mimeType: String(body.questionFile.mimeType || '').trim(),
+            size: Number(body.questionFile.size || 0),
+            dataUrl: String(body.questionFile.dataUrl || '').trim(),
+          }
+          : null)
+        : target.questionFile,
       solutionText: Object.prototype.hasOwnProperty.call(body, 'solutionText') ? String(body.solutionText || '').trim() : target.solutionText,
-      solutionImageUrl: Object.prototype.hasOwnProperty.call(body, 'solutionImageUrl') ? String(body.solutionImageUrl || '').trim() : target.solutionImageUrl,
+      solutionFile: Object.prototype.hasOwnProperty.call(body, 'solutionFile')
+        ? (body.solutionFile && typeof body.solutionFile === 'object'
+          ? {
+            name: String(body.solutionFile.name || '').trim(),
+            mimeType: String(body.solutionFile.mimeType || '').trim(),
+            size: Number(body.solutionFile.size || 0),
+            dataUrl: String(body.solutionFile.dataUrl || '').trim(),
+          }
+          : null)
+        : target.solutionFile,
       updatedAt: new Date().toISOString(),
     };
 
-    if (!updated.subject || !updated.chapter || !updated.section) {
-      throw new Error('subject, chapter, and section are required.');
+    if (!updated.subject) {
+      throw new Error('subject is required.');
     }
-    if (!updated.questionText && !updated.questionImageUrl) {
-      throw new Error('Provide question text or question image.');
+    if (!updated.questionText && !updated.questionFile) {
+      throw new Error('Provide question text or a question file.');
     }
-    if (!updated.solutionText && !updated.solutionImageUrl) {
-      throw new Error('Provide solution text or solution image.');
+    if (!updated.solutionText && !updated.solutionFile) {
+      throw new Error('Provide solution text or a solution file.');
     }
 
     db.practiceBoardQuestions[index] = updated;

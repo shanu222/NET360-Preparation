@@ -305,7 +305,16 @@ const COMMUNITY_REQUEST_SELECT = 'fromUserId toUserId status createdAt';
 const COMMUNITY_MESSAGE_SELECT = 'connectionId senderUserId text createdAt readByUserIds';
 const COMMUNITY_ROOM_POST_SELECT = 'roomId authorUserId type title text subject upvotes answers flagged createdAt';
 const MCQ_SELECT = 'subject part chapter section topic question questionImageUrl options answer tip difficulty source createdAt';
-const PRACTICE_BOARD_SELECT = 'subject chapter section difficulty questionText questionImageUrl solutionText solutionImageUrl source createdAt';
+const PRACTICE_BOARD_SELECT = 'subject difficulty questionText questionFile questionImageUrl solutionText solutionFile solutionImageUrl source createdAt';
+
+const PRACTICE_BOARD_ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+]);
+const PRACTICE_BOARD_MAX_FILE_BYTES = 8 * 1024 * 1024;
 
 function shuffle(array) {
   const copy = [...array];
@@ -469,6 +478,40 @@ function parseDataUrl(dataUrl) {
   } catch {
     return null;
   }
+}
+
+function normalizePracticeBoardFile(input) {
+  if (input == null) return null;
+  if (typeof input !== 'object') return null;
+
+  const name = String(input.name || '').trim();
+  const dataUrl = String(input.dataUrl || '').trim();
+  if (!name && !dataUrl) return null;
+  if (!name || !dataUrl) {
+    throw new Error('Practice file must include both name and dataUrl.');
+  }
+
+  const parsed = parseDataUrl(dataUrl);
+  if (!parsed?.buffer) {
+    throw new Error(`Invalid file data for ${name}.`);
+  }
+
+  const mimeType = String(input.mimeType || parsed.mimeType || 'application/octet-stream').trim().toLowerCase();
+  if (!PRACTICE_BOARD_ALLOWED_MIME_TYPES.has(mimeType)) {
+    throw new Error(`Unsupported file type for ${name}. Allowed types: JPG, PNG, PDF, DOC, DOCX.`);
+  }
+
+  const size = Number(input.size || parsed.buffer.length || 0);
+  if (!size || size > PRACTICE_BOARD_MAX_FILE_BYTES) {
+    throw new Error(`File ${name} exceeds the ${Math.floor(PRACTICE_BOARD_MAX_FILE_BYTES / (1024 * 1024))}MB limit.`);
+  }
+
+  return {
+    name,
+    mimeType,
+    size,
+    dataUrl,
+  };
 }
 
 function normalizePlainText(value) {
@@ -1297,16 +1340,48 @@ function serializeMcq(item) {
 }
 
 function serializePracticeBoardQuestion(item) {
+  const legacyQuestionUrl = String(item.questionImageUrl || '').trim();
+  const legacySolutionUrl = String(item.solutionImageUrl || '').trim();
+  const normalizedQuestionFile = item.questionFile
+    ? {
+      name: String(item.questionFile.name || '').trim(),
+      mimeType: String(item.questionFile.mimeType || '').trim().toLowerCase(),
+      size: Number(item.questionFile.size || 0),
+      dataUrl: String(item.questionFile.dataUrl || '').trim(),
+    }
+    : (legacyQuestionUrl
+      ? {
+        name: 'question-image',
+        mimeType: 'image/*',
+        size: 0,
+        dataUrl: legacyQuestionUrl,
+      }
+      : null);
+
+  const normalizedSolutionFile = item.solutionFile
+    ? {
+      name: String(item.solutionFile.name || '').trim(),
+      mimeType: String(item.solutionFile.mimeType || '').trim().toLowerCase(),
+      size: Number(item.solutionFile.size || 0),
+      dataUrl: String(item.solutionFile.dataUrl || '').trim(),
+    }
+    : (legacySolutionUrl
+      ? {
+        name: 'solution-image',
+        mimeType: 'image/*',
+        size: 0,
+        dataUrl: legacySolutionUrl,
+      }
+      : null);
+
   return {
     id: String(item._id),
     subject: String(item.subject || '').toLowerCase(),
-    chapter: String(item.chapter || '').trim(),
-    section: String(item.section || '').trim(),
     difficulty: String(item.difficulty || 'Medium'),
     questionText: String(item.questionText || '').trim(),
-    questionImageUrl: String(item.questionImageUrl || '').trim(),
+    questionFile: normalizedQuestionFile,
     solutionText: String(item.solutionText || '').trim(),
-    solutionImageUrl: String(item.solutionImageUrl || '').trim(),
+    solutionFile: normalizedSolutionFile,
   };
 }
 
@@ -3875,22 +3950,17 @@ app.post('/api/practice/analyze', authMiddleware, async (req, res) => {
 app.get('/api/practice-board/questions', async (req, res) => {
   try {
     const subject = String(req.query.subject || '').trim().toLowerCase();
-    const chapter = String(req.query.chapter || '').trim();
-    const section = String(req.query.section || '').trim();
     const difficulty = String(req.query.difficulty || '').trim();
+    const search = String(req.query.search || '').trim();
     const { page, limit, skip } = readPagination(req.query, { defaultLimit: 100, maxLimit: 500 });
 
     const filter = {};
     if (subject) filter.subject = subject;
-    if (chapter) {
-      const expr = containsRegex(chapter, 100);
-      if (expr) filter.chapter = expr;
-    }
-    if (section) {
-      const expr = containsRegex(section, 100);
-      if (expr) filter.section = expr;
-    }
     if (difficulty) filter.difficulty = difficulty;
+    if (search) {
+      const expr = containsRegex(search, 120);
+      filter.$or = [{ questionText: expr }, { solutionText: expr }];
+    }
 
     const questions = await PracticeBoardQuestionModel.find(filter)
       .select(PRACTICE_BOARD_SELECT)
@@ -3907,15 +3977,11 @@ app.get('/api/practice-board/questions', async (req, res) => {
 app.get('/api/practice-board/questions/random', async (req, res) => {
   try {
     const subject = String(req.query.subject || '').trim().toLowerCase();
-    const chapter = String(req.query.chapter || '').trim();
-    const section = String(req.query.section || '').trim();
     const difficulty = String(req.query.difficulty || '').trim();
     const excludeId = String(req.query.excludeId || '').trim();
 
     const filter = {};
     if (subject) filter.subject = subject;
-    if (chapter) filter.chapter = { $regex: chapter, $options: 'i' };
-    if (section) filter.section = { $regex: section, $options: 'i' };
     if (difficulty) filter.difficulty = difficulty;
     if (excludeId && isValidObjectId(excludeId)) {
       filter._id = { $ne: excludeId };
@@ -5427,22 +5493,12 @@ app.delete('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, r
 
 app.get('/api/admin/practice-board/questions', authMiddleware, requireAdmin, async (req, res) => {
   const subject = String(req.query.subject || '').trim().toLowerCase();
-  const chapter = String(req.query.chapter || '').trim();
-  const section = String(req.query.section || '').trim();
   const difficulty = String(req.query.difficulty || '').trim();
   const search = String(req.query.search || '').trim();
   const { page, limit, skip } = readPagination(req.query, { defaultLimit: 200, maxLimit: 500 });
 
   const filter = {};
   if (subject) filter.subject = subject;
-  if (chapter) {
-    const expr = containsRegex(chapter, 100);
-    if (expr) filter.chapter = expr;
-  }
-  if (section) {
-    const expr = containsRegex(section, 100);
-    if (expr) filter.section = expr;
-  }
   if (difficulty) filter.difficulty = difficulty;
   if (search) {
     const expr = containsRegex(search, 120);
@@ -5464,40 +5520,46 @@ app.get('/api/admin/practice-board/questions', authMiddleware, requireAdmin, asy
 app.post('/api/admin/practice-board/questions', authMiddleware, requireAdmin, async (req, res) => {
   const {
     subject,
-    chapter,
-    section,
     difficulty = 'Medium',
     questionText = '',
-    questionImageUrl = '',
+    questionFile = null,
     solutionText = '',
-    solutionImageUrl = '',
+    solutionFile = null,
   } = req.body || {};
 
   const normalizedSubject = String(subject || '').trim().toLowerCase();
-  if (!normalizedSubject || !chapter || !section) {
-    res.status(400).json({ error: 'subject, chapter, and section are required.' });
+  if (!normalizedSubject) {
+    res.status(400).json({ error: 'subject is required.' });
     return;
   }
 
-  if (!String(questionText || '').trim() && !String(questionImageUrl || '').trim()) {
-    res.status(400).json({ error: 'Provide question text or question image.' });
+  let normalizedQuestionFile;
+  let normalizedSolutionFile;
+  try {
+    normalizedQuestionFile = normalizePracticeBoardFile(questionFile);
+    normalizedSolutionFile = normalizePracticeBoardFile(solutionFile);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid uploaded file.' });
     return;
   }
 
-  if (!String(solutionText || '').trim() && !String(solutionImageUrl || '').trim()) {
-    res.status(400).json({ error: 'Provide solution text or solution image.' });
+  if (!String(questionText || '').trim() && !normalizedQuestionFile) {
+    res.status(400).json({ error: 'Provide question text or a question file.' });
+    return;
+  }
+
+  if (!String(solutionText || '').trim() && !normalizedSolutionFile) {
+    res.status(400).json({ error: 'Provide solution text or a solution file.' });
     return;
   }
 
   const created = await PracticeBoardQuestionModel.create({
     subject: normalizedSubject,
-    chapter: String(chapter).trim(),
-    section: String(section).trim(),
     difficulty: String(difficulty || 'Medium').trim() || 'Medium',
     questionText: String(questionText || '').trim(),
-    questionImageUrl: String(questionImageUrl || '').trim(),
+    questionFile: normalizedQuestionFile,
     solutionText: String(solutionText || '').trim(),
-    solutionImageUrl: String(solutionImageUrl || '').trim(),
+    solutionFile: normalizedSolutionFile,
     source: 'Admin',
   });
 
@@ -5515,41 +5577,46 @@ app.put('/api/admin/practice-board/questions/:questionId', authMiddleware, requi
     subject: Object.prototype.hasOwnProperty.call(req.body, 'subject')
       ? String(req.body.subject ?? '').trim().toLowerCase()
       : String(existing.subject || '').trim().toLowerCase(),
-    chapter: Object.prototype.hasOwnProperty.call(req.body, 'chapter')
-      ? String(req.body.chapter ?? '').trim()
-      : String(existing.chapter || '').trim(),
-    section: Object.prototype.hasOwnProperty.call(req.body, 'section')
-      ? String(req.body.section ?? '').trim()
-      : String(existing.section || '').trim(),
     difficulty: Object.prototype.hasOwnProperty.call(req.body, 'difficulty')
       ? String(req.body.difficulty ?? '').trim()
       : String(existing.difficulty || '').trim(),
     questionText: Object.prototype.hasOwnProperty.call(req.body, 'questionText')
       ? String(req.body.questionText ?? '').trim()
       : String(existing.questionText || '').trim(),
-    questionImageUrl: Object.prototype.hasOwnProperty.call(req.body, 'questionImageUrl')
-      ? String(req.body.questionImageUrl ?? '').trim()
-      : String(existing.questionImageUrl || '').trim(),
     solutionText: Object.prototype.hasOwnProperty.call(req.body, 'solutionText')
       ? String(req.body.solutionText ?? '').trim()
       : String(existing.solutionText || '').trim(),
-    solutionImageUrl: Object.prototype.hasOwnProperty.call(req.body, 'solutionImageUrl')
-      ? String(req.body.solutionImageUrl ?? '').trim()
-      : String(existing.solutionImageUrl || '').trim(),
   };
 
-  if (!next.subject || !next.chapter || !next.section) {
-    res.status(400).json({ error: 'subject, chapter, and section are required.' });
+  let nextQuestionFile = existing.questionFile || null;
+  let nextSolutionFile = existing.solutionFile || null;
+  try {
+    if (Object.prototype.hasOwnProperty.call(req.body, 'questionFile')) {
+      nextQuestionFile = normalizePracticeBoardFile(req.body.questionFile);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'solutionFile')) {
+      nextSolutionFile = normalizePracticeBoardFile(req.body.solutionFile);
+    }
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid uploaded file.' });
     return;
   }
 
-  if (!next.questionText && !next.questionImageUrl) {
-    res.status(400).json({ error: 'Provide question text or question image.' });
+  next.questionFile = nextQuestionFile;
+  next.solutionFile = nextSolutionFile;
+
+  if (!next.subject) {
+    res.status(400).json({ error: 'subject is required.' });
     return;
   }
 
-  if (!next.solutionText && !next.solutionImageUrl) {
-    res.status(400).json({ error: 'Provide solution text or solution image.' });
+  if (!next.questionText && !next.questionFile) {
+    res.status(400).json({ error: 'Provide question text or a question file.' });
+    return;
+  }
+
+  if (!next.solutionText && !next.solutionFile) {
+    res.status(400).json({ error: 'Provide solution text or a solution file.' });
     return;
   }
 
