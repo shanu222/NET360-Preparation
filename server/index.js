@@ -514,6 +514,183 @@ function splitInlineOptions(line) {
   return extracted;
 }
 
+function normalizeOptionText(value) {
+  return String(value || '')
+    .replace(/^(?:option\s*)?(?:[A-H]|\d{1,2})(?:\s*[\).:-])?\s*/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function resolveAnswerToOption(answerRaw, options) {
+  const normalizedAnswer = String(answerRaw || '').trim();
+  if (!normalizedAnswer) return '';
+
+  const token = normalizedAnswer.match(/(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\b|\)|\.|:)?/i);
+  if (token) {
+    const marker = token[1];
+    const idx = /^\d+$/.test(marker)
+      ? Number(marker) - 1
+      : marker.toUpperCase().charCodeAt(0) - 65;
+    if (idx >= 0 && idx < options.length) {
+      return options[idx];
+    }
+  }
+
+  const directIndex = options.findIndex((item) => String(item || '').trim().toLowerCase() === normalizedAnswer.toLowerCase());
+  if (directIndex >= 0) return options[directIndex];
+
+  return normalizedAnswer;
+}
+
+function normalizeDifficulty(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'easy') return 'Easy';
+  if (raw === 'hard') return 'Hard';
+  return 'Medium';
+}
+
+function parseOptionsFromUnknown(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeOptionText(item))
+      .filter(Boolean);
+  }
+
+  const raw = String(value || '').trim();
+  if (!raw) return [];
+
+  const lines = raw.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const options = [];
+
+  for (const line of lines) {
+    const inline = splitInlineOptions(line);
+    if (inline.length) {
+      options.push(...inline.map((item) => normalizeOptionText(item)).filter(Boolean));
+      continue;
+    }
+
+    const optionMatch = line.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\s*[\).:-])?\s+(.+)$/i);
+    if (optionMatch) {
+      options.push(normalizeOptionText(optionMatch[2]));
+      continue;
+    }
+
+    if (!options.length) {
+      const parts = raw.split(/\s+(?=(?:option\s*)?(?:[A-H]|\d{1,2})(?:[\).:-])?\s+)/i);
+      if (parts.length > 1) {
+        return parts
+          .map((part) => normalizeOptionText(part))
+          .filter(Boolean);
+      }
+    }
+  }
+
+  if (!options.length) {
+    return lines.map((line) => normalizeOptionText(line)).filter(Boolean);
+  }
+
+  return options;
+}
+
+function extractJsonObject(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+async function parseBulkMcqsWithAi(rawText) {
+  if (!openai) {
+    return { parsed: [], errors: ['AI parser is unavailable.'] };
+  }
+
+  const inputText = String(rawText || '').trim();
+  if (!inputText) {
+    return { parsed: [], errors: ['No content found to parse.'] };
+  }
+
+  const clippedText = inputText.length > 120000 ? inputText.slice(0, 120000) : inputText;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You extract ALL MCQs from messy educational documents.',
+            'Return strict JSON only in this schema:',
+            '{"mcqs":[{"question":"...","options":["..."],"answer":"...","explanation":"...","difficulty":"Easy|Medium|Hard"}]}',
+            'Rules:',
+            '- Detect all question boundaries (1., 1), Q1, Question 1, etc.).',
+            '- Support mixed option formats: A) A. A, Option 1, 1) and inline options in one line.',
+            '- Keep options separated as array items.',
+            '- answer may be letter/number/text; provide best available answer token from source.',
+            '- If explanation is not present, use empty string.',
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: clippedText,
+        },
+      ],
+    });
+
+    const raw = completion.choices?.[0]?.message?.content || '';
+    const parsedJson = extractJsonObject(raw);
+    const rows = Array.isArray(parsedJson?.mcqs) ? parsedJson.mcqs : [];
+
+    const parsed = [];
+    const errors = [];
+
+    rows.forEach((row, idx) => {
+      const question = String(row?.question || '').replace(/\s+/g, ' ').trim();
+      const options = parseOptionsFromUnknown(row?.options);
+      const answer = resolveAnswerToOption(row?.answer, options);
+      const tip = String(row?.explanation || '').trim();
+      const difficulty = normalizeDifficulty(row?.difficulty);
+
+      if (!question) {
+        errors.push(`Q${idx + 1}: question text is missing.`);
+        return;
+      }
+      if (options.length < 2) {
+        errors.push(`Q${idx + 1}: at least 2 options are required.`);
+        return;
+      }
+      if (!answer) {
+        errors.push(`Q${idx + 1}: correct answer is missing.`);
+        return;
+      }
+
+      parsed.push({
+        question,
+        questionImageUrl: '',
+        options,
+        answer,
+        tip,
+        difficulty,
+      });
+    });
+
+    if (!parsed.length) {
+      return { parsed: [], errors: ['AI parser could not extract valid MCQs.'] };
+    }
+
+    return { parsed, errors };
+  } catch {
+    return { parsed: [], errors: ['AI parser failed for this document.'] };
+  }
+}
+
 function parseBulkMcqsFromText(raw) {
   const text = normalizePlainText(raw);
   if (!text) return { parsed: [], errors: ['No content found to parse.'] };
@@ -5105,8 +5282,20 @@ app.post('/api/admin/mcqs/parse', authMiddleware, requireAdmin, async (req, res)
       sourceText = String(req.body?.rawText || '').trim();
     }
 
-    const parsedResult = parseBulkMcqsFromText(sourceText);
-    res.json(parsedResult);
+    const heuristicResult = parseBulkMcqsFromText(sourceText);
+    let finalResult = heuristicResult;
+
+    if (openai) {
+      const aiResult = await parseBulkMcqsWithAi(sourceText);
+      const heuristicScore = (heuristicResult.parsed?.length || 0) - (heuristicResult.errors?.length || 0);
+      const aiScore = (aiResult.parsed?.length || 0) - (aiResult.errors?.length || 0);
+
+      if (aiResult.parsed.length > 0 && aiScore >= heuristicScore) {
+        finalResult = aiResult;
+      }
+    }
+
+    res.json(finalResult);
   } catch (error) {
     res.status(400).json({
       parsed: [],
