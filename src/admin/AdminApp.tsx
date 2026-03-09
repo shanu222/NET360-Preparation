@@ -120,6 +120,14 @@ interface AdminMCQ {
   difficulty: string;
 }
 
+interface AdminMcqBankStructureItem {
+  subject: string;
+  part?: string;
+  chapter: string;
+  section: string;
+  count: number;
+}
+
 interface AdminPracticeBoardQuestion {
   id: string;
   subject: string;
@@ -465,6 +473,7 @@ function fileToDataUrl(file: File): Promise<string> {
 }
 
 export default function AdminApp() {
+  const isQuestionBankView = new URLSearchParams(window.location.search).get('view') === 'question-bank';
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_KEY));
   const [loading, setLoading] = useState(false);
@@ -475,6 +484,12 @@ export default function AdminApp() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [signupRequests, setSignupRequests] = useState<SignupRequest[]>([]);
   const [mcqs, setMcqs] = useState<AdminMCQ[]>([]);
+  const [mcqStructure, setMcqStructure] = useState<AdminMcqBankStructureItem[]>([]);
+  const [bankSubjectKey, setBankSubjectKey] = useState('');
+  const [bankChapterKey, setBankChapterKey] = useState('');
+  const [bankSectionKey, setBankSectionKey] = useState('');
+  const [bankMcqs, setBankMcqs] = useState<AdminMCQ[]>([]);
+  const [bankLoading, setBankLoading] = useState(false);
   const [issuedTokens, setIssuedTokens] = useState<Record<string, string>>({});
   const [query, setQuery] = useState('');
   const [form, setForm] = useState(emptyForm());
@@ -560,6 +575,82 @@ export default function AdminApp() {
     return Array.from(new Set(questionSubmissions.map((item) => item.subject).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [questionSubmissions]);
 
+  const bankTree = useMemo(() => {
+    const subjectMap = new Map<string, {
+      key: string;
+      label: string;
+      count: number;
+      chapters: Map<string, {
+        key: string;
+        label: string;
+        count: number;
+        sections: Map<string, { key: string; label: string; count: number }>;
+      }>;
+    }>();
+
+    mcqStructure.forEach((row) => {
+      const subjectKey = String(row.subject || '').trim().toLowerCase();
+      if (!subjectKey) return;
+      const chapterRaw = String(row.chapter || '').trim();
+      const sectionRaw = String(row.section || '').trim();
+      const count = Number(row.count || 0);
+
+      const chapterKey = chapterRaw ? chapterRaw.toLowerCase() : '__no_chapter__';
+      const chapterLabel = chapterRaw || 'General Topics';
+      const sectionLabel = sectionRaw || chapterLabel;
+      const sectionKey = sectionLabel.toLowerCase();
+
+      if (!subjectMap.has(subjectKey)) {
+        subjectMap.set(subjectKey, {
+          key: subjectKey,
+          label: subjectKey,
+          count: 0,
+          chapters: new Map(),
+        });
+      }
+
+      const subjectNode = subjectMap.get(subjectKey)!;
+      subjectNode.count += count;
+
+      if (!subjectNode.chapters.has(chapterKey)) {
+        subjectNode.chapters.set(chapterKey, {
+          key: chapterKey,
+          label: chapterLabel,
+          count: 0,
+          sections: new Map(),
+        });
+      }
+
+      const chapterNode = subjectNode.chapters.get(chapterKey)!;
+      chapterNode.count += count;
+
+      if (!chapterNode.sections.has(sectionKey)) {
+        chapterNode.sections.set(sectionKey, {
+          key: sectionKey,
+          label: sectionLabel,
+          count: 0,
+        });
+      }
+      chapterNode.sections.get(sectionKey)!.count += count;
+    });
+
+    return Array.from(subjectMap.values())
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .map((subject) => ({
+        ...subject,
+        chapters: Array.from(subject.chapters.values())
+          .sort((a, b) => a.label.localeCompare(b.label))
+          .map((chapter) => ({
+            ...chapter,
+            sections: Array.from(chapter.sections.values()).sort((a, b) => a.label.localeCompare(b.label)),
+          })),
+      }));
+  }, [mcqStructure]);
+
+  const activeBankSubject = useMemo(() => bankTree.find((item) => item.key === bankSubjectKey) || null, [bankTree, bankSubjectKey]);
+  const activeBankChapter = useMemo(() => activeBankSubject?.chapters.find((item) => item.key === bankChapterKey) || null, [activeBankSubject, bankChapterKey]);
+  const activeBankSection = useMemo(() => activeBankChapter?.sections.find((item) => item.key === bankSectionKey) || null, [activeBankChapter, bankSectionKey]);
+
   const authToken = token;
 
   const clearAdminSession = () => {
@@ -567,6 +658,12 @@ export default function AdminApp() {
     setRefreshToken(null);
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_TOKEN_KEY);
+  };
+
+  const openQuestionBankWindow = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('view', 'question-bank');
+    window.open(url.toString(), '_blank', 'noopener,noreferrer');
   };
 
   const loadAdminData = async (activeToken: string) => {
@@ -581,6 +678,7 @@ export default function AdminApp() {
       subscriptionOverviewPayload,
       subscriptionUsersPayload,
       communityReportsPayload,
+      structurePayload,
     ] = await Promise.all([
       apiRequest<AdminOverview>('/api/admin/overview', {}, activeToken),
       apiRequest<{ users: AdminUser[] }>('/api/admin/users', {}, activeToken),
@@ -605,6 +703,7 @@ export default function AdminApp() {
       })),
       apiRequest<{ users: AdminSubscriptionUser[] }>(`/api/admin/subscriptions/users?status=${subscriptionFilter}`, {}, activeToken).catch(() => ({ users: [] })),
       apiRequest<{ reports: AdminCommunityReport[] }>('/api/admin/community/reports', {}, activeToken).catch(() => ({ reports: [] })),
+      apiRequest<{ structure: AdminMcqBankStructureItem[] }>('/api/admin/mcq-bank/structure', {}, activeToken).catch(() => ({ structure: [] })),
     ]);
 
     setOverview(overviewPayload);
@@ -622,6 +721,29 @@ export default function AdminApp() {
     setSubscriptionOverview(subscriptionOverviewPayload);
     setSubscriptionUsers(subscriptionUsersPayload.users || []);
     setCommunityReports(communityReportsPayload.reports || []);
+    setMcqStructure(structurePayload.structure || []);
+  };
+
+  const loadBankMcqs = async (
+    activeToken: string,
+    subject: string,
+    chapterKey: string,
+    chapterLabel: string,
+    sectionLabel: string,
+  ) => {
+    const params = new URLSearchParams({ subject });
+    if (chapterKey && chapterKey !== '__no_chapter__' && chapterLabel) {
+      params.set('chapter', chapterLabel);
+    }
+    params.set('section', sectionLabel);
+
+    setBankLoading(true);
+    try {
+      const payload = await apiRequest<{ mcqs: AdminMCQ[] }>(`/api/admin/mcqs?${params.toString()}`, {}, activeToken);
+      setBankMcqs(payload.mcqs || []);
+    } finally {
+      setBankLoading(false);
+    }
   };
 
   const loadSectionMcqs = async (
@@ -714,6 +836,39 @@ export default function AdminApp() {
       setBulkDeleteSectionOrTopic(selectedHierarchy.sectionTitle);
     }
   }, [selectedHierarchy]);
+
+  useEffect(() => {
+    if (!bankTree.length) return;
+    if (!bankSubjectKey || !bankTree.some((item) => item.key === bankSubjectKey)) {
+      setBankSubjectKey(bankTree[0].key);
+      return;
+    }
+    const subject = bankTree.find((item) => item.key === bankSubjectKey);
+    if (!subject) return;
+    if (!bankChapterKey || !subject.chapters.some((item) => item.key === bankChapterKey)) {
+      setBankChapterKey(subject.chapters[0]?.key || '');
+      return;
+    }
+    const chapter = subject.chapters.find((item) => item.key === bankChapterKey);
+    if (!chapter) return;
+    if (!bankSectionKey || !chapter.sections.some((item) => item.key === bankSectionKey)) {
+      setBankSectionKey(chapter.sections[0]?.key || '');
+    }
+  }, [bankTree, bankSubjectKey, bankChapterKey, bankSectionKey]);
+
+  useEffect(() => {
+    if (!isQuestionBankView || !authToken || !activeBankSubject || !activeBankChapter || !activeBankSection) return;
+    void loadBankMcqs(
+      authToken,
+      activeBankSubject.key,
+      activeBankChapter.key,
+      activeBankChapter.label,
+      activeBankSection.label,
+    ).catch(() => {
+      setBankMcqs([]);
+      toast.error('Could not load question bank items for this section.');
+    });
+  }, [isQuestionBankView, authToken, activeBankSubject, activeBankChapter, activeBankSection]);
 
   const login = async () => {
     if (!authForm.email || !authForm.password) {
@@ -1420,6 +1575,122 @@ export default function AdminApp() {
     );
   }
 
+  if (isQuestionBankView) {
+    return (
+      <div className="min-h-screen p-3 sm:p-5">
+        <div className="mx-auto w-full max-w-[1700px] space-y-4 sm:space-y-5">
+          <header className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h1>Question Bank Explorer</h1>
+              <p className="text-sm text-muted-foreground">Browse all MCQs by Subject, Chapter, and Section/Topic.</p>
+            </div>
+            <Button variant="outline" onClick={() => {
+              const url = new URL(window.location.href);
+              url.searchParams.delete('view');
+              window.location.href = url.toString();
+            }}>
+              Back to Admin Dashboard
+            </Button>
+          </header>
+
+          <div className="grid gap-4 lg:grid-cols-[280px_320px_320px_minmax(0,1fr)]">
+            <Card>
+              <CardHeader>
+                <CardTitle>Subjects</CardTitle>
+              </CardHeader>
+              <CardContent className="max-h-[70vh] space-y-2 overflow-auto">
+                {bankTree.map((subject) => (
+                  <button
+                    type="button"
+                    key={subject.key}
+                    onClick={() => setBankSubjectKey(subject.key)}
+                    className={`w-full rounded-md border px-3 py-2 text-left text-sm ${bankSubjectKey === subject.key ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-muted'}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span>{subject.label}</span>
+                      <Badge variant="outline">{subject.count}</Badge>
+                    </div>
+                  </button>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Chapters</CardTitle>
+              </CardHeader>
+              <CardContent className="max-h-[70vh] space-y-2 overflow-auto">
+                {(activeBankSubject?.chapters || []).map((chapter) => (
+                  <button
+                    type="button"
+                    key={chapter.key}
+                    onClick={() => setBankChapterKey(chapter.key)}
+                    className={`w-full rounded-md border px-3 py-2 text-left text-sm ${bankChapterKey === chapter.key ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-muted'}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span>{chapter.label}</span>
+                      <Badge variant="outline">{chapter.count}</Badge>
+                    </div>
+                  </button>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Sections / Topics</CardTitle>
+              </CardHeader>
+              <CardContent className="max-h-[70vh] space-y-2 overflow-auto">
+                {(activeBankChapter?.sections || []).map((section) => (
+                  <button
+                    type="button"
+                    key={section.key}
+                    onClick={() => setBankSectionKey(section.key)}
+                    className={`w-full rounded-md border px-3 py-2 text-left text-sm ${bankSectionKey === section.key ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-muted'}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span>{section.label}</span>
+                      <Badge variant="outline">{section.count}</Badge>
+                    </div>
+                  </button>
+                ))}
+              </CardContent>
+            </Card>
+
+            <Card className="min-w-0">
+              <CardHeader>
+                <CardTitle>MCQs</CardTitle>
+                <CardDescription>
+                  {activeBankSubject?.label || '-'} / {activeBankChapter?.label || '-'} / {activeBankSection?.label || '-'}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3 max-h-[70vh] overflow-auto">
+                {bankLoading ? <p className="text-sm text-muted-foreground">Loading MCQs...</p> : null}
+                {!bankLoading && !bankMcqs.length ? (
+                  <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
+                    No MCQs found for this section/topic.
+                  </div>
+                ) : null}
+                {bankMcqs.map((item, idx) => (
+                  <div key={item.id} className="rounded-md border p-3 text-sm space-y-1.5">
+                    <p className="font-medium">Q{idx + 1}. {item.question}</p>
+                    {item.options.map((option, optionIdx) => (
+                      <p key={`${item.id}-opt-${optionIdx}`} className="text-muted-foreground">
+                        {String.fromCharCode(65 + optionIdx)}) {option}
+                      </p>
+                    ))}
+                    <p>Answer: <span className="font-medium">{item.answer}</span></p>
+                    {item.tip ? <p className="text-muted-foreground">Explanation: {item.tip}</p> : null}
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen p-3 sm:p-5">
       <div className="mx-auto w-full max-w-[1700px] space-y-4 sm:space-y-5">
@@ -1433,7 +1704,7 @@ export default function AdminApp() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Metric title="Registered Users" value={String(overview?.usersCount || 0)} />
-        <Metric title="Question Bank" value={String(overview?.mcqCount || 0)} />
+        <Metric title="Question Bank" value={String(overview?.mcqCount || 0)} onClick={openQuestionBankWindow} />
         <Metric title="Attempts" value={String(overview?.attemptsCount || 0)} />
         <Metric title="Average Score" value={`${overview?.averageScore || 0}%`} />
       </div>
@@ -2448,10 +2719,18 @@ export default function AdminApp() {
   );
 }
 
-function Metric({ title, value }: { title: string; value: string }) {
+function Metric({
+  title,
+  value,
+  onClick,
+}: {
+  title: string;
+  value: string;
+  onClick?: () => void;
+}) {
   return (
     <Card>
-      <CardContent className="pt-5">
+      <CardContent className={`pt-5 ${onClick ? 'cursor-pointer hover:bg-muted/40 transition-colors rounded-md' : ''}`} onClick={onClick}>
         <p className="text-sm text-muted-foreground">{title}</p>
         <p className="text-2xl">{value}</p>
       </CardContent>
