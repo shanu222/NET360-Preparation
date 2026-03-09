@@ -229,7 +229,7 @@ function emptyForm() {
     topic: 'General',
     question: '',
     questionImageUrl: '',
-    options: 'Option A\nOption B\nOption C\nOption D',
+    options: 'Option A\nOption B',
     answer: '',
     tip: '',
     difficulty: 'Medium',
@@ -351,8 +351,8 @@ function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[]
       errors.push(`Q${block.number}: question text is missing.`);
       return;
     }
-    if (options.length < 4) {
-      errors.push(`Q${block.number}: at least 4 options are required.`);
+    if (options.length < 2) {
+      errors.push(`Q${block.number}: at least 2 options are required.`);
       return;
     }
 
@@ -803,8 +803,8 @@ export default function AdminApp() {
       .map((line) => line.trim())
       .filter(Boolean);
 
-    if (!form.question.trim() || !form.answer.trim() || options.length < 4) {
-      toast.error('Question, answer, and at least 4 options are required.');
+    if (!form.question.trim() || !form.answer.trim() || options.length < 2) {
+      toast.error('Question, answer, and at least 2 options are required.');
       return;
     }
 
@@ -1644,7 +1644,7 @@ export default function AdminApp() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label>Options (one per line, minimum 4)</Label>
+                    <Label>Options (one per line, minimum 2)</Label>
                     <Textarea
                       value={form.options}
                       onChange={(e) => setForm((prev) => ({ ...prev, options: e.target.value }))}

@@ -813,8 +813,8 @@ function parseBulkMcqsFromText(raw: string): { parsed: Array<{ question: string;
       errors.push(`Q${block.number}: question text is missing.`);
       return;
     }
-    if (options.length < 4) {
-      errors.push(`Q${block.number}: at least 4 options are required.`);
+    if (options.length < 2) {
+      errors.push(`Q${block.number}: at least 2 options are required.`);
       return;
     }
 
@@ -2689,8 +2689,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       difficulty: String(body.difficulty || 'Medium') as Difficulty,
     };
 
-    if (!payload.question || payload.options.length < 4 || !payload.answer || !payload.subject) {
-      throw new Error('question, options (min 4), answer, and subject are required.');
+    if (!payload.question || payload.options.length < 2 || !payload.answer || !payload.subject) {
+      throw new Error('question, options (min 2), answer, and subject are required.');
     }
 
     if (!isFlatTopicSubject && (!payload.part || !payload.chapter || !payload.section)) {
@@ -2909,8 +2909,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       options: Array.isArray(body.options) ? body.options.map((item: unknown) => String(item)) : target.options,
     };
 
-    if (!updated.question || !updated.answer || !updated.options || updated.options.length < 4) {
-      throw new Error('question, answer, and at least 4 options are required.');
+    if (!updated.question || !updated.answer || !updated.options || updated.options.length < 2) {
+      throw new Error('question, answer, and at least 2 options are required.');
     }
 
     mcqs[index] = updated;

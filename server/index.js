@@ -584,8 +584,8 @@ function parseBulkMcqsFromText(raw) {
       return;
     }
 
-    if (options.length < 4) {
-      errors.push(`Q${block.number}: at least 4 options are required.`);
+    if (options.length < 2) {
+      errors.push(`Q${block.number}: at least 2 options are required.`);
       return;
     }
 
@@ -5095,8 +5095,8 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const normalizedTopic = String(topic || '').trim();
   const isFlatTopicSubject = normalizedSubject === 'quantitative-mathematics' || normalizedSubject === 'design-aptitude';
 
-  if (!question || !Array.isArray(options) || options.length < 4 || !answer || !normalizedSubject) {
-    res.status(400).json({ error: 'question, options (min 4), answer, and subject are required.' });
+  if (!question || !Array.isArray(options) || options.length < 2 || !answer || !normalizedSubject) {
+    res.status(400).json({ error: 'question, options (min 2), answer, and subject are required.' });
     return;
   }
 
@@ -5113,8 +5113,8 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const cleanOptions = options
     .map((item) => String(item || '').trim())
     .filter(Boolean);
-  if (cleanOptions.length < 4) {
-    res.status(400).json({ error: 'At least four non-empty options are required.' });
+  if (cleanOptions.length < 2) {
+    res.status(400).json({ error: 'At least two non-empty options are required.' });
     return;
   }
 
@@ -5155,8 +5155,8 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
     payload.options = req.body.options
       .map((item) => String(item || '').trim())
       .filter(Boolean);
-    if (payload.options.length < 4) {
-      res.status(400).json({ error: 'At least four non-empty options are required.' });
+    if (payload.options.length < 2) {
+      res.status(400).json({ error: 'At least two non-empty options are required.' });
       return;
     }
   }
