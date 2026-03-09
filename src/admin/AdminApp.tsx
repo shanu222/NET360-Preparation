@@ -265,7 +265,7 @@ function splitInlineOptions(line: string): string[] {
   const compact = String(line || '').replace(/\s+/g, ' ').trim();
   if (!compact) return [];
 
-  const markerRegex = /(?:^|\s)([A-H])(?:[\).:-])?\s+/g;
+  const markerRegex = /(?:^|\s)(?:option\s*)?([A-H]|\d{1,2})(?:[\).:-])?\s+/gi;
   const markers: Array<{ label: string; markerPos: number; valueStart: number }> = [];
   let match: RegExpExecArray | null;
 
@@ -275,7 +275,7 @@ function splitInlineOptions(line: string): string[] {
     markers.push({ label, markerPos, valueStart: markerRegex.lastIndex });
   }
 
-  const startsWithMarker = /^[A-H](?:[\).:-])?\s+\S/.test(compact);
+  const startsWithMarker = /^(?:option\s*)?(?:[A-H]|\d{1,2})(?:[\).:-])?\s+\S/i.test(compact);
   if (!markers.length || (!startsWithMarker && markers.length < 2)) {
     return [];
   }
@@ -353,7 +353,7 @@ function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[]
         continue;
       }
 
-      const answerMatch = line.match(/^(?:correct\s*answer|answer)\s*[:=-]\s*(.+)$/i);
+      const answerMatch = line.match(/^(?:correct\s*answer|correct|answer|ans\.?)\s*[:=-]\s*(.+)$/i);
       if (answerMatch) {
         answer = answerMatch[1].trim();
         capturingExplanation = false;
@@ -381,7 +381,7 @@ function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[]
         continue;
       }
 
-      const optionMatch = line.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\s*[\).:-])?\s+(.+)$/);
+      const optionMatch = line.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\s*[\).:-])?\s+(.+)$/i);
       if (optionMatch) {
         options.push(optionMatch[2].trim());
         capturingExplanation = false;
@@ -412,9 +412,12 @@ function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[]
     }
 
     let resolvedAnswer = normalizedAnswer;
-    const answerLetter = normalizedAnswer.match(/(?:option\s*)?([A-Ha-h])(?:\b|\)|\.|:)?/);
-    if (answerLetter) {
-      const idx = answerLetter[1].toUpperCase().charCodeAt(0) - 65;
+    const answerToken = normalizedAnswer.match(/(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\b|\)|\.|:)?/i);
+    if (answerToken) {
+      const token = answerToken[1];
+      const idx = /^\d+$/.test(token)
+        ? Number(token) - 1
+        : token.toUpperCase().charCodeAt(0) - 65;
       if (idx >= 0 && idx < options.length) {
         resolvedAnswer = options[idx];
       }
@@ -446,7 +449,7 @@ function resolveAnswerLabel(options: string[], answer: string): string {
   const answerIndex = options.findIndex((option) => String(option || '').trim().toLowerCase() === normalized);
   if (answerIndex >= 0) return String.fromCharCode(65 + answerIndex);
 
-  const directLetter = String(answer || '').trim().match(/^([A-Ha-h])(?:\b|\)|\.|:)?/);
+  const directLetter = String(answer || '').trim().match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\b|\)|\.|:)?/i);
   if (directLetter) return directLetter[1].toUpperCase();
 
   return String(answer || '').trim();
