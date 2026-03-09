@@ -1,7 +1,15 @@
 import { localApiRequest, localDownloadReport } from './localApi';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
-const MOBILE_API_BASE_URL = import.meta.env.VITE_MOBILE_API_BASE_URL || '';
+type RuntimeEnv = {
+  VITE_API_BASE_URL?: string;
+  VITE_MOBILE_API_BASE_URL?: string;
+  VITE_FORCE_LOCAL_API?: string;
+  VITE_DISABLE_LOCAL_API_FALLBACK?: string;
+};
+
+const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
+const API_BASE_URL = env.VITE_API_BASE_URL || '';
+const MOBILE_API_BASE_URL = env.VITE_MOBILE_API_BASE_URL || '';
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
 
@@ -19,10 +27,10 @@ function getEffectiveApiBaseUrl() {
 }
 
 function canFallbackToLocalMode() {
-  if (import.meta.env.VITE_FORCE_LOCAL_API === 'true') {
+  if (env.VITE_FORCE_LOCAL_API === 'true') {
     return true;
   }
-  if (import.meta.env.VITE_DISABLE_LOCAL_API_FALLBACK === 'true') {
+  if (env.VITE_DISABLE_LOCAL_API_FALLBACK === 'true') {
     return false;
   }
   return !isNativeCapacitorRuntime();
@@ -40,7 +48,7 @@ function resolveApiPath(path: string) {
 }
 
 function shouldUseForcedLocalMode() {
-  return import.meta.env.VITE_FORCE_LOCAL_API === 'true' && canFallbackToLocalMode();
+  return env.VITE_FORCE_LOCAL_API === 'true' && canFallbackToLocalMode();
 }
 
 function shouldFallbackFromHttpError(path: string, status: number) {
