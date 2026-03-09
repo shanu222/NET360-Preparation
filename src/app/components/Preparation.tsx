@@ -441,7 +441,7 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
               <TabsTrigger
                 key={tab.key}
                 value={tab.key}
-                className={`min-w-[150px] rounded-xl border border-indigo-100/80 bg-white/90 text-[12px] text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-white hover:text-indigo-900 data-[state=active]:border-transparent data-[state=active]:bg-gradient-to-r data-[state=active]:text-white data-[state=active]:shadow-[0_10px_20px_rgba(79,70,229,0.3)] sm:text-sm ${tabTriggerToneByKey[tab.key]}`}
+                className={`min-w-[150px] rounded-xl border border-indigo-100/80 bg-white/90 text-[12px] text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-white hover:text-indigo-900 data-[state=active]:border-transparent data-[state=active]:bg-gradient-to-r data-[state=active]:font-semibold data-[state=active]:text-slate-900 data-[state=active]:shadow-[0_10px_20px_rgba(79,70,229,0.3)] sm:text-sm ${tabTriggerToneByKey[tab.key]}`}
               >
                 {tab.label}
               </TabsTrigger>
