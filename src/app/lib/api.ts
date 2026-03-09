@@ -180,6 +180,10 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
       // Keep fallback message.
     }
 
+    if (response.status === 413 && errorMessage === `Request failed (${response.status})`) {
+      errorMessage = 'Uploaded file is too large. Upload a JPG, PNG, or PDF up to 5MB.';
+    }
+
     const error = new Error(errorMessage) as Error & {
       status?: number;
       code?: string;

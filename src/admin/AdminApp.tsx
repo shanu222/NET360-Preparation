@@ -131,6 +131,7 @@ interface SignupRequest {
     mimeType: string;
     size: number;
     dataUrl: string;
+    fileUrl?: string;
   };
   contactMethod?: 'whatsapp';
   contactValue?: string;
@@ -155,6 +156,7 @@ interface PremiumSubscriptionRequest {
     mimeType: string;
     size: number;
     dataUrl: string;
+    fileUrl?: string;
   };
   contactMethod: 'whatsapp';
   contactValue: string;
@@ -1232,6 +1234,72 @@ export default function AdminApp() {
     window.open(waUrl, '_blank', 'noopener,noreferrer');
   };
 
+  const openPaymentProof = async (path: string, fileName: string, fallbackDataUrl?: string, download = false) => {
+    const fallback = String(fallbackDataUrl || '').trim();
+
+    if (!authToken) {
+      if (fallback.startsWith('data:')) {
+        if (download) {
+          const anchor = document.createElement('a');
+          anchor.href = fallback;
+          anchor.download = fileName || 'payment-proof';
+          document.body.appendChild(anchor);
+          anchor.click();
+          document.body.removeChild(anchor);
+        } else {
+          window.open(fallback, '_blank', 'noopener,noreferrer');
+        }
+        return;
+      }
+      toast.error('Session expired. Please log in again to access payment proof.');
+      return;
+    }
+
+    try {
+      const response = await fetch(path, {
+        headers: {
+          Authorization: `Bearer ${authToken}`,
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Proof request failed (${response.status})`);
+      }
+
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+
+      if (download) {
+        const anchor = document.createElement('a');
+        anchor.href = objectUrl;
+        anchor.download = fileName || 'payment-proof';
+        document.body.appendChild(anchor);
+        anchor.click();
+        document.body.removeChild(anchor);
+      } else {
+        window.open(objectUrl, '_blank', 'noopener,noreferrer');
+      }
+
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      return;
+    } catch {
+      if (fallback.startsWith('data:')) {
+        if (download) {
+          const anchor = document.createElement('a');
+          anchor.href = fallback;
+          anchor.download = fileName || 'payment-proof';
+          document.body.appendChild(anchor);
+          anchor.click();
+          document.body.removeChild(anchor);
+        } else {
+          window.open(fallback, '_blank', 'noopener,noreferrer');
+        }
+        return;
+      }
+      toast.error('Could not open payment proof. Please try again.');
+    }
+  };
+
   const resetForm = () => {
     const fresh = emptyForm();
     if (selectedHierarchy) {
@@ -2187,15 +2255,19 @@ export default function AdminApp() {
                 <div key={request.id} className="rounded-lg border p-3 space-y-2">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <p className="text-sm">{request.email}</p>
+                      <p className="text-sm">User: {[request.firstName, request.lastName].filter(Boolean).join(' ').trim() || 'N/A'}</p>
+                      <p className="text-xs text-muted-foreground">Email: {request.email}</p>
                       <p className="text-xs text-muted-foreground">
                         Mobile: {request.mobileNumber || 'N/A'}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {request.paymentMethod.toUpperCase()} • Tx ID: {request.paymentTransactionId}
+                        Payment Method: {request.paymentMethod.toUpperCase()}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        Token delivery: {request.contactMethod?.toUpperCase() || 'SMS'} • {request.contactValue || request.mobileNumber || request.email}
+                        Transaction ID: {request.paymentTransactionId}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        WhatsApp Number: {request.contactValue || request.mobileNumber || 'N/A'}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {request.createdAt ? new Date(request.createdAt).toLocaleString() : 'Unknown time'}
@@ -2204,16 +2276,27 @@ export default function AdminApp() {
                     <Badge variant={request.status === 'pending' ? 'default' : 'outline'}>{request.status}</Badge>
                   </div>
 
-                  {request.paymentProof?.dataUrl ? (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="h-7 px-2 text-[11px]"
-                      onClick={() => window.open(request.paymentProof?.dataUrl || '', '_blank', 'noopener,noreferrer')}
-                    >
-                      View Proof
-                    </Button>
+                  {request.paymentProof ? (
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-[11px]"
+                        onClick={() => void openPaymentProof(`/api/admin/signup-requests/${request.id}/payment-proof`, request.paymentProof?.name || `signup-proof-${request.id}.dat`, request.paymentProof?.dataUrl, false)}
+                      >
+                        View Proof
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 px-2 text-[11px]"
+                        onClick={() => void openPaymentProof(`/api/admin/signup-requests/${request.id}/payment-proof?download=1`, request.paymentProof?.name || `signup-proof-${request.id}.dat`, request.paymentProof?.dataUrl, true)}
+                      >
+                        Download Proof
+                      </Button>
+                    </div>
                   ) : null}
 
                   {issuedTokens[request.id] ? (
@@ -2293,12 +2376,18 @@ export default function AdminApp() {
                   <div key={request.id} className="rounded-lg border p-3 space-y-2">
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <p className="text-sm">{request.email}</p>
+                        <p className="text-sm">Email: {request.email}</p>
                         <p className="text-xs text-muted-foreground">
-                          Plan: {request.planName || request.planId} • {request.paymentMethod.toUpperCase()} • Tx ID: {request.paymentTransactionId}
+                          Plan: {request.planName || request.planId}
                         </p>
                         <p className="text-xs text-muted-foreground">
-                          Token delivery: {request.contactMethod.toUpperCase()} • {request.contactValue}
+                          Payment Method: {request.paymentMethod.toUpperCase()}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Transaction ID: {request.paymentTransactionId}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          WhatsApp Number: {request.contactValue || request.mobileNumber || 'N/A'}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {request.createdAt ? new Date(request.createdAt).toLocaleString() : 'Unknown time'}
@@ -2308,16 +2397,27 @@ export default function AdminApp() {
                     </div>
 
                     <div className="flex flex-wrap gap-2">
-                      {request.paymentProof?.dataUrl ? (
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          className="h-7 px-2 text-[11px]"
-                          onClick={() => window.open(request.paymentProof?.dataUrl || '', '_blank', 'noopener,noreferrer')}
-                        >
-                          View Proof
-                        </Button>
+                      {request.paymentProof ? (
+                        <>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-[11px]"
+                            onClick={() => void openPaymentProof(`/api/admin/subscriptions/requests/${request.id}/payment-proof`, request.paymentProof?.name || `premium-proof-${request.id}.dat`, request.paymentProof?.dataUrl, false)}
+                          >
+                            View Proof
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-[11px]"
+                            onClick={() => void openPaymentProof(`/api/admin/subscriptions/requests/${request.id}/payment-proof?download=1`, request.paymentProof?.name || `premium-proof-${request.id}.dat`, request.paymentProof?.dataUrl, true)}
+                          >
+                            Download Proof
+                          </Button>
+                        </>
                       ) : null}
 
                       {issuedPremiumTokens[request.id] ? (

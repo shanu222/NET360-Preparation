@@ -1353,6 +1353,28 @@ function normalizePaymentProof(input) {
   };
 }
 
+function buildSafeDownloadName(rawName, fallback = 'payment-proof') {
+  const base = String(rawName || '').trim() || fallback;
+  return base.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
+}
+
+function streamPaymentProofFromDataUrl(res, paymentProof = {}, fallbackName = 'payment-proof') {
+  const parsed = parseDataUrl(paymentProof.dataUrl || '');
+  if (!parsed?.buffer || !parsed.buffer.length) return false;
+
+  const fileName = buildSafeDownloadName(paymentProof.name, fallbackName);
+  const mimeType = String(paymentProof.mimeType || parsed.mimeType || 'application/octet-stream').trim().toLowerCase();
+  const download = String(res.req?.query?.download || '') === '1';
+  const disposition = download ? 'attachment' : 'inline';
+
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('Content-Type', mimeType);
+  res.setHeader('Content-Length', String(parsed.buffer.length));
+  res.setHeader('Content-Disposition', `${disposition}; filename="${fileName}"`);
+  res.send(parsed.buffer);
+  return true;
+}
+
 function serializeSignupRequest(item) {
   return {
     id: String(item._id),
@@ -5792,6 +5814,23 @@ app.get('/api/admin/signup-requests', authMiddleware, requireAdmin, async (req, 
   });
 });
 
+app.get('/api/admin/signup-requests/:requestId/payment-proof', authMiddleware, requireAdmin, async (req, res) => {
+  const request = await SignupRequestModel.findById(req.params.requestId).lean();
+  if (!request) {
+    res.status(404).json({ error: 'Signup request not found.' });
+    return;
+  }
+
+  const streamed = streamPaymentProofFromDataUrl(
+    res,
+    request.paymentProof,
+    `signup-proof-${String(request._id)}.dat`,
+  );
+  if (!streamed) {
+    res.status(404).json({ error: 'Payment proof is not available for this signup request.' });
+  }
+});
+
 app.post('/api/admin/signup-requests/:requestId/approve', authMiddleware, requireAdmin, async (req, res) => {
   const request = await SignupRequestModel.findById(req.params.requestId);
   if (!request) {
@@ -5877,6 +5916,23 @@ app.post('/api/admin/signup-requests/:requestId/reject', authMiddleware, require
   await request.save();
 
   res.json({ ok: true, requestId: String(request._id) });
+});
+
+app.get('/api/admin/subscriptions/requests/:requestId/payment-proof', authMiddleware, requireAdmin, async (req, res) => {
+  const request = await PremiumSubscriptionRequestModel.findById(req.params.requestId).lean();
+  if (!request) {
+    res.status(404).json({ error: 'Premium activation request not found.' });
+    return;
+  }
+
+  const streamed = streamPaymentProofFromDataUrl(
+    res,
+    request.paymentProof,
+    `premium-proof-${String(request._id)}.dat`,
+  );
+  if (!streamed) {
+    res.status(404).json({ error: 'Payment proof is not available for this premium request.' });
+  }
 });
 
 app.get('/api/admin/users', authMiddleware, requireAdmin, async (req, res) => {
@@ -6387,6 +6443,11 @@ app.use((err, req, res, next) => {
 
   if (res.headersSent) {
     next(err);
+    return;
+  }
+
+  if (err?.type === 'entity.too.large' || err?.status === 413 || err?.statusCode === 413) {
+    res.status(413).json({ error: 'Uploaded file is too large. Upload a JPG, PNG, or PDF up to 5MB.' });
     return;
   }
 
