@@ -280,14 +280,14 @@ export function TestInterfacePage() {
         </div>
 
         <main className="grid gap-0 border-b border-[#2b5f9f] bg-[#c8d3df] sm:grid-cols-[1fr_160px]">
-          <section className="border-b border-[#2b5f9f] p-2 sm:border-b-0 sm:border-r">
+          <section className="order-2 border-b border-[#2b5f9f] p-2 sm:order-1 sm:border-b-0 sm:border-r">
             <p className="mb-2 font-semibold text-black">Question</p>
             <div className="min-h-[120px] rounded border border-[#1e3f6e] bg-white p-3 text-sm text-black sm:text-base">
               {question.question}
             </div>
           </section>
 
-          <aside className="grid grid-cols-1 gap-2 p-2 sm:block">
+          <aside className="order-1 grid grid-cols-1 gap-2 border-b border-[#2b5f9f] p-2 sm:order-2 sm:block sm:border-b-0">
             <p className="mb-1 text-xs text-black">Candidate</p>
             <div className="mb-2 rounded border border-[#d25555] bg-white p-2 text-center text-[13px] text-black">
               {user?.firstName || 'Candidate'} {user?.lastName || ''}
