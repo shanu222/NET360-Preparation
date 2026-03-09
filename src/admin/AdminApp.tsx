@@ -2471,7 +2471,7 @@ export default function AdminApp() {
           <Card>
             <CardHeader>
               <CardTitle>Password Recovery Requests</CardTitle>
-              <CardDescription>Track automated password recovery attempts and delivery status.</CardDescription>
+              <CardDescription>Track automatic in-app password recovery verification and token generation activity.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid gap-2 md:grid-cols-[220px_1fr]">
@@ -2484,8 +2484,6 @@ export default function AdminApp() {
                     <SelectContent>
                       <SelectItem value="all">All</SelectItem>
                       <SelectItem value="sent">Sent</SelectItem>
-                      <SelectItem value="partial">Partial</SelectItem>
-                      <SelectItem value="failed">Failed</SelectItem>
                       <SelectItem value="not_found">Not Found</SelectItem>
                     </SelectContent>
                   </Select>
@@ -2514,14 +2512,7 @@ export default function AdminApp() {
                       <Badge variant={request.recoveryStatus === 'sent' ? 'default' : 'outline'}>{request.recoveryStatus}</Badge>
                     </div>
 
-                    <div className="rounded-md border bg-slate-50 p-2 space-y-1">
-                      {request.dispatches.map((dispatch, index) => (
-                        <p key={`${request.id}-${dispatch.channel}-${index}`} className="text-xs text-slate-700">
-                            {dispatch.channel.toUpperCase()} {'->'} {dispatch.destination || 'N/A'} ({dispatch.status})
-                        </p>
-                      ))}
-                      {!request.dispatches.length ? <p className="text-xs text-slate-500">No delivery attempted.</p> : null}
-                    </div>
+                    <p className="text-xs text-slate-500">Token is generated and shown directly in-app after successful verification.</p>
                   </div>
                 ))}
 

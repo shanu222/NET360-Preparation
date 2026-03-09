@@ -44,7 +44,8 @@ export function Profile({ onNavigate }: ProfileProps) {
     tokenCode: '',
   });
   const [forgotMode, setForgotMode] = useState(false);
-  const [forgotIdentifier, setForgotIdentifier] = useState('');
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotMobileNumber, setForgotMobileNumber] = useState('');
   const [forgotToken, setForgotToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [forgotCooldownSeconds, setForgotCooldownSeconds] = useState(0);
@@ -183,23 +184,25 @@ export function Profile({ onNavigate }: ProfileProps) {
       return;
     }
 
-    const identifier = forgotIdentifier.trim() || authForm.email.trim() || authForm.mobileNumber.trim();
-    if (!identifier) {
-      toast.error('Enter your registered email or mobile number.');
+    const email = forgotEmail.trim() || authForm.email.trim();
+    const mobileNumber = forgotMobileNumber.trim() || authForm.mobileNumber.trim();
+
+    if (!email || !mobileNumber) {
+      toast.error('Enter your registered email and mobile number.');
       return;
     }
 
     try {
       const payload = await apiRequest<{ message: string; resetToken?: string }>('/api/auth/forgot-password', {
         method: 'POST',
-        body: JSON.stringify({ identifier }),
+        body: JSON.stringify({ email, mobileNumber }),
       });
 
       if (payload.resetToken) {
         setForgotToken(payload.resetToken);
       }
       setForgotCooldownSeconds(60);
-      toast.success(payload.message || 'Reset link requested.');
+      toast.success(payload.message || 'Recovery token generated successfully.');
     } catch (error) {
       const detailed = error as Error & { status?: number; retryAfterSeconds?: number };
       if (detailed.status === 429) {
@@ -494,12 +497,23 @@ export function Profile({ onNavigate }: ProfileProps) {
               {forgotMode ? (
                 <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
                   <div className="space-y-1">
-                    <Label htmlFor="forgot-identifier">Email or Mobile Number</Label>
+                    <Label htmlFor="forgot-email">Registered Email Address</Label>
                     <Input
-                      id="forgot-identifier"
-                      value={forgotIdentifier}
-                      onChange={(e) => setForgotIdentifier(e.target.value)}
-                      placeholder="student@example.com or +923001234567"
+                      id="forgot-email"
+                      type="email"
+                      value={forgotEmail}
+                      onChange={(e) => setForgotEmail(e.target.value)}
+                      placeholder="student@example.com"
+                      className="h-10 border-indigo-100"
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label htmlFor="forgot-mobile">Registered Mobile Number</Label>
+                    <Input
+                      id="forgot-mobile"
+                      value={forgotMobileNumber}
+                      onChange={(e) => setForgotMobileNumber(e.target.value)}
+                      placeholder="+923001234567"
                       className="h-10 border-indigo-100"
                     />
                   </div>
@@ -510,7 +524,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                     disabled={forgotCooldownSeconds > 0}
                     onClick={() => void handleForgotPasswordRequest()}
                   >
-                    {forgotCooldownSeconds > 0 ? `Retry in ${forgotCooldownSeconds}s` : 'Send Recovery Token'}
+                    {forgotCooldownSeconds > 0 ? `Retry in ${forgotCooldownSeconds}s` : 'Generate Recovery Token'}
                   </Button>
                   <div className="space-y-1">
                     <Label htmlFor="reset-token">Reset Token</Label>
@@ -569,7 +583,8 @@ export function Profile({ onNavigate }: ProfileProps) {
                       tokenCode: '',
                     });
                     setForgotToken('');
-                    setForgotIdentifier('');
+                    setForgotEmail('');
+                    setForgotMobileNumber('');
                     setNewPassword('');
                     setForgotMode(false);
                   }}

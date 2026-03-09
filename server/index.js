@@ -3089,41 +3089,31 @@ app.post('/api/auth/logout', async (req, res) => {
 });
 
 app.post('/api/auth/forgot-password', async (req, res) => {
-  const rawIdentifier = sanitizePlainText(req.body?.identifier || req.body?.email || req.body?.mobileNumber || '', 180);
-  const identifier = rawIdentifier.trim();
-  if (!identifier) {
-    res.status(400).json({ error: 'Registered email or mobile number is required.' });
+  const email = normalizeEmail(req.body?.email || '');
+  const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber || '');
+
+  if (!email || !mobileNumber) {
+    res.status(400).json({ error: 'Registered email and mobile number are required.' });
     return;
   }
 
-  const isEmailIdentifier = identifier.includes('@');
-  const normalizedIdentifier = isEmailIdentifier ? normalizeEmail(identifier) : normalizeMobileNumber(identifier);
-  if (isEmailIdentifier && !isValidEmail(normalizedIdentifier)) {
+  if (!isValidEmail(email)) {
     res.status(400).json({ error: 'Enter a valid email address.' });
     return;
   }
-  if (!isEmailIdentifier && !isValidMobileNumber(normalizedIdentifier)) {
+
+  if (!isValidMobileNumber(mobileNumber)) {
     res.status(400).json({ error: 'Enter a valid mobile number.' });
     return;
   }
 
-  let user = null;
-  let matchedBy = 'none';
+  const user = await UserModel.findOne({ email });
+  const matchedBy = user && compactMobile(user.phone) === compactMobile(mobileNumber) ? 'email' : 'none';
 
-  if (isEmailIdentifier) {
-    user = await UserModel.findOne({ email: normalizedIdentifier });
-    matchedBy = user ? 'email' : 'none';
-  } else {
-    const mobileDigits = compactMobile(normalizedIdentifier);
-    const mobileMatches = await UserModel.find({ phone: { $exists: true, $ne: '' } }).limit(5000);
-    user = mobileMatches.find((item) => compactMobile(item.phone) === mobileDigits) || null;
-    matchedBy = user ? 'mobile' : 'none';
-  }
-
-  if (!user) {
+  if (!user || compactMobile(user.phone) !== compactMobile(mobileNumber)) {
     await PasswordRecoveryRequestModel.create({
-      identifier,
-      normalizedIdentifier,
+      identifier: `${email} | ${mobileNumber}`,
+      normalizedIdentifier: `${email} | ${compactMobile(mobileNumber)}`,
       matchedBy: 'none',
       recoveryStatus: 'not_found',
       dispatches: [],
@@ -3131,7 +3121,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       requestedUserAgent: getUserAgent(req),
     });
 
-    res.json({ message: 'If this account exists, recovery details have been sent.' });
+    res.json({ message: 'No active account matched this email and mobile number.' });
     return;
   }
 
@@ -3141,49 +3131,26 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   user.resetPasswordExpiresAt = tokenExpiresAt;
   await user.save();
 
-  const dispatches = [];
-  const emailDestination = normalizeEmail(user.email || '');
-  const mobileDestination = normalizeMobileNumber(user.phone || '');
-  const emailDispatch = await sendRecoveryEmail(emailDestination, resetToken, 30);
-  const smsDispatch = await sendRecoverySms(mobileDestination, resetToken, 30);
-  const whatsappDispatch = await sendRecoveryWhatsApp(mobileDestination, resetToken, 30);
-  dispatches.push(emailDispatch, smsDispatch, whatsappDispatch);
-
-  const successfulDispatches = dispatches.filter((item) => item.status === 'sent').length;
-  const recoveryStatus = successfulDispatches === 0
-    ? 'failed'
-    : successfulDispatches === dispatches.length
-      ? 'sent'
-      : 'partial';
-
   const request = await PasswordRecoveryRequestModel.create({
-    identifier,
-    normalizedIdentifier,
+    identifier: `${email} | ${mobileNumber}`,
+    normalizedIdentifier: `${email} | ${compactMobile(mobileNumber)}`,
     matchedBy,
     userId: user._id,
     userName: `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim(),
-    email: emailDestination,
-    mobileNumber: mobileDestination,
-    recoveryStatus,
-    dispatches,
+    email,
+    mobileNumber: normalizeMobileNumber(user.phone || ''),
+    recoveryStatus: 'sent',
+    dispatches: [],
     tokenExpiresAt,
     requestedIp: getClientIp(req),
     requestedUserAgent: getUserAgent(req),
   });
 
-  const payload = {
-    message: successfulDispatches > 0
-      ? 'Recovery details sent. Use the token to set a new password.'
-      : 'Recovery request recorded, but delivery failed. Please contact admin support.',
+  res.json({
+    message: 'Verification successful. Use the generated reset token to set a new password.',
+    resetToken,
     request: serializePasswordRecoveryRequest(request),
-  };
-
-  if (!IS_PRODUCTION) {
-    res.json({ ...payload, resetToken });
-    return;
-  }
-
-  res.json(payload);
+  });
 });
 
 app.post('/api/auth/reset-password', async (req, res) => {

@@ -1998,32 +1998,23 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
   }
 
   if (url.pathname === '/api/auth/forgot-password' && method === 'POST') {
-    const identifier = String(body.identifier || body.email || body.mobileNumber || '').trim();
-    if (!identifier) throw new Error('Registered email or mobile number is required.');
-
-    const isEmailIdentifier = identifier.includes('@');
-    const normalizedIdentifier = isEmailIdentifier ? normalizeEmail(identifier) : normalizeMobileNumber(identifier);
-    if (isEmailIdentifier && !isValidEmail(normalizedIdentifier)) throw new Error('Enter a valid email address.');
-    if (!isEmailIdentifier && !isValidMobileNumber(normalizedIdentifier)) throw new Error('Enter a valid mobile number.');
+    const email = normalizeEmail(body.email || '');
+    const mobileNumber = normalizeMobileNumber(body.mobileNumber || '');
+    if (!email || !mobileNumber) throw new Error('Registered email and mobile number are required.');
+    if (!isValidEmail(email)) throw new Error('Enter a valid email address.');
+    if (!isValidMobileNumber(mobileNumber)) throw new Error('Enter a valid mobile number.');
 
     const db = readDb();
-    let user: LocalUser | undefined;
-    let matchedBy: LocalPasswordRecoveryRequest['matchedBy'] = 'none';
+    const user = db.users.find((item) => normalizeEmail(item.email) === email);
+    const matchedBy: LocalPasswordRecoveryRequest['matchedBy'] = user && compactMobile(user.phone) === compactMobile(mobileNumber)
+      ? 'email'
+      : 'none';
 
-    if (isEmailIdentifier) {
-      user = db.users.find((item) => normalizeEmail(item.email) === normalizedIdentifier);
-      matchedBy = user ? 'email' : 'none';
-    } else {
-      const mobileDigits = compactMobile(normalizedIdentifier);
-      user = db.users.find((item) => compactMobile(item.phone) === mobileDigits);
-      matchedBy = user ? 'mobile' : 'none';
-    }
-
-    if (!user) {
+    if (!user || compactMobile(user.phone) !== compactMobile(mobileNumber)) {
       const request: LocalPasswordRecoveryRequest = {
         id: `recovery-${Date.now()}-${Math.round(Math.random() * 10000)}`,
-        identifier,
-        normalizedIdentifier,
+        identifier: `${email} | ${mobileNumber}`,
+        normalizedIdentifier: `${email} | ${compactMobile(mobileNumber)}`,
         matchedBy: 'none',
         userId: null,
         userName: '',
@@ -2036,84 +2027,23 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       };
       db.passwordRecoveryRequests.unshift(request);
       writeDb(db);
-      return { message: 'If this account exists, recovery details have been sent.', request: serializePasswordRecoveryRequest(request) } as T;
+      return { message: 'No active account matched this email and mobile number.', request: serializePasswordRecoveryRequest(request) } as T;
     }
 
     user.resetPasswordToken = `local-reset-${Date.now()}`;
     user.resetPasswordExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
 
-    const dispatches: LocalPasswordRecoveryDispatch[] = [];
-    const emailDestination = normalizeEmail(user.email || '');
-    const mobileDestination = normalizeMobileNumber(user.phone || '');
-
-    if (isValidEmail(emailDestination)) {
-      dispatches.push({
-        channel: 'email',
-        destination: emailDestination,
-        status: 'sent',
-        provider: 'simulated-gmail',
-        detail: 'Recovery token sent automatically.',
-      });
-    } else {
-      dispatches.push({
-        channel: 'email',
-        destination: emailDestination,
-        status: 'failed',
-        provider: 'simulated-gmail',
-        detail: 'No valid email available for delivery.',
-      });
-    }
-
-    if (isValidMobileNumber(mobileDestination)) {
-      dispatches.push({
-        channel: 'sms',
-        destination: mobileDestination,
-        status: 'sent',
-        provider: 'simulated-sms',
-        detail: 'Recovery token sent automatically.',
-      });
-      dispatches.push({
-        channel: 'whatsapp',
-        destination: mobileDestination,
-        status: 'sent',
-        provider: 'simulated-whatsapp',
-        detail: 'Recovery token sent automatically.',
-      });
-    } else {
-      dispatches.push({
-        channel: 'sms',
-        destination: mobileDestination,
-        status: 'failed',
-        provider: 'simulated-sms',
-        detail: 'No valid mobile number available for delivery.',
-      });
-      dispatches.push({
-        channel: 'whatsapp',
-        destination: mobileDestination,
-        status: 'failed',
-        provider: 'simulated-whatsapp',
-        detail: 'No valid mobile number available for delivery.',
-      });
-    }
-
-    const successfulDispatches = dispatches.filter((item) => item.status === 'sent').length;
-    const recoveryStatus: LocalPasswordRecoveryRequest['recoveryStatus'] = successfulDispatches === 0
-      ? 'failed'
-      : successfulDispatches === dispatches.length
-        ? 'sent'
-        : 'partial';
-
     const request: LocalPasswordRecoveryRequest = {
       id: `recovery-${Date.now()}-${Math.round(Math.random() * 10000)}`,
-      identifier,
-      normalizedIdentifier,
+      identifier: `${email} | ${mobileNumber}`,
+      normalizedIdentifier: `${email} | ${compactMobile(mobileNumber)}`,
       matchedBy,
       userId: user.id,
       userName: `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim(),
-      email: emailDestination,
-      mobileNumber: mobileDestination,
-      recoveryStatus,
-      dispatches,
+      email,
+      mobileNumber: normalizeMobileNumber(user.phone || ''),
+      recoveryStatus: 'sent',
+      dispatches: [],
       tokenExpiresAt: user.resetPasswordExpiresAt,
       createdAt: new Date().toISOString(),
     };
@@ -2122,9 +2052,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     writeDb(db);
 
     return {
-      message: successfulDispatches > 0
-        ? 'Recovery details sent. Use the token to set a new password.'
-        : 'Recovery request recorded, but delivery failed. Please contact admin support.',
+      message: 'Verification successful. Use the generated reset token to set a new password.',
       resetToken: user.resetPasswordToken,
       request: serializePasswordRecoveryRequest(request),
     } as T;
