@@ -142,6 +142,7 @@ const app = express();
 
 const PAYMENT_PROOF_ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
+  'image/jpg',
   'image/png',
   'application/pdf',
 ]);
@@ -1131,6 +1132,23 @@ function compactMobile(value) {
   return String(value || '').replace(/\D/g, '');
 }
 
+function normalizePaymentProofMime(value) {
+  const mime = String(value || '').trim().toLowerCase();
+  if (mime === 'image/jpg') return 'image/jpeg';
+  if (mime === 'application/x-pdf') return 'application/pdf';
+  return mime;
+}
+
+function inferPaymentProofMimeFromName(fileName) {
+  const name = String(fileName || '').trim().toLowerCase();
+  if (!name.includes('.')) return '';
+  const ext = name.split('.').pop() || '';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'pdf') return 'application/pdf';
+  return '';
+}
+
 function serializePasswordRecoveryRequest(item) {
   return {
     id: String(item._id),
@@ -1309,7 +1327,10 @@ function normalizePaymentProof(input) {
     throw new Error('Payment proof must include a valid file name and file data.');
   }
 
-  const mimeType = String(input.mimeType || parsed.mimeType || '').trim().toLowerCase();
+  const providedMime = normalizePaymentProofMime(input.mimeType || '');
+  const parsedMime = normalizePaymentProofMime(parsed.mimeType || '');
+  const inferredMime = inferPaymentProofMimeFromName(name);
+  const mimeType = [providedMime, parsedMime, inferredMime].find((candidate) => PAYMENT_PROOF_ALLOWED_MIME_TYPES.has(candidate));
   if (!PAYMENT_PROOF_ALLOWED_MIME_TYPES.has(mimeType)) {
     throw new Error('Payment proof must be JPG, PNG, or PDF.');
   }

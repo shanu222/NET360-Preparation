@@ -400,7 +400,7 @@ let cachedMcqs: MCQ[] = [];
 const SIGNUP_TOKEN_TTL_HOURS = 24;
 const PREMIUM_TOKEN_TTL_HOURS = 24;
 const PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024;
-const PAYMENT_PROOF_ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf']);
+const PAYMENT_PROOF_ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'application/pdf']);
 
 const LOCAL_SUBSCRIPTION_PLANS = {
   basic_monthly: {
@@ -548,6 +548,23 @@ function compactMobile(value: unknown) {
   return String(value || '').replace(/\D/g, '');
 }
 
+function normalizePaymentProofMime(value: unknown) {
+  const mime = String(value || '').trim().toLowerCase();
+  if (mime === 'image/jpg') return 'image/jpeg';
+  if (mime === 'application/x-pdf') return 'application/pdf';
+  return mime;
+}
+
+function inferPaymentProofMimeFromName(fileName: unknown) {
+  const name = String(fileName || '').trim().toLowerCase();
+  if (!name.includes('.')) return '';
+  const ext = name.split('.').pop() || '';
+  if (ext === 'jpg' || ext === 'jpeg') return 'image/jpeg';
+  if (ext === 'png') return 'image/png';
+  if (ext === 'pdf') return 'application/pdf';
+  return '';
+}
+
 function isValidMobileNumber(value: string) {
   const cleaned = String(value || '').replace(/[\s()-]/g, '');
   return /^\+?[0-9]{8,18}$/.test(cleaned);
@@ -560,7 +577,7 @@ function normalizePaymentProof(input: unknown): LocalPaymentProof {
 
   const candidate = input as Partial<LocalPaymentProof>;
   const name = String(candidate.name || '').trim().slice(0, 120);
-  const mimeType = String(candidate.mimeType || '').trim().toLowerCase();
+  const mimeType = normalizePaymentProofMime(candidate.mimeType || '');
   const dataUrl = String(candidate.dataUrl || '').trim();
   const parsed = parseLocalDataUrl(dataUrl);
 
@@ -568,7 +585,10 @@ function normalizePaymentProof(input: unknown): LocalPaymentProof {
     throw new Error('Payment proof must include a valid file name and file data.');
   }
 
-  if (!PAYMENT_PROOF_ALLOWED_MIME_TYPES.has(mimeType || parsed.mimeType)) {
+  const parsedMime = normalizePaymentProofMime(parsed.mimeType || '');
+  const inferredMime = inferPaymentProofMimeFromName(name);
+  const effectiveMime = [mimeType, parsedMime, inferredMime].find((item) => PAYMENT_PROOF_ALLOWED_MIME_TYPES.has(item));
+  if (!effectiveMime) {
     throw new Error('Payment proof must be JPG, PNG, or PDF.');
   }
 
@@ -579,7 +599,7 @@ function normalizePaymentProof(input: unknown): LocalPaymentProof {
 
   return {
     name,
-    mimeType: mimeType || parsed.mimeType,
+    mimeType: effectiveMime,
     size,
     dataUrl,
   };

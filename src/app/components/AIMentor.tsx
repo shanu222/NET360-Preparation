@@ -26,6 +26,7 @@ import {
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
+import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
 
 interface AIMentorProps {
   onNavigate?: (section: string) => void;
@@ -173,6 +174,8 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     size: number;
     dataUrl: string;
   }>(null);
+  const [premiumProofReadProgress, setPremiumProofReadProgress] = useState(0);
+  const [isReadingPremiumProof, setIsReadingPremiumProof] = useState(false);
   const [activationTokenCode, setActivationTokenCode] = useState('');
   const [activationRequest, setActivationRequest] = useState<PremiumActivationRequest | null>(null);
   const [subscription, setSubscription] = useState<SubscriptionInfo>(emptySubscription);
@@ -350,28 +353,16 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const mime = String(file.type || '').toLowerCase();
-    if (!['image/jpeg', 'image/png', 'application/pdf'].includes(mime)) {
-      toast.error('Payment proof must be JPG, PNG, or PDF.');
-      return;
-    }
-
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Payment proof must be under 5MB.');
-      return;
-    }
-
     try {
-      const dataUrl = await fileToDataUrl(file);
-      setPaymentProof({
-        name: file.name,
-        mimeType: file.type,
-        size: file.size,
-        dataUrl,
-      });
+      setIsReadingPremiumProof(true);
+      const payload = await buildPaymentProofPayload(file, (progress) => setPremiumProofReadProgress(progress));
+      setPaymentProof(payload);
       toast.success('Payment proof attached.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not read payment proof file.');
+    } finally {
+      setIsReadingPremiumProof(false);
+      event.target.value = '';
     }
   };
 
@@ -700,10 +691,11 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                 <Input
                   ref={premiumProofInputRef}
                   type="file"
-                  accept="image/jpeg,image/png,application/pdf"
+                  accept={PAYMENT_PROOF_ACCEPT}
                   className="hidden"
                   onChange={(e) => void handlePremiumProofChange(e)}
                 />
+                {isReadingPremiumProof ? <p>Reading file... {premiumProofReadProgress}%</p> : null}
                 <p>{paymentProof ? `Attached: ${paymentProof.name}` : 'Attach receipt/screenshot for admin verification.'}</p>
               </div>
 

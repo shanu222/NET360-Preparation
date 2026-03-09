@@ -11,18 +11,10 @@ import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
+import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
 
 interface ProfileProps {
   onNavigate?: (section: string) => void;
-}
-
-function fileToDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('Could not read selected file.'));
-    reader.readAsDataURL(file);
-  });
 }
 
 export function Profile({ onNavigate }: ProfileProps) {
@@ -56,6 +48,8 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [forgotToken, setForgotToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [forgotCooldownSeconds, setForgotCooldownSeconds] = useState(0);
+  const [paymentProofReadProgress, setPaymentProofReadProgress] = useState(0);
+  const [isReadingPaymentProof, setIsReadingPaymentProof] = useState(false);
 
   useEffect(() => {
     setLocalProfile(profile);
@@ -291,31 +285,19 @@ export function Profile({ onNavigate }: ProfileProps) {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const mime = String(file.type || '').toLowerCase();
-    if (!['image/jpeg', 'image/png', 'application/pdf'].includes(mime)) {
-      toast.error('Payment proof must be JPG, PNG, or PDF.');
-      return;
-    }
-
-    if (file.size > 5 * 1024 * 1024) {
-      toast.error('Payment proof must be under 5MB.');
-      return;
-    }
-
     try {
-      const dataUrl = await fileToDataUrl(file);
+      setIsReadingPaymentProof(true);
+      const payload = await buildPaymentProofPayload(file, (progress) => setPaymentProofReadProgress(progress));
       setAuthForm((prev) => ({
         ...prev,
-        paymentProof: {
-          name: file.name,
-          mimeType: file.type,
-          size: file.size,
-          dataUrl,
-        },
+        paymentProof: payload,
       }));
       toast.success('Payment proof attached.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not read payment proof file.');
+    } finally {
+      setIsReadingPaymentProof(false);
+      event.target.value = '';
     }
   };
 
@@ -475,11 +457,14 @@ export function Profile({ onNavigate }: ProfileProps) {
                       <Input
                         ref={paymentProofInputRef}
                         type="file"
-                        accept="image/jpeg,image/png,application/pdf"
+                        accept={PAYMENT_PROOF_ACCEPT}
                         className="hidden"
                         onChange={(e) => void handlePaymentProofSelected(e)}
                       />
                     </div>
+                    {isReadingPaymentProof ? (
+                      <p className="text-xs text-indigo-700">Reading file... {paymentProofReadProgress}%</p>
+                    ) : null}
                     {authForm.paymentProof ? (
                       <p className="text-xs text-slate-600">
                         Attached: {authForm.paymentProof.name} ({Math.max(1, Math.round(authForm.paymentProof.size / 1024))} KB)
