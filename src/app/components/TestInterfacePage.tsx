@@ -358,7 +358,7 @@ export function TestInterfacePage() {
       </div>
 
       <div className="mt-1 bg-white px-2 py-2 text-center text-xs text-red-600 sm:text-sm">
-        This is just a Sample of Computer Based NUST Entry Test (CBNET) .{' '}
+        NUST NET-style testing interface{' '}
         <button
           type="button"
           className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
