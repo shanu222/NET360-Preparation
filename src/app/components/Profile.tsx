@@ -17,6 +17,8 @@ interface ProfileProps {
   onNavigate?: (section: string) => void;
 }
 
+type AuthPanelMode = 'login' | 'register' | 'recovery';
+
 export function Profile({ onNavigate }: ProfileProps) {
   const { user, login, submitSignupRequest, registerWithToken, logout } = useAuth();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
@@ -24,7 +26,7 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [avatarPreview, setAvatarPreview] = useState('');
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const paymentProofInputRef = useRef<HTMLInputElement | null>(null);
-  const [isRegisterMode, setIsRegisterMode] = useState(false);
+  const [authMode, setAuthMode] = useState<AuthPanelMode>('login');
   const [authForm, setAuthForm] = useState({
     firstName: '',
     lastName: '',
@@ -43,7 +45,6 @@ export function Profile({ onNavigate }: ProfileProps) {
     contactValue: '',
     tokenCode: '',
   });
-  const [forgotMode, setForgotMode] = useState(false);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotMobileNumber, setForgotMobileNumber] = useState('');
   const [forgotToken, setForgotToken] = useState('');
@@ -92,6 +93,9 @@ export function Profile({ onNavigate }: ProfileProps) {
     setLocalProfile((previous) => ({ ...previous, [key]: value }));
   };
 
+  const isRegisterMode = authMode === 'register';
+  const isRecoveryMode = authMode === 'recovery';
+
   const isValidInternationalWhatsApp = (value: string) => /^\+[1-9]\d{7,14}$/.test(value.trim());
 
   const handleAuthSubmit = async () => {
@@ -127,12 +131,7 @@ export function Profile({ onNavigate }: ProfileProps) {
             return;
           }
 
-          if (!authForm.contactValue.trim()) {
-            toast.error('Enter contact details to receive your signup token.');
-            return;
-          }
-
-          if (!isValidInternationalWhatsApp(authForm.contactValue)) {
+          if (!isValidInternationalWhatsApp(authForm.mobileNumber)) {
             toast.error('Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).');
             return;
           }
@@ -146,7 +145,7 @@ export function Profile({ onNavigate }: ProfileProps) {
             paymentTransactionId: authForm.paymentTransactionId,
             paymentProof: authForm.paymentProof,
             contactMethod: authForm.contactMethod,
-            contactValue: authForm.contactValue.trim(),
+            contactValue: authForm.mobileNumber.trim(),
           });
           toast.success('Signup request submitted. Wait for admin approval, then use token to complete signup.');
         }
@@ -227,7 +226,7 @@ export function Profile({ onNavigate }: ProfileProps) {
         body: JSON.stringify({ token: forgotToken, newPassword }),
       });
       toast.success('Password reset successful. You can now log in.');
-      setForgotMode(false);
+      setAuthMode('login');
       setNewPassword('');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not reset password.');
@@ -322,179 +321,19 @@ export function Profile({ onNavigate }: ProfileProps) {
         <div className="grid gap-4 lg:grid-cols-[1fr_1.5fr] xl:grid-cols-[1fr_1.65fr]">
           <Card className="rounded-2xl border-indigo-100 bg-white/92 shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
             <CardHeader className="pb-3">
-              <CardTitle className="text-slate-800">{isRegisterMode ? 'Create Account' : 'Login'}</CardTitle>
+              <CardTitle className="text-slate-800">
+                {isRecoveryMode ? 'Recover Password' : isRegisterMode ? 'Create Account' : 'Login'}
+              </CardTitle>
               <CardDescription className="text-slate-600">
-                {isRegisterMode
+                {isRecoveryMode
+                  ? 'Enter your registered email and mobile number to generate a reset token instantly in-app.'
+                  : isRegisterMode
                   ? 'Pay via Easypaisa/JazzCash/Bank Transfer, upload proof, then complete signup with admin-issued token.'
                   : 'Users can only stay logged in on one device at a time.'}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {isRegisterMode ? (
-                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="reg-first-name">First Name</Label>
-                    <Input
-                      id="reg-first-name"
-                      value={authForm.firstName}
-                      onChange={(e) => setAuthForm((prev) => ({ ...prev, firstName: e.target.value }))}
-                      className="h-11 border-indigo-100"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="reg-last-name">Last Name</Label>
-                    <Input
-                      id="reg-last-name"
-                      value={authForm.lastName}
-                      onChange={(e) => setAuthForm((prev) => ({ ...prev, lastName: e.target.value }))}
-                      className="h-11 border-indigo-100"
-                    />
-                  </div>
-                </div>
-              ) : null}
-
-              <div className="space-y-1.5">
-                <Label htmlFor="auth-email">Email</Label>
-                <Input
-                  id="auth-email"
-                  type="email"
-                  value={authForm.email}
-                  onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
-                  placeholder="student@example.com"
-                  className="h-11 border-indigo-100"
-                />
-              </div>
-
-              {isRegisterMode ? (
-                <div className="space-y-1.5">
-                  <Label htmlFor="mobile-number">Mobile Number</Label>
-                  <Input
-                    id="mobile-number"
-                    value={authForm.mobileNumber}
-                    onChange={(e) => setAuthForm((prev) => ({ ...prev, mobileNumber: e.target.value }))}
-                    placeholder="e.g. +923001234567"
-                    className="h-11 border-indigo-100"
-                  />
-                </div>
-              ) : null}
-
-              <div className="space-y-1.5">
-                <Label htmlFor="auth-password">Password</Label>
-                <Input
-                  id="auth-password"
-                  type="password"
-                  value={authForm.password}
-                  onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
-                  placeholder="Enter your password"
-                  className="h-11 border-indigo-100"
-                />
-              </div>
-
-              {isRegisterMode ? (
-                <>
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="payment-method">Payment Method</Label>
-                      <Select
-                        value={authForm.paymentMethod}
-                        onValueChange={(value: 'easypaisa' | 'jazzcash' | 'bank_transfer') => setAuthForm((prev) => ({ ...prev, paymentMethod: value }))}
-                      >
-                        <SelectTrigger id="payment-method" className="h-11 border-indigo-100">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="easypaisa">Easypaisa</SelectItem>
-                          <SelectItem value="jazzcash">JazzCash</SelectItem>
-                          <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="payment-txid">Transaction ID</Label>
-                      <Input
-                        id="payment-txid"
-                        value={authForm.paymentTransactionId}
-                        onChange={(e) => setAuthForm((prev) => ({ ...prev, paymentTransactionId: e.target.value }))}
-                        placeholder="Payment reference"
-                        className="h-11 border-indigo-100"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="token-contact-method">Token Delivery Method</Label>
-                      <Select
-                        value={authForm.contactMethod}
-                        onValueChange={() => setAuthForm((prev) => ({ ...prev, contactMethod: 'whatsapp' }))}
-                      >
-                        <SelectTrigger id="token-contact-method" className="h-11 border-indigo-100">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label htmlFor="token-contact-value">WhatsApp Number</Label>
-                      <Input
-                        id="token-contact-value"
-                        value={authForm.contactValue}
-                        onChange={(e) => setAuthForm((prev) => ({ ...prev, contactValue: e.target.value }))}
-                        placeholder="+923XXXXXXXXX"
-                        className="h-11 border-indigo-100"
-                      />
-                      <p className="text-xs text-slate-500">Use international format with country code (e.g. +923001234567).</p>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm text-indigo-900">Payment Proof</p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-9 border-indigo-200 bg-white !text-indigo-700 hover:bg-indigo-50 hover:!text-indigo-800"
-                        onClick={() => paymentProofInputRef.current?.click()}
-                      >
-                        Upload Proof
-                      </Button>
-                      <Input
-                        ref={paymentProofInputRef}
-                        type="file"
-                        accept={PAYMENT_PROOF_ACCEPT}
-                        className="hidden"
-                        onChange={(e) => void handlePaymentProofSelected(e)}
-                      />
-                    </div>
-                    {isReadingPaymentProof ? (
-                      <p className="text-xs text-indigo-700">Reading file... {paymentProofReadProgress}%</p>
-                    ) : null}
-                    {authForm.paymentProof ? (
-                      <p className="text-xs text-slate-600">
-                        Attached: {authForm.paymentProof.name} ({Math.max(1, Math.round(authForm.paymentProof.size / 1024))} KB)
-                      </p>
-                    ) : (
-                      <p className="text-xs text-slate-500">Upload screenshot/PDF receipt so admin can verify payment.</p>
-                    )}
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label htmlFor="signup-token">Admin Approval Token (for final signup)</Label>
-                    <Input
-                      id="signup-token"
-                      value={authForm.tokenCode}
-                      onChange={(e) => setAuthForm((prev) => ({ ...prev, tokenCode: e.target.value.toUpperCase() }))}
-                      placeholder="NET-XXXX-XXXX-XXXX"
-                      className="h-11 border-indigo-100"
-                    />
-                  </div>
-                </>
-              ) : null}
-
-              {forgotMode ? (
+              {isRecoveryMode ? (
                 <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
                   <div className="space-y-1">
                     <Label htmlFor="forgot-email">Registered Email Address</Label>
@@ -551,73 +390,212 @@ export function Profile({ onNavigate }: ProfileProps) {
                     Set New Password
                   </Button>
                 </div>
+              ) : (
+                <>
+              {isRegisterMode ? (
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reg-first-name">First Name</Label>
+                    <Input
+                      id="reg-first-name"
+                      value={authForm.firstName}
+                      onChange={(e) => setAuthForm((prev) => ({ ...prev, firstName: e.target.value }))}
+                      className="h-11 border-indigo-100"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="reg-last-name">Last Name</Label>
+                    <Input
+                      id="reg-last-name"
+                      value={authForm.lastName}
+                      onChange={(e) => setAuthForm((prev) => ({ ...prev, lastName: e.target.value }))}
+                      className="h-11 border-indigo-100"
+                    />
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="space-y-1.5">
+                <Label htmlFor="auth-email">Email</Label>
+                <Input
+                  id="auth-email"
+                  type="email"
+                  value={authForm.email}
+                  onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
+                  placeholder="student@example.com"
+                  className="h-11 border-indigo-100"
+                />
+              </div>
+
+              {isRegisterMode ? (
+                <div className="space-y-1.5">
+                  <Label htmlFor="mobile-number">Mobile Number</Label>
+                  <Input
+                    id="mobile-number"
+                    value={authForm.mobileNumber}
+                    onChange={(e) => setAuthForm((prev) => ({ ...prev, mobileNumber: e.target.value }))}
+                    placeholder="e.g. +923001234567"
+                    className="h-11 border-indigo-100"
+                  />
+                  <p className="text-xs text-slate-500">This mobile number will be used for account verification and token delivery.</p>
+                </div>
+              ) : null}
+
+              <div className="space-y-1.5">
+                <Label htmlFor="auth-password">Password</Label>
+                <Input
+                  id="auth-password"
+                  type="password"
+                  value={authForm.password}
+                  onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
+                  placeholder="Enter your password"
+                  className="h-11 border-indigo-100"
+                />
+              </div>
+
+              {isRegisterMode ? (
+                <>
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="payment-method">Payment Method</Label>
+                      <Select
+                        value={authForm.paymentMethod}
+                        onValueChange={(value: 'easypaisa' | 'jazzcash' | 'bank_transfer') => setAuthForm((prev) => ({ ...prev, paymentMethod: value }))}
+                      >
+                        <SelectTrigger id="payment-method" className="h-11 border-indigo-100">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="easypaisa">Easypaisa</SelectItem>
+                          <SelectItem value="jazzcash">JazzCash</SelectItem>
+                          <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="payment-txid">Transaction ID</Label>
+                      <Input
+                        id="payment-txid"
+                        value={authForm.paymentTransactionId}
+                        onChange={(e) => setAuthForm((prev) => ({ ...prev, paymentTransactionId: e.target.value }))}
+                        placeholder="Payment reference"
+                        className="h-11 border-indigo-100"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="token-contact-method">Token Delivery Method</Label>
+                    <Select
+                      value={authForm.contactMethod}
+                      onValueChange={() => setAuthForm((prev) => ({ ...prev, contactMethod: 'whatsapp' }))}
+                    >
+                      <SelectTrigger id="token-contact-method" className="h-11 border-indigo-100">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-slate-500">Signup token will be sent to your registered mobile number.</p>
+                  </div>
+
+                  <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm text-indigo-900">Payment Proof</p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-9 border-indigo-200 bg-white !text-indigo-700 hover:bg-indigo-50 hover:!text-indigo-800"
+                        onClick={() => paymentProofInputRef.current?.click()}
+                      >
+                        Upload Proof
+                      </Button>
+                      <Input
+                        ref={paymentProofInputRef}
+                        type="file"
+                        accept={PAYMENT_PROOF_ACCEPT}
+                        className="hidden"
+                        onChange={(e) => void handlePaymentProofSelected(e)}
+                      />
+                    </div>
+                    {isReadingPaymentProof ? (
+                      <p className="text-xs text-indigo-700">Reading file... {paymentProofReadProgress}%</p>
+                    ) : null}
+                    {authForm.paymentProof ? (
+                      <p className="text-xs text-slate-600">
+                        Attached: {authForm.paymentProof.name} ({Math.max(1, Math.round(authForm.paymentProof.size / 1024))} KB)
+                      </p>
+                    ) : (
+                      <p className="text-xs text-slate-500">Upload screenshot/PDF receipt so admin can verify payment.</p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label htmlFor="signup-token">Admin Approval Token (for final signup)</Label>
+                    <Input
+                      id="signup-token"
+                      value={authForm.tokenCode}
+                      onChange={(e) => setAuthForm((prev) => ({ ...prev, tokenCode: e.target.value.toUpperCase() }))}
+                      placeholder="NET-XXXX-XXXX-XXXX"
+                      className="h-11 border-indigo-100"
+                    />
+                  </div>
+                </>
               ) : null}
 
               <Button className="h-11 w-full rounded-xl bg-gradient-to-r from-indigo-700 to-violet-600 !text-white font-semibold shadow-sm hover:from-indigo-800 hover:to-violet-700" onClick={handleAuthSubmit}>
                 {isRegisterMode ? 'Create Account' : 'Login'}
               </Button>
+                </>
+              )}
 
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto]">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                 <Button
-                  variant="outline"
-                  className="h-11 rounded-xl border-indigo-200 bg-white !text-indigo-700 hover:bg-indigo-50 hover:!text-indigo-800"
-                  onClick={() => setIsRegisterMode((prev) => !prev)}
+                  type="button"
+                  variant={authMode === 'login' ? 'default' : 'outline'}
+                  className="h-10"
+                  onClick={() => setAuthMode('login')}
                 >
-                  {isRegisterMode ? 'Use Login' : 'Create Account'}
-                </Button>
-                <Button
-                  variant="outline"
-                  className="h-11 w-full rounded-xl border-indigo-200 bg-white p-0 !text-indigo-600 hover:bg-indigo-50 hover:!text-indigo-800 sm:w-11"
-                  onClick={() => {
-                    setAuthForm({
-                      firstName: '',
-                      lastName: '',
-                      email: '',
-                      password: '',
-                      mobileNumber: '',
-                      paymentMethod: 'easypaisa',
-                      paymentTransactionId: '',
-                      paymentProof: null,
-                      contactMethod: 'whatsapp',
-                      contactValue: '',
-                      tokenCode: '',
-                    });
-                    setForgotToken('');
-                    setForgotEmail('');
-                    setForgotMobileNumber('');
-                    setNewPassword('');
-                    setForgotMode(false);
-                  }}
-                >
-                  <RefreshCw className="h-4 w-4" />
+                  Login
                 </Button>
                 <Button
-                  variant="outline"
-                  className="h-11 w-full rounded-xl border-indigo-200 bg-white p-0 !text-indigo-600 hover:bg-indigo-50 hover:!text-indigo-800 sm:w-11"
-                  onClick={() => setIsRegisterMode((prev) => !prev)}
+                  type="button"
+                  variant={authMode === 'register' ? 'default' : 'outline'}
+                  className="h-10"
+                  onClick={() => setAuthMode('register')}
                 >
-                  <UserRound className="h-4 w-4" />
+                  Create Account
+                </Button>
+                <Button
+                  type="button"
+                  variant={authMode === 'recovery' ? 'default' : 'outline'}
+                  className="h-10"
+                  onClick={() => setAuthMode('recovery')}
+                >
+                  Recover Password
                 </Button>
               </div>
 
-              <div className="flex items-center justify-between text-xs text-slate-500">
-                <button type="button" className="underline-offset-2 hover:underline" onClick={() => setForgotMode((prev) => !prev)}>
-                  {forgotMode ? 'Hide reset panel' : 'Forgot password?'}
-                </button>
-                <span className="text-slate-500">Recovery is automatic after submit{forgotCooldownSeconds > 0 ? ` • cooldown ${forgotCooldownSeconds}s` : ''}</span>
+              <div className="text-xs text-slate-500 text-center">
+                Recovery is automatic after submit{forgotCooldownSeconds > 0 ? ` • cooldown ${forgotCooldownSeconds}s` : ''}
               </div>
 
-              <div className="relative py-1 text-center text-sm text-slate-500">
-                <div className="absolute left-0 right-0 top-1/2 h-px bg-indigo-100" />
-                <span className="relative bg-white px-3 text-slate-500">or continue with</span>
-              </div>
+              {authMode === 'login' ? (
+                <>
+                  <div className="relative py-1 text-center text-sm text-slate-500">
+                    <div className="absolute left-0 right-0 top-1/2 h-px bg-indigo-100" />
+                    <span className="relative bg-white px-3 text-slate-500">or continue with</span>
+                  </div>
 
-              <div className="flex flex-wrap justify-center gap-3">
-                <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white text-lg !text-slate-800 hover:bg-slate-50 hover:!text-slate-900">G</Button>
-                <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white !text-slate-800 hover:bg-slate-50 hover:!text-slate-900">
-                  <Apple className="h-5 w-5" />
-                </Button>
-              </div>
+                  <div className="flex flex-wrap justify-center gap-3">
+                    <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white text-lg !text-slate-800 hover:bg-slate-50 hover:!text-slate-900">G</Button>
+                    <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white !text-slate-800 hover:bg-slate-50 hover:!text-slate-900">
+                      <Apple className="h-5 w-5" />
+                    </Button>
+                  </div>
+                </>
+              ) : null}
             </CardContent>
           </Card>
 
