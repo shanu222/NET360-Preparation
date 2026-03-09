@@ -16,12 +16,22 @@ interface ProfileProps {
   onNavigate?: (section: string) => void;
 }
 
+function fileToDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Could not read selected file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export function Profile({ onNavigate }: ProfileProps) {
   const { user, login, submitSignupRequest, registerWithToken, logout } = useAuth();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
   const [localProfile, setLocalProfile] = useState(profile);
   const [avatarPreview, setAvatarPreview] = useState('');
   const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const paymentProofInputRef = useRef<HTMLInputElement | null>(null);
   const [isRegisterMode, setIsRegisterMode] = useState(false);
   const [authForm, setAuthForm] = useState({
     firstName: '',
@@ -29,13 +39,23 @@ export function Profile({ onNavigate }: ProfileProps) {
     email: '',
     password: '',
     mobileNumber: '',
-    paymentMethod: 'easypaisa' as 'easypaisa' | 'jazzcash' | 'hbl',
+    paymentMethod: 'easypaisa' as 'easypaisa' | 'jazzcash' | 'bank_transfer',
     paymentTransactionId: '',
+    paymentProof: null as null | {
+      name: string;
+      mimeType: string;
+      size: number;
+      dataUrl: string;
+    },
+    contactMethod: 'sms' as 'sms' | 'email' | 'whatsapp',
+    contactValue: '',
     tokenCode: '',
   });
   const [forgotMode, setForgotMode] = useState(false);
+  const [forgotIdentifier, setForgotIdentifier] = useState('');
   const [forgotToken, setForgotToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [forgotCooldownSeconds, setForgotCooldownSeconds] = useState(0);
 
   useEffect(() => {
     setLocalProfile(profile);
@@ -58,6 +78,14 @@ export function Profile({ onNavigate }: ProfileProps) {
       }
     };
   }, [avatarPreview]);
+
+  useEffect(() => {
+    if (forgotCooldownSeconds <= 0) return;
+    const timer = window.setInterval(() => {
+      setForgotCooldownSeconds((current) => (current > 0 ? current - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [forgotCooldownSeconds]);
 
   const avatarText = useMemo(() => {
     const first = localProfile.firstName?.trim()[0] ?? 'S';
@@ -97,6 +125,16 @@ export function Profile({ onNavigate }: ProfileProps) {
             return;
           }
 
+          if (!authForm.paymentProof) {
+            toast.error('Upload payment proof (JPG, PNG, or PDF) before submitting.');
+            return;
+          }
+
+          if (!authForm.contactValue.trim()) {
+            toast.error('Enter contact details to receive your signup token.');
+            return;
+          }
+
           await submitSignupRequest({
             email: authForm.email,
             firstName: authForm.firstName,
@@ -104,6 +142,9 @@ export function Profile({ onNavigate }: ProfileProps) {
             mobileNumber: authForm.mobileNumber,
             paymentMethod: authForm.paymentMethod,
             paymentTransactionId: authForm.paymentTransactionId,
+            paymentProof: authForm.paymentProof,
+            contactMethod: authForm.contactMethod,
+            contactValue: authForm.contactValue.trim(),
           });
           toast.success('Signup request submitted. Wait for admin approval, then use token to complete signup.');
         }
@@ -136,22 +177,36 @@ export function Profile({ onNavigate }: ProfileProps) {
   };
 
   const handleForgotPasswordRequest = async () => {
-    if (!authForm.email) {
-      toast.error('Enter your email to request a reset link.');
+    if (forgotCooldownSeconds > 0) {
+      toast.error(`Please wait ${forgotCooldownSeconds}s before requesting another token.`);
+      return;
+    }
+
+    const identifier = forgotIdentifier.trim() || authForm.email.trim() || authForm.mobileNumber.trim();
+    if (!identifier) {
+      toast.error('Enter your registered email or mobile number.');
       return;
     }
 
     try {
       const payload = await apiRequest<{ message: string; resetToken?: string }>('/api/auth/forgot-password', {
         method: 'POST',
-        body: JSON.stringify({ email: authForm.email }),
+        body: JSON.stringify({ identifier }),
       });
 
       if (payload.resetToken) {
         setForgotToken(payload.resetToken);
       }
+      setForgotCooldownSeconds(60);
       toast.success(payload.message || 'Reset link requested.');
     } catch (error) {
+      const detailed = error as Error & { status?: number; retryAfterSeconds?: number };
+      if (detailed.status === 429) {
+        const retryAfter = Math.max(30, Number(detailed.retryAfterSeconds || 60));
+        setForgotCooldownSeconds(retryAfter);
+        toast.error(`Too many recovery attempts. Try again in ${retryAfter}s.`);
+        return;
+      }
       toast.error(error instanceof Error ? error.message : 'Could not request password reset.');
     }
   };
@@ -232,6 +287,38 @@ export function Profile({ onNavigate }: ProfileProps) {
     toast.success('Profile photo updated locally for this browser session.');
   };
 
+  const handlePaymentProofSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const mime = String(file.type || '').toLowerCase();
+    if (!['image/jpeg', 'image/png', 'application/pdf'].includes(mime)) {
+      toast.error('Payment proof must be JPG, PNG, or PDF.');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Payment proof must be under 5MB.');
+      return;
+    }
+
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setAuthForm((prev) => ({
+        ...prev,
+        paymentProof: {
+          name: file.name,
+          mimeType: file.type,
+          size: file.size,
+          dataUrl,
+        },
+      }));
+      toast.success('Payment proof attached.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not read payment proof file.');
+    }
+  };
+
   if (!user) {
     return (
       <div className="space-y-5">
@@ -246,7 +333,7 @@ export function Profile({ onNavigate }: ProfileProps) {
               <CardTitle className="text-slate-800">{isRegisterMode ? 'Create Account' : 'Login'}</CardTitle>
               <CardDescription className="text-slate-600">
                 {isRegisterMode
-                  ? 'Pay via Easypaisa/JazzCash/HBL, submit transaction ID, then complete signup with admin-issued token.'
+                  ? 'Pay via Easypaisa/JazzCash/Bank Transfer, upload proof, then complete signup with admin-issued token.'
                   : 'Users can only stay logged in on one device at a time.'}
               </CardDescription>
             </CardHeader>
@@ -318,7 +405,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                       <Label htmlFor="payment-method">Payment Method</Label>
                       <Select
                         value={authForm.paymentMethod}
-                        onValueChange={(value: 'easypaisa' | 'jazzcash' | 'hbl') => setAuthForm((prev) => ({ ...prev, paymentMethod: value }))}
+                        onValueChange={(value: 'easypaisa' | 'jazzcash' | 'bank_transfer') => setAuthForm((prev) => ({ ...prev, paymentMethod: value }))}
                       >
                         <SelectTrigger id="payment-method" className="h-11 border-indigo-100">
                           <SelectValue />
@@ -326,7 +413,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                         <SelectContent>
                           <SelectItem value="easypaisa">Easypaisa</SelectItem>
                           <SelectItem value="jazzcash">JazzCash</SelectItem>
-                          <SelectItem value="hbl">HBL</SelectItem>
+                          <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -340,6 +427,66 @@ export function Profile({ onNavigate }: ProfileProps) {
                         className="h-11 border-indigo-100"
                       />
                     </div>
+                  </div>
+
+                  <div className="grid gap-2 md:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="token-contact-method">Token Delivery Method</Label>
+                      <Select
+                        value={authForm.contactMethod}
+                        onValueChange={(value: 'sms' | 'email' | 'whatsapp') => setAuthForm((prev) => ({ ...prev, contactMethod: value }))}
+                      >
+                        <SelectTrigger id="token-contact-method" className="h-11 border-indigo-100">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="sms">SMS</SelectItem>
+                          <SelectItem value="email">Email</SelectItem>
+                          <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label htmlFor="token-contact-value">
+                        {authForm.contactMethod === 'email' ? 'Delivery Email' : 'Delivery Number'}
+                      </Label>
+                      <Input
+                        id="token-contact-value"
+                        value={authForm.contactValue}
+                        onChange={(e) => setAuthForm((prev) => ({ ...prev, contactValue: e.target.value }))}
+                        placeholder={authForm.contactMethod === 'email' ? 'student@example.com' : '+923001234567'}
+                        className="h-11 border-indigo-100"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm text-indigo-900">Payment Proof</p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-9 border-indigo-200 bg-white text-indigo-700"
+                        onClick={() => paymentProofInputRef.current?.click()}
+                      >
+                        Upload Proof
+                      </Button>
+                      <Input
+                        ref={paymentProofInputRef}
+                        type="file"
+                        accept="image/jpeg,image/png,application/pdf"
+                        className="hidden"
+                        onChange={(e) => void handlePaymentProofSelected(e)}
+                      />
+                    </div>
+                    {authForm.paymentProof ? (
+                      <p className="text-xs text-slate-600">
+                        Attached: {authForm.paymentProof.name} ({Math.max(1, Math.round(authForm.paymentProof.size / 1024))} KB)
+                      </p>
+                    ) : (
+                      <p className="text-xs text-slate-500">Upload screenshot/PDF receipt so admin can verify payment.</p>
+                    )}
                   </div>
 
                   <div className="space-y-1.5">
@@ -357,6 +504,25 @@ export function Profile({ onNavigate }: ProfileProps) {
 
               {forgotMode ? (
                 <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
+                  <div className="space-y-1">
+                    <Label htmlFor="forgot-identifier">Email or Mobile Number</Label>
+                    <Input
+                      id="forgot-identifier"
+                      value={forgotIdentifier}
+                      onChange={(e) => setForgotIdentifier(e.target.value)}
+                      placeholder="student@example.com or +923001234567"
+                      className="h-10 border-indigo-100"
+                    />
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="h-10 w-full border-indigo-200 bg-white text-indigo-700"
+                    disabled={forgotCooldownSeconds > 0}
+                    onClick={() => void handleForgotPasswordRequest()}
+                  >
+                    {forgotCooldownSeconds > 0 ? `Retry in ${forgotCooldownSeconds}s` : 'Send Recovery Token'}
+                  </Button>
                   <div className="space-y-1">
                     <Label htmlFor="reset-token">Reset Token</Label>
                     <Input
@@ -384,7 +550,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                 </div>
               ) : null}
 
-              <Button className="h-11 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white" onClick={handleAuthSubmit}>
+              <Button className="h-11 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 !text-white shadow-sm" onClick={handleAuthSubmit}>
                 {isRegisterMode ? 'Create Account' : 'Login'}
               </Button>
 
@@ -408,9 +574,13 @@ export function Profile({ onNavigate }: ProfileProps) {
                       mobileNumber: '',
                       paymentMethod: 'easypaisa',
                       paymentTransactionId: '',
+                      paymentProof: null,
+                      contactMethod: 'sms',
+                      contactValue: '',
                       tokenCode: '',
                     });
                     setForgotToken('');
+                    setForgotIdentifier('');
                     setNewPassword('');
                     setForgotMode(false);
                   }}
@@ -430,11 +600,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                 <button type="button" className="underline-offset-2 hover:underline" onClick={() => setForgotMode((prev) => !prev)}>
                   {forgotMode ? 'Hide reset panel' : 'Forgot password?'}
                 </button>
-                {!forgotMode ? (
-                  <button type="button" className="underline-offset-2 hover:underline" onClick={() => void handleForgotPasswordRequest()}>
-                    Request reset token
-                  </button>
-                ) : null}
+                <span className="text-slate-500">Recovery is automatic after submit{forgotCooldownSeconds > 0 ? ` • cooldown ${forgotCooldownSeconds}s` : ''}</span>
               </div>
 
               <div className="relative py-1 text-center text-sm text-slate-500">

@@ -58,9 +58,116 @@ interface LocalUser {
   role: 'student' | 'admin';
   preferences: PublicUser['preferences'];
   progress: PublicUser['progress'];
+  subscription: LocalSubscription;
   refreshTokens: string[];
   resetPasswordToken: string | null;
   resetPasswordExpiresAt: string | null;
+}
+
+interface LocalSubscription {
+  status: 'inactive' | 'active' | 'expired' | 'cancelled';
+  planId: string;
+  billingCycle: '' | 'monthly' | 'yearly';
+  startedAt: string | null;
+  expiresAt: string | null;
+  paymentReference: string;
+  lastActivatedAt: string | null;
+}
+
+interface LocalPaymentProof {
+  name: string;
+  mimeType: string;
+  size: number;
+  dataUrl: string;
+}
+
+interface LocalSignupRequest {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  mobileNumber: string;
+  paymentMethod: 'easypaisa' | 'jazzcash' | 'bank_transfer';
+  paymentTransactionId: string;
+  paymentProof: LocalPaymentProof;
+  contactMethod: 'sms' | 'email' | 'whatsapp';
+  contactValue: string;
+  status: 'pending' | 'approved' | 'rejected' | 'completed';
+  notes: string;
+  reviewedByEmail: string;
+  reviewedAt: string | null;
+  signupTokenId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface LocalSignupToken {
+  id: string;
+  code: string;
+  email: string;
+  signupRequestId: string;
+  status: 'active' | 'used' | 'expired' | 'revoked';
+  expiresAt: string;
+  usedAt: string | null;
+  usedByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface LocalPremiumSubscriptionRequest {
+  id: string;
+  userId: string;
+  email: string;
+  mobileNumber: string;
+  planId: string;
+  paymentMethod: 'easypaisa' | 'jazzcash' | 'bank_transfer';
+  paymentTransactionId: string;
+  paymentProof: LocalPaymentProof;
+  contactMethod: 'sms' | 'email' | 'whatsapp';
+  contactValue: string;
+  status: 'pending' | 'approved' | 'rejected' | 'completed';
+  notes: string;
+  reviewedByEmail: string;
+  reviewedAt: string | null;
+  activationTokenId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface LocalPremiumActivationToken {
+  id: string;
+  code: string;
+  userId: string;
+  email: string;
+  premiumRequestId: string;
+  status: 'active' | 'used' | 'expired' | 'revoked';
+  expiresAt: string;
+  usedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface LocalPasswordRecoveryDispatch {
+  channel: 'email' | 'sms' | 'whatsapp';
+  destination: string;
+  status: 'sent' | 'skipped' | 'failed';
+  provider: string;
+  detail: string;
+}
+
+interface LocalPasswordRecoveryRequest {
+  id: string;
+  identifier: string;
+  normalizedIdentifier: string;
+  matchedBy: 'email' | 'mobile' | 'none';
+  userId: string | null;
+  userName: string;
+  email: string;
+  mobileNumber: string;
+  recoveryStatus: 'not_found' | 'sent' | 'partial' | 'failed';
+  dispatches: LocalPasswordRecoveryDispatch[];
+  tokenExpiresAt: string | null;
+  createdAt: string;
 }
 
 interface SessionQuestion {
@@ -125,6 +232,8 @@ interface LocalAIUsage {
   userId: string;
   day: string;
   chatCount: number;
+  solverCount: number;
+  tokenConsumed: number;
 }
 
 interface LocalPracticeBoardQuestion {
@@ -265,6 +374,11 @@ interface LocalCommunityBlock {
 
 interface LocalDb {
   users: LocalUser[];
+  signupRequests: LocalSignupRequest[];
+  signupTokens: LocalSignupToken[];
+  premiumSubscriptionRequests: LocalPremiumSubscriptionRequest[];
+  premiumActivationTokens: LocalPremiumActivationToken[];
+  passwordRecoveryRequests: LocalPasswordRecoveryRequest[];
   sessions: LocalSession[];
   attempts: LocalAttempt[];
   aiUsage: LocalAIUsage[];
@@ -280,8 +394,56 @@ interface LocalDb {
   communityBlocks: LocalCommunityBlock[];
 }
 
-const DB_STORAGE_KEY = 'net360-local-db-v7';
+const DB_STORAGE_KEY = 'net360-local-db-v8';
 let cachedMcqs: MCQ[] = [];
+
+const SIGNUP_TOKEN_TTL_HOURS = 24;
+const PREMIUM_TOKEN_TTL_HOURS = 24;
+const PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024;
+const PAYMENT_PROOF_ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'application/pdf']);
+
+const LOCAL_SUBSCRIPTION_PLANS = {
+  basic_monthly: {
+    id: 'basic_monthly',
+    name: 'Basic Plan',
+    tier: 'basic',
+    billingCycle: 'monthly',
+    pricePkr: 500,
+    dailyAiLimit: 50,
+    features: ['Image upload solving', 'Structured concept + steps + final answer', 'Basic explanations'],
+    expiresInDays: 30,
+  },
+  pro_monthly: {
+    id: 'pro_monthly',
+    name: 'Pro Plan',
+    tier: 'pro',
+    billingCycle: 'monthly',
+    pricePkr: 900,
+    dailyAiLimit: 200,
+    features: ['Faster guided processing priority', 'Advanced step explanations', 'Shortcut solving tricks'],
+    expiresInDays: 30,
+  },
+  basic_yearly: {
+    id: 'basic_yearly',
+    name: 'Basic Yearly',
+    tier: 'basic',
+    billingCycle: 'yearly',
+    pricePkr: 5000,
+    dailyAiLimit: 50,
+    features: ['Image upload solving', 'Structured concept + steps + final answer', 'Yearly discounted billing'],
+    expiresInDays: 365,
+  },
+  pro_yearly: {
+    id: 'pro_yearly',
+    name: 'Pro Yearly',
+    tier: 'pro',
+    billingCycle: 'yearly',
+    pricePkr: 9000,
+    dailyAiLimit: 200,
+    features: ['Faster guided processing priority', 'Advanced explanations + tricks', 'Yearly discounted billing'],
+    expiresInDays: 365,
+  },
+} as const;
 
 const CONTENT_RESTRICTION_MESSAGE = 'Your submission contains content that does not meet the platform guidelines.\nUpload access has been temporarily restricted.\nPlease contact the administration if you believe this action was taken by mistake.';
 const SUPPORTED_SUBJECTS = new Set([
@@ -331,6 +493,179 @@ function defaultProgress(): PublicUser['progress'] {
       accuracyTrend: [],
     },
     studyPlan: null,
+  };
+}
+
+function defaultSubscription(): LocalSubscription {
+  return {
+    status: 'inactive',
+    planId: '',
+    billingCycle: '',
+    startedAt: null,
+    expiresAt: null,
+    paymentReference: '',
+    lastActivatedAt: null,
+  };
+}
+
+function resolveSubscriptionPlan(planId: string) {
+  return LOCAL_SUBSCRIPTION_PLANS[String(planId || '').trim() as keyof typeof LOCAL_SUBSCRIPTION_PLANS] || null;
+}
+
+function isSubscriptionActive(subscription?: LocalSubscription | null) {
+  if (!subscription || subscription.status !== 'active') return false;
+  if (!subscription.expiresAt) return false;
+  return new Date(subscription.expiresAt).getTime() > Date.now();
+}
+
+function normalizePaymentMethod(value: unknown): 'easypaisa' | 'jazzcash' | 'bank_transfer' | '' {
+  const method = String(value || '').trim().toLowerCase();
+  if (method === 'hbl') return 'bank_transfer';
+  if (method === 'easypaisa' || method === 'jazzcash' || method === 'bank_transfer') return method;
+  return '';
+}
+
+function normalizeContactMethod(value: unknown): 'sms' | 'email' | 'whatsapp' | '' {
+  const method = String(value || '').trim().toLowerCase();
+  if (method === 'phone') return 'sms';
+  if (method === 'sms' || method === 'email' || method === 'whatsapp') return method;
+  return '';
+}
+
+function normalizeEmail(value: unknown) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isValidEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(String(value || '').trim().toLowerCase());
+}
+
+function normalizeMobileNumber(value: unknown) {
+  return String(value || '').trim();
+}
+
+function compactMobile(value: unknown) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function isValidMobileNumber(value: string) {
+  const cleaned = String(value || '').replace(/[\s()-]/g, '');
+  return /^\+?[0-9]{8,18}$/.test(cleaned);
+}
+
+function normalizePaymentProof(input: unknown): LocalPaymentProof {
+  if (!input || typeof input !== 'object') {
+    throw new Error('Payment proof file is required.');
+  }
+
+  const candidate = input as Partial<LocalPaymentProof>;
+  const name = String(candidate.name || '').trim().slice(0, 120);
+  const mimeType = String(candidate.mimeType || '').trim().toLowerCase();
+  const dataUrl = String(candidate.dataUrl || '').trim();
+  const parsed = parseLocalDataUrl(dataUrl);
+
+  if (!name || !parsed) {
+    throw new Error('Payment proof must include a valid file name and file data.');
+  }
+
+  if (!PAYMENT_PROOF_ALLOWED_MIME_TYPES.has(mimeType || parsed.mimeType)) {
+    throw new Error('Payment proof must be JPG, PNG, or PDF.');
+  }
+
+  const size = Number(candidate.size || parsed.size || 0);
+  if (!size || size > PAYMENT_PROOF_MAX_BYTES) {
+    throw new Error('Payment proof must be up to 5MB.');
+  }
+
+  return {
+    name,
+    mimeType: mimeType || parsed.mimeType,
+    size,
+    dataUrl,
+  };
+}
+
+function generateSignupTokenCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const parts: string[] = [];
+  for (let block = 0; block < 3; block += 1) {
+    let token = '';
+    for (let i = 0; i < 4; i += 1) {
+      token += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    parts.push(token);
+  }
+  return `NET-${parts.join('-')}`;
+}
+
+function generatePremiumTokenCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const parts: string[] = [];
+  for (let block = 0; block < 3; block += 1) {
+    let token = '';
+    for (let i = 0; i < 4; i += 1) {
+      token += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    parts.push(token);
+  }
+  return `PREM-${parts.join('-')}`;
+}
+
+function serializeSignupRequest(item: LocalSignupRequest) {
+  return {
+    id: item.id,
+    email: item.email,
+    firstName: item.firstName,
+    lastName: item.lastName,
+    mobileNumber: item.mobileNumber,
+    paymentMethod: item.paymentMethod,
+    paymentTransactionId: item.paymentTransactionId,
+    paymentProof: item.paymentProof,
+    contactMethod: item.contactMethod,
+    contactValue: item.contactValue,
+    status: item.status,
+    notes: item.notes,
+    reviewedAt: item.reviewedAt,
+    reviewedByEmail: item.reviewedByEmail,
+    createdAt: item.createdAt,
+  };
+}
+
+function serializePremiumSubscriptionRequest(item: LocalPremiumSubscriptionRequest) {
+  const plan = resolveSubscriptionPlan(item.planId);
+  return {
+    id: item.id,
+    userId: item.userId,
+    email: item.email,
+    mobileNumber: item.mobileNumber,
+    planId: item.planId,
+    planName: plan?.name || '',
+    paymentMethod: item.paymentMethod,
+    paymentTransactionId: item.paymentTransactionId,
+    paymentProof: item.paymentProof,
+    contactMethod: item.contactMethod,
+    contactValue: item.contactValue,
+    status: item.status,
+    notes: item.notes,
+    reviewedAt: item.reviewedAt,
+    reviewedByEmail: item.reviewedByEmail,
+    createdAt: item.createdAt,
+  };
+}
+
+function serializePasswordRecoveryRequest(item: LocalPasswordRecoveryRequest) {
+  return {
+    id: item.id,
+    identifier: item.identifier,
+    matchedBy: item.matchedBy,
+    userId: item.userId || '',
+    userName: item.userName,
+    email: item.email,
+    mobileNumber: item.mobileNumber,
+    recoveryStatus: item.recoveryStatus,
+    dispatches: item.dispatches,
+    tokenExpiresAt: item.tokenExpiresAt,
+    createdAt: item.createdAt,
   };
 }
 
@@ -611,6 +946,11 @@ function readDb(): LocalDb {
   if (!raw) {
     return {
       users: [],
+      signupRequests: [],
+      signupTokens: [],
+      premiumSubscriptionRequests: [],
+      premiumActivationTokens: [],
+      passwordRecoveryRequests: [],
       sessions: [],
       attempts: [],
       aiUsage: [],
@@ -630,10 +970,25 @@ function readDb(): LocalDb {
   try {
     const parsed = JSON.parse(raw) as Partial<LocalDb>;
     return {
-      users: parsed.users || [],
+      users: (parsed.users || []).map((item) => ({
+        ...item,
+        subscription: {
+          ...defaultSubscription(),
+          ...(item.subscription || {}),
+        },
+      })),
+      signupRequests: parsed.signupRequests || [],
+      signupTokens: parsed.signupTokens || [],
+      premiumSubscriptionRequests: parsed.premiumSubscriptionRequests || [],
+      premiumActivationTokens: parsed.premiumActivationTokens || [],
+      passwordRecoveryRequests: parsed.passwordRecoveryRequests || [],
       sessions: parsed.sessions || [],
       attempts: parsed.attempts || [],
-      aiUsage: parsed.aiUsage || [],
+      aiUsage: (parsed.aiUsage || []).map((item) => ({
+        ...item,
+        solverCount: Number((item as any).solverCount || 0),
+        tokenConsumed: Number((item as any).tokenConsumed || 0),
+      })),
       practiceBoardQuestions: parsed.practiceBoardQuestions || [],
       questionSubmissions: parsed.questionSubmissions || [],
       contributionPolicy: {
@@ -651,6 +1006,11 @@ function readDb(): LocalDb {
   } catch {
     return {
       users: [],
+      signupRequests: [],
+      signupTokens: [],
+      premiumSubscriptionRequests: [],
+      premiumActivationTokens: [],
+      passwordRecoveryRequests: [],
       sessions: [],
       attempts: [],
       aiUsage: [],
@@ -699,6 +1059,15 @@ function requireAdmin(token?: string | null) {
     throw new Error('Admin access required.');
   }
   return { db, user };
+}
+
+function getOrCreateDailyAiUsage(db: LocalDb, userId: string, day: string) {
+  let usage = db.aiUsage.find((item) => item.userId === userId && item.day === day);
+  if (!usage) {
+    usage = { userId, day, chatCount: 0, solverCount: 0, tokenConsumed: 0 };
+    db.aiUsage.push(usage);
+  }
+  return usage;
 }
 
 async function loadMcqs() {
@@ -1375,21 +1744,125 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     return { status: 'ok', service: 'net360-local-api' } as T;
   }
 
-  if (url.pathname === '/api/auth/register' && method === 'POST') {
-    const email = String(body.email || '').trim().toLowerCase();
-    const password = String(body.password || '');
-    if (!email || !password) {
-      throw new Error('Email and password are required.');
+  if (url.pathname === '/api/auth/signup-request' && method === 'POST') {
+    const db = readDb();
+    const email = normalizeEmail(body.email);
+    const firstName = String(body.firstName || '').trim();
+    const lastName = String(body.lastName || '').trim();
+    const mobileNumber = normalizeMobileNumber(body.mobileNumber);
+    const paymentMethod = normalizePaymentMethod(body.paymentMethod);
+    const paymentTransactionId = String(body.paymentTransactionId || '').trim();
+    const contactMethod = normalizeContactMethod(body.contactMethod || 'sms');
+    const contactValue = contactMethod === 'email'
+      ? normalizeEmail(body.contactValue)
+      : normalizeMobileNumber(body.contactValue || mobileNumber);
+
+    let paymentProof: LocalPaymentProof;
+    try {
+      paymentProof = normalizePaymentProof(body.paymentProof);
+    } catch (error) {
+      throw new Error(error instanceof Error ? error.message : 'Payment proof is invalid.');
     }
 
+    if (!email || !mobileNumber || !paymentMethod || !paymentTransactionId || !contactMethod || !contactValue) {
+      throw new Error('Email, mobile number, payment method, transaction ID, payment proof, and contact details are required.');
+    }
+    if (!isValidEmail(email)) {
+      throw new Error('Enter a valid email address.');
+    }
+    if (!isValidMobileNumber(mobileNumber)) {
+      throw new Error('Enter a valid mobile number.');
+    }
+    if (!['easypaisa', 'jazzcash', 'bank_transfer'].includes(paymentMethod)) {
+      throw new Error('Payment method must be one of: easypaisa, jazzcash, bank_transfer.');
+    }
+    if (!['sms', 'email', 'whatsapp'].includes(contactMethod)) {
+      throw new Error('Contact method must be sms, email, or whatsapp.');
+    }
+    if (contactMethod === 'email' && !isValidEmail(contactValue)) {
+      throw new Error('Enter a valid email for token delivery.');
+    }
+    if (contactMethod !== 'email' && !isValidMobileNumber(contactValue)) {
+      throw new Error('Enter a valid mobile/WhatsApp number for token delivery.');
+    }
+
+    if (db.users.some((item) => item.email === email)) {
+      throw new Error('Email is already registered.');
+    }
+    if (db.signupRequests.some((item) => item.email === email && item.status === 'pending')) {
+      throw new Error('A pending signup request already exists for this email.');
+    }
+
+    const now = new Date().toISOString();
+    const request: LocalSignupRequest = {
+      id: `signup-req-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+      email,
+      firstName,
+      lastName,
+      mobileNumber,
+      paymentMethod,
+      paymentTransactionId,
+      paymentProof,
+      contactMethod,
+      contactValue,
+      status: 'pending',
+      notes: '',
+      reviewedByEmail: '',
+      reviewedAt: null,
+      signupTokenId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    db.signupRequests.unshift(request);
+    writeDb(db);
+    return {
+      request: serializeSignupRequest(request),
+      message: 'Signup request submitted. Wait for admin approval and token.',
+    } as T;
+  }
+
+  if (url.pathname === '/api/auth/register-with-token' && method === 'POST') {
+    const db = readDb();
+    const email = normalizeEmail(body.email);
+    const password = String(body.password || '');
+    const tokenCode = String(body.tokenCode || '').trim().toUpperCase();
+    const firstName = String(body.firstName || '').trim();
+    const lastName = String(body.lastName || '').trim();
+
+    if (!email || !password || !tokenCode) {
+      throw new Error('Email, password, and token code are required.');
+    }
+    if (!isValidEmail(email)) {
+      throw new Error('Enter a valid email address.');
+    }
     if (password.length < 8) {
       throw new Error('Password must be at least 8 characters.');
     }
-
-    const db = readDb();
-    const exists = db.users.some((user) => user.email === email);
-    if (exists) {
+    if (db.users.some((item) => item.email === email)) {
       throw new Error('Email is already registered.');
+    }
+
+    const signupToken = db.signupTokens.find((item) => item.code === tokenCode);
+    if (!signupToken) {
+      throw new Error('Invalid token code.');
+    }
+    if (signupToken.status !== 'active') {
+      throw new Error('This token is no longer active.');
+    }
+    if (new Date(signupToken.expiresAt).getTime() <= Date.now()) {
+      signupToken.status = 'expired';
+      signupToken.updatedAt = new Date().toISOString();
+      writeDb(db);
+      throw new Error('Token expired. Ask admin for a new token.');
+    }
+    if (signupToken.email !== email) {
+      throw new Error('Token was issued for a different email.');
+    }
+
+    const signupRequest = db.signupRequests.find((item) => item.id === signupToken.signupRequestId);
+    if (!signupRequest) {
+      throw new Error('Signup request not found for this token.');
     }
 
     const role: 'student' | 'admin' = email.includes('admin') ? 'admin' : 'student';
@@ -1397,9 +1870,9 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       id: `user-${Date.now()}`,
       email,
       password,
-      firstName: String(body.firstName || ''),
-      lastName: String(body.lastName || ''),
-      phone: '',
+      firstName,
+      lastName,
+      phone: signupRequest.mobileNumber,
       city: '',
       targetProgram: '',
       testSeries: '',
@@ -1409,14 +1882,23 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       role,
       preferences: defaultPreferences(),
       progress: defaultProgress(),
+      subscription: defaultSubscription(),
       refreshTokens: [],
       resetPasswordToken: null,
       resetPasswordExpiresAt: null,
     };
 
+    const now = new Date().toISOString();
+    signupToken.status = 'used';
+    signupToken.usedAt = now;
+    signupToken.usedByUserId = user.id;
+    signupToken.updatedAt = now;
+
+    signupRequest.status = 'completed';
+    signupRequest.updatedAt = now;
+
     const refreshToken = createRefreshToken(user.id);
     user.refreshTokens.push(refreshToken);
-
     db.users.push(user);
     writeDb(db);
 
@@ -1425,6 +1907,10 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       refreshToken,
       user: toPublicUser(user),
     } as T;
+  }
+
+  if (url.pathname === '/api/auth/register' && method === 'POST') {
+    throw new Error('Direct signup is disabled. Submit payment proof, get approval, then register using your token.');
   }
 
   if (url.pathname === '/api/auth/login' && method === 'POST') {
@@ -1493,21 +1979,136 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
   }
 
   if (url.pathname === '/api/auth/forgot-password' && method === 'POST') {
-    const email = String(body.email || '').trim().toLowerCase();
-    if (!email) {
-      throw new Error('Email is required.');
-    }
+    const identifier = String(body.identifier || body.email || body.mobileNumber || '').trim();
+    if (!identifier) throw new Error('Registered email or mobile number is required.');
+
+    const isEmailIdentifier = identifier.includes('@');
+    const normalizedIdentifier = isEmailIdentifier ? normalizeEmail(identifier) : normalizeMobileNumber(identifier);
+    if (isEmailIdentifier && !isValidEmail(normalizedIdentifier)) throw new Error('Enter a valid email address.');
+    if (!isEmailIdentifier && !isValidMobileNumber(normalizedIdentifier)) throw new Error('Enter a valid mobile number.');
 
     const db = readDb();
-    const user = db.users.find((item) => item.email === email);
-    if (user) {
-      user.resetPasswordToken = `local-reset-${Date.now()}`;
-      user.resetPasswordExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
-      writeDb(db);
-      return { message: 'Reset link generated.', resetToken: user.resetPasswordToken } as T;
+    let user: LocalUser | undefined;
+    let matchedBy: LocalPasswordRecoveryRequest['matchedBy'] = 'none';
+
+    if (isEmailIdentifier) {
+      user = db.users.find((item) => normalizeEmail(item.email) === normalizedIdentifier);
+      matchedBy = user ? 'email' : 'none';
+    } else {
+      const mobileDigits = compactMobile(normalizedIdentifier);
+      user = db.users.find((item) => compactMobile(item.phone) === mobileDigits);
+      matchedBy = user ? 'mobile' : 'none';
     }
 
-    return { message: 'If this email exists, a password reset link has been sent.' } as T;
+    if (!user) {
+      const request: LocalPasswordRecoveryRequest = {
+        id: `recovery-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+        identifier,
+        normalizedIdentifier,
+        matchedBy: 'none',
+        userId: null,
+        userName: '',
+        email: '',
+        mobileNumber: '',
+        recoveryStatus: 'not_found',
+        dispatches: [],
+        tokenExpiresAt: null,
+        createdAt: new Date().toISOString(),
+      };
+      db.passwordRecoveryRequests.unshift(request);
+      writeDb(db);
+      return { message: 'If this account exists, recovery details have been sent.', request: serializePasswordRecoveryRequest(request) } as T;
+    }
+
+    user.resetPasswordToken = `local-reset-${Date.now()}`;
+    user.resetPasswordExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+
+    const dispatches: LocalPasswordRecoveryDispatch[] = [];
+    const emailDestination = normalizeEmail(user.email || '');
+    const mobileDestination = normalizeMobileNumber(user.phone || '');
+
+    if (isValidEmail(emailDestination)) {
+      dispatches.push({
+        channel: 'email',
+        destination: emailDestination,
+        status: 'sent',
+        provider: 'simulated-gmail',
+        detail: 'Recovery token sent automatically.',
+      });
+    } else {
+      dispatches.push({
+        channel: 'email',
+        destination: emailDestination,
+        status: 'failed',
+        provider: 'simulated-gmail',
+        detail: 'No valid email available for delivery.',
+      });
+    }
+
+    if (isValidMobileNumber(mobileDestination)) {
+      dispatches.push({
+        channel: 'sms',
+        destination: mobileDestination,
+        status: 'sent',
+        provider: 'simulated-sms',
+        detail: 'Recovery token sent automatically.',
+      });
+      dispatches.push({
+        channel: 'whatsapp',
+        destination: mobileDestination,
+        status: 'sent',
+        provider: 'simulated-whatsapp',
+        detail: 'Recovery token sent automatically.',
+      });
+    } else {
+      dispatches.push({
+        channel: 'sms',
+        destination: mobileDestination,
+        status: 'failed',
+        provider: 'simulated-sms',
+        detail: 'No valid mobile number available for delivery.',
+      });
+      dispatches.push({
+        channel: 'whatsapp',
+        destination: mobileDestination,
+        status: 'failed',
+        provider: 'simulated-whatsapp',
+        detail: 'No valid mobile number available for delivery.',
+      });
+    }
+
+    const successfulDispatches = dispatches.filter((item) => item.status === 'sent').length;
+    const recoveryStatus: LocalPasswordRecoveryRequest['recoveryStatus'] = successfulDispatches === 0
+      ? 'failed'
+      : successfulDispatches === dispatches.length
+        ? 'sent'
+        : 'partial';
+
+    const request: LocalPasswordRecoveryRequest = {
+      id: `recovery-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+      identifier,
+      normalizedIdentifier,
+      matchedBy,
+      userId: user.id,
+      userName: `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim(),
+      email: emailDestination,
+      mobileNumber: mobileDestination,
+      recoveryStatus,
+      dispatches,
+      tokenExpiresAt: user.resetPasswordExpiresAt,
+      createdAt: new Date().toISOString(),
+    };
+
+    db.passwordRecoveryRequests.unshift(request);
+    writeDb(db);
+
+    return {
+      message: successfulDispatches > 0
+        ? 'Recovery details sent. Use the token to set a new password.'
+        : 'Recovery request recorded, but delivery failed. Please contact admin support.',
+      resetToken: user.resetPasswordToken,
+      request: serializePasswordRecoveryRequest(request),
+    } as T;
   }
 
   if (url.pathname === '/api/auth/reset-password' && method === 'POST') {
@@ -1568,6 +2169,433 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     };
     writeDb(db);
     return { user: toPublicUser(user) } as T;
+  }
+
+  if (url.pathname === '/api/subscriptions/plans' && method === 'GET') {
+    return { plans: Object.values(LOCAL_SUBSCRIPTION_PLANS) } as T;
+  }
+
+  if (url.pathname === '/api/subscriptions/me' && method === 'GET') {
+    const { db, user } = requireAuth(token);
+    const subscription = { ...defaultSubscription(), ...(user.subscription || {}) };
+    const plan = resolveSubscriptionPlan(subscription.planId);
+    const day = new Date().toISOString().slice(0, 10);
+    const usage = getOrCreateDailyAiUsage(db, user.id, day);
+    const latestActivationRequest = db.premiumSubscriptionRequests
+      .filter((item) => item.userId === user.id)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0] || null;
+
+    writeDb(db);
+    return {
+      subscription: {
+        ...subscription,
+        isActive: isSubscriptionActive(subscription),
+        planName: plan?.name || '',
+        dailyAiLimit: plan?.dailyAiLimit || 0,
+      },
+      activationRequest: latestActivationRequest ? serializePremiumSubscriptionRequest(latestActivationRequest) : null,
+      usage: {
+        day,
+        chatCount: usage.chatCount || 0,
+        solverCount: usage.solverCount || 0,
+        tokenConsumed: usage.tokenConsumed || 0,
+        remainingToday: Math.max(0, (plan?.dailyAiLimit || 0) - ((usage.chatCount || 0) + (usage.solverCount || 0))),
+      },
+    } as T;
+  }
+
+  if (url.pathname === '/api/subscriptions/purchase' && method === 'POST') {
+    throw new Error('Direct activation is disabled. Submit payment proof and activate using admin-issued token.');
+  }
+
+  if (url.pathname === '/api/subscriptions/request-activation' && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const planId = String(body.planId || '').trim();
+    const paymentMethod = normalizePaymentMethod(body.paymentMethod);
+    const paymentTransactionId = String(body.paymentTransactionId || '').trim();
+    const contactMethod = normalizeContactMethod(body.contactMethod || 'sms');
+    const contactValue = contactMethod === 'email'
+      ? normalizeEmail(body.contactValue || user.email)
+      : normalizeMobileNumber(body.contactValue || user.phone);
+    const plan = resolveSubscriptionPlan(planId);
+
+    let paymentProof: LocalPaymentProof;
+    try {
+      paymentProof = normalizePaymentProof(body.paymentProof);
+    } catch (error) {
+      throw new Error(error instanceof Error ? error.message : 'Payment proof is invalid.');
+    }
+
+    if (!plan) throw new Error('Invalid plan selected.');
+    if (!paymentMethod) throw new Error('Payment method must be one of: easypaisa, jazzcash, bank_transfer.');
+    if (!paymentTransactionId || paymentTransactionId.length < 4) throw new Error('Payment transaction ID is required for verification.');
+    if (!contactMethod) throw new Error('Contact method must be sms, email, or whatsapp.');
+    if (contactMethod === 'email' && !isValidEmail(contactValue)) throw new Error('Enter a valid email for token delivery.');
+    if (contactMethod !== 'email' && !isValidMobileNumber(contactValue)) throw new Error('Enter a valid mobile/WhatsApp number for token delivery.');
+
+    if (db.premiumSubscriptionRequests.some((item) => item.userId === user.id && item.status === 'pending')) {
+      throw new Error('A premium activation request is already pending for your account.');
+    }
+
+    const now = new Date().toISOString();
+    const request: LocalPremiumSubscriptionRequest = {
+      id: `premium-req-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+      userId: user.id,
+      email: user.email,
+      mobileNumber: user.phone || '',
+      planId: plan.id,
+      paymentMethod,
+      paymentTransactionId,
+      paymentProof,
+      contactMethod,
+      contactValue,
+      status: 'pending',
+      notes: '',
+      reviewedByEmail: '',
+      reviewedAt: null,
+      activationTokenId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    db.premiumSubscriptionRequests.unshift(request);
+    writeDb(db);
+    return {
+      ok: true,
+      request: serializePremiumSubscriptionRequest(request),
+      message: 'Premium activation request submitted. Wait for admin verification and token.',
+    } as T;
+  }
+
+  if (url.pathname === '/api/subscriptions/activate-with-token' && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const tokenCode = String(body.tokenCode || '').trim().toUpperCase();
+    if (!tokenCode) throw new Error('Activation token is required.');
+
+    const activationToken = db.premiumActivationTokens.find((item) => item.code === tokenCode);
+    if (!activationToken) throw new Error('Invalid activation token.');
+    if (activationToken.userId !== user.id) throw new Error('This token does not belong to your account.');
+    if (activationToken.status !== 'active') throw new Error('This activation token is no longer active.');
+    if (new Date(activationToken.expiresAt).getTime() <= Date.now()) {
+      activationToken.status = 'expired';
+      activationToken.updatedAt = new Date().toISOString();
+      writeDb(db);
+      throw new Error('Activation token expired. Request a new one from admin.');
+    }
+
+    const request = db.premiumSubscriptionRequests.find((item) => item.id === activationToken.premiumRequestId);
+    if (!request) throw new Error('Premium activation request not found for this token.');
+    if (request.status !== 'approved') throw new Error('This premium activation request is not approved yet.');
+
+    const plan = resolveSubscriptionPlan(request.planId);
+    if (!plan) throw new Error('Approved plan is invalid. Contact admin.');
+
+    const startedAt = new Date();
+    const expiresAt = new Date(startedAt.getTime() + plan.expiresInDays * 24 * 60 * 60 * 1000);
+    user.subscription = {
+      status: 'active',
+      planId: plan.id,
+      billingCycle: plan.billingCycle,
+      startedAt: startedAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      paymentReference: request.paymentTransactionId,
+      lastActivatedAt: startedAt.toISOString(),
+    };
+
+    const now = new Date().toISOString();
+    activationToken.status = 'used';
+    activationToken.usedAt = now;
+    activationToken.updatedAt = now;
+    request.status = 'completed';
+    request.updatedAt = now;
+
+    writeDb(db);
+    return {
+      ok: true,
+      subscription: {
+        ...user.subscription,
+        isActive: true,
+        planName: plan.name,
+        dailyAiLimit: plan.dailyAiLimit,
+      },
+    } as T;
+  }
+
+  if (url.pathname === '/api/admin/subscriptions/overview' && method === 'GET') {
+    const { db } = requireAdmin(token);
+    const now = Date.now();
+    const totalUsers = db.users.length;
+    const activeUsers = db.users.filter((item) => isSubscriptionActive(item.subscription)).length;
+    const expiredUsers = db.users.filter((item) => {
+      const subscription = item.subscription || defaultSubscription();
+      if (subscription.status === 'expired' || subscription.status === 'cancelled') return true;
+      if (subscription.status === 'active' && subscription.expiresAt && new Date(subscription.expiresAt).getTime() <= now) return true;
+      return false;
+    }).length;
+
+    const usageByDay = new Map<string, { chatCount: number; solverCount: number; tokenConsumed: number }>();
+    db.aiUsage.forEach((item) => {
+      const key = item.day;
+      const current = usageByDay.get(key) || { chatCount: 0, solverCount: 0, tokenConsumed: 0 };
+      current.chatCount += Number(item.chatCount || 0);
+      current.solverCount += Number(item.solverCount || 0);
+      current.tokenConsumed += Number(item.tokenConsumed || 0);
+      usageByDay.set(key, current);
+    });
+
+    const dailyUsage = Array.from(usageByDay.entries())
+      .sort((a, b) => b[0].localeCompare(a[0]))
+      .slice(0, 14)
+      .map(([day, value]) => ({ day, ...value }));
+
+    return {
+      totalUsers,
+      activeUsers,
+      expiredUsers,
+      plans: Object.values(LOCAL_SUBSCRIPTION_PLANS),
+      dailyUsage,
+    } as T;
+  }
+
+  if (url.pathname === '/api/admin/subscriptions/users' && method === 'GET') {
+    const { db } = requireAdmin(token);
+    const status = String(url.searchParams.get('status') || 'all').toLowerCase();
+    const users = db.users
+      .filter((item) => {
+        if (status === 'all') return true;
+        return String(item.subscription?.status || 'inactive').toLowerCase() === status;
+      })
+      .map((item) => {
+        const subscription = { ...defaultSubscription(), ...(item.subscription || {}) };
+        const plan = resolveSubscriptionPlan(subscription.planId);
+        return {
+          id: item.id,
+          email: item.email,
+          firstName: item.firstName,
+          lastName: item.lastName,
+          subscription: {
+            ...subscription,
+            isActive: isSubscriptionActive(subscription),
+            planName: plan?.name || '',
+            dailyAiLimit: plan?.dailyAiLimit || 0,
+          },
+        };
+      });
+
+    return { users } as T;
+  }
+
+  if (/^\/api\/admin\/subscriptions\/[^/]+\/update$/.test(url.pathname) && method === 'POST') {
+    const { db } = requireAdmin(token);
+    const userId = url.pathname.split('/')[4];
+    const planId = String(body.planId || '').trim();
+    const status = String(body.status || '').trim().toLowerCase();
+    const paymentReference = String(body.paymentReference || '').trim();
+    const plan = resolveSubscriptionPlan(planId);
+    if (!userId || !plan || !['active', 'inactive', 'expired', 'cancelled'].includes(status)) {
+      throw new Error('Valid userId, planId, and status are required.');
+    }
+
+    const user = db.users.find((item) => item.id === userId);
+    if (!user) throw new Error('User not found.');
+
+    const startedAt = new Date();
+    const expiresAt = new Date(startedAt.getTime() + plan.expiresInDays * 24 * 60 * 60 * 1000);
+    user.subscription = {
+      status: status as LocalSubscription['status'],
+      planId: plan.id,
+      billingCycle: plan.billingCycle,
+      startedAt: startedAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      paymentReference,
+      lastActivatedAt: startedAt.toISOString(),
+    };
+
+    writeDb(db);
+    return { ok: true, userId, subscription: user.subscription } as T;
+  }
+
+  if (url.pathname === '/api/admin/subscriptions/requests' && method === 'GET') {
+    requireAdmin(token);
+    const db = readDb();
+    const status = String(url.searchParams.get('status') || 'all').toLowerCase();
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase();
+
+    const requests = db.premiumSubscriptionRequests
+      .filter((item) => {
+        if (status !== 'all' && item.status !== status) return false;
+        if (!q) return true;
+        const blob = [item.email, item.contactValue, item.paymentTransactionId, item.planId].join(' ').toLowerCase();
+        return blob.includes(q);
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .map((item) => serializePremiumSubscriptionRequest(item));
+
+    return { requests } as T;
+  }
+
+  if (/^\/api\/admin\/subscriptions\/requests\/[^/]+\/approve$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAdmin(token);
+    const requestId = url.pathname.split('/')[5];
+    const request = db.premiumSubscriptionRequests.find((item) => item.id === requestId);
+    if (!request) throw new Error('Premium activation request not found.');
+    if (request.status !== 'pending') throw new Error('Only pending premium requests can be approved.');
+
+    const targetUser = db.users.find((item) => item.id === request.userId);
+    if (!targetUser) {
+      request.status = 'rejected';
+      request.notes = 'User account not found.';
+      request.reviewedByEmail = user.email;
+      request.reviewedAt = new Date().toISOString();
+      request.updatedAt = new Date().toISOString();
+      writeDb(db);
+      throw new Error('User account missing. Request auto-rejected.');
+    }
+
+    let code = '';
+    for (let i = 0; i < 5; i += 1) {
+      const candidate = generatePremiumTokenCode();
+      if (!db.premiumActivationTokens.some((item) => item.code === candidate)) {
+        code = candidate;
+        break;
+      }
+    }
+    if (!code) throw new Error('Could not generate unique premium activation token. Try again.');
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + PREMIUM_TOKEN_TTL_HOURS * 60 * 60 * 1000).toISOString();
+    const tokenItem: LocalPremiumActivationToken = {
+      id: `premium-token-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+      code,
+      userId: request.userId,
+      email: request.email,
+      premiumRequestId: request.id,
+      status: 'active',
+      expiresAt,
+      usedAt: null,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+
+    db.premiumActivationTokens.unshift(tokenItem);
+    request.status = 'approved';
+    request.activationTokenId = tokenItem.id;
+    request.notes = String(body.notes || '').trim();
+    request.reviewedByEmail = user.email;
+    request.reviewedAt = now.toISOString();
+    request.updatedAt = now.toISOString();
+
+    writeDb(db);
+    return {
+      requestId: request.id,
+      token: {
+        code,
+        expiresAt,
+      },
+    } as T;
+  }
+
+  if (/^\/api\/admin\/subscriptions\/requests\/[^/]+\/reject$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAdmin(token);
+    const requestId = url.pathname.split('/')[5];
+    const request = db.premiumSubscriptionRequests.find((item) => item.id === requestId);
+    if (!request) throw new Error('Premium activation request not found.');
+    if (request.status !== 'pending') throw new Error('Only pending premium requests can be rejected.');
+
+    request.status = 'rejected';
+    request.notes = String(body.notes || '').trim();
+    request.reviewedByEmail = user.email;
+    request.reviewedAt = new Date().toISOString();
+    request.updatedAt = new Date().toISOString();
+    writeDb(db);
+    return { ok: true, requestId: request.id } as T;
+  }
+
+  if (url.pathname === '/api/admin/signup-requests' && method === 'GET') {
+    requireAdmin(token);
+    const db = readDb();
+    const status = String(url.searchParams.get('status') || 'all').toLowerCase();
+    const requests = db.signupRequests
+      .filter((item) => (status === 'all' ? true : item.status === status))
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .map((item) => serializeSignupRequest(item));
+    return { requests } as T;
+  }
+
+  if (/^\/api\/admin\/signup-requests\/[^/]+\/approve$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAdmin(token);
+    const requestId = url.pathname.split('/')[4];
+    const request = db.signupRequests.find((item) => item.id === requestId);
+    if (!request) throw new Error('Signup request not found.');
+    if (request.status !== 'pending') throw new Error('Only pending requests can be approved.');
+
+    if (db.users.some((item) => item.email === request.email)) {
+      request.status = 'rejected';
+      request.notes = 'Email already registered.';
+      request.reviewedByEmail = user.email;
+      request.reviewedAt = new Date().toISOString();
+      request.updatedAt = new Date().toISOString();
+      writeDb(db);
+      throw new Error('Email already registered. Request auto-rejected.');
+    }
+
+    let code = '';
+    for (let i = 0; i < 5; i += 1) {
+      const candidate = generateSignupTokenCode();
+      if (!db.signupTokens.some((item) => item.code === candidate)) {
+        code = candidate;
+        break;
+      }
+    }
+    if (!code) throw new Error('Could not generate unique signup token. Try again.');
+
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + SIGNUP_TOKEN_TTL_HOURS * 60 * 60 * 1000).toISOString();
+    const tokenItem: LocalSignupToken = {
+      id: `signup-token-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+      code,
+      email: request.email,
+      signupRequestId: request.id,
+      status: 'active',
+      expiresAt,
+      usedAt: null,
+      usedByUserId: null,
+      createdAt: now.toISOString(),
+      updatedAt: now.toISOString(),
+    };
+
+    db.signupTokens.unshift(tokenItem);
+    request.status = 'approved';
+    request.signupTokenId = tokenItem.id;
+    request.notes = String(body.notes || '').trim();
+    request.reviewedByEmail = user.email;
+    request.reviewedAt = now.toISOString();
+    request.updatedAt = now.toISOString();
+
+    writeDb(db);
+    return {
+      requestId: request.id,
+      token: {
+        code,
+        expiresAt,
+      },
+    } as T;
+  }
+
+  if (/^\/api\/admin\/signup-requests\/[^/]+\/reject$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAdmin(token);
+    const requestId = url.pathname.split('/')[4];
+    const request = db.signupRequests.find((item) => item.id === requestId);
+    if (!request) throw new Error('Signup request not found.');
+    if (request.status !== 'pending') throw new Error('Only pending requests can be rejected.');
+
+    request.status = 'rejected';
+    request.notes = String(body.notes || '').trim();
+    request.reviewedByEmail = user.email;
+    request.reviewedAt = new Date().toISOString();
+    request.updatedAt = new Date().toISOString();
+    writeDb(db);
+    return { ok: true, requestId: request.id } as T;
   }
 
   if (url.pathname === '/api/community/profile' && method === 'GET') {
@@ -2297,19 +3325,19 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       throw new Error('Message is required.');
     }
 
-    const day = new Date().toISOString().slice(0, 10);
-    const key = `${user.id}-${day}`;
-    const usage = db.aiUsage.find((item) => `${item.userId}-${item.day}` === key);
-    if (!usage) {
-      db.aiUsage.push({ userId: user.id, day, chatCount: 1 });
-    } else {
-      usage.chatCount += 1;
+    const subscription = { ...defaultSubscription(), ...(user.subscription || {}) };
+    const plan = resolveSubscriptionPlan(subscription.planId);
+    if (!isSubscriptionActive(subscription) || !plan) {
+      const err = new Error('Premium subscription required to access Smart Study Mentor features.') as Error & { code?: string };
+      err.code = 'SUBSCRIPTION_REQUIRED';
+      throw err;
     }
 
-    const currentUsage = db.aiUsage.find((item) => `${item.userId}-${item.day}` === key)!;
-    const dailyLimit = 50;
-    if (currentUsage.chatCount > dailyLimit) {
-      throw new Error(`Daily guidance limit reached (${dailyLimit}). Please continue tomorrow.`);
+    const day = new Date().toISOString().slice(0, 10);
+    const usage = getOrCreateDailyAiUsage(db, user.id, day);
+    const usedBefore = (usage.chatCount || 0) + (usage.solverCount || 0);
+    if (usedBefore >= plan.dailyAiLimit) {
+      throw new Error(`Daily guidance limit reached (${plan.dailyAiLimit}). Please continue tomorrow.`);
     }
 
     let answer = [
@@ -2382,13 +3410,84 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       ].join('\n');
     }
 
+    usage.chatCount += 1;
+    usage.tokenConsumed += Math.max(80, Math.ceil((message.length + answer.length) / 4));
     writeDb(db);
 
     return {
       answer,
       usage: {
-        usedToday: currentUsage.chatCount,
-        remainingToday: Math.max(0, dailyLimit - currentUsage.chatCount),
+        usedToday: (usage.chatCount || 0) + (usage.solverCount || 0),
+        remainingToday: Math.max(0, plan.dailyAiLimit - ((usage.chatCount || 0) + (usage.solverCount || 0))),
+      },
+    } as T;
+  }
+
+  if (url.pathname === '/api/ai/mentor/solve-image' && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const subscription = { ...defaultSubscription(), ...(user.subscription || {}) };
+    const plan = resolveSubscriptionPlan(subscription.planId);
+    if (!isSubscriptionActive(subscription) || !plan) {
+      const err = new Error('Premium subscription required to access Smart Study Mentor features.') as Error & { code?: string };
+      err.code = 'SUBSCRIPTION_REQUIRED';
+      throw err;
+    }
+
+    const questionText = String(body.questionText || '').trim();
+    const imageDataUrl = String(body.imageDataUrl || '').trim();
+    if (!questionText && !imageDataUrl) {
+      throw new Error('Question image or extracted question text is required.');
+    }
+
+    const day = new Date().toISOString().slice(0, 10);
+    const usage = getOrCreateDailyAiUsage(db, user.id, day);
+    const usedBefore = (usage.chatCount || 0) + (usage.solverCount || 0);
+    if (usedBefore >= plan.dailyAiLimit) {
+      throw new Error(`Daily guidance limit reached (${plan.dailyAiLimit}). Please continue tomorrow.`);
+    }
+
+    const detectedSubject = /integr|deriv|matrix|trigon|algebra/i.test(questionText)
+      ? 'Mathematics'
+      : /force|newton|velocity|acceleration|electric|optics/i.test(questionText)
+        ? 'Physics'
+        : /mole|reaction|acid|base|organic|bond/i.test(questionText)
+          ? 'Chemistry'
+          : 'General';
+    const detectedTopic = detectedSubject === 'Mathematics'
+      ? 'Problem Solving'
+      : detectedSubject === 'Physics'
+        ? 'Mechanics and Fundamentals'
+        : detectedSubject === 'Chemistry'
+          ? 'Core Concepts'
+          : 'General Problem Solving';
+
+    const structured = {
+      conceptExplanation: `This question maps to ${detectedSubject} (${detectedTopic}). Identify known values and governing formulas before solving.`,
+      stepByStepSolution: [
+        'Read the question carefully and identify known and unknown values.',
+        'Select the governing concept/formula and align units.',
+        'Substitute values and simplify step-by-step.',
+        'Validate the final result against options/constraints.',
+      ],
+      finalAnswer: 'Apply the computed result from the formula-based steps above.',
+      shortestTrick: 'Eliminate impossible options first, then compute only for plausible answers.',
+    };
+
+    usage.solverCount += 1;
+    usage.tokenConsumed += Math.max(80, Math.ceil((questionText.length + JSON.stringify(structured).length) / 4));
+    writeDb(db);
+
+    return {
+      questionText: questionText || 'Question extracted from uploaded image.',
+      detected: {
+        subject: detectedSubject,
+        topic: detectedTopic,
+      },
+      result: structured,
+      usage: {
+        usedToday: (usage.chatCount || 0) + (usage.solverCount || 0),
+        remainingToday: Math.max(0, plan.dailyAiLimit - ((usage.chatCount || 0) + (usage.solverCount || 0))),
+        tokenConsumed: usage.tokenConsumed || 0,
       },
     } as T;
   }
@@ -2664,6 +3763,15 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const mcqs = await loadMcqs();
     const mcqCount = mcqs.length;
     const attemptsCount = db.attempts.length;
+    const pendingSignupRequests = db.signupRequests.filter((item) => item.status === 'pending').length;
+    const pendingPremiumRequests = db.premiumSubscriptionRequests.filter((item) => item.status === 'pending').length;
+    const recoveryRequestCount = db.passwordRecoveryRequests.length;
+    const recoveryStatusCounts = {
+      sent: db.passwordRecoveryRequests.filter((item) => item.recoveryStatus === 'sent').length,
+      partial: db.passwordRecoveryRequests.filter((item) => item.recoveryStatus === 'partial').length,
+      failed: db.passwordRecoveryRequests.filter((item) => item.recoveryStatus === 'failed').length,
+      not_found: db.passwordRecoveryRequests.filter((item) => item.recoveryStatus === 'not_found').length,
+    };
     const pendingQuestionSubmissions = db.questionSubmissions.filter((item) => item.status === 'pending').length;
     const recentAttempts = db.attempts.slice(0, 12);
     const averageScore = recentAttempts.length
@@ -2674,10 +3782,67 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       usersCount,
       mcqCount,
       attemptsCount,
+      pendingSignupRequests,
+      pendingPremiumRequests,
+      recoveryRequestCount,
+      recoveryStatusCounts,
       pendingQuestionSubmissions,
       averageScore,
       recentAttempts,
     } as T;
+  }
+
+  if (url.pathname === '/api/admin/password-recovery-requests' && method === 'GET') {
+    requireAdmin(token);
+    const db = readDb();
+    const status = String(url.searchParams.get('status') || 'all').toLowerCase();
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase();
+
+    const requests = db.passwordRecoveryRequests
+      .filter((item) => {
+        if (status !== 'all' && item.recoveryStatus !== status) return false;
+        if (!q) return true;
+        const blob = [item.identifier, item.email, item.mobileNumber, item.userName].join(' ').toLowerCase();
+        return blob.includes(q);
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .map((item) => serializePasswordRecoveryRequest(item));
+
+    return { requests } as T;
+  }
+
+  if (url.pathname === '/api/admin/users' && method === 'GET') {
+    const { db } = requireAdmin(token);
+    const users = db.users
+      .map((item) => ({
+        id: item.id,
+        email: item.email,
+        firstName: item.firstName,
+        lastName: item.lastName,
+        role: item.role,
+        createdAt: null,
+      }))
+      .sort((a, b) => a.email.localeCompare(b.email));
+    return { users } as T;
+  }
+
+  if (/^\/api\/admin\/users\/[^/]+$/.test(url.pathname) && method === 'DELETE') {
+    const { db, user } = requireAdmin(token);
+    const userId = url.pathname.split('/')[4];
+    if (!userId) throw new Error('User id is required.');
+    if (user.id === userId) throw new Error('You cannot delete your own admin account.');
+
+    const target = db.users.find((item) => item.id === userId);
+    if (!target) throw new Error('User not found.');
+
+    db.users = db.users.filter((item) => item.id !== userId);
+    db.attempts = db.attempts.filter((item) => item.userId !== userId);
+    db.sessions = db.sessions.filter((item) => item.userId !== userId);
+    db.aiUsage = db.aiUsage.filter((item) => item.userId !== userId);
+    db.premiumSubscriptionRequests = db.premiumSubscriptionRequests.filter((item) => item.userId !== userId);
+    db.premiumActivationTokens = db.premiumActivationTokens.filter((item) => item.userId !== userId);
+    writeDb(db);
+    return { ok: true, removedUserId: userId } as T;
   }
 
   if (url.pathname === '/api/admin/question-submissions' && method === 'GET') {

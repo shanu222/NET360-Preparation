@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import OpenAI from 'openai';
+import nodemailer from 'nodemailer';
+import Twilio from 'twilio';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import mammoth from 'mammoth';
 import { connectMongo } from './lib/mongo.js';
@@ -30,6 +32,9 @@ import { CommunityBlockModel } from './models/CommunityBlock.js';
 import { CommunityRoomPostModel } from './models/CommunityRoomPost.js';
 import { SignupRequestModel } from './models/SignupRequest.js';
 import { SignupTokenModel } from './models/SignupToken.js';
+import { PremiumSubscriptionRequestModel } from './models/PremiumSubscriptionRequest.js';
+import { PremiumActivationTokenModel } from './models/PremiumActivationToken.js';
+import { PasswordRecoveryRequestModel } from './models/PasswordRecoveryRequest.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -45,6 +50,7 @@ const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
 const AI_DAILY_LIMIT = Number(process.env.SMART_DAILY_LIMIT || process.env.AI_DAILY_LIMIT || 50);
 const OPENAI_MODEL = process.env.MODEL_PROVIDER_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const SIGNUP_TOKEN_TTL_HOURS = Number(process.env.SIGNUP_TOKEN_TTL_HOURS || 24);
+const PREMIUM_TOKEN_TTL_HOURS = Number(process.env.PREMIUM_TOKEN_TTL_HOURS || 24);
 const NUST_UPDATES_CACHE_MS = Number(process.env.NUST_UPDATES_CACHE_MS || 60 * 1000);
 const MAX_JSON_BODY_MB = clamp(Number(process.env.MAX_JSON_BODY_MB || 10), 1, 20);
 const REQUEST_TIMEOUT_MS = clamp(Number(process.env.REQUEST_TIMEOUT_MS || 30_000), 5_000, 120_000);
@@ -58,9 +64,35 @@ const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || '')
   .filter(Boolean);
 
 const MODEL_PROVIDER_KEY = process.env.MODEL_PROVIDER_API_KEY || process.env.OPENAI_API_KEY || '';
+const SMTP_HOST = String(process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
+const SMTP_SECURE = String(process.env.SMTP_SECURE || 'false').toLowerCase() === 'true';
+const SMTP_USER = String(process.env.SMTP_USER || '').trim();
+const SMTP_PASS = String(process.env.SMTP_PASS || '').trim();
+const SMTP_FROM_EMAIL = String(process.env.SMTP_FROM_EMAIL || SMTP_USER).trim();
+const TWILIO_ACCOUNT_SID = String(process.env.TWILIO_ACCOUNT_SID || '').trim();
+const TWILIO_AUTH_TOKEN = String(process.env.TWILIO_AUTH_TOKEN || '').trim();
+const TWILIO_PHONE_NUMBER = String(process.env.TWILIO_PHONE_NUMBER || '').trim();
+const TWILIO_WHATSAPP_FROM = String(process.env.TWILIO_WHATSAPP_FROM || '').trim();
 
 const openai = MODEL_PROVIDER_KEY
   ? new OpenAI({ apiKey: MODEL_PROVIDER_KEY })
+  : null;
+
+const smtpTransporter = SMTP_USER && SMTP_PASS
+  ? nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+    auth: {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    },
+  })
+  : null;
+
+const twilioClient = TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN
+  ? Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
   : null;
 
 const SUBSCRIPTION_PLANS = {
@@ -107,6 +139,13 @@ const SUBSCRIPTION_PLANS = {
 };
 
 const app = express();
+
+const PAYMENT_PROOF_ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'application/pdf',
+]);
+const PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024;
 // Render sits behind a proxy and forwards client IP in X-Forwarded-For.
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
@@ -1059,13 +1098,284 @@ function sanitizePlainText(value, maxLen = 240) {
     .slice(0, maxLen);
 }
 
+function getClientIp(req) {
+  return String(req.ip || req.socket?.remoteAddress || '').trim().slice(0, 120);
+}
+
+function getUserAgent(req) {
+  return String(req.get('user-agent') || '').trim().slice(0, 240);
+}
+
 function normalizeMobileNumber(value) {
   return String(value || '').trim();
+}
+
+function normalizePaymentMethod(value) {
+  const method = String(value || '').trim().toLowerCase();
+  if (method === 'hbl') return 'bank_transfer';
+  return method;
+}
+
+function normalizeContactMethod(value) {
+  const method = String(value || '').trim().toLowerCase();
+  if (method === 'phone') return 'sms';
+  return method;
 }
 
 function isValidMobileNumber(value) {
   const cleaned = String(value || '').replace(/[\s()-]/g, '');
   return /^\+?[0-9]{8,18}$/.test(cleaned);
+}
+
+function compactMobile(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function serializePasswordRecoveryRequest(item) {
+  return {
+    id: String(item._id),
+    identifier: String(item.identifier || ''),
+    matchedBy: String(item.matchedBy || 'none'),
+    userId: item.userId ? String(item.userId) : '',
+    userName: String(item.userName || ''),
+    email: String(item.email || ''),
+    mobileNumber: String(item.mobileNumber || ''),
+    recoveryStatus: String(item.recoveryStatus || 'failed'),
+    dispatches: Array.isArray(item.dispatches)
+      ? item.dispatches.map((dispatch) => ({
+        channel: String(dispatch.channel || ''),
+        destination: String(dispatch.destination || ''),
+        status: String(dispatch.status || ''),
+        provider: String(dispatch.provider || ''),
+        detail: String(dispatch.detail || ''),
+      }))
+      : [],
+    tokenExpiresAt: item.tokenExpiresAt ? new Date(item.tokenExpiresAt).toISOString() : null,
+    createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+  };
+}
+
+async function sendRecoveryEmail(destination, token, expiresInMinutes = 30) {
+  if (!isValidEmail(destination)) {
+    return {
+      channel: 'email',
+      destination,
+      status: 'failed',
+      provider: 'smtp-gmail',
+      detail: 'No valid email available for delivery.',
+    };
+  }
+
+  if (!smtpTransporter || !SMTP_FROM_EMAIL) {
+    return {
+      channel: 'email',
+      destination,
+      status: 'failed',
+      provider: 'smtp-gmail',
+      detail: 'SMTP provider not configured.',
+    };
+  }
+
+  try {
+    await smtpTransporter.sendMail({
+      from: SMTP_FROM_EMAIL,
+      to: destination,
+      subject: 'NET360 Password Recovery Token',
+      text: `Your NET360 reset token is: ${token}. It expires in ${expiresInMinutes} minutes.`,
+      html: `<p>Your NET360 reset token is: <strong>${token}</strong></p><p>This token expires in ${expiresInMinutes} minutes.</p>`,
+    });
+
+    return {
+      channel: 'email',
+      destination,
+      status: 'sent',
+      provider: 'smtp-gmail',
+      detail: 'Recovery token sent.',
+    };
+  } catch (error) {
+    return {
+      channel: 'email',
+      destination,
+      status: 'failed',
+      provider: 'smtp-gmail',
+      detail: error instanceof Error ? error.message : 'Email provider error.',
+    };
+  }
+}
+
+async function sendRecoverySms(destination, token, expiresInMinutes = 30) {
+  if (!isValidMobileNumber(destination)) {
+    return {
+      channel: 'sms',
+      destination,
+      status: 'failed',
+      provider: 'twilio-sms',
+      detail: 'No valid mobile number available for delivery.',
+    };
+  }
+
+  if (!twilioClient || !TWILIO_PHONE_NUMBER) {
+    return {
+      channel: 'sms',
+      destination,
+      status: 'failed',
+      provider: 'twilio-sms',
+      detail: 'Twilio SMS provider not configured.',
+    };
+  }
+
+  try {
+    await twilioClient.messages.create({
+      to: destination,
+      from: TWILIO_PHONE_NUMBER,
+      body: `NET360 reset token: ${token}. Expires in ${expiresInMinutes} minutes.`,
+    });
+
+    return {
+      channel: 'sms',
+      destination,
+      status: 'sent',
+      provider: 'twilio-sms',
+      detail: 'Recovery token sent.',
+    };
+  } catch (error) {
+    return {
+      channel: 'sms',
+      destination,
+      status: 'failed',
+      provider: 'twilio-sms',
+      detail: error instanceof Error ? error.message : 'SMS provider error.',
+    };
+  }
+}
+
+async function sendRecoveryWhatsApp(destination, token, expiresInMinutes = 30) {
+  if (!isValidMobileNumber(destination)) {
+    return {
+      channel: 'whatsapp',
+      destination,
+      status: 'failed',
+      provider: 'twilio-whatsapp',
+      detail: 'No valid mobile number available for delivery.',
+    };
+  }
+
+  if (!twilioClient || !TWILIO_WHATSAPP_FROM) {
+    return {
+      channel: 'whatsapp',
+      destination,
+      status: 'failed',
+      provider: 'twilio-whatsapp',
+      detail: 'Twilio WhatsApp provider not configured.',
+    };
+  }
+
+  const to = destination.startsWith('whatsapp:') ? destination : `whatsapp:${destination}`;
+
+  try {
+    await twilioClient.messages.create({
+      to,
+      from: TWILIO_WHATSAPP_FROM,
+      body: `NET360 reset token: ${token}. Expires in ${expiresInMinutes} minutes.`,
+    });
+
+    return {
+      channel: 'whatsapp',
+      destination,
+      status: 'sent',
+      provider: 'twilio-whatsapp',
+      detail: 'Recovery token sent.',
+    };
+  } catch (error) {
+    return {
+      channel: 'whatsapp',
+      destination,
+      status: 'failed',
+      provider: 'twilio-whatsapp',
+      detail: error instanceof Error ? error.message : 'WhatsApp provider error.',
+    };
+  }
+}
+
+function normalizePaymentProof(input) {
+  if (!input || typeof input !== 'object') {
+    throw new Error('Payment proof file is required.');
+  }
+
+  const name = sanitizePlainText(input.name || '', 120);
+  const dataUrl = String(input.dataUrl || '').trim();
+  const parsed = parseDataUrl(dataUrl);
+  if (!name || !parsed?.buffer?.length) {
+    throw new Error('Payment proof must include a valid file name and file data.');
+  }
+
+  const mimeType = String(input.mimeType || parsed.mimeType || '').trim().toLowerCase();
+  if (!PAYMENT_PROOF_ALLOWED_MIME_TYPES.has(mimeType)) {
+    throw new Error('Payment proof must be JPG, PNG, or PDF.');
+  }
+
+  const size = Number(input.size || parsed.buffer.length || 0);
+  if (!size || size > PAYMENT_PROOF_MAX_BYTES) {
+    throw new Error('Payment proof must be up to 5MB.');
+  }
+
+  return {
+    name,
+    mimeType,
+    size,
+    dataUrl,
+  };
+}
+
+function serializeSignupRequest(item) {
+  return {
+    id: String(item._id),
+    email: item.email,
+    firstName: item.firstName || '',
+    lastName: item.lastName || '',
+    mobileNumber: item.mobileNumber || '',
+    paymentMethod: normalizePaymentMethod(item.paymentMethod),
+    paymentTransactionId: item.paymentTransactionId,
+    paymentProof: {
+      name: String(item.paymentProof?.name || ''),
+      mimeType: String(item.paymentProof?.mimeType || ''),
+      size: Number(item.paymentProof?.size || 0),
+      dataUrl: String(item.paymentProof?.dataUrl || ''),
+    },
+    contactMethod: normalizeContactMethod(item.contactMethod || 'sms'),
+    contactValue: String(item.contactValue || ''),
+    status: item.status,
+    notes: item.notes || '',
+    reviewedAt: item.reviewedAt ? new Date(item.reviewedAt).toISOString() : null,
+    reviewedByEmail: item.reviewedByEmail || '',
+    createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+  };
+}
+
+function serializePremiumSubscriptionRequest(item, planName = '') {
+  return {
+    id: String(item._id),
+    userId: String(item.userId || ''),
+    email: item.email,
+    mobileNumber: item.mobileNumber || '',
+    planId: String(item.planId || ''),
+    planName,
+    paymentMethod: normalizePaymentMethod(item.paymentMethod),
+    paymentTransactionId: item.paymentTransactionId,
+    paymentProof: {
+      name: String(item.paymentProof?.name || ''),
+      mimeType: String(item.paymentProof?.mimeType || ''),
+      size: Number(item.paymentProof?.size || 0),
+      dataUrl: String(item.paymentProof?.dataUrl || ''),
+    },
+    contactMethod: normalizeContactMethod(item.contactMethod || 'sms'),
+    contactValue: String(item.contactValue || ''),
+    status: String(item.status || 'pending'),
+    notes: String(item.notes || ''),
+    reviewedAt: item.reviewedAt ? new Date(item.reviewedAt).toISOString() : null,
+    reviewedByEmail: String(item.reviewedByEmail || ''),
+    createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+  };
 }
 
 function sanitizeDeviceId(value) {
@@ -1085,6 +1395,19 @@ function generateSignupTokenCode() {
     parts.push(token);
   }
   return `NET-${parts.join('-')}`;
+}
+
+function generatePremiumTokenCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const parts = [];
+  for (let block = 0; block < 3; block += 1) {
+    let token = '';
+    for (let i = 0; i < 4; i += 1) {
+      token += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    parts.push(token);
+  }
+  return `PREM-${parts.join('-')}`;
 }
 
 function defaultPreferences() {
@@ -2389,11 +2712,25 @@ app.post('/api/auth/signup-request', async (req, res) => {
     const firstName = sanitizeHumanName(req.body?.firstName || '');
     const lastName = sanitizeHumanName(req.body?.lastName || '');
     const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber);
-    const paymentMethod = String(req.body?.paymentMethod || '').trim().toLowerCase();
+    const paymentMethod = normalizePaymentMethod(req.body?.paymentMethod);
     const paymentTransactionId = sanitizePlainText(req.body?.paymentTransactionId || '', 120);
+    const contactMethod = normalizeContactMethod(req.body?.contactMethod || 'sms');
+    const contactValueRaw = String(req.body?.contactValue || '').trim();
 
-    if (!email || !mobileNumber || !paymentTransactionId || !paymentMethod) {
-      res.status(400).json({ error: 'Email, mobile number, payment method, and transaction ID are required.' });
+    let paymentProof;
+    try {
+      paymentProof = normalizePaymentProof(req.body?.paymentProof);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Payment proof is invalid.' });
+      return;
+    }
+
+    const contactValue = contactMethod === 'email'
+      ? normalizeEmail(contactValueRaw)
+      : normalizeMobileNumber(contactValueRaw || mobileNumber);
+
+    if (!email || !mobileNumber || !paymentTransactionId || !paymentMethod || !contactMethod || !contactValue) {
+      res.status(400).json({ error: 'Email, mobile number, payment method, transaction ID, payment proof, and contact details are required.' });
       return;
     }
 
@@ -2407,8 +2744,23 @@ app.post('/api/auth/signup-request', async (req, res) => {
       return;
     }
 
-    if (!['easypaisa', 'jazzcash', 'hbl'].includes(paymentMethod)) {
-      res.status(400).json({ error: 'Payment method must be one of: easypaisa, jazzcash, hbl.' });
+    if (!['easypaisa', 'jazzcash', 'bank_transfer'].includes(paymentMethod)) {
+      res.status(400).json({ error: 'Payment method must be one of: easypaisa, jazzcash, bank_transfer.' });
+      return;
+    }
+
+    if (!['sms', 'email', 'whatsapp'].includes(contactMethod)) {
+      res.status(400).json({ error: 'Contact method must be sms, email, or whatsapp.' });
+      return;
+    }
+
+    if (contactMethod === 'email' && !isValidEmail(contactValue)) {
+      res.status(400).json({ error: 'Enter a valid email for token delivery.' });
+      return;
+    }
+
+    if (contactMethod !== 'email' && !isValidMobileNumber(contactValue)) {
+      res.status(400).json({ error: 'Enter a valid mobile/WhatsApp number for token delivery.' });
       return;
     }
 
@@ -2431,16 +2783,14 @@ app.post('/api/auth/signup-request', async (req, res) => {
       mobileNumber,
       paymentMethod,
       paymentTransactionId,
+      paymentProof,
+      contactMethod,
+      contactValue,
       status: 'pending',
     });
 
     res.status(201).json({
-      request: {
-        id: String(request._id),
-        email: request.email,
-        status: request.status,
-        createdAt: request.createdAt,
-      },
+      request: serializeSignupRequest(request),
       message: 'Signup request submitted. Wait for admin approval and token.',
     });
   } catch {
@@ -2698,31 +3048,101 @@ app.post('/api/auth/logout', async (req, res) => {
 });
 
 app.post('/api/auth/forgot-password', async (req, res) => {
-  const email = String(req.body?.email || '').trim().toLowerCase();
-  if (!email) {
-    res.status(400).json({ error: 'Email is required.' });
+  const rawIdentifier = sanitizePlainText(req.body?.identifier || req.body?.email || req.body?.mobileNumber || '', 180);
+  const identifier = rawIdentifier.trim();
+  if (!identifier) {
+    res.status(400).json({ error: 'Registered email or mobile number is required.' });
     return;
   }
 
-  if (!isValidEmail(email)) {
+  const isEmailIdentifier = identifier.includes('@');
+  const normalizedIdentifier = isEmailIdentifier ? normalizeEmail(identifier) : normalizeMobileNumber(identifier);
+  if (isEmailIdentifier && !isValidEmail(normalizedIdentifier)) {
     res.status(400).json({ error: 'Enter a valid email address.' });
     return;
   }
-
-  const user = await UserModel.findOne({ email });
-  if (user) {
-    const resetToken = crypto.randomBytes(24).toString('hex');
-    user.resetPasswordTokenHash = hashToken(resetToken);
-    user.resetPasswordExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
-    await user.save();
-
-    if (process.env.NODE_ENV !== 'production') {
-      res.json({ message: 'Reset link generated.', resetToken });
-      return;
-    }
+  if (!isEmailIdentifier && !isValidMobileNumber(normalizedIdentifier)) {
+    res.status(400).json({ error: 'Enter a valid mobile number.' });
+    return;
   }
 
-  res.json({ message: 'If this email exists, a password reset link has been sent.' });
+  let user = null;
+  let matchedBy = 'none';
+
+  if (isEmailIdentifier) {
+    user = await UserModel.findOne({ email: normalizedIdentifier });
+    matchedBy = user ? 'email' : 'none';
+  } else {
+    const mobileDigits = compactMobile(normalizedIdentifier);
+    const mobileMatches = await UserModel.find({ phone: { $exists: true, $ne: '' } }).limit(5000);
+    user = mobileMatches.find((item) => compactMobile(item.phone) === mobileDigits) || null;
+    matchedBy = user ? 'mobile' : 'none';
+  }
+
+  if (!user) {
+    await PasswordRecoveryRequestModel.create({
+      identifier,
+      normalizedIdentifier,
+      matchedBy: 'none',
+      recoveryStatus: 'not_found',
+      dispatches: [],
+      requestedIp: getClientIp(req),
+      requestedUserAgent: getUserAgent(req),
+    });
+
+    res.json({ message: 'If this account exists, recovery details have been sent.' });
+    return;
+  }
+
+  const resetToken = crypto.randomBytes(24).toString('hex');
+  const tokenExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
+  user.resetPasswordTokenHash = hashToken(resetToken);
+  user.resetPasswordExpiresAt = tokenExpiresAt;
+  await user.save();
+
+  const dispatches = [];
+  const emailDestination = normalizeEmail(user.email || '');
+  const mobileDestination = normalizeMobileNumber(user.phone || '');
+  const emailDispatch = await sendRecoveryEmail(emailDestination, resetToken, 30);
+  const smsDispatch = await sendRecoverySms(mobileDestination, resetToken, 30);
+  const whatsappDispatch = await sendRecoveryWhatsApp(mobileDestination, resetToken, 30);
+  dispatches.push(emailDispatch, smsDispatch, whatsappDispatch);
+
+  const successfulDispatches = dispatches.filter((item) => item.status === 'sent').length;
+  const recoveryStatus = successfulDispatches === 0
+    ? 'failed'
+    : successfulDispatches === dispatches.length
+      ? 'sent'
+      : 'partial';
+
+  const request = await PasswordRecoveryRequestModel.create({
+    identifier,
+    normalizedIdentifier,
+    matchedBy,
+    userId: user._id,
+    userName: `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim(),
+    email: emailDestination,
+    mobileNumber: mobileDestination,
+    recoveryStatus,
+    dispatches,
+    tokenExpiresAt,
+    requestedIp: getClientIp(req),
+    requestedUserAgent: getUserAgent(req),
+  });
+
+  const payload = {
+    message: successfulDispatches > 0
+      ? 'Recovery details sent. Use the token to set a new password.'
+      : 'Recovery request recorded, but delivery failed. Please contact admin support.',
+    request: serializePasswordRecoveryRequest(request),
+  };
+
+  if (!IS_PRODUCTION) {
+    res.json({ ...payload, resetToken });
+    return;
+  }
+
+  res.json(payload);
 });
 
 app.post('/api/auth/reset-password', async (req, res) => {
@@ -4396,6 +4816,11 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
   const plan = resolveSubscriptionPlan(subscription.planId);
   const day = new Date().toISOString().slice(0, 10);
   const usage = await AIUsageModel.findOne({ userId: req.user._id, day }).lean();
+  const latestActivationRequest = await PremiumSubscriptionRequestModel
+    .findOne({ userId: req.user._id })
+    .sort({ createdAt: -1 })
+    .lean();
+  const requestPlan = resolveSubscriptionPlan(latestActivationRequest?.planId || '');
 
   res.json({
     subscription: {
@@ -4404,6 +4829,9 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
       planName: plan?.name || '',
       dailyAiLimit: plan?.dailyAiLimit || 0,
     },
+    activationRequest: latestActivationRequest
+      ? serializePremiumSubscriptionRequest(latestActivationRequest, requestPlan?.name || '')
+      : null,
     usage: {
       day,
       chatCount: usage?.chatCount || 0,
@@ -4415,17 +4843,135 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/subscriptions/purchase', authMiddleware, async (req, res) => {
+  res.status(410).json({
+    error: 'Direct activation is disabled. Submit payment proof and activate using admin-issued token.',
+  });
+});
+
+app.post('/api/subscriptions/request-activation', authMiddleware, async (req, res) => {
   const planId = String(req.body?.planId || '').trim();
-  const paymentReference = String(req.body?.paymentReference || '').trim();
+  const paymentMethod = normalizePaymentMethod(req.body?.paymentMethod);
+  const paymentTransactionId = sanitizePlainText(req.body?.paymentTransactionId || '', 120);
+  const contactMethod = normalizeContactMethod(req.body?.contactMethod || 'sms');
+  const contactValueRaw = String(req.body?.contactValue || '').trim();
   const plan = resolveSubscriptionPlan(planId);
+
+  let paymentProof;
+  try {
+    paymentProof = normalizePaymentProof(req.body?.paymentProof);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Payment proof is invalid.' });
+    return;
+  }
+
+  const defaultContactValue = normalizeMobileNumber(req.user.phone || '');
+  const contactValue = contactMethod === 'email'
+    ? normalizeEmail(contactValueRaw || req.user.email)
+    : normalizeMobileNumber(contactValueRaw || defaultContactValue);
 
   if (!plan) {
     res.status(400).json({ error: 'Invalid plan selected.' });
     return;
   }
 
-  if (!paymentReference || paymentReference.length < 4) {
-    res.status(400).json({ error: 'Payment reference is required for verification.' });
+  if (!['easypaisa', 'jazzcash', 'bank_transfer'].includes(paymentMethod)) {
+    res.status(400).json({ error: 'Payment method must be one of: easypaisa, jazzcash, bank_transfer.' });
+    return;
+  }
+
+  if (!paymentTransactionId || paymentTransactionId.length < 4) {
+    res.status(400).json({ error: 'Payment transaction ID is required for verification.' });
+    return;
+  }
+
+  if (!['sms', 'email', 'whatsapp'].includes(contactMethod)) {
+    res.status(400).json({ error: 'Contact method must be sms, email, or whatsapp.' });
+    return;
+  }
+
+  if (contactMethod === 'email' && !isValidEmail(contactValue)) {
+    res.status(400).json({ error: 'Enter a valid email for token delivery.' });
+    return;
+  }
+
+  if (contactMethod !== 'email' && !isValidMobileNumber(contactValue)) {
+    res.status(400).json({ error: 'Enter a valid mobile/WhatsApp number for token delivery.' });
+    return;
+  }
+
+  const existingPending = await PremiumSubscriptionRequestModel.findOne({
+    userId: req.user._id,
+    status: 'pending',
+  }).lean();
+  if (existingPending) {
+    res.status(409).json({ error: 'A premium activation request is already pending for your account.' });
+    return;
+  }
+
+  const request = await PremiumSubscriptionRequestModel.create({
+    userId: req.user._id,
+    email: req.user.email,
+    mobileNumber: normalizeMobileNumber(req.user.phone || ''),
+    planId: plan.id,
+    paymentMethod,
+    paymentTransactionId,
+    paymentProof,
+    contactMethod,
+    contactValue,
+    status: 'pending',
+  });
+
+  res.status(201).json({
+    ok: true,
+    request: serializePremiumSubscriptionRequest(request, plan.name),
+    message: 'Premium activation request submitted. Wait for admin verification and token.',
+  });
+});
+
+app.post('/api/subscriptions/activate-with-token', authMiddleware, async (req, res) => {
+  const tokenCode = String(req.body?.tokenCode || '').trim().toUpperCase();
+  if (!tokenCode) {
+    res.status(400).json({ error: 'Activation token is required.' });
+    return;
+  }
+
+  const activationToken = await PremiumActivationTokenModel.findOne({ code: tokenCode });
+  if (!activationToken) {
+    res.status(400).json({ error: 'Invalid activation token.' });
+    return;
+  }
+
+  if (String(activationToken.userId) !== String(req.user._id)) {
+    res.status(403).json({ error: 'This token does not belong to your account.' });
+    return;
+  }
+
+  if (activationToken.status !== 'active') {
+    res.status(400).json({ error: 'This activation token is no longer active.' });
+    return;
+  }
+
+  if (new Date(activationToken.expiresAt).getTime() <= Date.now()) {
+    activationToken.status = 'expired';
+    await activationToken.save();
+    res.status(400).json({ error: 'Activation token expired. Request a new one from admin.' });
+    return;
+  }
+
+  const request = await PremiumSubscriptionRequestModel.findById(activationToken.premiumRequestId);
+  if (!request) {
+    res.status(400).json({ error: 'Premium activation request not found for this token.' });
+    return;
+  }
+
+  if (request.status !== 'approved') {
+    res.status(400).json({ error: 'This premium activation request is not approved yet.' });
+    return;
+  }
+
+  const plan = resolveSubscriptionPlan(request.planId);
+  if (!plan) {
+    res.status(400).json({ error: 'Approved plan is invalid. Contact admin.' });
     return;
   }
 
@@ -4437,10 +4983,17 @@ app.post('/api/subscriptions/purchase', authMiddleware, async (req, res) => {
     billingCycle: plan.billingCycle,
     startedAt,
     expiresAt,
-    paymentReference,
+    paymentReference: request.paymentTransactionId,
     lastActivatedAt: startedAt,
   };
   await req.user.save();
+
+  activationToken.status = 'used';
+  activationToken.usedAt = new Date();
+  await activationToken.save();
+
+  request.status = 'completed';
+  await request.save();
 
   res.status(201).json({
     ok: true,
@@ -4865,13 +5418,19 @@ app.get('/api/reports/export', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) => {
-  const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingSignupRequests, pendingQuestionSubmissions] = await Promise.all([
+  const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingSignupRequests, pendingPremiumRequests, pendingQuestionSubmissions, recoveryRequestCount, recoverySentCount, recoveryPartialCount, recoveryFailedCount, recoveryNotFoundCount] = await Promise.all([
     UserModel.countDocuments(),
     MCQModel.countDocuments(),
     AttemptModel.countDocuments(),
     AttemptModel.find().sort({ attemptedAt: -1 }).limit(12).lean(),
     SignupRequestModel.countDocuments({ status: 'pending' }),
+    PremiumSubscriptionRequestModel.countDocuments({ status: 'pending' }),
     QuestionSubmissionModel.countDocuments({ status: 'pending' }),
+    PasswordRecoveryRequestModel.countDocuments(),
+    PasswordRecoveryRequestModel.countDocuments({ recoveryStatus: 'sent' }),
+    PasswordRecoveryRequestModel.countDocuments({ recoveryStatus: 'partial' }),
+    PasswordRecoveryRequestModel.countDocuments({ recoveryStatus: 'failed' }),
+    PasswordRecoveryRequestModel.countDocuments({ recoveryStatus: 'not_found' }),
   ]);
 
   const averageScore = latestAttempts.length
@@ -4883,10 +5442,36 @@ app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) =>
     mcqCount,
     attemptsCount,
     pendingSignupRequests,
+    pendingPremiumRequests,
     pendingQuestionSubmissions,
+    recoveryRequestCount,
+    recoveryStatusCounts: {
+      sent: recoverySentCount,
+      partial: recoveryPartialCount,
+      failed: recoveryFailedCount,
+      not_found: recoveryNotFoundCount,
+    },
     averageScore,
     recentAttempts: latestAttempts.map((item) => serializeAttempt(item)),
   });
+});
+
+app.get('/api/admin/password-recovery-requests', authMiddleware, requireAdmin, async (req, res) => {
+  const status = String(req.query?.status || 'all').toLowerCase();
+  const q = String(req.query?.q || '').trim();
+
+  const filter = status === 'all' ? {} : { recoveryStatus: status };
+  if (q) {
+    filter.$or = [
+      { identifier: { $regex: q, $options: 'i' } },
+      { email: { $regex: q, $options: 'i' } },
+      { mobileNumber: { $regex: q, $options: 'i' } },
+      { userName: { $regex: q, $options: 'i' } },
+    ];
+  }
+
+  const requests = await PasswordRecoveryRequestModel.find(filter).sort({ createdAt: -1 }).limit(400).lean();
+  res.json({ requests: requests.map((item) => serializePasswordRecoveryRequest(item)) });
 });
 
 app.get('/api/admin/question-submissions', authMiddleware, requireAdmin, async (req, res) => {
@@ -5074,26 +5659,124 @@ app.post('/api/admin/subscriptions/:userId/update', authMiddleware, requireAdmin
   res.json({ ok: true, userId, subscription: normalizeSubscription(user) });
 });
 
+app.get('/api/admin/subscriptions/requests', authMiddleware, requireAdmin, async (req, res) => {
+  const status = String(req.query?.status || 'all').toLowerCase();
+  const q = String(req.query?.q || '').trim();
+  const filter = status === 'all' ? {} : { status };
+
+  if (q) {
+    filter.$or = [
+      { email: { $regex: q, $options: 'i' } },
+      { contactValue: { $regex: q, $options: 'i' } },
+      { paymentTransactionId: { $regex: q, $options: 'i' } },
+      { planId: { $regex: q, $options: 'i' } },
+    ];
+  }
+
+  const requests = await PremiumSubscriptionRequestModel.find(filter).sort({ createdAt: -1 }).limit(400).lean();
+  res.json({
+    requests: requests.map((item) => {
+      const plan = resolveSubscriptionPlan(item.planId);
+      return serializePremiumSubscriptionRequest(item, plan?.name || '');
+    }),
+  });
+});
+
+app.post('/api/admin/subscriptions/requests/:requestId/approve', authMiddleware, requireAdmin, async (req, res) => {
+  const request = await PremiumSubscriptionRequestModel.findById(req.params.requestId);
+  if (!request) {
+    res.status(404).json({ error: 'Premium activation request not found.' });
+    return;
+  }
+
+  if (request.status !== 'pending') {
+    res.status(400).json({ error: 'Only pending premium requests can be approved.' });
+    return;
+  }
+
+  const user = await UserModel.findById(request.userId).lean();
+  if (!user) {
+    request.status = 'rejected';
+    request.notes = 'User account not found.';
+    request.reviewedByAdminId = req.user._id;
+    request.reviewedByEmail = req.user.email;
+    request.reviewedAt = new Date();
+    await request.save();
+    res.status(409).json({ error: 'User account missing. Request auto-rejected.' });
+    return;
+  }
+
+  let code = '';
+  for (let i = 0; i < 5; i += 1) {
+    const candidate = generatePremiumTokenCode();
+    const exists = await PremiumActivationTokenModel.findOne({ code: candidate }).lean();
+    if (!exists) {
+      code = candidate;
+      break;
+    }
+  }
+
+  if (!code) {
+    res.status(500).json({ error: 'Could not generate unique premium activation token. Try again.' });
+    return;
+  }
+
+  const expiresAt = new Date(Date.now() + PREMIUM_TOKEN_TTL_HOURS * 60 * 60 * 1000);
+  const tokenDoc = await PremiumActivationTokenModel.create({
+    code,
+    userId: request.userId,
+    email: request.email,
+    premiumRequestId: request._id,
+    status: 'active',
+    expiresAt,
+  });
+
+  request.status = 'approved';
+  request.activationTokenId = tokenDoc._id;
+  request.notes = String(req.body?.notes || '').trim();
+  request.reviewedByAdminId = req.user._id;
+  request.reviewedByEmail = req.user.email;
+  request.reviewedAt = new Date();
+  await request.save();
+
+  res.status(201).json({
+    requestId: String(request._id),
+    token: {
+      code,
+      expiresAt: expiresAt.toISOString(),
+    },
+  });
+});
+
+app.post('/api/admin/subscriptions/requests/:requestId/reject', authMiddleware, requireAdmin, async (req, res) => {
+  const request = await PremiumSubscriptionRequestModel.findById(req.params.requestId);
+  if (!request) {
+    res.status(404).json({ error: 'Premium activation request not found.' });
+    return;
+  }
+
+  if (request.status !== 'pending') {
+    res.status(400).json({ error: 'Only pending premium requests can be rejected.' });
+    return;
+  }
+
+  request.status = 'rejected';
+  request.notes = String(req.body?.notes || '').trim();
+  request.reviewedByAdminId = req.user._id;
+  request.reviewedByEmail = req.user.email;
+  request.reviewedAt = new Date();
+  await request.save();
+
+  res.json({ ok: true, requestId: String(request._id) });
+});
+
 app.get('/api/admin/signup-requests', authMiddleware, requireAdmin, async (req, res) => {
   const status = String(req.query?.status || 'all').toLowerCase();
   const filter = status === 'all' ? {} : { status };
 
   const requests = await SignupRequestModel.find(filter).sort({ createdAt: -1 }).limit(300).lean();
   res.json({
-    requests: requests.map((item) => ({
-      id: String(item._id),
-      email: item.email,
-      firstName: item.firstName || '',
-      lastName: item.lastName || '',
-      mobileNumber: item.mobileNumber || '',
-      paymentMethod: item.paymentMethod,
-      paymentTransactionId: item.paymentTransactionId,
-      status: item.status,
-      notes: item.notes || '',
-      reviewedAt: item.reviewedAt ? new Date(item.reviewedAt).toISOString() : null,
-      reviewedByEmail: item.reviewedByEmail || '',
-      createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
-    })),
+    requests: requests.map((item) => serializeSignupRequest(item)),
   });
 });
 

@@ -71,6 +71,22 @@ function shouldFallbackFromHttpError(path: string, status: number) {
   return false;
 }
 
+function parseRetryAfterSeconds(headerValue: string | null): number | undefined {
+  if (!headerValue) return undefined;
+  const asNumber = Number(headerValue);
+  if (Number.isFinite(asNumber) && asNumber > 0) {
+    return Math.max(1, Math.floor(asNumber));
+  }
+
+  const asDate = new Date(headerValue).getTime();
+  if (Number.isFinite(asDate)) {
+    const seconds = Math.ceil((asDate - Date.now()) / 1000);
+    return seconds > 0 ? seconds : undefined;
+  }
+
+  return undefined;
+}
+
 export async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
   if (shouldUseForcedLocalMode()) {
     return localApiRequest<T>(path, options, token);
@@ -169,8 +185,13 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
       code?: string;
       payload?: any;
       activeSession?: any;
+      retryAfterSeconds?: number;
     };
     error.status = response.status;
+    const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get('Retry-After'));
+    if (retryAfterSeconds) {
+      error.retryAfterSeconds = retryAfterSeconds;
+    }
     if (payload && typeof payload === 'object') {
       if (typeof payload.code === 'string') {
         error.code = payload.code;

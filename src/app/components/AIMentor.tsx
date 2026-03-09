@@ -86,7 +86,27 @@ interface UsageInfo {
 
 interface SubscriptionPayload {
   subscription: SubscriptionInfo;
+  activationRequest?: PremiumActivationRequest | null;
   usage?: UsageInfo;
+}
+
+interface PremiumActivationRequest {
+  id: string;
+  planId: string;
+  planName: string;
+  paymentMethod: 'easypaisa' | 'jazzcash' | 'bank_transfer';
+  paymentTransactionId: string;
+  paymentProof: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  };
+  contactMethod: 'sms' | 'email' | 'whatsapp';
+  contactValue: string;
+  status: 'pending' | 'approved' | 'rejected' | 'completed';
+  notes?: string;
+  createdAt: string | null;
 }
 
 interface SolverPayload {
@@ -137,16 +157,29 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
   const [isAskingAI, setIsAskingAI] = useState(false);
   const [isLoadingSubscription, setIsLoadingSubscription] = useState(false);
-  const [isPurchasing, setIsPurchasing] = useState(false);
+  const [isSubmittingActivationRequest, setIsSubmittingActivationRequest] = useState(false);
+  const [isActivatingWithToken, setIsActivatingWithToken] = useState(false);
   const [isSolving, setIsSolving] = useState(false);
 
   const [plans, setPlans] = useState<SubscriptionPlan[]>([]);
   const [selectedPlanId, setSelectedPlanId] = useState('');
-  const [paymentReference, setPaymentReference] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState<'easypaisa' | 'jazzcash' | 'bank_transfer'>('easypaisa');
+  const [paymentTransactionId, setPaymentTransactionId] = useState('');
+  const [contactMethod, setContactMethod] = useState<'sms' | 'email' | 'whatsapp'>('sms');
+  const [contactValue, setContactValue] = useState('');
+  const [paymentProof, setPaymentProof] = useState<null | {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  }>(null);
+  const [activationTokenCode, setActivationTokenCode] = useState('');
+  const [activationRequest, setActivationRequest] = useState<PremiumActivationRequest | null>(null);
   const [subscription, setSubscription] = useState<SubscriptionInfo>(emptySubscription);
   const [aiUsage, setAiUsage] = useState<UsageInfo | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const premiumProofInputRef = useRef<HTMLInputElement | null>(null);
   const [solverImageName, setSolverImageName] = useState('');
   const [solverMimeType, setSolverMimeType] = useState('');
   const [solverImageDataUrl, setSolverImageDataUrl] = useState('');
@@ -166,6 +199,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     if (!token || !user) {
       setPlanData(null);
       setSubscription(emptySubscription);
+      setActivationRequest(null);
       return;
     }
 
@@ -195,6 +229,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
         setPlans(plansPayload.plans || []);
         setSubscription(mePayload.subscription || emptySubscription);
+        setActivationRequest(mePayload.activationRequest || null);
         setAiUsage(mePayload.usage || null);
 
         if (!selectedPlanId && plansPayload.plans?.length) {
@@ -220,9 +255,11 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     try {
       const mePayload = await apiRequest<SubscriptionPayload>('/api/subscriptions/me', {}, token);
       setSubscription(mePayload.subscription || emptySubscription);
+      setActivationRequest(mePayload.activationRequest || null);
       setAiUsage(mePayload.usage || null);
     } catch {
       setSubscription(emptySubscription);
+      setActivationRequest(null);
     }
   };
 
@@ -280,6 +317,10 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     fileInputRef.current?.click();
   };
 
+  const handleChoosePremiumProof = () => {
+    premiumProofInputRef.current?.click();
+  };
+
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -302,6 +343,35 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       toast.success(`Selected image: ${file.name}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not read image file.');
+    }
+  };
+
+  const handlePremiumProofChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const mime = String(file.type || '').toLowerCase();
+    if (!['image/jpeg', 'image/png', 'application/pdf'].includes(mime)) {
+      toast.error('Payment proof must be JPG, PNG, or PDF.');
+      return;
+    }
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Payment proof must be under 5MB.');
+      return;
+    }
+
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setPaymentProof({
+        name: file.name,
+        mimeType: file.type,
+        size: file.size,
+        dataUrl,
+      });
+      toast.success('Payment proof attached.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not read payment proof file.');
     }
   };
 
@@ -347,7 +417,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     }
   };
 
-  const purchaseSubscription = async () => {
+  const submitActivationRequest = async () => {
     if (!token || !user) {
       toast.error('Please login first.');
       return;
@@ -358,31 +428,77 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       return;
     }
 
-    if (!paymentReference.trim()) {
-      toast.error('Enter payment reference to activate your plan.');
+    if (!paymentTransactionId.trim()) {
+      toast.error('Enter payment transaction ID.');
       return;
     }
 
-    setIsPurchasing(true);
+    if (!paymentProof) {
+      toast.error('Upload payment proof before submitting activation request.');
+      return;
+    }
+
+    if (!contactValue.trim()) {
+      toast.error('Enter contact details to receive your activation token.');
+      return;
+    }
+
+    setIsSubmittingActivationRequest(true);
     try {
-      await apiRequest<SubscriptionPayload>(
-        '/api/subscriptions/purchase',
+      await apiRequest<{ request: PremiumActivationRequest }>(
+        '/api/subscriptions/request-activation',
         {
           method: 'POST',
           body: JSON.stringify({
             planId: selectedPlanId,
-            paymentReference: paymentReference.trim(),
+            paymentMethod,
+            paymentTransactionId: paymentTransactionId.trim(),
+            paymentProof,
+            contactMethod,
+            contactValue: contactValue.trim(),
           }),
         },
         token,
       );
       await reloadSubscription();
-      setPaymentReference('');
-      toast.success('Subscription activated. Smart Study Mentor unlocked.');
+      setPaymentTransactionId('');
+      setPaymentProof(null);
+      toast.success('Activation request submitted. Admin will verify and send your token.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not activate subscription.');
+      toast.error(error instanceof Error ? error.message : 'Could not submit activation request.');
     } finally {
-      setIsPurchasing(false);
+      setIsSubmittingActivationRequest(false);
+    }
+  };
+
+  const activateWithToken = async () => {
+    if (!token || !user) {
+      toast.error('Please login first.');
+      return;
+    }
+
+    if (!activationTokenCode.trim()) {
+      toast.error('Enter admin-issued activation token.');
+      return;
+    }
+
+    setIsActivatingWithToken(true);
+    try {
+      await apiRequest<SubscriptionPayload>(
+        '/api/subscriptions/activate-with-token',
+        {
+          method: 'POST',
+          body: JSON.stringify({ tokenCode: activationTokenCode.trim().toUpperCase() }),
+        },
+        token,
+      );
+      setActivationTokenCode('');
+      await reloadSubscription();
+      toast.success('Subscription activated successfully. Smart Study Mentor unlocked.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not activate subscription with token.');
+    } finally {
+      setIsActivatingWithToken(false);
     }
   };
 
@@ -499,7 +615,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
           <Card className="rounded-2xl border-indigo-100 bg-white/95">
             <CardHeader>
               <CardTitle className="text-xl text-indigo-950">Activate Plan</CardTitle>
-              <CardDescription>Enter payment reference after transfer to unlock instantly</CardDescription>
+              <CardDescription>Submit payment proof, wait for admin verification, then activate with token</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="space-y-1.5">
@@ -518,15 +634,77 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                 </Select>
               </div>
 
-              <div className="space-y-1.5">
-                <Label htmlFor="payment-ref">Payment Reference</Label>
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="premium-payment-method">Payment Method</Label>
+                  <Select value={paymentMethod} onValueChange={(value: 'easypaisa' | 'jazzcash' | 'bank_transfer') => setPaymentMethod(value)}>
+                    <SelectTrigger id="premium-payment-method" className="border-indigo-100">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="easypaisa">Easypaisa</SelectItem>
+                      <SelectItem value="jazzcash">JazzCash</SelectItem>
+                      <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label htmlFor="premium-payment-tx">Transaction ID</Label>
+                  <Input
+                    id="premium-payment-tx"
+                    value={paymentTransactionId}
+                    onChange={(e) => setPaymentTransactionId(e.target.value)}
+                    placeholder="e.g. TXN-239482"
+                    className="border-indigo-100"
+                  />
+                </div>
+              </div>
+
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="premium-contact-method">Token Delivery Method</Label>
+                  <Select value={contactMethod} onValueChange={(value: 'sms' | 'email' | 'whatsapp') => setContactMethod(value)}>
+                    <SelectTrigger id="premium-contact-method" className="border-indigo-100">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="sms">SMS</SelectItem>
+                      <SelectItem value="email">Email</SelectItem>
+                      <SelectItem value="whatsapp">WhatsApp</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="premium-contact-value">
+                    {contactMethod === 'email' ? 'Delivery Email' : 'Delivery Number'}
+                  </Label>
+                  <Input
+                    id="premium-contact-value"
+                    value={contactValue}
+                    onChange={(e) => setContactValue(e.target.value)}
+                    placeholder={contactMethod === 'email' ? 'student@example.com' : '+923001234567'}
+                    className="border-indigo-100"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs text-slate-700">
+                <div className="flex items-center justify-between gap-2">
+                  <span>Payment proof (JPG, PNG, PDF)</span>
+                  <Button type="button" variant="outline" size="sm" onClick={handleChoosePremiumProof}>
+                    <Upload className="mr-1.5 h-3.5 w-3.5" />
+                    Upload
+                  </Button>
+                </div>
                 <Input
-                  id="payment-ref"
-                  value={paymentReference}
-                  onChange={(e) => setPaymentReference(e.target.value)}
-                  placeholder="e.g. TXN-239482"
-                  className="border-indigo-100"
+                  ref={premiumProofInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,application/pdf"
+                  className="hidden"
+                  onChange={(e) => void handlePremiumProofChange(e)}
                 />
+                <p>{paymentProof ? `Attached: ${paymentProof.name}` : 'Attach receipt/screenshot for admin verification.'}</p>
               </div>
 
               {selectedPlan ? (
@@ -535,9 +713,39 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                 </div>
               ) : null}
 
-              <Button onClick={() => void purchaseSubscription()} disabled={isPurchasing} className="w-full">
-                {isPurchasing ? 'Activating...' : 'Activate Subscription'}
+              {activationRequest ? (
+                <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700 space-y-1">
+                  <p>
+                    Latest request: <strong>{activationRequest.status.toUpperCase()}</strong>
+                  </p>
+                  <p>
+                    Plan: {activationRequest.planName || activationRequest.planId} | Txn: {activationRequest.paymentTransactionId}
+                  </p>
+                  {activationRequest.notes ? <p>Admin note: {activationRequest.notes}</p> : null}
+                </div>
+              ) : null}
+
+              <Button onClick={() => void submitActivationRequest()} disabled={isSubmittingActivationRequest} className="w-full">
+                {isSubmittingActivationRequest ? 'Submitting Request...' : 'Submit Activation Request'}
               </Button>
+
+              <div className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2">
+                <Label htmlFor="premium-activation-token">Activation Token</Label>
+                <Input
+                  id="premium-activation-token"
+                  value={activationTokenCode}
+                  onChange={(e) => setActivationTokenCode(e.target.value.toUpperCase())}
+                  placeholder="PREM-XXXX-XXXX-XXXX"
+                  className="border-emerald-200"
+                />
+                <Button
+                  onClick={() => void activateWithToken()}
+                  disabled={isActivatingWithToken}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700"
+                >
+                  {isActivatingWithToken ? 'Activating With Token...' : 'Activate With Token'}
+                </Button>
+              </div>
 
               <Button variant="outline" className="w-full" onClick={() => onNavigate?.('profile')}>
                 Open Profile

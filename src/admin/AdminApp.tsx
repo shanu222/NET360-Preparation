@@ -44,7 +44,35 @@ interface AdminOverview {
   attemptsCount: number;
   averageScore: number;
   pendingSignupRequests?: number;
+  pendingPremiumRequests?: number;
+  recoveryRequestCount?: number;
+  recoveryStatusCounts?: {
+    sent: number;
+    partial: number;
+    failed: number;
+    not_found: number;
+  };
   pendingQuestionSubmissions?: number;
+}
+
+interface PasswordRecoveryRequest {
+  id: string;
+  identifier: string;
+  matchedBy: 'email' | 'mobile' | 'none';
+  userId: string;
+  userName: string;
+  email: string;
+  mobileNumber: string;
+  recoveryStatus: 'not_found' | 'sent' | 'partial' | 'failed';
+  dispatches: Array<{
+    channel: 'email' | 'sms' | 'whatsapp';
+    destination: string;
+    status: 'sent' | 'skipped' | 'failed';
+    provider: string;
+    detail: string;
+  }>;
+  tokenExpiresAt: string | null;
+  createdAt: string | null;
 }
 
 interface AdminQuestionSubmissionAttachment {
@@ -96,8 +124,40 @@ interface SignupRequest {
   firstName: string;
   lastName: string;
   mobileNumber: string;
-  paymentMethod: 'easypaisa' | 'jazzcash' | 'hbl';
+  paymentMethod: 'easypaisa' | 'jazzcash' | 'bank_transfer';
   paymentTransactionId: string;
+  paymentProof?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  };
+  contactMethod?: 'sms' | 'email' | 'whatsapp';
+  contactValue?: string;
+  status: 'pending' | 'approved' | 'rejected' | 'completed';
+  notes?: string;
+  reviewedAt: string | null;
+  reviewedByEmail: string;
+  createdAt: string | null;
+}
+
+interface PremiumSubscriptionRequest {
+  id: string;
+  userId: string;
+  email: string;
+  mobileNumber: string;
+  planId: string;
+  planName: string;
+  paymentMethod: 'easypaisa' | 'jazzcash' | 'bank_transfer';
+  paymentTransactionId: string;
+  paymentProof?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  };
+  contactMethod: 'sms' | 'email' | 'whatsapp';
+  contactValue: string;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   notes?: string;
   reviewedAt: string | null;
@@ -521,6 +581,13 @@ export default function AdminApp() {
   const [subscriptionOverview, setSubscriptionOverview] = useState<AdminSubscriptionOverview | null>(null);
   const [subscriptionUsers, setSubscriptionUsers] = useState<AdminSubscriptionUser[]>([]);
   const [subscriptionFilter, setSubscriptionFilter] = useState('all');
+  const [premiumRequests, setPremiumRequests] = useState<PremiumSubscriptionRequest[]>([]);
+  const [premiumRequestStatusFilter, setPremiumRequestStatusFilter] = useState('all');
+  const [premiumRequestQuery, setPremiumRequestQuery] = useState('');
+  const [issuedPremiumTokens, setIssuedPremiumTokens] = useState<Record<string, string>>({});
+  const [passwordRecoveryRequests, setPasswordRecoveryRequests] = useState<PasswordRecoveryRequest[]>([]);
+  const [passwordRecoveryStatusFilter, setPasswordRecoveryStatusFilter] = useState('all');
+  const [passwordRecoveryQuery, setPasswordRecoveryQuery] = useState('');
   const [practiceQuestions, setPracticeQuestions] = useState<AdminPracticeBoardQuestion[]>([]);
   const [practiceQuery, setPracticeQuery] = useState('');
   const [practiceBankSubjectKey, setPracticeBankSubjectKey] = useState('');
@@ -781,6 +848,8 @@ export default function AdminApp() {
       policyPayload,
       subscriptionOverviewPayload,
       subscriptionUsersPayload,
+      premiumRequestsPayload,
+      passwordRecoveryPayload,
       communityReportsPayload,
       structurePayload,
     ] = await Promise.all([
@@ -806,6 +875,16 @@ export default function AdminApp() {
         dailyUsage: [],
       })),
       apiRequest<{ users: AdminSubscriptionUser[] }>(`/api/admin/subscriptions/users?status=${subscriptionFilter}`, {}, activeToken).catch(() => ({ users: [] })),
+      apiRequest<{ requests: PremiumSubscriptionRequest[] }>(
+        `/api/admin/subscriptions/requests?status=${premiumRequestStatusFilter}&q=${encodeURIComponent(premiumRequestQuery.trim())}`,
+        {},
+        activeToken,
+      ).catch(() => ({ requests: [] })),
+      apiRequest<{ requests: PasswordRecoveryRequest[] }>(
+        `/api/admin/password-recovery-requests?status=${passwordRecoveryStatusFilter}&q=${encodeURIComponent(passwordRecoveryQuery.trim())}`,
+        {},
+        activeToken,
+      ).catch(() => ({ requests: [] })),
       apiRequest<{ reports: AdminCommunityReport[] }>('/api/admin/community/reports', {}, activeToken).catch(() => ({ reports: [] })),
       apiRequest<{ structure: AdminMcqBankStructureItem[] }>('/api/admin/mcq-bank/structure', {}, activeToken).catch(() => ({ structure: [] })),
     ]);
@@ -824,6 +903,8 @@ export default function AdminApp() {
     });
     setSubscriptionOverview(subscriptionOverviewPayload);
     setSubscriptionUsers(subscriptionUsersPayload.users || []);
+    setPremiumRequests(premiumRequestsPayload.requests || []);
+    setPasswordRecoveryRequests(passwordRecoveryPayload.requests || []);
     setCommunityReports(communityReportsPayload.reports || []);
     setMcqStructure(structurePayload.structure || []);
   };
@@ -927,7 +1008,15 @@ export default function AdminApp() {
     return () => {
       cancelled = true;
     };
-  }, [authToken, refreshToken, subscriptionFilter]);
+  }, [
+    authToken,
+    refreshToken,
+    subscriptionFilter,
+    premiumRequestStatusFilter,
+    premiumRequestQuery,
+    passwordRecoveryStatusFilter,
+    passwordRecoveryQuery,
+  ]);
 
   useEffect(() => {
     if (!selectedHierarchy) return;
@@ -1065,6 +1154,43 @@ export default function AdminApp() {
     }
   };
 
+  const approvePremiumRequest = async (request: PremiumSubscriptionRequest) => {
+    if (!authToken) return;
+    try {
+      const payload = await apiRequest<{ requestId: string; token: { code: string; expiresAt: string } }>(
+        `/api/admin/subscriptions/requests/${request.id}/approve`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ notes: 'Payment verified by admin.' }),
+        },
+        authToken,
+      );
+      setIssuedPremiumTokens((prev) => ({ ...prev, [request.id]: payload.token.code }));
+      toast.success(`Premium request approved. Token: ${payload.token.code}`);
+      await loadAdminData(authToken);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not approve premium request.');
+    }
+  };
+
+  const rejectPremiumRequest = async (request: PremiumSubscriptionRequest) => {
+    if (!authToken) return;
+    try {
+      await apiRequest(
+        `/api/admin/subscriptions/requests/${request.id}/reject`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ notes: 'Payment could not be verified.' }),
+        },
+        authToken,
+      );
+      toast.success('Premium request rejected.');
+      await loadAdminData(authToken);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not reject premium request.');
+    }
+  };
+
   const copyToken = async (tokenCode: string) => {
     try {
       if (navigator.clipboard?.writeText) {
@@ -1086,14 +1212,41 @@ export default function AdminApp() {
     }
   };
 
-  const sendTokenBySms = (mobileNumber: string, tokenCode: string, email: string) => {
-    const target = String(mobileNumber || '').trim();
-    if (!target) {
-      toast.error('Mobile number is missing for this request.');
+  const sendTokenShortcut = (
+    method: 'sms' | 'email' | 'whatsapp',
+    targetValue: string,
+    tokenCode: string,
+    purpose: 'signup' | 'premium',
+    fallbackEmail?: string,
+  ) => {
+    const target = String(targetValue || '').trim();
+    const fallback = String(fallbackEmail || '').trim();
+    const message = purpose === 'premium'
+      ? `NET360 premium activation token: ${tokenCode}. Use this to activate your subscription.`
+      : `NET360 signup token: ${tokenCode}. Use this to complete your registration.`;
+
+    if (method === 'email') {
+      const emailTarget = target || fallback;
+      if (!emailTarget) {
+        toast.error('Email is missing for this request.');
+        return;
+      }
+      const mailto = `mailto:${encodeURIComponent(emailTarget)}?subject=${encodeURIComponent('NET360 Token')}&body=${encodeURIComponent(message)}`;
+      window.open(mailto, '_blank', 'noopener,noreferrer');
       return;
     }
 
-    const message = `NET360 approval token for ${email}: ${tokenCode}. Use this token to complete signup.`;
+    if (!target) {
+      toast.error('Mobile/WhatsApp number is missing for this request.');
+      return;
+    }
+
+    if (method === 'whatsapp') {
+      const waUrl = `https://wa.me/${encodeURIComponent(target.replace(/\D/g, ''))}?text=${encodeURIComponent(message)}`;
+      window.open(waUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
     const smsUrl = `sms:${encodeURIComponent(target)}?body=${encodeURIComponent(message)}`;
     window.location.href = smsUrl;
   };
@@ -1972,10 +2125,12 @@ export default function AdminApp() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         <Metric title="Completed Signups" value={String(signupRequests.filter((item) => item.status === 'completed').length)} />
         <Metric title="Pending User Submissions" value={String(overview?.pendingQuestionSubmissions || 0)} />
-        <Metric title="Approved Submissions" value={String(questionSubmissions.filter((item) => item.status === 'approved').length)} />
+        <Metric title="Pending Premium Requests" value={String(overview?.pendingPremiumRequests || 0)} />
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <Metric title="Recovery Requests" value={String(overview?.recoveryRequestCount || 0)} />
+        <Metric title="Approved Submissions" value={String(questionSubmissions.filter((item) => item.status === 'approved').length)} />
         <Metric title="Rejected Submissions" value={String(questionSubmissions.filter((item) => item.status === 'rejected').length)} />
         <Metric title="Active Subscriptions" value={String(subscriptionOverview?.activeUsers || 0)} />
         <Metric title="Expired/Inactive" value={String(subscriptionOverview?.expiredUsers || 0)} />
@@ -1985,11 +2140,26 @@ export default function AdminApp() {
         <Metric title="Tracked Users" value={String(subscriptionOverview?.totalUsers || 0)} />
       </div>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>Password Recovery Snapshot</CardTitle>
+          <CardDescription>Quick delivery status overview for recent recovery activity.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap gap-2">
+          <Badge className="bg-emerald-600 text-white">sent: {overview?.recoveryStatusCounts?.sent || 0}</Badge>
+          <Badge className="bg-amber-500 text-white">partial: {overview?.recoveryStatusCounts?.partial || 0}</Badge>
+          <Badge className="bg-rose-600 text-white">failed: {overview?.recoveryStatusCounts?.failed || 0}</Badge>
+          <Badge variant="outline">not_found: {overview?.recoveryStatusCounts?.not_found || 0}</Badge>
+        </CardContent>
+      </Card>
+
       <Tabs defaultValue="users" className="w-full min-w-0 space-y-4">
         <div className="overflow-x-auto pb-1">
           <TabsList className="inline-flex h-auto min-w-max gap-1">
             <TabsTrigger className="min-w-[150px]" value="users">Users</TabsTrigger>
             <TabsTrigger className="min-w-[170px]" value="requests">Signup Requests</TabsTrigger>
+            <TabsTrigger className="min-w-[190px]" value="premium-requests">Premium Requests</TabsTrigger>
+            <TabsTrigger className="min-w-[220px]" value="password-recovery">Password Recovery</TabsTrigger>
             <TabsTrigger className="min-w-[120px]" value="mcqs">MCQs</TabsTrigger>
             <TabsTrigger className="min-w-[150px]" value="practice-board">Practice Board</TabsTrigger>
             <TabsTrigger className="min-w-[140px]" value="submissions">Submissions</TabsTrigger>
@@ -2029,7 +2199,7 @@ export default function AdminApp() {
           <Card>
             <CardHeader>
               <CardTitle>Payment Approval Requests</CardTitle>
-              <CardDescription>Verify transaction IDs and approve to generate signup token.</CardDescription>
+              <CardDescription>Verify transaction details + proof, then approve to generate signup token.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2 max-h-[520px] overflow-auto">
               {signupRequests.map((request) => (
@@ -2044,11 +2214,26 @@ export default function AdminApp() {
                         {request.paymentMethod.toUpperCase()} • Tx ID: {request.paymentTransactionId}
                       </p>
                       <p className="text-xs text-muted-foreground">
+                        Token delivery: {request.contactMethod?.toUpperCase() || 'SMS'} • {request.contactValue || request.mobileNumber || request.email}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
                         {request.createdAt ? new Date(request.createdAt).toLocaleString() : 'Unknown time'}
                       </p>
                     </div>
                     <Badge variant={request.status === 'pending' ? 'default' : 'outline'}>{request.status}</Badge>
                   </div>
+
+                  {request.paymentProof?.dataUrl ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 px-2 text-[11px]"
+                      onClick={() => window.open(request.paymentProof?.dataUrl || '', '_blank', 'noopener,noreferrer')}
+                    >
+                      View Proof
+                    </Button>
+                  ) : null}
 
                   {issuedTokens[request.id] ? (
                     <div className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-1 text-xs text-emerald-700 flex items-center justify-between gap-2">
@@ -2069,9 +2254,9 @@ export default function AdminApp() {
                         size="sm"
                         variant="outline"
                         className="h-6 px-2 text-[11px]"
-                        onClick={() => sendTokenBySms(request.mobileNumber, issuedTokens[request.id], request.email)}
+                        onClick={() => sendTokenShortcut(request.contactMethod || 'sms', request.contactValue || request.mobileNumber, issuedTokens[request.id], 'signup', request.email)}
                       >
-                        Send SMS
+                        Send Token
                       </Button>
                     </div>
                   ) : null}
@@ -2084,6 +2269,185 @@ export default function AdminApp() {
                   ) : null}
                 </div>
               ))}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="premium-requests" className="space-y-3">
+          <Card>
+            <CardHeader>
+              <CardTitle>Premium Subscription Management</CardTitle>
+              <CardDescription>Verify premium payments, generate activation tokens, and send via email/SMS/WhatsApp.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid gap-2 md:grid-cols-[220px_1fr]">
+                <div className="space-y-1">
+                  <Label htmlFor="premium-request-status">Status</Label>
+                  <Select value={premiumRequestStatusFilter} onValueChange={setPremiumRequestStatusFilter}>
+                    <SelectTrigger id="premium-request-status">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="pending">Pending</SelectItem>
+                      <SelectItem value="approved">Approved</SelectItem>
+                      <SelectItem value="rejected">Rejected</SelectItem>
+                      <SelectItem value="completed">Completed</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="premium-request-search">Search</Label>
+                  <Input
+                    id="premium-request-search"
+                    value={premiumRequestQuery}
+                    onChange={(e) => setPremiumRequestQuery(e.target.value)}
+                    placeholder="Search by email, plan, transaction ID, or contact"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2 max-h-[520px] overflow-auto">
+                {premiumRequests.map((request) => (
+                  <div key={request.id} className="rounded-lg border p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm">{request.email}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Plan: {request.planName || request.planId} • {request.paymentMethod.toUpperCase()} • Tx ID: {request.paymentTransactionId}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Token delivery: {request.contactMethod.toUpperCase()} • {request.contactValue}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {request.createdAt ? new Date(request.createdAt).toLocaleString() : 'Unknown time'}
+                        </p>
+                      </div>
+                      <Badge variant={request.status === 'pending' ? 'default' : 'outline'}>{request.status}</Badge>
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      {request.paymentProof?.dataUrl ? (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2 text-[11px]"
+                          onClick={() => window.open(request.paymentProof?.dataUrl || '', '_blank', 'noopener,noreferrer')}
+                        >
+                          View Proof
+                        </Button>
+                      ) : null}
+
+                      {issuedPremiumTokens[request.id] ? (
+                        <>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-[11px]"
+                            onClick={() => void copyToken(issuedPremiumTokens[request.id])}
+                          >
+                            Copy Token
+                          </Button>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-[11px]"
+                            onClick={() => sendTokenShortcut(request.contactMethod, request.contactValue, issuedPremiumTokens[request.id], 'premium', request.email)}
+                          >
+                            Send Token
+                          </Button>
+                        </>
+                      ) : null}
+                    </div>
+
+                    {issuedPremiumTokens[request.id] ? (
+                      <div className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-1 text-xs text-emerald-700">
+                        Generated token: <strong>{issuedPremiumTokens[request.id]}</strong>
+                      </div>
+                    ) : null}
+
+                    {request.status === 'pending' ? (
+                      <div className="flex gap-2">
+                        <Button size="sm" onClick={() => void approvePremiumRequest(request)}>Approve + Generate Token</Button>
+                        <Button size="sm" variant="outline" onClick={() => void rejectPremiumRequest(request)}>Reject</Button>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+
+                {!premiumRequests.length ? (
+                  <p className="text-sm text-muted-foreground">No premium requests matched the current filter.</p>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="password-recovery" className="space-y-3">
+          <Card>
+            <CardHeader>
+              <CardTitle>Password Recovery Requests</CardTitle>
+              <CardDescription>Track automated password recovery attempts and delivery status.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid gap-2 md:grid-cols-[220px_1fr]">
+                <div className="space-y-1">
+                  <Label htmlFor="password-recovery-status">Status</Label>
+                  <Select value={passwordRecoveryStatusFilter} onValueChange={setPasswordRecoveryStatusFilter}>
+                    <SelectTrigger id="password-recovery-status">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="sent">Sent</SelectItem>
+                      <SelectItem value="partial">Partial</SelectItem>
+                      <SelectItem value="failed">Failed</SelectItem>
+                      <SelectItem value="not_found">Not Found</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="password-recovery-search">Search</Label>
+                  <Input
+                    id="password-recovery-search"
+                    value={passwordRecoveryQuery}
+                    onChange={(e) => setPasswordRecoveryQuery(e.target.value)}
+                    placeholder="Search by identifier, name, email, or mobile"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2 max-h-[520px] overflow-auto">
+                {passwordRecoveryRequests.map((request) => (
+                  <div key={request.id} className="rounded-lg border p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="text-sm">{request.userName || request.identifier}</p>
+                        <p className="text-xs text-muted-foreground">User ID: {request.userId || 'N/A'}</p>
+                        <p className="text-xs text-muted-foreground">Email: {request.email || 'N/A'} | Mobile: {request.mobileNumber || 'N/A'}</p>
+                        <p className="text-xs text-muted-foreground">Matched by: {request.matchedBy.toUpperCase()} | Request: {request.createdAt ? new Date(request.createdAt).toLocaleString() : 'Unknown'}</p>
+                      </div>
+                      <Badge variant={request.recoveryStatus === 'sent' ? 'default' : 'outline'}>{request.recoveryStatus}</Badge>
+                    </div>
+
+                    <div className="rounded-md border bg-slate-50 p-2 space-y-1">
+                      {request.dispatches.map((dispatch, index) => (
+                        <p key={`${request.id}-${dispatch.channel}-${index}`} className="text-xs text-slate-700">
+                            {dispatch.channel.toUpperCase()} {'->'} {dispatch.destination || 'N/A'} ({dispatch.status})
+                        </p>
+                      ))}
+                      {!request.dispatches.length ? <p className="text-xs text-slate-500">No delivery attempted.</p> : null}
+                    </div>
+                  </div>
+                ))}
+
+                {!passwordRecoveryRequests.length ? (
+                  <p className="text-sm text-muted-foreground">No recovery requests matched the current filter.</p>
+                ) : null}
+              </div>
             </CardContent>
           </Card>
         </TabsContent>

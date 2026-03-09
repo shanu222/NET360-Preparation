@@ -1,11 +1,11 @@
 import mongoose from 'mongoose';
 
-const signupRequestSchema = new mongoose.Schema(
+const premiumSubscriptionRequestSchema = new mongoose.Schema(
   {
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     email: { type: String, required: true, lowercase: true, trim: true, index: true },
-    firstName: { type: String, default: '' },
-    lastName: { type: String, default: '' },
-    mobileNumber: { type: String, required: true, trim: true, index: true },
+    mobileNumber: { type: String, default: '', trim: true, index: true },
+    planId: { type: String, required: true, trim: true, index: true },
     paymentMethod: {
       type: String,
       enum: ['easypaisa', 'jazzcash', 'bank_transfer', 'hbl'],
@@ -22,10 +22,11 @@ const signupRequestSchema = new mongoose.Schema(
     contactMethod: {
       type: String,
       enum: ['sms', 'email', 'whatsapp'],
+      required: true,
       default: 'sms',
       index: true,
     },
-    contactValue: { type: String, default: '', trim: true },
+    contactValue: { type: String, required: true, trim: true },
     status: {
       type: String,
       enum: ['pending', 'approved', 'rejected', 'completed'],
@@ -36,12 +37,13 @@ const signupRequestSchema = new mongoose.Schema(
     reviewedByAdminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
     reviewedByEmail: { type: String, default: '' },
     reviewedAt: { type: Date, default: null },
-    signupTokenId: { type: mongoose.Schema.Types.ObjectId, ref: 'SignupToken', default: null },
+    activationTokenId: { type: mongoose.Schema.Types.ObjectId, ref: 'PremiumActivationToken', default: null },
   },
   { timestamps: true },
 );
 
-signupRequestSchema.index({ email: 1, status: 1, createdAt: -1 });
+premiumSubscriptionRequestSchema.index({ userId: 1, status: 1, createdAt: -1 });
+premiumSubscriptionRequestSchema.index({ email: 1, status: 1, createdAt: -1 });
 
-export const SignupRequestModel =
-  mongoose.models.SignupRequest || mongoose.model('SignupRequest', signupRequestSchema);
+export const PremiumSubscriptionRequestModel =
+  mongoose.models.PremiumSubscriptionRequest || mongoose.model('PremiumSubscriptionRequest', premiumSubscriptionRequestSchema);

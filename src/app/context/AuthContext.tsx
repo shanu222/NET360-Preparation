@@ -29,8 +29,16 @@ interface AuthContextValue {
     firstName?: string;
     lastName?: string;
     mobileNumber: string;
-    paymentMethod: 'easypaisa' | 'jazzcash' | 'hbl';
+    paymentMethod: 'easypaisa' | 'jazzcash' | 'bank_transfer';
     paymentTransactionId: string;
+    paymentProof: {
+      name: string;
+      mimeType: string;
+      size: number;
+      dataUrl: string;
+    };
+    contactMethod: 'sms' | 'email' | 'whatsapp';
+    contactValue: string;
   }) => Promise<void>;
   registerWithToken: (params: {
     email: string;
@@ -165,6 +173,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     mobileNumber,
     paymentMethod,
     paymentTransactionId,
+    paymentProof,
+    contactMethod,
+    contactValue,
   }) => {
     await apiRequest('/api/auth/signup-request', {
       method: 'POST',
@@ -175,6 +186,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         mobileNumber,
         paymentMethod,
         paymentTransactionId,
+        paymentProof,
+        contactMethod,
+        contactValue,
       }),
     });
   };
