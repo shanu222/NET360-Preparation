@@ -185,6 +185,11 @@ interface ParsedBulkMcq {
   difficulty: 'Easy' | 'Medium' | 'Hard';
 }
 
+interface ParsedBulkResponse {
+  parsed: ParsedBulkMcq[];
+  errors: string[];
+}
+
 const TOKEN_KEY = 'net360-admin-access-token';
 const REFRESH_TOKEN_KEY = 'net360-admin-refresh-token';
 
@@ -353,6 +358,23 @@ function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[]
   return { parsed, errors };
 }
 
+function hierarchyLabel(selection: SelectedHierarchy | null): string {
+  if (!selection) return 'No target selected';
+  if (selection.kind === 'section') {
+    return `${selection.subject} / ${selection.part} / ${selection.chapterTitle} / ${selection.sectionTitle}`;
+  }
+  return `${selection.subject} / ${selection.sectionTitle}`;
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Could not read file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function AdminApp() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_KEY));
@@ -375,6 +397,10 @@ export default function AdminApp() {
   const [practiceQuery, setPracticeQuery] = useState('');
   const [practiceForm, setPracticeForm] = useState(emptyPracticeForm());
   const [bulkInput, setBulkInput] = useState('');
+  const [bulkFile, setBulkFile] = useState<File | null>(null);
+  const [bulkParsed, setBulkParsed] = useState<ParsedBulkMcq[]>([]);
+  const [bulkParseErrors, setBulkParseErrors] = useState<string[]>([]);
+  const [bulkProcessing, setBulkProcessing] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
   const [questionSubmissions, setQuestionSubmissions] = useState<AdminQuestionSubmission[]>([]);
   const [submissionStatusFilter, setSubmissionStatusFilter] = useState('all');
@@ -792,26 +818,93 @@ export default function AdminApp() {
     }
   };
 
+  const analyzeBulkMcqs = async () => {
+    if (!authToken) return;
+
+    const hasText = Boolean(bulkInput.trim());
+    if (!hasText && !bulkFile) {
+      toast.error('Paste MCQs or upload a PDF/Word file first.');
+      return;
+    }
+
+    if (bulkFile && bulkFile.size > 8 * 1024 * 1024) {
+      toast.error('Uploaded file is too large. Maximum size is 8 MB.');
+      return;
+    }
+
+    try {
+      setBulkProcessing(true);
+
+      let payload: ParsedBulkResponse;
+
+      if (bulkFile) {
+        const dataUrl = await fileToDataUrl(bulkFile);
+        payload = await apiRequest<ParsedBulkResponse>('/api/admin/mcqs/parse', {
+          method: 'POST',
+          body: JSON.stringify({
+            sourceType: 'file',
+            file: {
+              name: bulkFile.name,
+              mimeType: bulkFile.type,
+              size: bulkFile.size,
+              dataUrl,
+            },
+          }),
+        }, authToken);
+      } else {
+        try {
+          payload = await apiRequest<ParsedBulkResponse>('/api/admin/mcqs/parse', {
+            method: 'POST',
+            body: JSON.stringify({
+              sourceType: 'text',
+              rawText: bulkInput,
+            }),
+          }, authToken);
+        } catch {
+          // Fallback keeps local mode usable when backend parser route is unavailable.
+          payload = parseBulkMcqs(bulkInput);
+        }
+      }
+
+      setBulkParsed(payload.parsed || []);
+      setBulkParseErrors(payload.errors || []);
+
+      if (!payload.parsed?.length) {
+        toast.error(payload.errors?.[0] || 'No questions were parsed.');
+        return;
+      }
+
+      if ((payload.parsed || []).length > 50) {
+        toast.error('You can upload at most 50 questions at once.');
+        return;
+      }
+
+      toast.success(`Parsed ${payload.parsed.length} MCQ(s). Review and confirm target before saving.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not parse uploaded content.');
+    } finally {
+      setBulkProcessing(false);
+    }
+  };
+
   const uploadBulkMcqs = async () => {
     if (!authToken) return;
     if (!selectedHierarchy) {
-      toast.error('Select a section/topic first before bulk upload.');
+      toast.error('Select subject/chapter/section/topic before saving parsed MCQs.');
       return;
     }
 
-    const { parsed, errors } = parseBulkMcqs(bulkInput);
-    if (errors.length) {
-      toast.error(errors[0]);
+    if (!bulkParsed.length) {
+      toast.error('Analyze content first, then save parsed MCQs.');
       return;
     }
 
-    if (!parsed.length) {
-      toast.error('No questions were parsed.');
-      return;
-    }
-
-    if (parsed.length > 50) {
+    if (bulkParsed.length > 50) {
       toast.error('You can upload at most 50 questions at once.');
+      return;
+    }
+
+    if (!window.confirm(`Save ${bulkParsed.length} MCQ(s) to:\n${hierarchyLabel(selectedHierarchy)}\n\nContinue?`)) {
       return;
     }
 
@@ -835,7 +928,7 @@ export default function AdminApp() {
     try {
       setBulkUploading(true);
 
-      for (const item of parsed) {
+      for (const item of bulkParsed) {
         await apiRequest('/api/admin/mcqs', {
           method: 'POST',
           body: JSON.stringify({
@@ -850,8 +943,11 @@ export default function AdminApp() {
         }, authToken);
       }
 
-      toast.success(`${parsed.length} MCQ(s) uploaded successfully.`);
+      toast.success(`${bulkParsed.length} MCQ(s) uploaded successfully.`);
       setBulkInput('');
+      setBulkFile(null);
+      setBulkParsed([]);
+      setBulkParseErrors([]);
       await loadSectionMcqs(authToken, selectedHierarchy);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Bulk upload failed.');
@@ -1381,7 +1477,7 @@ export default function AdminApp() {
                   </div>
 
                   <div className="space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/30 p-3">
-                    <Label>Bulk Paste (1-50 questions)</Label>
+                    <Label>Bulk Import (Paste / PDF / Word, 1-50 questions)</Label>
                     <Textarea
                       value={bulkInput}
                       onChange={(e) => setBulkInput(e.target.value)}
@@ -1399,13 +1495,71 @@ export default function AdminApp() {
                         '2) Next question...',
                       ].join('\n')}
                     />
-                    <Button
-                      variant="outline"
-                      onClick={() => void uploadBulkMcqs()}
-                      disabled={!selectedHierarchy || bulkUploading}
-                    >
-                      {bulkUploading ? 'Uploading...' : 'Upload'}
-                    </Button>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="admin-mcq-upload-file">Or upload PDF / DOC / DOCX</Label>
+                      <Input
+                        id="admin-mcq-upload-file"
+                        type="file"
+                        accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0] || null;
+                          setBulkFile(file);
+                        }}
+                      />
+                      {bulkFile ? (
+                        <p className="text-xs text-muted-foreground">
+                          Selected file: {bulkFile.name} ({Math.max(1, Math.round(bulkFile.size / 1024))} KB)
+                        </p>
+                      ) : null}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => void analyzeBulkMcqs()}
+                        disabled={bulkProcessing || bulkUploading}
+                      >
+                        {bulkProcessing ? 'Analyzing...' : 'Analyze Content'}
+                      </Button>
+                      <Button
+                        onClick={() => void uploadBulkMcqs()}
+                        disabled={!selectedHierarchy || !bulkParsed.length || bulkUploading || bulkProcessing}
+                      >
+                        {bulkUploading ? 'Saving...' : 'Save Parsed MCQs'}
+                      </Button>
+                    </div>
+
+                    <p className="text-xs text-muted-foreground">
+                      Save target: {hierarchyLabel(selectedHierarchy)}
+                    </p>
+
+                    {bulkParseErrors.length ? (
+                      <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
+                        {bulkParseErrors[0]}
+                      </div>
+                    ) : null}
+
+                    {bulkParsed.length ? (
+                      <div className="space-y-2 rounded-md border bg-background p-2">
+                        <p className="text-xs font-medium">Parsed Preview ({bulkParsed.length})</p>
+                        <div className="max-h-[320px] space-y-2 overflow-auto pr-1">
+                          {bulkParsed.map((item, idx) => (
+                            <div key={`${idx}-${item.question.slice(0, 30)}`} className="rounded-md border p-2 text-xs">
+                              <p className="font-medium">Q{idx + 1}. {item.question}</p>
+                              <div className="mt-1 space-y-0.5 text-muted-foreground">
+                                {item.options.map((option, optionIdx) => (
+                                  <p key={`${idx}-opt-${optionIdx}`}>
+                                    {String.fromCharCode(65 + optionIdx)}) {option}
+                                  </p>
+                                ))}
+                              </div>
+                              <p className="mt-1">Answer: <span className="font-medium">{item.answer}</span></p>
+                              {item.tip ? <p className="mt-1 text-muted-foreground">Explanation: {item.tip}</p> : null}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="flex flex-wrap gap-2">

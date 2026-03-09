@@ -627,6 +627,140 @@ function parseBody(options: RequestInit) {
   return {};
 }
 
+function parseBulkMcqsFromText(raw: string): { parsed: Array<{ question: string; questionImageUrl: string; options: string[]; answer: string; tip: string; difficulty: 'Easy' | 'Medium' | 'Hard' }>; errors: string[] } {
+  const text = String(raw || '').replace(/\r\n/g, '\n').trim();
+  if (!text) return { parsed: [], errors: ['No content found to parse.'] };
+
+  const starts: Array<{ index: number; number: string }> = [];
+  const startRegex = /^\s*(\d{1,3})\s*[\).:-]\s+/gm;
+  let match: RegExpExecArray | null;
+  while ((match = startRegex.exec(text))) {
+    starts.push({ index: match.index, number: match[1] });
+  }
+
+  if (!starts.length) {
+    return {
+      parsed: [],
+      errors: ['Could not detect question numbering. Use format like "1. ...", "2) ...", etc.'],
+    };
+  }
+
+  const blocks = starts.map((entry, idx) => {
+    const end = idx + 1 < starts.length ? starts[idx + 1].index : text.length;
+    return {
+      number: entry.number,
+      content: text.slice(entry.index, end).trim(),
+    };
+  });
+
+  const errors: string[] = [];
+  const parsed: Array<{ question: string; questionImageUrl: string; options: string[]; answer: string; tip: string; difficulty: 'Easy' | 'Medium' | 'Hard' }> = [];
+
+  blocks.forEach((block) => {
+    const lines = block.content
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (!lines.length) {
+      errors.push(`Q${block.number}: empty block.`);
+      return;
+    }
+
+    lines[0] = lines[0].replace(/^\d{1,3}\s*[\).:-]\s*/, '').trim();
+
+    let questionImageUrl = '';
+    let answer = '';
+    let explanation = '';
+    let difficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium';
+    const questionLines: string[] = [];
+    const options: string[] = [];
+    let capturingExplanation = false;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      const imageMatch = line.match(/^(?:image|img|question\s*image)\s*[:=-]\s*(https?:\/\/\S+)$/i)
+        || line.match(/^!\[[^\]]*\]\((https?:\/\/[^\)\s]+)\)$/i);
+      if (imageMatch) {
+        questionImageUrl = imageMatch[1].trim();
+        continue;
+      }
+
+      const answerMatch = line.match(/^(?:correct\s*answer|answer)\s*[:=-]\s*(.+)$/i);
+      if (answerMatch) {
+        answer = answerMatch[1].trim();
+        capturingExplanation = false;
+        continue;
+      }
+
+      const explanationMatch = line.match(/^(?:explanation|solution|reason)\s*[:=-]\s*(.*)$/i);
+      if (explanationMatch) {
+        explanation = explanationMatch[1].trim();
+        capturingExplanation = true;
+        continue;
+      }
+
+      const difficultyMatch = line.match(/^difficulty\s*[:=-]\s*(easy|medium|hard)$/i);
+      if (difficultyMatch) {
+        const normalized = difficultyMatch[1].toLowerCase();
+        difficulty = normalized === 'easy' ? 'Easy' : normalized === 'hard' ? 'Hard' : 'Medium';
+        continue;
+      }
+
+      const optionMatch = line.match(/^(?:option\s*)?([A-Fa-f]|\d{1,2})\s*[\).:-]\s*(.+)$/);
+      if (optionMatch) {
+        options.push(optionMatch[2].trim());
+        capturingExplanation = false;
+        continue;
+      }
+
+      if (capturingExplanation) {
+        explanation = explanation ? `${explanation}\n${line}` : line;
+      } else {
+        questionLines.push(line);
+      }
+    }
+
+    const question = questionLines.join(' ').trim();
+    if (!question) {
+      errors.push(`Q${block.number}: question text is missing.`);
+      return;
+    }
+    if (options.length < 4) {
+      errors.push(`Q${block.number}: at least 4 options are required.`);
+      return;
+    }
+
+    const normalizedAnswer = answer.trim();
+    if (!normalizedAnswer) {
+      errors.push(`Q${block.number}: correct answer is missing.`);
+      return;
+    }
+
+    let resolvedAnswer = normalizedAnswer;
+    const answerLetter = normalizedAnswer.match(/^([A-Fa-f])(?:\b|\)|\.)?/);
+    if (answerLetter) {
+      const idx = answerLetter[1].toUpperCase().charCodeAt(0) - 65;
+      if (idx >= 0 && idx < options.length) {
+        resolvedAnswer = options[idx];
+      }
+    }
+
+    parsed.push({
+      question,
+      questionImageUrl,
+      options,
+      answer: resolvedAnswer,
+      tip: explanation,
+      difficulty,
+    });
+  });
+
+  return { parsed, errors };
+}
+
 function normalizeContributionActorKey(params: {
   submittedByUserId?: string;
   submittedByClientId?: string;
@@ -1928,16 +2062,33 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     } as T;
   }
 
+  if (url.pathname === '/api/admin/mcqs/parse' && method === 'POST') {
+    requireAdmin(token);
+    const sourceType = String(body.sourceType || 'text').trim().toLowerCase();
+
+    if (sourceType === 'file') {
+      throw new Error('File parsing requires the server API. Start backend and try again.');
+    }
+
+    return parseBulkMcqsFromText(String(body.rawText || '')) as T;
+  }
+
   if (url.pathname === '/api/admin/mcqs' && method === 'POST') {
     requireAdmin(token);
     const mcqs = await loadMcqs();
+    const normalizedSubject = String(body.subject || 'mathematics').toLowerCase().trim();
+    const isFlatTopicSubject = normalizedSubject === 'quantitative-mathematics' || normalizedSubject === 'design-aptitude';
+    const normalizedPart = String(body.part || '').toLowerCase().trim();
+    const normalizedChapter = String(body.chapter || '').trim();
+    const normalizedSection = String(body.section || '').trim();
+    const normalizedTopic = String(body.topic || 'General').trim();
     const payload = {
       id: `admin-${Date.now()}`,
-      subject: String(body.subject || 'mathematics') as SubjectKey,
-      part: String(body.part || '').toLowerCase(),
-      chapter: String(body.chapter || ''),
-      section: String(body.section || ''),
-      topic: String(body.topic || 'General'),
+      subject: normalizedSubject as SubjectKey,
+      part: isFlatTopicSubject ? '' : normalizedPart,
+      chapter: isFlatTopicSubject ? '' : normalizedChapter,
+      section: isFlatTopicSubject ? (normalizedSection || normalizedTopic) : normalizedSection,
+      topic: isFlatTopicSubject ? (normalizedTopic || normalizedSection) : normalizedTopic,
       question: String(body.question || ''),
       questionImageUrl: String(body.questionImageUrl || ''),
       options: Array.isArray(body.options) ? body.options.map((item: unknown) => String(item)) : [],
@@ -1946,8 +2097,16 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       difficulty: String(body.difficulty || 'Medium') as Difficulty,
     };
 
-    if (!payload.question || payload.options.length < 4 || !payload.answer || !payload.part || !payload.chapter || !payload.section) {
-      throw new Error('question, options (min 4), answer, part, chapter, and section are required.');
+    if (!payload.question || payload.options.length < 4 || !payload.answer || !payload.subject) {
+      throw new Error('question, options (min 4), answer, and subject are required.');
+    }
+
+    if (!isFlatTopicSubject && (!payload.part || !payload.chapter || !payload.section)) {
+      throw new Error('part, chapter, and section are required for this subject.');
+    }
+
+    if (isFlatTopicSubject && !payload.topic && !payload.section) {
+      throw new Error('topic is required for this subject.');
     }
 
     cachedMcqs = [payload as MCQ, ...mcqs];

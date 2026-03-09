@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import OpenAI from 'openai';
+import pdfParse from 'pdf-parse';
+import mammoth from 'mammoth';
 import { connectMongo } from './lib/mongo.js';
 import { UserModel } from './models/User.js';
 import { MCQModel } from './models/MCQ.js';
@@ -291,6 +293,213 @@ function getAttachmentSignalSnippet(attachment) {
   } catch {
     return '';
   }
+}
+
+function parseDataUrl(dataUrl) {
+  const raw = String(dataUrl || '').trim();
+  if (!raw.startsWith('data:')) return null;
+  const comma = raw.indexOf(',');
+  if (comma < 0) return null;
+
+  const meta = raw.slice(5, comma);
+  const payload = raw.slice(comma + 1);
+  const [mimeTypeRaw = 'application/octet-stream'] = meta.split(';');
+  const mimeType = String(mimeTypeRaw || 'application/octet-stream').trim().toLowerCase();
+  const isBase64 = /;base64/i.test(meta);
+
+  try {
+    const buffer = isBase64
+      ? Buffer.from(payload, 'base64')
+      : Buffer.from(decodeURIComponent(payload), 'utf8');
+    return { mimeType, buffer };
+  } catch {
+    return null;
+  }
+}
+
+function normalizePlainText(value) {
+  return String(value || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\u0000/g, ' ')
+    .replace(/\t/g, ' ')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \f\v]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function parseBulkMcqsFromText(raw) {
+  const text = normalizePlainText(raw);
+  if (!text) return { parsed: [], errors: ['No content found to parse.'] };
+
+  const starts = [];
+  const startRegex = /^\s*(\d{1,3})\s*[\).:-]\s+/gm;
+  let match;
+  while ((match = startRegex.exec(text))) {
+    starts.push({ index: match.index, number: match[1] });
+  }
+
+  if (!starts.length) {
+    return {
+      parsed: [],
+      errors: ['Could not detect question numbering. Use format like "1. ...", "2) ...", etc.'],
+    };
+  }
+
+  const blocks = starts.map((entry, idx) => {
+    const end = idx + 1 < starts.length ? starts[idx + 1].index : text.length;
+    return {
+      number: entry.number,
+      content: text.slice(entry.index, end).trim(),
+    };
+  });
+
+  const errors = [];
+  const parsed = [];
+
+  blocks.forEach((block) => {
+    const lines = block.content
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    if (!lines.length) {
+      errors.push(`Q${block.number}: empty block.`);
+      return;
+    }
+
+    lines[0] = lines[0].replace(/^\d{1,3}\s*[\).:-]\s*/, '').trim();
+
+    let questionImageUrl = '';
+    let answer = '';
+    let explanation = '';
+    let difficulty = 'Medium';
+    const questionLines = [];
+    const options = [];
+    let capturingExplanation = false;
+
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+
+      const imageMatch = line.match(/^(?:image|img|question\s*image)\s*[:=-]\s*(https?:\/\/\S+)$/i)
+        || line.match(/^!\[[^\]]*\]\((https?:\/\/[^\)\s]+)\)$/i);
+      if (imageMatch) {
+        questionImageUrl = imageMatch[1].trim();
+        continue;
+      }
+
+      const answerMatch = line.match(/^(?:correct\s*answer|answer)\s*[:=-]\s*(.+)$/i);
+      if (answerMatch) {
+        answer = answerMatch[1].trim();
+        capturingExplanation = false;
+        continue;
+      }
+
+      const explanationMatch = line.match(/^(?:explanation|solution|reason)\s*[:=-]\s*(.*)$/i);
+      if (explanationMatch) {
+        explanation = explanationMatch[1].trim();
+        capturingExplanation = true;
+        continue;
+      }
+
+      const difficultyMatch = line.match(/^difficulty\s*[:=-]\s*(easy|medium|hard)$/i);
+      if (difficultyMatch) {
+        const normalized = difficultyMatch[1].toLowerCase();
+        difficulty = normalized === 'easy' ? 'Easy' : normalized === 'hard' ? 'Hard' : 'Medium';
+        continue;
+      }
+
+      const optionMatch = line.match(/^(?:option\s*)?([A-Fa-f]|\d{1,2})\s*[\).:-]\s*(.+)$/);
+      if (optionMatch) {
+        options.push(optionMatch[2].trim());
+        capturingExplanation = false;
+        continue;
+      }
+
+      if (capturingExplanation) {
+        explanation = explanation ? `${explanation}\n${line}` : line;
+      } else {
+        questionLines.push(line);
+      }
+    }
+
+    const question = questionLines.join(' ').trim();
+    if (!question) {
+      errors.push(`Q${block.number}: question text is missing.`);
+      return;
+    }
+
+    if (options.length < 4) {
+      errors.push(`Q${block.number}: at least 4 options are required.`);
+      return;
+    }
+
+    const normalizedAnswer = answer.trim();
+    if (!normalizedAnswer) {
+      errors.push(`Q${block.number}: correct answer is missing.`);
+      return;
+    }
+
+    let resolvedAnswer = normalizedAnswer;
+    const answerLetter = normalizedAnswer.match(/^([A-Fa-f])(?:\b|\)|\.)?/);
+    if (answerLetter) {
+      const idx = answerLetter[1].toUpperCase().charCodeAt(0) - 65;
+      if (idx >= 0 && idx < options.length) {
+        resolvedAnswer = options[idx];
+      }
+    }
+
+    parsed.push({
+      question,
+      questionImageUrl,
+      options,
+      answer: resolvedAnswer,
+      tip: explanation,
+      difficulty,
+    });
+  });
+
+  return { parsed, errors };
+}
+
+async function extractTextFromUpload(filePayload) {
+  const fileName = String(filePayload?.name || '').trim();
+  const extension = path.extname(fileName).toLowerCase();
+  const fileMeta = parseDataUrl(filePayload?.dataUrl);
+  if (!fileMeta?.buffer?.length) {
+    throw new Error('Uploaded file data is invalid.');
+  }
+
+  const mimeType = String(filePayload?.mimeType || fileMeta.mimeType || '').toLowerCase().trim();
+  const sizeBytes = Number(filePayload?.size || fileMeta.buffer.length || 0);
+  if (!sizeBytes || sizeBytes > 8 * 1024 * 1024) {
+    throw new Error('Uploaded file must be between 1 byte and 8 MB.');
+  }
+
+  if (mimeType.includes('pdf') || extension === '.pdf') {
+    const parsed = await pdfParse(fileMeta.buffer);
+    return normalizePlainText(parsed?.text || '');
+  }
+
+  if (
+    mimeType.includes('officedocument.wordprocessingml.document')
+    || extension === '.docx'
+  ) {
+    const result = await mammoth.extractRawText({ buffer: fileMeta.buffer });
+    return normalizePlainText(result?.value || '');
+  }
+
+  if (mimeType.includes('msword') || extension === '.doc') {
+    // Legacy DOC is often binary; this fallback extracts any readable text blocks.
+    const text = normalizePlainText(fileMeta.buffer.toString('latin1'));
+    if (!text || text.length < 25) {
+      throw new Error('Could not reliably parse this DOC file. Please save it as DOCX and upload again.');
+    }
+    return text;
+  }
+
+  throw new Error('Unsupported file type. Upload PDF, DOC, or DOCX.');
 }
 
 async function checkSubmissionRestriction(actorKey) {
@@ -3152,6 +3361,27 @@ app.delete('/api/admin/mcqs/purge-all', authMiddleware, requireAdmin, async (_re
       attempts: attemptResult.deletedCount || 0,
     },
   });
+});
+
+app.post('/api/admin/mcqs/parse', authMiddleware, requireAdmin, async (req, res) => {
+  const sourceType = String(req.body?.sourceType || 'text').trim().toLowerCase();
+
+  try {
+    let sourceText = '';
+    if (sourceType === 'file') {
+      sourceText = await extractTextFromUpload(req.body?.file || {});
+    } else {
+      sourceText = String(req.body?.rawText || '').trim();
+    }
+
+    const parsedResult = parseBulkMcqsFromText(sourceText);
+    res.json(parsedResult);
+  } catch (error) {
+    res.status(400).json({
+      parsed: [],
+      errors: [error instanceof Error ? error.message : 'Could not parse content.'],
+    });
+  }
 });
 
 app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
