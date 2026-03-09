@@ -51,8 +51,18 @@ function shouldUseForcedLocalMode() {
   return env.VITE_FORCE_LOCAL_API === 'true' && canFallbackToLocalMode();
 }
 
-function shouldFallbackFromHttpError(path: string, status: number) {
+function isPremiumSensitivePath(path: string) {
+  return path.startsWith('/api/subscriptions/') || path.startsWith('/api/ai/');
+}
+
+function shouldFallbackFromHttpError(path: string, status: number, hasAuthToken: boolean) {
   if (!canFallbackToLocalMode()) {
+    return false;
+  }
+
+  // Do not switch premium/subscription endpoints to local mode when authenticated.
+  // Mixing remote auth with local subscription state can incorrectly re-lock premium features.
+  if (hasAuthToken && isPremiumSensitivePath(path)) {
     return false;
   }
 
@@ -135,6 +145,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
   };
 
   const initialToken = token || localStorage.getItem(TOKEN_STORAGE_KEY);
+  const hasAuthToken = Boolean(initialToken);
 
   let response: Response;
   try {
@@ -144,7 +155,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
     });
   } catch (error) {
     // If backend is unreachable, transparently fall back to browser-local mode.
-    if (canFallbackToLocalMode()) {
+    if (canFallbackToLocalMode() && !(hasAuthToken && isPremiumSensitivePath(path))) {
       return localApiRequest<T>(path, options, token);
     }
     throw error;
@@ -167,7 +178,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
       }
     }
 
-    if (shouldFallbackFromHttpError(path, response.status)) {
+    if (shouldFallbackFromHttpError(path, response.status, hasAuthToken)) {
       return localApiRequest<T>(path, options, token);
     }
 

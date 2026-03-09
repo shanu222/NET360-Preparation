@@ -98,6 +98,12 @@ interface ActivationWithTokenResponse {
   usage?: UsageInfo;
 }
 
+interface SubscriptionRefreshResult {
+  subscription: SubscriptionInfo;
+  activationRequest?: PremiumActivationRequest | null;
+  usage?: UsageInfo;
+}
+
 interface PremiumActivationRequest {
   id: string;
   planId: string;
@@ -221,10 +227,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
         const [latestPlan, plansPayload, mePayload] = await Promise.all([
           apiRequest<{ studyPlan: StudyPlan | null }>('/api/study-plans/latest', {}, token).catch(() => ({ studyPlan: null })),
           apiRequest<{ plans: SubscriptionPlan[] }>('/api/subscriptions/plans', {}, token).catch(() => ({ plans: [] })),
-          apiRequest<SubscriptionPayload>('/api/subscriptions/me', {}, token).catch(() => ({
-            subscription: emptySubscription,
-            usage: undefined,
-          })),
+          apiRequest<SubscriptionPayload>('/api/subscriptions/me', {}, token).catch(() => null),
         ]);
 
         if (cancelled) return;
@@ -238,9 +241,11 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
         }
 
         setPlans(plansPayload.plans || []);
-        setSubscription(mePayload.subscription || emptySubscription);
-        setActivationRequest(mePayload.activationRequest || null);
-        setAiUsage(mePayload.usage || null);
+        if (mePayload?.subscription) {
+          setSubscription(mePayload.subscription);
+          setActivationRequest(mePayload.activationRequest || null);
+          setAiUsage(mePayload.usage || null);
+        }
 
         if (!selectedPlanId && plansPayload.plans?.length) {
           const recommended = plansPayload.plans.find((item) => item.tier === 'pro' && item.billingCycle === 'monthly');
@@ -260,15 +265,21 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     };
   }, [token, user]);
 
-  const reloadSubscription = async () => {
-    if (!token) return;
+  const reloadSubscription = async (): Promise<SubscriptionRefreshResult | null> => {
+    if (!token) return null;
     try {
       const mePayload = await apiRequest<SubscriptionPayload>('/api/subscriptions/me', {}, token);
       setSubscription(mePayload.subscription || emptySubscription);
       setActivationRequest(mePayload.activationRequest || null);
       setAiUsage(mePayload.usage || null);
+      return {
+        subscription: mePayload.subscription || emptySubscription,
+        activationRequest: mePayload.activationRequest || null,
+        usage: mePayload.usage || null,
+      };
     } catch {
       // Keep current state on transient errors so a freshly activated plan does not appear locked.
+      return null;
     }
   };
 
@@ -305,8 +316,13 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     } catch (error) {
       const appError = error as { message?: string; code?: string };
       if (appError?.code === 'SUBSCRIPTION_REQUIRED') {
-        setSubscription(emptySubscription);
-        toast.error('Premium subscription required. Please activate a plan first.');
+        const refreshed = await reloadSubscription();
+        if (!refreshed?.subscription?.isActive) {
+          setSubscription(emptySubscription);
+          toast.error('Premium subscription required. Please activate a plan first.');
+        } else {
+          toast.error('Your premium status is active. Please retry your request.');
+        }
       } else {
         toast.error(error instanceof Error ? error.message : 'Could not reach the study mentor right now.');
       }
@@ -406,8 +422,13 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     } catch (error) {
       const appError = error as { message?: string; code?: string };
       if (appError?.code === 'SUBSCRIPTION_REQUIRED') {
-        setSubscription(emptySubscription);
-        toast.error('Premium subscription required. Please activate a plan first.');
+        const refreshed = await reloadSubscription();
+        if (!refreshed?.subscription?.isActive) {
+          setSubscription(emptySubscription);
+          toast.error('Premium subscription required. Please activate a plan first.');
+        } else {
+          toast.error('Your premium status is active. Please retry your request.');
+        }
       } else {
         toast.error(error instanceof Error ? error.message : 'Could not solve this question right now.');
       }

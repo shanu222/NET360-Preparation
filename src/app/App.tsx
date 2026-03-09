@@ -118,8 +118,8 @@ export default function App() {
   return (
     <AuthProvider>
       <AppDataProvider>
-      <div className="min-h-screen p-2 sm:p-4 md:p-5 xl:p-6">
-        <div className="net360-shell mx-auto flex w-full max-w-[1600px] flex-col gap-3 rounded-[24px] border border-white/70 bg-white/65 p-2 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl xl:flex-row xl:rounded-[28px]">
+      <div className="min-h-dvh p-1.5 sm:p-4 md:p-5 xl:p-6">
+        <div className="net360-shell mx-auto flex w-full max-w-[1600px] flex-col gap-2 rounded-[20px] border border-white/70 bg-white/65 p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl sm:gap-3 sm:rounded-[24px] sm:p-2 xl:flex-row xl:rounded-[28px]">
           {/* Desktop Sidebar */}
           <aside className="relative hidden xl:flex w-64 shrink-0 flex-col overflow-hidden rounded-3xl border border-indigo-300/30 bg-gradient-to-b from-[#5f4ee6] via-[#5b40d7] to-[#5e3ae0] p-4">
             <div className="pointer-events-none absolute -bottom-20 -left-16 h-56 w-72 rounded-full bg-fuchsia-400/25 blur-3xl" />
@@ -140,9 +140,9 @@ export default function App() {
             </ScrollArea>
           </aside>
 
-          <section className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white/85 to-[#f2f4ff]/80 backdrop-blur sm:rounded-3xl">
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white/85 to-[#f2f4ff]/80 backdrop-blur sm:rounded-3xl">
             {/* Header */}
-            <header className="sticky top-0 z-40 flex h-16 items-center justify-between rounded-t-2xl border-b border-indigo-100/70 bg-white/65 px-3 backdrop-blur-xl sm:px-5 sm:rounded-t-3xl">
+            <header className="sticky top-0 z-40 flex h-14 items-center justify-between rounded-t-2xl border-b border-indigo-100/70 bg-white/65 px-2.5 backdrop-blur-xl sm:h-16 sm:px-5 sm:rounded-t-3xl">
               <div className="flex items-center gap-3">
                 <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
                   <SheetTrigger asChild className="xl:hidden">
@@ -150,14 +150,16 @@ export default function App() {
                       <Menu className="w-5 h-5" />
                     </Button>
                   </SheetTrigger>
-                  <SheetContent side="left" className="w-[290px] p-0 border-white/20 bg-gradient-to-b from-[#5f4ee6] via-[#5b40d7] to-[#5e3ae0]">
-                    <div className="p-5 border-b border-white/20">
+                  <SheetContent side="left" className="h-dvh w-[290px] max-w-[88vw] overflow-hidden border-white/20 bg-gradient-to-b from-[#5f4ee6] via-[#5b40d7] to-[#5e3ae0] p-0">
+                    <div className="flex h-full min-h-0 flex-col">
+                    <div className="shrink-0 border-b border-white/20 p-5">
                       <h2 className="text-lg font-semibold text-white">NET360</h2>
                       <p className="text-xs text-indigo-100">Your Smart NET Preparation</p>
                     </div>
-                    <ScrollArea className="h-[calc(100vh-100px)] p-4">
+                    <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-8 [scrollbar-gutter:stable]">
                       <NavigationContent />
-                    </ScrollArea>
+                    </div>
+                    </div>
                   </SheetContent>
                 </Sheet>
                 <div>
@@ -185,7 +187,7 @@ export default function App() {
             </header>
 
             {/* Main Content */}
-            <main className="min-w-0 overflow-x-clip px-3 py-4 sm:px-5 sm:py-5">
+            <main className="min-w-0 overflow-x-clip px-2.5 py-3 sm:px-5 sm:py-5">
               <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-0">
                 <TabsContent value="home" className="mt-0">
                   <Dashboard onNavigate={setActiveTab} />
