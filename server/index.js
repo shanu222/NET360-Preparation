@@ -315,6 +315,14 @@ const PRACTICE_BOARD_ALLOWED_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
 const PRACTICE_BOARD_MAX_FILE_BYTES = 8 * 1024 * 1024;
+const COMMUNITY_PROFILE_PICTURE_ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/svg+xml',
+]);
+const COMMUNITY_PROFILE_PICTURE_MAX_BYTES = 3 * 1024 * 1024;
 
 function shuffle(array) {
   const copy = [...array];
@@ -512,6 +520,30 @@ function normalizePracticeBoardFile(input) {
     size,
     dataUrl,
   };
+}
+
+function normalizeCommunityProfilePicture(dataUrlRaw) {
+  const dataUrl = String(dataUrlRaw || '').trim();
+  if (!dataUrl) return '';
+  if (!dataUrl.startsWith('data:')) {
+    throw new Error('Profile picture must be uploaded as a valid image file.');
+  }
+
+  const parsed = parseDataUrl(dataUrl);
+  if (!parsed?.buffer) {
+    throw new Error('Invalid profile picture data.');
+  }
+
+  const mimeType = String(parsed.mimeType || '').trim().toLowerCase();
+  if (!COMMUNITY_PROFILE_PICTURE_ALLOWED_MIME_TYPES.has(mimeType)) {
+    throw new Error('Unsupported profile picture format. Use JPG, PNG, WEBP, GIF, or SVG.');
+  }
+
+  if (parsed.buffer.length > COMMUNITY_PROFILE_PICTURE_MAX_BYTES) {
+    throw new Error('Profile picture exceeds 3MB size limit.');
+  }
+
+  return dataUrl;
 }
 
 function normalizePlainText(value) {
@@ -1583,7 +1615,8 @@ async function applyCommunityViolation(userId, reason, sourceReportId = '') {
 function serializeCommunityUser(params) {
   const profile = params?.profile || {};
   const user = params?.user || {};
-  const showPicture = Boolean(profile.shareProfilePicture && profile.profilePictureUrl);
+  const includePrivatePicture = Boolean(params?.includePrivatePicture);
+  const showPicture = Boolean(profile.profilePictureUrl && (includePrivatePicture || profile.shareProfilePicture));
   return {
     id: String(user._id || ''),
     userId: String(user._id || ''),
@@ -2792,7 +2825,7 @@ async function communityWriteGuard(req, res) {
 app.get('/api/community/profile', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const profile = await getOrCreateCommunityProfile(req.user);
-  res.json({ profile: serializeCommunityUser({ user: req.user, profile }) });
+  res.json({ profile: serializeCommunityUser({ user: req.user, profile, includePrivatePicture: true }) });
 });
 
 app.put('/api/community/profile', authMiddleware, async (req, res) => {
@@ -2818,7 +2851,15 @@ app.put('/api/community/profile', authMiddleware, async (req, res) => {
   if (Object.prototype.hasOwnProperty.call(req.body || {}, 'shareProfilePicture')) {
     profile.shareProfilePicture = Boolean(req.body?.shareProfilePicture);
   }
-  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'profilePictureUrl')) {
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'profilePictureDataUrl')) {
+    try {
+      profile.profilePictureUrl = normalizeCommunityProfilePicture(req.body?.profilePictureDataUrl);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid profile picture upload.' });
+      return;
+    }
+  } else if (Object.prototype.hasOwnProperty.call(req.body || {}, 'profilePictureUrl')) {
+    // Backward compatibility for older clients still sending URL field.
     profile.profilePictureUrl = String(req.body?.profilePictureUrl || '').trim();
   }
   if (Array.isArray(req.body?.favoriteSubjects)) {
@@ -2846,7 +2887,7 @@ app.put('/api/community/profile', authMiddleware, async (req, res) => {
   }
 
   await profile.save();
-  res.json({ profile: serializeCommunityUser({ user: req.user, profile }) });
+  res.json({ profile: serializeCommunityUser({ user: req.user, profile, includePrivatePicture: true }) });
 });
 
 app.get('/api/community/users/search', authMiddleware, async (req, res) => {

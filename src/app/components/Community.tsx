@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -99,6 +99,57 @@ interface LeaderboardRow extends CommunityUser {
   improvement: number;
 }
 
+const PROFILE_PICTURE_ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/svg+xml',
+]);
+const PROFILE_PICTURE_MAX_BYTES = 3 * 1024 * 1024;
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Could not read selected image file.'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function getAvatarFallback(userLike: { firstName?: string; lastName?: string; username?: string }) {
+  const first = String(userLike.firstName || '').trim();
+  const last = String(userLike.lastName || '').trim();
+  const uname = String(userLike.username || '').trim();
+  const label = [first, last].filter(Boolean).join(' ') || uname || 'U';
+  const parts = label.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  }
+  return label.slice(0, 2).toUpperCase();
+}
+
+function CommunityAvatar({
+  userLike,
+  sizeClass = 'h-8 w-8',
+}: {
+  userLike: { firstName?: string; lastName?: string; username?: string; profilePictureUrl?: string };
+  sizeClass?: string;
+}) {
+  const image = String(userLike.profilePictureUrl || '').trim();
+  const fallback = getAvatarFallback(userLike);
+
+  if (image) {
+    return <img src={image} alt={fallback} className={`${sizeClass} rounded-full border object-cover`} />;
+  }
+
+  return (
+    <div className={`${sizeClass} grid place-items-center rounded-full border bg-slate-100 text-[11px] font-medium text-slate-600`}>
+      {fallback}
+    </div>
+  );
+}
+
 function displayName(user: CommunityUser) {
   const full = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
   return full || user.username || 'Student';
@@ -113,7 +164,8 @@ export function Community() {
 
   const [profile, setProfile] = useState<CommunityUser | null>(null);
   const [usernameInput, setUsernameInput] = useState('');
-  const [profilePictureUrl, setProfilePictureUrl] = useState('');
+  const [profilePictureDataUrl, setProfilePictureDataUrl] = useState('');
+  const [profilePictureUploadName, setProfilePictureUploadName] = useState('');
   const [shareProfilePicture, setShareProfilePicture] = useState(false);
   const [targetNetType, setTargetNetType] = useState('net-engineering');
   const [subjectsNeedHelpInput, setSubjectsNeedHelpInput] = useState('');
@@ -189,7 +241,8 @@ export function Community() {
 
     setProfile(profilePayload.profile || null);
     setUsernameInput(profilePayload.profile?.username || '');
-    setProfilePictureUrl(profilePayload.profile?.profilePictureUrl || '');
+    setProfilePictureDataUrl(profilePayload.profile?.profilePictureUrl || '');
+    setProfilePictureUploadName('');
     setShareProfilePicture(Boolean(profilePayload.profile?.shareProfilePicture));
     setTargetNetType(profilePayload.profile?.targetNetType || 'net-engineering');
     setSubjectsNeedHelpInput((profilePayload.profile?.subjectsNeedHelp || []).join(', '));
@@ -286,6 +339,86 @@ export function Community() {
     };
   }, [token, activeConnectionId]);
 
+  useEffect(() => {
+    if (!token) return;
+    let cancelled = false;
+    let running = false;
+
+    const poll = async () => {
+      if (running || cancelled) return;
+      running = true;
+      try {
+        const [requestsPayload, connectionsPayload, roomsPayload] = await Promise.all([
+          apiRequest<{ incoming: CommunityRequestRow[]; outgoing: CommunityRequestRow[] }>('/api/community/connections/requests', {}, token),
+          apiRequest<{ connections: ConnectionRow[] }>('/api/community/connections', {}, token),
+          apiRequest<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms', {}, token),
+        ]);
+
+        if (cancelled) return;
+        setIncomingRequests(requestsPayload.incoming || []);
+        setOutgoingRequests(requestsPayload.outgoing || []);
+        setConnections(connectionsPayload.connections || []);
+        setRooms(roomsPayload.rooms || []);
+
+        if (activeConnectionId) {
+          const messagePayload = await apiRequest<{ messages: MessageRow[] }>(`/api/community/messages/${activeConnectionId}`, {}, token);
+          if (!cancelled) setMessages(messagePayload.messages || []);
+        }
+
+        if (activeRoomId) {
+          const roomPayload = await apiRequest<{ posts: DiscussionPost[] }>(`/api/community/discussion-rooms/${activeRoomId}/posts`, {}, token);
+          if (!cancelled) setRoomPosts(roomPayload.posts || []);
+        }
+
+        if (activeTab === 'leaderboard') {
+          await loadLeaderboardAndBadges(leaderboardPeriod);
+        }
+      } catch {
+        // Silent polling failures; primary actions already show toasts.
+      } finally {
+        running = false;
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void poll();
+    }, 5000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [token, activeConnectionId, activeRoomId, activeTab, leaderboardPeriod]);
+
+  const onProfilePictureSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const selected = event.target.files?.[0] || null;
+    if (!selected) return;
+
+    const mimeType = String(selected.type || '').toLowerCase();
+    if (!PROFILE_PICTURE_ALLOWED_MIME_TYPES.has(mimeType)) {
+      toast.error('Profile picture format not supported. Use JPG, PNG, WEBP, GIF, or SVG.');
+      event.currentTarget.value = '';
+      return;
+    }
+
+    if (selected.size > PROFILE_PICTURE_MAX_BYTES) {
+      toast.error('Profile picture exceeds 3MB limit.');
+      event.currentTarget.value = '';
+      return;
+    }
+
+    try {
+      const dataUrl = await fileToDataUrl(selected);
+      setProfilePictureDataUrl(dataUrl);
+      setProfilePictureUploadName(selected.name);
+      toast.success('Profile picture selected. Save profile to apply.');
+    } catch {
+      toast.error('Could not read selected profile picture.');
+    } finally {
+      event.currentTarget.value = '';
+    }
+  };
+
   const saveCommunityProfile = async () => {
     if (!token) return;
     try {
@@ -301,7 +434,7 @@ export function Community() {
           method: 'PUT',
           body: JSON.stringify({
             username: usernameInput,
-            profilePictureUrl,
+            profilePictureDataUrl,
             shareProfilePicture,
             targetNetType,
             subjectsNeedHelp,
@@ -314,6 +447,8 @@ export function Community() {
         token,
       );
       setProfile(payload.profile);
+      setProfilePictureDataUrl(payload.profile?.profilePictureUrl || profilePictureDataUrl);
+      setProfilePictureUploadName('');
       toast.success('Community profile updated.');
       await refreshCommunity();
     } catch (error) {
@@ -497,8 +632,29 @@ export function Community() {
                   <Input value={usernameInput} onChange={(e) => setUsernameInput(e.target.value)} placeholder="e.g. future-engineer" />
                 </div>
                 <div className="space-y-1.5">
-                  <Label>Profile Picture URL (optional)</Label>
-                  <Input value={profilePictureUrl} onChange={(e) => setProfilePictureUrl(e.target.value)} placeholder="https://..." />
+                  <Label>Profile Picture Upload (optional)</Label>
+                  <Input
+                    type="file"
+                    accept=".jpg,.jpeg,.png,.webp,.gif,.svg,image/jpeg,image/png,image/webp,image/gif,image/svg+xml"
+                    onChange={(e) => void onProfilePictureSelected(e)}
+                  />
+                  {profilePictureUploadName ? <p className="text-xs text-muted-foreground">Selected: {profilePictureUploadName}</p> : null}
+                  {profilePictureDataUrl ? (
+                    <div className="flex items-center gap-3 rounded-md border p-2">
+                      <img src={profilePictureDataUrl} alt="Profile preview" className="h-12 w-12 rounded-full border object-cover" />
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => {
+                          setProfilePictureDataUrl('');
+                          setProfilePictureUploadName('');
+                        }}
+                      >
+                        Remove Picture
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -583,8 +739,13 @@ export function Community() {
                 <div className="space-y-2 max-h-[320px] overflow-auto">
                   {searchResults.map((result) => (
                     <div key={result.id} className="rounded-lg border p-3">
-                      <p className="text-sm">{displayName(result)}</p>
-                      <p className="text-xs text-muted-foreground">{result.targetProgram || 'Program not set'}{result.city ? `  ${result.city}` : ''}</p>
+                      <div className="flex items-start gap-2">
+                        <CommunityAvatar userLike={result} />
+                        <div>
+                          <p className="text-sm">{displayName(result)}</p>
+                          <p className="text-xs text-muted-foreground">{result.targetProgram || 'Program not set'}{result.city ? `  ${result.city}` : ''}</p>
+                        </div>
+                      </div>
                       <div className="mt-2 flex items-center justify-between gap-2">
                         <Badge variant="outline">{result.connectionStatus || 'none'}</Badge>
                         <div className="flex gap-1">
@@ -610,7 +771,10 @@ export function Community() {
                   <div className="space-y-2 max-h-[220px] overflow-auto">
                     {incomingRequests.map((item) => (
                       <div key={item.id} className="rounded-lg border p-3 space-y-2">
-                        <p className="text-sm">{displayName(item.user)}</p>
+                        <div className="flex items-center gap-2">
+                          <CommunityAvatar userLike={item.user} />
+                          <p className="text-sm">{displayName(item.user)}</p>
+                        </div>
                         <div className="flex gap-2">
                           <Button size="sm" onClick={() => void respondToRequest(item.id, 'accept')}>Accept</Button>
                           <Button size="sm" variant="outline" onClick={() => void respondToRequest(item.id, 'reject')}>Reject</Button>
@@ -625,7 +789,10 @@ export function Community() {
                   <div className="space-y-2 max-h-[220px] overflow-auto">
                     {outgoingRequests.map((item) => (
                       <div key={item.id} className="rounded-lg border p-3">
-                        <p className="text-sm">{displayName(item.user)}</p>
+                        <div className="flex items-center gap-2">
+                          <CommunityAvatar userLike={item.user} />
+                          <p className="text-sm">{displayName(item.user)}</p>
+                        </div>
                         <Badge variant="outline" className="mt-2">Pending</Badge>
                       </div>
                     ))}
@@ -639,7 +806,10 @@ export function Community() {
           {profilePreview ? (
             <Card>
               <CardHeader>
-                <CardTitle>{displayName(profilePreview)}</CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  <CommunityAvatar userLike={profilePreview} />
+                  <span>{displayName(profilePreview)}</span>
+                </CardTitle>
                 <CardDescription>Profile preview</CardDescription>
               </CardHeader>
               <CardContent className="space-y-1 text-sm text-muted-foreground">
@@ -664,12 +834,15 @@ export function Community() {
               {studyPartners.map((item) => (
                 <div key={item.user.id} className="rounded-lg border p-3">
                   <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm font-medium">{displayName(item.user)}</p>
-                      <p className="text-xs text-muted-foreground">{item.user.targetNetType || 'NET profile pending'}</p>
-                      <p className="text-xs text-muted-foreground">Needs help: {(item.user.subjectsNeedHelp || []).join(', ') || 'Not set'}</p>
-                      <p className="text-xs text-muted-foreground">Score: {Math.round(Number(item.user.score || 0))}  {item.user.studyTimePreference || 'flexible'} sessions</p>
-                      {item.reasons?.length ? <p className="text-xs text-emerald-700 mt-1">{item.reasons.join(' | ')}</p> : null}
+                    <div className="flex items-start gap-2">
+                      <CommunityAvatar userLike={item.user} />
+                      <div>
+                        <p className="text-sm font-medium">{displayName(item.user)}</p>
+                        <p className="text-xs text-muted-foreground">{item.user.targetNetType || 'NET profile pending'}</p>
+                        <p className="text-xs text-muted-foreground">Needs help: {(item.user.subjectsNeedHelp || []).join(', ') || 'Not set'}</p>
+                        <p className="text-xs text-muted-foreground">Score: {Math.round(Number(item.user.score || 0))}  {item.user.studyTimePreference || 'flexible'} sessions</p>
+                        {item.reasons?.length ? <p className="text-xs text-emerald-700 mt-1">{item.reasons.join(' | ')}</p> : null}
+                      </div>
                     </div>
                     <Badge>{Math.round(item.compatibility)}% match</Badge>
                   </div>
@@ -828,8 +1001,13 @@ export function Community() {
                         onClick={() => setActiveConnectionId(item.connectionId)}
                         className={`w-full rounded-lg border p-3 text-left ${activeConnectionId === item.connectionId ? 'border-indigo-400 bg-indigo-50' : ''}`}
                       >
-                        <p className="text-sm">{displayName(item.user)}</p>
-                        <p className="text-xs text-muted-foreground">{item.user.targetProgram || 'Study partner'}</p>
+                        <div className="flex items-center gap-2">
+                          <CommunityAvatar userLike={item.user} />
+                          <div>
+                            <p className="text-sm">{displayName(item.user)}</p>
+                            <p className="text-xs text-muted-foreground">{item.user.targetProgram || 'Study partner'}</p>
+                          </div>
+                        </div>
                         {item.unreadCount > 0 ? <Badge className="mt-2">{item.unreadCount} unread</Badge> : null}
                       </button>
                     ))}
@@ -843,7 +1021,12 @@ export function Community() {
               <CardHeader>
                 <CardTitle>Private Chat</CardTitle>
                 <CardDescription>
-                  {activeConnection ? `Chat with ${displayName(activeConnection.user)}` : 'Select a connection to start chatting.'}
+                  {activeConnection ? (
+                    <span className="inline-flex items-center gap-2">
+                      <CommunityAvatar userLike={activeConnection.user} sizeClass="h-6 w-6" />
+                      {`Chat with ${displayName(activeConnection.user)}`}
+                    </span>
+                  ) : 'Select a connection to start chatting.'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">

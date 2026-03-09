@@ -1228,6 +1228,58 @@ function localNormalizeUsername(input: string) {
     .slice(0, 32);
 }
 
+const LOCAL_COMMUNITY_PROFILE_PICTURE_ALLOWED_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/svg+xml',
+]);
+const LOCAL_COMMUNITY_PROFILE_PICTURE_MAX_BYTES = 3 * 1024 * 1024;
+
+function parseLocalDataUrl(rawValue: string) {
+  const raw = String(rawValue || '').trim();
+  if (!raw.startsWith('data:')) return null;
+  const comma = raw.indexOf(',');
+  if (comma < 0) return null;
+
+  const meta = raw.slice(5, comma);
+  const payload = raw.slice(comma + 1);
+  const [mimeTypeRaw = 'application/octet-stream'] = meta.split(';');
+  const mimeType = String(mimeTypeRaw || 'application/octet-stream').trim().toLowerCase();
+  const isBase64 = /;base64/i.test(meta);
+
+  try {
+    const bytes = isBase64
+      ? Uint8Array.from(atob(payload), (ch) => ch.charCodeAt(0))
+      : new TextEncoder().encode(decodeURIComponent(payload));
+    return { mimeType, size: bytes.length };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeLocalCommunityProfilePicture(dataUrlRaw: string) {
+  const dataUrl = String(dataUrlRaw || '').trim();
+  if (!dataUrl) return '';
+  if (!dataUrl.startsWith('data:')) {
+    throw new Error('Profile picture must be uploaded as an image file.');
+  }
+
+  const parsed = parseLocalDataUrl(dataUrl);
+  if (!parsed) {
+    throw new Error('Invalid profile picture data.');
+  }
+  if (!LOCAL_COMMUNITY_PROFILE_PICTURE_ALLOWED_MIME_TYPES.has(parsed.mimeType)) {
+    throw new Error('Unsupported profile picture format. Use JPG, PNG, WEBP, GIF, or SVG.');
+  }
+  if (parsed.size > LOCAL_COMMUNITY_PROFILE_PICTURE_MAX_BYTES) {
+    throw new Error('Profile picture exceeds 3MB size limit.');
+  }
+
+  return dataUrl;
+}
+
 function getOrCreateLocalCommunityProfile(db: LocalDb, user: LocalUser) {
   let profile = db.communityProfiles.find((item) => item.userId === user.id);
   if (!profile) {
@@ -1244,7 +1296,7 @@ function getOrCreateLocalCommunityProfile(db: LocalDb, user: LocalUser) {
   return profile;
 }
 
-function serializeLocalCommunityUser(user: LocalUser, profile?: LocalCommunityProfile) {
+function serializeLocalCommunityUser(user: LocalUser, profile?: LocalCommunityProfile, options?: { includePrivatePicture?: boolean }) {
   const resolvedProfile = profile || {
     userId: user.id,
     username: localNormalizeUsername(user.firstName || user.email.split('@')[0] || 'student'),
@@ -1263,7 +1315,7 @@ function serializeLocalCommunityUser(user: LocalUser, profile?: LocalCommunityPr
     weakTopics: Array.isArray(user.progress?.weakTopics) ? user.progress.weakTopics : [],
     username: resolvedProfile.username,
     shareProfilePicture: resolvedProfile.shareProfilePicture,
-    profilePictureUrl: resolvedProfile.shareProfilePicture ? resolvedProfile.profilePictureUrl : '',
+    profilePictureUrl: resolvedProfile.shareProfilePicture || options?.includePrivatePicture ? resolvedProfile.profilePictureUrl : '',
     favoriteSubjects: resolvedProfile.favoriteSubjects || [],
   };
 }
@@ -1529,7 +1581,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     }
     const profile = getOrCreateLocalCommunityProfile(db, user);
     writeDb(db);
-    return { profile: serializeLocalCommunityUser(user, profile) } as T;
+    return { profile: serializeLocalCommunityUser(user, profile, { includePrivatePicture: true }) } as T;
   }
 
   if (url.pathname === '/api/community/profile' && method === 'PUT') {
@@ -1540,10 +1592,14 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const taken = db.communityProfiles.some((item) => item.userId !== user.id && item.username === username);
     if (taken) throw new Error('Username is already taken.');
     profile.username = username;
-    profile.profilePictureUrl = String(body.profilePictureUrl || '').trim();
+    if (Object.prototype.hasOwnProperty.call(body, 'profilePictureDataUrl')) {
+      profile.profilePictureUrl = normalizeLocalCommunityProfilePicture(String(body.profilePictureDataUrl || ''));
+    } else if (Object.prototype.hasOwnProperty.call(body, 'profilePictureUrl')) {
+      profile.profilePictureUrl = String(body.profilePictureUrl || '').trim();
+    }
     profile.shareProfilePicture = Boolean(body.shareProfilePicture);
     writeDb(db);
-    return { profile: serializeLocalCommunityUser(user, profile) } as T;
+    return { profile: serializeLocalCommunityUser(user, profile, { includePrivatePicture: true }) } as T;
   }
 
   if (url.pathname === '/api/community/users/search' && method === 'GET') {
