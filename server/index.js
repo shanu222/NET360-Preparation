@@ -1496,8 +1496,29 @@ function defaultSubscription() {
   };
 }
 
+function toPlainRecord(value) {
+  if (!value || typeof value !== 'object') return {};
+  if (typeof value.toObject === 'function') {
+    return value.toObject();
+  }
+  if (value._doc && typeof value._doc === 'object') {
+    return value._doc;
+  }
+  return value;
+}
+
 function normalizeSubscription(user) {
-  return { ...defaultSubscription(), ...(user?.subscription || {}) };
+  const plainUser = toPlainRecord(user);
+  const userSubscription = plainUser.subscription
+    || (typeof user?.get === 'function' ? user.get('subscription') : null)
+    || user?.subscription
+    || {};
+  const plainSubscription = toPlainRecord(userSubscription);
+
+  return {
+    ...defaultSubscription(),
+    ...plainSubscription,
+  };
 }
 
 function resolveSubscriptionPlan(planId) {
@@ -4978,7 +4999,7 @@ app.post('/api/subscriptions/activate-with-token', authMiddleware, async (req, r
 
   const startedAt = new Date();
   const expiresAt = new Date(startedAt.getTime() + plan.expiresInDays * 24 * 60 * 60 * 1000);
-  req.user.subscription = {
+  const nextSubscription = {
     status: 'active',
     planId: plan.id,
     billingCycle: plan.billingCycle,
@@ -4987,7 +5008,18 @@ app.post('/api/subscriptions/activate-with-token', authMiddleware, async (req, r
     paymentReference: request.paymentTransactionId,
     lastActivatedAt: startedAt,
   };
-  await req.user.save();
+
+  await UserModel.findByIdAndUpdate(
+    req.user._id,
+    {
+      $set: {
+        subscription: nextSubscription,
+      },
+    },
+    { runValidators: true },
+  );
+
+  req.user.subscription = nextSubscription;
 
   activationToken.status = 'used';
   activationToken.usedAt = new Date();
@@ -4996,11 +5028,14 @@ app.post('/api/subscriptions/activate-with-token', authMiddleware, async (req, r
   request.status = 'completed';
   await request.save();
 
+  const updatedUser = await UserModel.findById(req.user._id).lean();
+  const normalizedSubscription = normalizeSubscription(updatedUser || req.user);
+
   res.status(201).json({
     ok: true,
     subscription: {
-      ...normalizeSubscription(req.user),
-      isActive: true,
+      ...normalizedSubscription,
+      isActive: isSubscriptionActive(normalizedSubscription),
       planName: plan.name,
       dailyAiLimit: plan.dailyAiLimit,
     },
