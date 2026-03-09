@@ -712,12 +712,54 @@ function parseBody(options: RequestInit) {
   return {};
 }
 
+function normalizeBulkText(raw: string): string {
+  return String(raw || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\t/g, ' ')
+    .replace(/[ \f\v]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/([^\n])\s+((?:q(?:uestion)?\s*)?\d{1,3}\s*[\).:-])/gi, '$1\n$2')
+    .trim();
+}
+
+function splitInlineOptions(line: string): string[] {
+  const compact = String(line || '').replace(/\s+/g, ' ').trim();
+  if (!compact) return [];
+
+  const markerRegex = /(?:^|\s)([A-H])(?:[\).:-])?\s+/g;
+  const markers: Array<{ label: string; markerPos: number; valueStart: number }> = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = markerRegex.exec(compact))) {
+    const label = String(match[1] || '').toUpperCase();
+    const markerPos = compact.indexOf(label, match.index);
+    markers.push({ label, markerPos, valueStart: markerRegex.lastIndex });
+  }
+
+  const startsWithMarker = /^[A-H](?:[\).:-])?\s+\S/.test(compact);
+  if (!markers.length || (!startsWithMarker && markers.length < 2)) {
+    return [];
+  }
+
+  const extracted: string[] = [];
+  for (let i = 0; i < markers.length; i += 1) {
+    const current = markers[i];
+    const next = markers[i + 1];
+    const end = next ? next.markerPos : compact.length;
+    const segment = compact.slice(current.valueStart, end).trim();
+    if (segment) extracted.push(segment);
+  }
+
+  return extracted;
+}
+
 function parseBulkMcqsFromText(raw: string): { parsed: Array<{ question: string; questionImageUrl: string; options: string[]; answer: string; tip: string; difficulty: 'Easy' | 'Medium' | 'Hard' }>; errors: string[] } {
-  const text = String(raw || '').replace(/\r\n/g, '\n').trim();
+  const text = normalizeBulkText(raw);
   if (!text) return { parsed: [], errors: ['No content found to parse.'] };
 
   const starts: Array<{ index: number; number: string }> = [];
-  const startRegex = /^\s*(\d{1,3})\s*[\).:-]\s+/gm;
+  const startRegex = /^\s*(?:q(?:uestion)?\s*)?(\d{1,3})\s*[\).:-]\s+/gim;
   let match: RegExpExecArray | null;
   while ((match = startRegex.exec(text))) {
     starts.push({ index: match.index, number: match[1] });
@@ -752,7 +794,7 @@ function parseBulkMcqsFromText(raw: string): { parsed: Array<{ question: string;
       return;
     }
 
-    lines[0] = lines[0].replace(/^\d{1,3}\s*[\).:-]\s*/, '').trim();
+    lines[0] = lines[0].replace(/^(?:q(?:uestion)?\s*)?\d{1,3}\s*[\).:-]\s*/i, '').trim();
 
     let questionImageUrl = '';
     let answer = '';
@@ -794,7 +836,14 @@ function parseBulkMcqsFromText(raw: string): { parsed: Array<{ question: string;
         continue;
       }
 
-      const optionMatch = line.match(/^(?:option\s*)?([A-Fa-f]|\d{1,2})\s*[\).:-]\s*(.+)$/);
+      const inlineOptions = splitInlineOptions(line);
+      if (inlineOptions.length) {
+        options.push(...inlineOptions);
+        capturingExplanation = false;
+        continue;
+      }
+
+      const optionMatch = line.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\s*[\).:-])?\s+(.+)$/);
       if (optionMatch) {
         options.push(optionMatch[2].trim());
         capturingExplanation = false;
@@ -825,7 +874,7 @@ function parseBulkMcqsFromText(raw: string): { parsed: Array<{ question: string;
     }
 
     let resolvedAnswer = normalizedAnswer;
-    const answerLetter = normalizedAnswer.match(/^([A-Fa-f])(?:\b|\)|\.)?/);
+    const answerLetter = normalizedAnswer.match(/(?:option\s*)?([A-Ha-h])(?:\b|\)|\.|:)?/);
     if (answerLetter) {
       const idx = answerLetter[1].toUpperCase().charCodeAt(0) - 65;
       if (idx >= 0 && idx < options.length) {

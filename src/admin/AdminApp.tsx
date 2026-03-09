@@ -250,12 +250,54 @@ function emptyPracticeForm() {
   };
 }
 
+function normalizeBulkText(raw: string): string {
+  return String(raw || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\t/g, ' ')
+    .replace(/[ \f\v]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/([^\n])\s+((?:q(?:uestion)?\s*)?\d{1,3}\s*[\).:-])/gi, '$1\n$2')
+    .trim();
+}
+
+function splitInlineOptions(line: string): string[] {
+  const compact = String(line || '').replace(/\s+/g, ' ').trim();
+  if (!compact) return [];
+
+  const markerRegex = /(?:^|\s)([A-H])(?:[\).:-])?\s+/g;
+  const markers: Array<{ label: string; markerPos: number; valueStart: number }> = [];
+  let match: RegExpExecArray | null;
+
+  while ((match = markerRegex.exec(compact))) {
+    const label = String(match[1] || '').toUpperCase();
+    const markerPos = compact.indexOf(label, match.index);
+    markers.push({ label, markerPos, valueStart: markerRegex.lastIndex });
+  }
+
+  const startsWithMarker = /^[A-H](?:[\).:-])?\s+\S/.test(compact);
+  if (!markers.length || (!startsWithMarker && markers.length < 2)) {
+    return [];
+  }
+
+  const extracted: string[] = [];
+  for (let i = 0; i < markers.length; i += 1) {
+    const current = markers[i];
+    const next = markers[i + 1];
+    const end = next ? next.markerPos : compact.length;
+    const segment = compact.slice(current.valueStart, end).trim();
+    if (segment) extracted.push(segment);
+  }
+
+  return extracted;
+}
+
 function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[] } {
-  const text = String(raw || '').replace(/\r\n/g, '\n').trim();
+  const text = normalizeBulkText(raw);
   if (!text) return { parsed: [], errors: ['Paste questions before uploading.'] };
 
   const starts: Array<{ index: number; number: string }> = [];
-  const startRegex = /^\s*(\d{1,3})\s*[\).:-]\s+/gm;
+  const startRegex = /^\s*(?:q(?:uestion)?\s*)?(\d{1,3})\s*[\).:-]\s+/gim;
   let match: RegExpExecArray | null;
   while ((match = startRegex.exec(text))) {
     starts.push({ index: match.index, number: match[1] });
@@ -290,7 +332,7 @@ function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[]
       return;
     }
 
-    lines[0] = lines[0].replace(/^\d{1,3}\s*[\).:-]\s*/, '').trim();
+    lines[0] = lines[0].replace(/^(?:q(?:uestion)?\s*)?\d{1,3}\s*[\).:-]\s*/i, '').trim();
 
     let questionImageUrl = '';
     let answer = '';
@@ -332,7 +374,14 @@ function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[]
         continue;
       }
 
-      const optionMatch = line.match(/^(?:option\s*)?([A-Fa-f]|\d{1,2})\s*[\).:-]\s*(.+)$/);
+      const inlineOptions = splitInlineOptions(line);
+      if (inlineOptions.length) {
+        options.push(...inlineOptions);
+        capturingExplanation = false;
+        continue;
+      }
+
+      const optionMatch = line.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\s*[\).:-])?\s+(.+)$/);
       if (optionMatch) {
         options.push(optionMatch[2].trim());
         capturingExplanation = false;
@@ -363,7 +412,7 @@ function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[]
     }
 
     let resolvedAnswer = normalizedAnswer;
-    const answerLetter = normalizedAnswer.match(/^([A-Fa-f])(?:\b|\)|\.)?/);
+    const answerLetter = normalizedAnswer.match(/(?:option\s*)?([A-Ha-h])(?:\b|\)|\.|:)?/);
     if (answerLetter) {
       const idx = answerLetter[1].toUpperCase().charCodeAt(0) - 65;
       if (idx >= 0 && idx < options.length) {
@@ -390,6 +439,17 @@ function hierarchyLabel(selection: SelectedHierarchy | null): string {
     return `${selection.subject} / ${selection.part} / ${selection.chapterTitle} / ${selection.sectionTitle}`;
   }
   return `${selection.subject} / ${selection.sectionTitle}`;
+}
+
+function resolveAnswerLabel(options: string[], answer: string): string {
+  const normalized = String(answer || '').trim().toLowerCase();
+  const answerIndex = options.findIndex((option) => String(option || '').trim().toLowerCase() === normalized);
+  if (answerIndex >= 0) return String.fromCharCode(65 + answerIndex);
+
+  const directLetter = String(answer || '').trim().match(/^([A-Ha-h])(?:\b|\)|\.|:)?/);
+  if (directLetter) return directLetter[1].toUpperCase();
+
+  return String(answer || '').trim();
 }
 
 function fileToDataUrl(file: File): Promise<string> {
@@ -1744,16 +1804,27 @@ export default function AdminApp() {
                         <div className="max-h-[320px] space-y-2 overflow-auto pr-1">
                           {bulkParsed.map((item, idx) => (
                             <div key={`${idx}-${item.question.slice(0, 30)}`} className="rounded-md border p-2 text-xs">
-                              <p className="font-medium">Q{idx + 1}. {item.question}</p>
-                              <div className="mt-1 space-y-0.5 text-muted-foreground">
+                              <p className="font-medium">Q{idx + 1}. Question</p>
+                              <p className="mt-1">{item.question}</p>
+
+                              <p className="mt-2 font-medium">Options:</p>
+                              <div className="mt-1 space-y-0.5">
                                 {item.options.map((option, optionIdx) => (
                                   <p key={`${idx}-opt-${optionIdx}`}>
                                     {String.fromCharCode(65 + optionIdx)}) {option}
                                   </p>
                                 ))}
                               </div>
-                              <p className="mt-1">Answer: <span className="font-medium">{item.answer}</span></p>
-                              {item.tip ? <p className="mt-1 text-muted-foreground">Explanation: {item.tip}</p> : null}
+
+                              <p className="mt-2 font-medium">Correct Answer:</p>
+                              <p>{resolveAnswerLabel(item.options, item.answer)}</p>
+
+                              {item.tip ? (
+                                <>
+                                  <p className="mt-2 font-medium">Explanation:</p>
+                                  <p className="whitespace-pre-wrap text-muted-foreground">{item.tip}</p>
+                                </>
+                              ) : null}
                             </div>
                           ))}
                         </div>
