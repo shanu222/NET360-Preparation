@@ -132,7 +132,7 @@ interface SignupRequest {
     size: number;
     dataUrl: string;
   };
-  contactMethod?: 'sms' | 'email' | 'whatsapp';
+  contactMethod?: 'whatsapp';
   contactValue?: string;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   notes?: string;
@@ -156,7 +156,7 @@ interface PremiumSubscriptionRequest {
     size: number;
     dataUrl: string;
   };
-  contactMethod: 'sms' | 'email' | 'whatsapp';
+  contactMethod: 'whatsapp';
   contactValue: string;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   notes?: string;
@@ -1213,42 +1213,23 @@ export default function AdminApp() {
   };
 
   const sendTokenShortcut = (
-    method: 'sms' | 'email' | 'whatsapp',
+    method: 'whatsapp',
     targetValue: string,
     tokenCode: string,
     purpose: 'signup' | 'premium',
-    fallbackEmail?: string,
   ) => {
     const target = String(targetValue || '').trim();
-    const fallback = String(fallbackEmail || '').trim();
     const message = purpose === 'premium'
       ? `NET360 premium activation token: ${tokenCode}. Use this to activate your subscription.`
       : `NET360 signup token: ${tokenCode}. Use this to complete your registration.`;
 
-    if (method === 'email') {
-      const emailTarget = target || fallback;
-      if (!emailTarget) {
-        toast.error('Email is missing for this request.');
-        return;
-      }
-      const mailto = `mailto:${encodeURIComponent(emailTarget)}?subject=${encodeURIComponent('NET360 Token')}&body=${encodeURIComponent(message)}`;
-      window.open(mailto, '_blank', 'noopener,noreferrer');
-      return;
-    }
-
     if (!target) {
-      toast.error('Mobile/WhatsApp number is missing for this request.');
+      toast.error('WhatsApp number is missing for this request.');
       return;
     }
 
-    if (method === 'whatsapp') {
-      const waUrl = `https://wa.me/${encodeURIComponent(target.replace(/\D/g, ''))}?text=${encodeURIComponent(message)}`;
-      window.open(waUrl, '_blank', 'noopener,noreferrer');
-      return;
-    }
-
-    const smsUrl = `sms:${encodeURIComponent(target)}?body=${encodeURIComponent(message)}`;
-    window.location.href = smsUrl;
+    const waUrl = `https://wa.me/${encodeURIComponent(target.replace(/\D/g, ''))}?text=${encodeURIComponent(message)}`;
+    window.open(waUrl, '_blank', 'noopener,noreferrer');
   };
 
   const resetForm = () => {
@@ -2254,7 +2235,7 @@ export default function AdminApp() {
                         size="sm"
                         variant="outline"
                         className="h-6 px-2 text-[11px]"
-                        onClick={() => sendTokenShortcut(request.contactMethod || 'sms', request.contactValue || request.mobileNumber, issuedTokens[request.id], 'signup', request.email)}
+                        onClick={() => sendTokenShortcut('whatsapp', request.contactValue || request.mobileNumber, issuedTokens[request.id], 'signup')}
                       >
                         Send Token
                       </Button>
@@ -2277,7 +2258,7 @@ export default function AdminApp() {
           <Card>
             <CardHeader>
               <CardTitle>Premium Subscription Management</CardTitle>
-              <CardDescription>Verify premium payments, generate activation tokens, and send via email/SMS/WhatsApp.</CardDescription>
+              <CardDescription>Verify premium payments, generate activation tokens, and send via WhatsApp.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid gap-2 md:grid-cols-[220px_1fr]">
@@ -2355,7 +2336,7 @@ export default function AdminApp() {
                             size="sm"
                             variant="outline"
                             className="h-7 px-2 text-[11px]"
-                            onClick={() => sendTokenShortcut(request.contactMethod, request.contactValue, issuedPremiumTokens[request.id], 'premium', request.email)}
+                            onClick={() => sendTokenShortcut('whatsapp', request.contactValue, issuedPremiumTokens[request.id], 'premium')}
                           >
                             Send Token
                           </Button>

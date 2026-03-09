@@ -103,7 +103,7 @@ interface PremiumActivationRequest {
     size: number;
     dataUrl: string;
   };
-  contactMethod: 'sms' | 'email' | 'whatsapp';
+  contactMethod: 'whatsapp';
   contactValue: string;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   notes?: string;
@@ -166,7 +166,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'easypaisa' | 'jazzcash' | 'bank_transfer'>('easypaisa');
   const [paymentTransactionId, setPaymentTransactionId] = useState('');
-  const [contactMethod, setContactMethod] = useState<'sms' | 'email' | 'whatsapp'>('sms');
+  const [contactMethod, setContactMethod] = useState<'whatsapp'>('whatsapp');
   const [contactValue, setContactValue] = useState('');
   const [paymentProof, setPaymentProof] = useState<null | {
     name: string;
@@ -366,6 +366,8 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     }
   };
 
+  const isValidInternationalWhatsApp = (value: string) => /^\+[1-9]\d{7,14}$/.test(value.trim());
+
   const solveQuestion = async () => {
     if (!token || !user) {
       toast.error('Login required to use premium solver.');
@@ -431,6 +433,11 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
     if (!contactValue.trim()) {
       toast.error('Enter contact details to receive your activation token.');
+      return;
+    }
+
+    if (!isValidInternationalWhatsApp(contactValue)) {
+      toast.error('Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).');
       return;
     }
 
@@ -655,28 +662,25 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
               <div className="grid gap-2 md:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label htmlFor="premium-contact-method">Token Delivery Method</Label>
-                  <Select value={contactMethod} onValueChange={(value: 'sms' | 'email' | 'whatsapp') => setContactMethod(value)}>
+                  <Select value={contactMethod} onValueChange={() => setContactMethod('whatsapp')}>
                     <SelectTrigger id="premium-contact-method" className="border-indigo-100">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="sms">SMS</SelectItem>
-                      <SelectItem value="email">Email</SelectItem>
                       <SelectItem value="whatsapp">WhatsApp</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="premium-contact-value">
-                    {contactMethod === 'email' ? 'Delivery Email' : 'Delivery Number'}
-                  </Label>
+                  <Label htmlFor="premium-contact-value">WhatsApp Number</Label>
                   <Input
                     id="premium-contact-value"
                     value={contactValue}
                     onChange={(e) => setContactValue(e.target.value)}
-                    placeholder={contactMethod === 'email' ? 'student@example.com' : '+923001234567'}
+                    placeholder="+923XXXXXXXXX"
                     className="border-indigo-100"
                   />
+                  <p className="text-xs text-slate-500">Use international format with country code (e.g. +923001234567).</p>
                 </div>
               </div>
 

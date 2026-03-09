@@ -37,7 +37,7 @@ interface AuthContextValue {
       size: number;
       dataUrl: string;
     };
-    contactMethod: 'sms' | 'email' | 'whatsapp';
+    contactMethod: 'whatsapp';
     contactValue: string;
   }) => Promise<void>;
   registerWithToken: (params: {

@@ -39,7 +39,7 @@ export function Profile({ onNavigate }: ProfileProps) {
       size: number;
       dataUrl: string;
     },
-    contactMethod: 'sms' as 'sms' | 'email' | 'whatsapp',
+    contactMethod: 'whatsapp' as 'whatsapp',
     contactValue: '',
     tokenCode: '',
   });
@@ -91,6 +91,8 @@ export function Profile({ onNavigate }: ProfileProps) {
     setLocalProfile((previous) => ({ ...previous, [key]: value }));
   };
 
+  const isValidInternationalWhatsApp = (value: string) => /^\+[1-9]\d{7,14}$/.test(value.trim());
+
   const handleAuthSubmit = async () => {
     try {
       if (!authForm.email) {
@@ -126,6 +128,11 @@ export function Profile({ onNavigate }: ProfileProps) {
 
           if (!authForm.contactValue.trim()) {
             toast.error('Enter contact details to receive your signup token.');
+            return;
+          }
+
+          if (!isValidInternationalWhatsApp(authForm.contactValue)) {
+            toast.error('Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).');
             return;
           }
 
@@ -416,30 +423,27 @@ export function Profile({ onNavigate }: ProfileProps) {
                       <Label htmlFor="token-contact-method">Token Delivery Method</Label>
                       <Select
                         value={authForm.contactMethod}
-                        onValueChange={(value: 'sms' | 'email' | 'whatsapp') => setAuthForm((prev) => ({ ...prev, contactMethod: value }))}
+                        onValueChange={() => setAuthForm((prev) => ({ ...prev, contactMethod: 'whatsapp' }))}
                       >
                         <SelectTrigger id="token-contact-method" className="h-11 border-indigo-100">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="sms">SMS</SelectItem>
-                          <SelectItem value="email">Email</SelectItem>
                           <SelectItem value="whatsapp">WhatsApp</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
 
                     <div className="space-y-1.5">
-                      <Label htmlFor="token-contact-value">
-                        {authForm.contactMethod === 'email' ? 'Delivery Email' : 'Delivery Number'}
-                      </Label>
+                      <Label htmlFor="token-contact-value">WhatsApp Number</Label>
                       <Input
                         id="token-contact-value"
                         value={authForm.contactValue}
                         onChange={(e) => setAuthForm((prev) => ({ ...prev, contactValue: e.target.value }))}
-                        placeholder={authForm.contactMethod === 'email' ? 'student@example.com' : '+923001234567'}
+                        placeholder="+923XXXXXXXXX"
                         className="h-11 border-indigo-100"
                       />
+                      <p className="text-xs text-slate-500">Use international format with country code (e.g. +923001234567).</p>
                     </div>
                   </div>
 
@@ -560,7 +564,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                       paymentMethod: 'easypaisa',
                       paymentTransactionId: '',
                       paymentProof: null,
-                      contactMethod: 'sms',
+                      contactMethod: 'whatsapp',
                       contactValue: '',
                       tokenCode: '',
                     });

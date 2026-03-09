@@ -90,7 +90,7 @@ interface LocalSignupRequest {
   paymentMethod: 'easypaisa' | 'jazzcash' | 'bank_transfer';
   paymentTransactionId: string;
   paymentProof: LocalPaymentProof;
-  contactMethod: 'sms' | 'email' | 'whatsapp';
+  contactMethod: 'whatsapp';
   contactValue: string;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   notes: string;
@@ -123,7 +123,7 @@ interface LocalPremiumSubscriptionRequest {
   paymentMethod: 'easypaisa' | 'jazzcash' | 'bank_transfer';
   paymentTransactionId: string;
   paymentProof: LocalPaymentProof;
-  contactMethod: 'sms' | 'email' | 'whatsapp';
+  contactMethod: 'whatsapp';
   contactValue: string;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   notes: string;
@@ -525,10 +525,9 @@ function normalizePaymentMethod(value: unknown): 'easypaisa' | 'jazzcash' | 'ban
   return '';
 }
 
-function normalizeContactMethod(value: unknown): 'sms' | 'email' | 'whatsapp' | '' {
+function normalizeContactMethod(value: unknown): 'whatsapp' | '' {
   const method = String(value || '').trim().toLowerCase();
-  if (method === 'phone') return 'sms';
-  if (method === 'sms' || method === 'email' || method === 'whatsapp') return method;
+  if (method === 'phone' || method === 'sms' || method === 'email' || method === 'whatsapp') return 'whatsapp';
   return '';
 }
 
@@ -568,6 +567,11 @@ function inferPaymentProofMimeFromName(fileName: unknown) {
 function isValidMobileNumber(value: string) {
   const cleaned = String(value || '').replace(/[\s()-]/g, '');
   return /^\+?[0-9]{8,18}$/.test(cleaned);
+}
+
+function isValidWhatsAppNumber(value: string) {
+  const cleaned = String(value || '').replace(/[\s()-]/g, '');
+  return /^\+[1-9][0-9]{7,14}$/.test(cleaned);
 }
 
 function normalizePaymentProof(input: unknown): LocalPaymentProof {
@@ -1772,10 +1776,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const mobileNumber = normalizeMobileNumber(body.mobileNumber);
     const paymentMethod = normalizePaymentMethod(body.paymentMethod);
     const paymentTransactionId = String(body.paymentTransactionId || '').trim();
-    const contactMethod = normalizeContactMethod(body.contactMethod || 'sms');
-    const contactValue = contactMethod === 'email'
-      ? normalizeEmail(body.contactValue)
-      : normalizeMobileNumber(body.contactValue || mobileNumber);
+    const contactMethod = normalizeContactMethod(body.contactMethod || 'whatsapp');
+    const contactValue = normalizeMobileNumber(body.contactValue || mobileNumber);
 
     let paymentProof: LocalPaymentProof;
     try {
@@ -1796,14 +1798,11 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     if (!['easypaisa', 'jazzcash', 'bank_transfer'].includes(paymentMethod)) {
       throw new Error('Payment method must be one of: easypaisa, jazzcash, bank_transfer.');
     }
-    if (!['sms', 'email', 'whatsapp'].includes(contactMethod)) {
-      throw new Error('Contact method must be sms, email, or whatsapp.');
+    if (contactMethod !== 'whatsapp') {
+      throw new Error('Contact method must be whatsapp.');
     }
-    if (contactMethod === 'email' && !isValidEmail(contactValue)) {
-      throw new Error('Enter a valid email for token delivery.');
-    }
-    if (contactMethod !== 'email' && !isValidMobileNumber(contactValue)) {
-      throw new Error('Enter a valid mobile/WhatsApp number for token delivery.');
+    if (!isValidWhatsAppNumber(contactValue)) {
+      throw new Error('Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).');
     }
 
     if (db.users.some((item) => item.email === email)) {
@@ -2233,10 +2232,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const planId = String(body.planId || '').trim();
     const paymentMethod = normalizePaymentMethod(body.paymentMethod);
     const paymentTransactionId = String(body.paymentTransactionId || '').trim();
-    const contactMethod = normalizeContactMethod(body.contactMethod || 'sms');
-    const contactValue = contactMethod === 'email'
-      ? normalizeEmail(body.contactValue || user.email)
-      : normalizeMobileNumber(body.contactValue || user.phone);
+    const contactMethod = normalizeContactMethod(body.contactMethod || 'whatsapp');
+    const contactValue = normalizeMobileNumber(body.contactValue || user.phone);
     const plan = resolveSubscriptionPlan(planId);
 
     let paymentProof: LocalPaymentProof;
@@ -2249,9 +2246,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     if (!plan) throw new Error('Invalid plan selected.');
     if (!paymentMethod) throw new Error('Payment method must be one of: easypaisa, jazzcash, bank_transfer.');
     if (!paymentTransactionId || paymentTransactionId.length < 4) throw new Error('Payment transaction ID is required for verification.');
-    if (!contactMethod) throw new Error('Contact method must be sms, email, or whatsapp.');
-    if (contactMethod === 'email' && !isValidEmail(contactValue)) throw new Error('Enter a valid email for token delivery.');
-    if (contactMethod !== 'email' && !isValidMobileNumber(contactValue)) throw new Error('Enter a valid mobile/WhatsApp number for token delivery.');
+    if (contactMethod !== 'whatsapp') throw new Error('Contact method must be whatsapp.');
+    if (!isValidWhatsAppNumber(contactValue)) throw new Error('Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).');
 
     if (db.premiumSubscriptionRequests.some((item) => item.userId === user.id && item.status === 'pending')) {
       throw new Error('A premium activation request is already pending for your account.');

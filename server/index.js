@@ -1119,13 +1119,18 @@ function normalizePaymentMethod(value) {
 
 function normalizeContactMethod(value) {
   const method = String(value || '').trim().toLowerCase();
-  if (method === 'phone') return 'sms';
-  return method;
+  if (method === 'phone' || method === 'sms' || method === 'email' || method === 'whatsapp') return 'whatsapp';
+  return '';
 }
 
 function isValidMobileNumber(value) {
   const cleaned = String(value || '').replace(/[\s()-]/g, '');
   return /^\+?[0-9]{8,18}$/.test(cleaned);
+}
+
+function isValidWhatsAppNumber(value) {
+  const cleaned = String(value || '').replace(/[\s()-]/g, '');
+  return /^\+[1-9][0-9]{7,14}$/.test(cleaned);
 }
 
 function compactMobile(value) {
@@ -1363,7 +1368,7 @@ function serializeSignupRequest(item) {
       size: Number(item.paymentProof?.size || 0),
       dataUrl: String(item.paymentProof?.dataUrl || ''),
     },
-    contactMethod: normalizeContactMethod(item.contactMethod || 'sms'),
+    contactMethod: normalizeContactMethod(item.contactMethod || 'whatsapp'),
     contactValue: String(item.contactValue || ''),
     status: item.status,
     notes: item.notes || '',
@@ -1389,7 +1394,7 @@ function serializePremiumSubscriptionRequest(item, planName = '') {
       size: Number(item.paymentProof?.size || 0),
       dataUrl: String(item.paymentProof?.dataUrl || ''),
     },
-    contactMethod: normalizeContactMethod(item.contactMethod || 'sms'),
+    contactMethod: normalizeContactMethod(item.contactMethod || 'whatsapp'),
     contactValue: String(item.contactValue || ''),
     status: String(item.status || 'pending'),
     notes: String(item.notes || ''),
@@ -2735,7 +2740,7 @@ app.post('/api/auth/signup-request', async (req, res) => {
     const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber);
     const paymentMethod = normalizePaymentMethod(req.body?.paymentMethod);
     const paymentTransactionId = sanitizePlainText(req.body?.paymentTransactionId || '', 120);
-    const contactMethod = normalizeContactMethod(req.body?.contactMethod || 'sms');
+    const contactMethod = normalizeContactMethod(req.body?.contactMethod || 'whatsapp');
     const contactValueRaw = String(req.body?.contactValue || '').trim();
 
     let paymentProof;
@@ -2746,9 +2751,7 @@ app.post('/api/auth/signup-request', async (req, res) => {
       return;
     }
 
-    const contactValue = contactMethod === 'email'
-      ? normalizeEmail(contactValueRaw)
-      : normalizeMobileNumber(contactValueRaw || mobileNumber);
+    const contactValue = normalizeMobileNumber(contactValueRaw || mobileNumber);
 
     if (!email || !mobileNumber || !paymentTransactionId || !paymentMethod || !contactMethod || !contactValue) {
       res.status(400).json({ error: 'Email, mobile number, payment method, transaction ID, payment proof, and contact details are required.' });
@@ -2770,18 +2773,13 @@ app.post('/api/auth/signup-request', async (req, res) => {
       return;
     }
 
-    if (!['sms', 'email', 'whatsapp'].includes(contactMethod)) {
-      res.status(400).json({ error: 'Contact method must be sms, email, or whatsapp.' });
+    if (contactMethod !== 'whatsapp') {
+      res.status(400).json({ error: 'Contact method must be whatsapp.' });
       return;
     }
 
-    if (contactMethod === 'email' && !isValidEmail(contactValue)) {
-      res.status(400).json({ error: 'Enter a valid email for token delivery.' });
-      return;
-    }
-
-    if (contactMethod !== 'email' && !isValidMobileNumber(contactValue)) {
-      res.status(400).json({ error: 'Enter a valid mobile/WhatsApp number for token delivery.' });
+    if (!isValidWhatsAppNumber(contactValue)) {
+      res.status(400).json({ error: 'Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).' });
       return;
     }
 
@@ -4873,7 +4871,7 @@ app.post('/api/subscriptions/request-activation', authMiddleware, async (req, re
   const planId = String(req.body?.planId || '').trim();
   const paymentMethod = normalizePaymentMethod(req.body?.paymentMethod);
   const paymentTransactionId = sanitizePlainText(req.body?.paymentTransactionId || '', 120);
-  const contactMethod = normalizeContactMethod(req.body?.contactMethod || 'sms');
+  const contactMethod = normalizeContactMethod(req.body?.contactMethod || 'whatsapp');
   const contactValueRaw = String(req.body?.contactValue || '').trim();
   const plan = resolveSubscriptionPlan(planId);
 
@@ -4886,9 +4884,7 @@ app.post('/api/subscriptions/request-activation', authMiddleware, async (req, re
   }
 
   const defaultContactValue = normalizeMobileNumber(req.user.phone || '');
-  const contactValue = contactMethod === 'email'
-    ? normalizeEmail(contactValueRaw || req.user.email)
-    : normalizeMobileNumber(contactValueRaw || defaultContactValue);
+  const contactValue = normalizeMobileNumber(contactValueRaw || defaultContactValue);
 
   if (!plan) {
     res.status(400).json({ error: 'Invalid plan selected.' });
@@ -4905,18 +4901,13 @@ app.post('/api/subscriptions/request-activation', authMiddleware, async (req, re
     return;
   }
 
-  if (!['sms', 'email', 'whatsapp'].includes(contactMethod)) {
-    res.status(400).json({ error: 'Contact method must be sms, email, or whatsapp.' });
+  if (contactMethod !== 'whatsapp') {
+    res.status(400).json({ error: 'Contact method must be whatsapp.' });
     return;
   }
 
-  if (contactMethod === 'email' && !isValidEmail(contactValue)) {
-    res.status(400).json({ error: 'Enter a valid email for token delivery.' });
-    return;
-  }
-
-  if (contactMethod !== 'email' && !isValidMobileNumber(contactValue)) {
-    res.status(400).json({ error: 'Enter a valid mobile/WhatsApp number for token delivery.' });
+  if (!isValidWhatsAppNumber(contactValue)) {
+    res.status(400).json({ error: 'Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).' });
     return;
   }
 
