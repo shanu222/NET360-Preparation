@@ -38,6 +38,15 @@ interface ProgramCategory {
   institutions?: string[];
 }
 
+const categoryTabTone: Record<CategoryKey, string> = {
+  engineering: 'data-[state=active]:from-indigo-600 data-[state=active]:to-violet-500',
+  computing: 'data-[state=active]:from-cyan-600 data-[state=active]:to-blue-500',
+  business: 'data-[state=active]:from-rose-600 data-[state=active]:to-pink-500',
+  architecture: 'data-[state=active]:from-amber-500 data-[state=active]:to-orange-500',
+  sciences: 'data-[state=active]:from-emerald-600 data-[state=active]:to-teal-500',
+  applied: 'data-[state=active]:from-fuchsia-600 data-[state=active]:to-purple-500',
+};
+
 export function ProgramExplorer() {
   const programs: Record<CategoryKey, ProgramCategory> = {
     engineering: {
@@ -155,14 +164,19 @@ export function ProgramExplorer() {
       </section>
 
       <Tabs defaultValue="engineering" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 !bg-white/80 !border-indigo-100">
-          <TabsTrigger value="engineering">Engineering</TabsTrigger>
-          <TabsTrigger value="computing">Computing</TabsTrigger>
-          <TabsTrigger value="business">Business</TabsTrigger>
-          <TabsTrigger value="architecture">Architecture</TabsTrigger>
-          <TabsTrigger value="sciences">Sciences</TabsTrigger>
-          <TabsTrigger value="applied">Applied</TabsTrigger>
-        </TabsList>
+        <div className="overflow-x-auto pb-1">
+          <TabsList className="inline-flex h-auto min-w-max gap-2 rounded-2xl border border-indigo-100 bg-white/80 p-1.5 shadow-sm">
+            {(['engineering', 'computing', 'business', 'architecture', 'sciences', 'applied'] as CategoryKey[]).map((key) => (
+              <TabsTrigger
+                key={key}
+                value={key}
+                className={`min-w-[150px] rounded-xl border border-indigo-100/80 bg-white/90 text-slate-700 transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-white hover:text-indigo-900 data-[state=active]:border-transparent data-[state=active]:bg-gradient-to-r data-[state=active]:text-white data-[state=active]:shadow-[0_10px_20px_rgba(79,70,229,0.3)] ${categoryTabTone[key]}`}
+              >
+                {programs[key].tag}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
 
         <TabsContent value="engineering" className="space-y-4">
           <Card>

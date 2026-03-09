@@ -32,6 +32,16 @@ const tabItems: Array<{ key: TabKey; label: string }> = [
   { key: 'design-aptitude', label: 'Design Aptitude' },
 ];
 
+const tabTriggerToneByKey: Record<TabKey, string> = {
+  mathematics: 'data-[state=active]:from-indigo-600 data-[state=active]:to-violet-500',
+  physics: 'data-[state=active]:from-cyan-600 data-[state=active]:to-blue-500',
+  english: 'data-[state=active]:from-rose-600 data-[state=active]:to-pink-500',
+  biology: 'data-[state=active]:from-emerald-600 data-[state=active]:to-teal-500',
+  chemistry: 'data-[state=active]:from-amber-500 data-[state=active]:to-orange-500',
+  'quantitative-mathematics': 'data-[state=active]:from-fuchsia-600 data-[state=active]:to-violet-500',
+  'design-aptitude': 'data-[state=active]:from-purple-600 data-[state=active]:to-indigo-500',
+};
+
 const FLAT_TOPIC_TABS: Record<'quantitative-mathematics' | 'design-aptitude', { title: string; topics: string[] }> = {
   'quantitative-mathematics': {
     title: 'Quantitative Mathematics',
@@ -426,9 +436,13 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
 
       <Tabs defaultValue="mathematics">
         <div className="overflow-x-auto pb-1">
-          <TabsList className="inline-flex h-auto min-w-max gap-1">
+          <TabsList className="inline-flex h-auto min-w-max gap-2 rounded-2xl border border-indigo-100 bg-white/80 p-1.5 shadow-sm">
             {tabItems.map((tab) => (
-              <TabsTrigger key={tab.key} value={tab.key} className="min-w-[150px] text-[12px] sm:text-sm">
+              <TabsTrigger
+                key={tab.key}
+                value={tab.key}
+                className={`min-w-[150px] rounded-xl border border-indigo-100/80 bg-white/90 text-[12px] text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-white hover:text-indigo-900 data-[state=active]:border-transparent data-[state=active]:bg-gradient-to-r data-[state=active]:text-white data-[state=active]:shadow-[0_10px_20px_rgba(79,70,229,0.3)] sm:text-sm ${tabTriggerToneByKey[tab.key]}`}
+              >
                 {tab.label}
               </TabsTrigger>
             ))}
@@ -453,7 +467,7 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
                         <li key={topic}>
                           <button
                             type="button"
-                            className={`w-full rounded-lg border px-3 py-2 text-left transition ${selectedFlatTopic === topic ? 'border-indigo-300 bg-indigo-50 text-indigo-900' : 'border-indigo-100 bg-white text-slate-700 hover:bg-indigo-50'}`}
+                            className={`w-full rounded-lg border px-3 py-2 text-left transition-all duration-200 ${selectedFlatTopic === topic ? 'border-transparent bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-[0_10px_18px_rgba(79,70,229,0.3)]' : 'border-indigo-100 bg-white text-slate-700 hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-900'}`}
                             onClick={() => {
                               setSelectedFlatTopicByTab((prev) => ({ ...prev, [flatKey]: topic }));
                               onSelectFlatTopic?.({
@@ -516,10 +530,10 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
                             setSelectedChapterBySubject((prev) => ({ ...prev, [subject]: null }));
                             setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
                           }}
-                          className={`rounded-xl border p-3 text-left transition ${isSelected ? 'border-indigo-300 bg-indigo-50/60' : 'border-indigo-100 bg-white hover:bg-indigo-50/40'}`}
+                          className={`rounded-xl border p-3 text-left transition-all duration-200 ${isSelected ? 'border-transparent bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-[0_12px_20px_rgba(79,70,229,0.28)]' : 'border-indigo-100 bg-white hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-indigo-50/60'}`}
                         >
-                          <p className="text-sm font-semibold text-indigo-950">{SYLLABUS[subject][part].label}</p>
-                          <p className="mt-1 text-xs text-slate-500">{chapterCount} chapters</p>
+                          <p className={`text-sm font-semibold ${isSelected ? 'text-white' : 'text-indigo-950'}`}>{SYLLABUS[subject][part].label}</p>
+                          <p className={`mt-1 text-xs ${isSelected ? 'text-indigo-100' : 'text-slate-500'}`}>{chapterCount} chapters</p>
                         </button>
                       );
                     })}
@@ -536,7 +550,7 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
                         return (
                           <div
                             key={chapter.id}
-                            className={`rounded-xl border transition ${active ? 'border-indigo-300 bg-indigo-50/55' : 'border-indigo-100 bg-white hover:bg-indigo-50/30'}`}
+                            className={`rounded-xl border transition-all duration-200 ${active ? 'border-indigo-300 bg-indigo-50/55 shadow-[0_8px_16px_rgba(99,102,241,0.12)]' : 'border-indigo-100 bg-white hover:border-indigo-200 hover:bg-indigo-50/30'}`}
                           >
                             <button
                               type="button"
@@ -565,7 +579,7 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
                                     <li key={section}>
                                       <button
                                         type="button"
-                                        className={`w-full rounded-lg border px-3 py-2 text-left transition ${selectedSectionBySubject[subject] === `${chapter.id}::${section}` ? 'border-indigo-300 bg-indigo-50 text-indigo-900' : 'border-indigo-100 bg-white text-slate-700 hover:bg-indigo-50'}`}
+                                        className={`w-full rounded-lg border px-3 py-2 text-left transition-all duration-200 ${selectedSectionBySubject[subject] === `${chapter.id}::${section}` ? 'border-transparent bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-[0_10px_18px_rgba(79,70,229,0.28)]' : 'border-indigo-100 bg-white text-slate-700 hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-900'}`}
                                         onClick={() => {
                                           const selection = {
                                             subject,
