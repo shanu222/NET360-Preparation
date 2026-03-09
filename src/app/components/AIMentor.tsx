@@ -104,6 +104,8 @@ interface SubscriptionRefreshResult {
   usage?: UsageInfo;
 }
 
+const PREMIUM_SUBSCRIPTION_CACHE_PREFIX = 'net360-premium-subscription';
+
 interface PremiumActivationRequest {
   id: string;
   planId: string;
@@ -150,6 +152,52 @@ const emptySubscription: SubscriptionInfo = {
   planName: '',
   dailyAiLimit: 0,
 };
+
+function isSubscriptionActiveNow(subscription?: Partial<SubscriptionInfo> | null) {
+  if (!subscription || subscription.status !== 'active') return false;
+  if (!subscription.expiresAt) return false;
+  return new Date(subscription.expiresAt).getTime() > Date.now();
+}
+
+function normalizeSubscriptionForUi(subscription?: Partial<SubscriptionInfo> | null): SubscriptionInfo {
+  const merged = { ...emptySubscription, ...(subscription || {}) };
+  return {
+    ...merged,
+    isActive: isSubscriptionActiveNow(merged),
+  };
+}
+
+function getPremiumCacheKey(userId: string) {
+  return `${PREMIUM_SUBSCRIPTION_CACHE_PREFIX}:${userId}`;
+}
+
+function readCachedPremiumSubscription(userId: string): SubscriptionInfo | null {
+  try {
+    const raw = localStorage.getItem(getPremiumCacheKey(userId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<SubscriptionInfo>;
+    const normalized = normalizeSubscriptionForUi(parsed);
+    if (!normalized.isActive) {
+      localStorage.removeItem(getPremiumCacheKey(userId));
+      return null;
+    }
+    return normalized;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedPremiumSubscription(userId: string, subscription: SubscriptionInfo) {
+  try {
+    if (subscription.isActive) {
+      localStorage.setItem(getPremiumCacheKey(userId), JSON.stringify(subscription));
+      return;
+    }
+    localStorage.removeItem(getPremiumCacheKey(userId));
+  } catch {
+    // Ignore storage errors (private mode/quota), server state still remains source of truth.
+  }
+}
 
 function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -211,6 +259,15 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     [plans, selectedPlanId],
   );
 
+  const applySubscription = (nextSubscription?: Partial<SubscriptionInfo> | null) => {
+    const normalized = normalizeSubscriptionForUi(nextSubscription);
+    setSubscription(normalized);
+    if (user?.id) {
+      writeCachedPremiumSubscription(user.id, normalized);
+    }
+    return normalized;
+  };
+
   useEffect(() => {
     if (!token || !user) {
       setPlanData(null);
@@ -220,6 +277,11 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     }
 
     let cancelled = false;
+
+    const cachedSubscription = readCachedPremiumSubscription(user.id);
+    if (cachedSubscription) {
+      applySubscription(cachedSubscription);
+    }
 
     async function bootstrap() {
       try {
@@ -242,7 +304,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
         setPlans(plansPayload.plans || []);
         if (mePayload?.subscription) {
-          setSubscription(mePayload.subscription);
+          applySubscription(mePayload.subscription);
           setActivationRequest(mePayload.activationRequest || null);
           setAiUsage(mePayload.usage || null);
         }
@@ -269,11 +331,11 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     if (!token) return null;
     try {
       const mePayload = await apiRequest<SubscriptionPayload>('/api/subscriptions/me', {}, token);
-      setSubscription(mePayload.subscription || emptySubscription);
+      const normalizedSubscription = applySubscription(mePayload.subscription || emptySubscription);
       setActivationRequest(mePayload.activationRequest || null);
       setAiUsage(mePayload.usage || null);
       return {
-        subscription: mePayload.subscription || emptySubscription,
+        subscription: normalizedSubscription,
         activationRequest: mePayload.activationRequest || null,
         usage: mePayload.usage || null,
       };
@@ -318,8 +380,12 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       if (appError?.code === 'SUBSCRIPTION_REQUIRED') {
         const refreshed = await reloadSubscription();
         if (!refreshed?.subscription?.isActive) {
-          setSubscription(emptySubscription);
-          toast.error('Premium subscription required. Please activate a plan first.');
+          if (subscription.isActive && isSubscriptionActiveNow(subscription)) {
+            toast.error('Could not verify premium status right now. Please retry in a moment.');
+          } else {
+            applySubscription(emptySubscription);
+            toast.error('Premium subscription required. Please activate a plan first.');
+          }
         } else {
           toast.error('Your premium status is active. Please retry your request.');
         }
@@ -424,8 +490,12 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       if (appError?.code === 'SUBSCRIPTION_REQUIRED') {
         const refreshed = await reloadSubscription();
         if (!refreshed?.subscription?.isActive) {
-          setSubscription(emptySubscription);
-          toast.error('Premium subscription required. Please activate a plan first.');
+          if (subscription.isActive && isSubscriptionActiveNow(subscription)) {
+            toast.error('Could not verify premium status right now. Please retry in a moment.');
+          } else {
+            applySubscription(emptySubscription);
+            toast.error('Premium subscription required. Please activate a plan first.');
+          }
         } else {
           toast.error('Your premium status is active. Please retry your request.');
         }
@@ -519,7 +589,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       );
 
       if (activationPayload.subscription) {
-        setSubscription(activationPayload.subscription);
+        applySubscription(activationPayload.subscription);
       }
       if (activationPayload.activationRequest !== undefined) {
         setActivationRequest(activationPayload.activationRequest || null);

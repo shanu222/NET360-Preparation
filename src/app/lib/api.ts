@@ -238,6 +238,7 @@ export async function downloadReport(path: string, token?: string | null): Promi
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
+  const hasAuthToken = Boolean(token || localStorage.getItem(TOKEN_STORAGE_KEY));
 
   let response: Response;
   try {
@@ -251,7 +252,7 @@ export async function downloadReport(path: string, token?: string | null): Promi
     return localDownloadReport(format, token);
   }
 
-  if (!response.ok && shouldFallbackFromHttpError(path, response.status)) {
+  if (!response.ok && shouldFallbackFromHttpError(path, response.status, hasAuthToken)) {
     const url = new URL(path, window.location.origin);
     const format = (url.searchParams.get('format') || 'pdf') as 'pdf';
     return localDownloadReport(format, token);
