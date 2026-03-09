@@ -545,36 +545,50 @@ export function Profile({ onNavigate }: ProfileProps) {
               ) : null}
 
               <Button className="h-11 w-full rounded-xl bg-gradient-to-r from-indigo-700 to-violet-600 !text-white font-semibold shadow-sm hover:from-indigo-800 hover:to-violet-700" onClick={handleAuthSubmit}>
-                {isRegisterMode ? 'Create Account' : 'Login'}
+                {isRegisterMode ? 'Create Account' : 'Sign In'}
               </Button>
                 </>
               )}
 
-              <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <Button
-                  type="button"
-                  variant={authMode === 'login' ? 'default' : 'outline'}
-                  className="h-10"
-                  onClick={() => setAuthMode('login')}
-                >
-                  Login
-                </Button>
-                <Button
-                  type="button"
-                  variant={authMode === 'register' ? 'default' : 'outline'}
-                  className="h-10"
-                  onClick={() => setAuthMode('register')}
-                >
-                  Create Account
-                </Button>
-                <Button
-                  type="button"
-                  variant={authMode === 'recovery' ? 'default' : 'outline'}
-                  className="h-10"
-                  onClick={() => setAuthMode('recovery')}
-                >
-                  Recover Password
-                </Button>
+              <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-1.5">
+                <div className="grid grid-cols-3 gap-1.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className={`min-h-[2.75rem] h-auto rounded-lg px-2 py-2 text-center text-[12px] leading-tight whitespace-normal sm:text-sm ${
+                      authMode === 'login'
+                        ? 'bg-gradient-to-r from-indigo-700 to-violet-600 !text-white shadow-sm hover:from-indigo-800 hover:to-violet-700'
+                        : 'bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-700'
+                    }`}
+                    onClick={() => setAuthMode('login')}
+                  >
+                    Login
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className={`min-h-[2.75rem] h-auto rounded-lg px-2 py-2 text-center text-[12px] leading-tight whitespace-normal sm:text-sm ${
+                      authMode === 'register'
+                        ? 'bg-gradient-to-r from-indigo-700 to-violet-600 !text-white shadow-sm hover:from-indigo-800 hover:to-violet-700'
+                        : 'bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-700'
+                    }`}
+                    onClick={() => setAuthMode('register')}
+                  >
+                    Create Account
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    className={`min-h-[2.75rem] h-auto rounded-lg px-2 py-2 text-center text-[12px] leading-tight whitespace-normal sm:text-sm ${
+                      authMode === 'recovery'
+                        ? 'bg-gradient-to-r from-indigo-700 to-violet-600 !text-white shadow-sm hover:from-indigo-800 hover:to-violet-700'
+                        : 'bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-700'
+                    }`}
+                    onClick={() => setAuthMode('recovery')}
+                  >
+                    Recover Password
+                  </Button>
+                </div>
               </div>
 
               <div className="text-xs text-slate-500 text-center">

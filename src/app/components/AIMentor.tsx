@@ -91,6 +91,13 @@ interface SubscriptionPayload {
   usage?: UsageInfo;
 }
 
+interface ActivationWithTokenResponse {
+  ok?: boolean;
+  subscription?: SubscriptionInfo;
+  activationRequest?: PremiumActivationRequest | null;
+  usage?: UsageInfo;
+}
+
 interface PremiumActivationRequest {
   id: string;
   planId: string;
@@ -261,8 +268,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       setActivationRequest(mePayload.activationRequest || null);
       setAiUsage(mePayload.usage || null);
     } catch {
-      setSubscription(emptySubscription);
-      setActivationRequest(null);
+      // Keep current state on transient errors so a freshly activated plan does not appear locked.
     }
   };
 
@@ -482,7 +488,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
     setIsActivatingWithToken(true);
     try {
-      await apiRequest<SubscriptionPayload>(
+      const activationPayload = await apiRequest<ActivationWithTokenResponse>(
         '/api/subscriptions/activate-with-token',
         {
           method: 'POST',
@@ -490,6 +496,17 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
         },
         token,
       );
+
+      if (activationPayload.subscription) {
+        setSubscription(activationPayload.subscription);
+      }
+      if (activationPayload.activationRequest !== undefined) {
+        setActivationRequest(activationPayload.activationRequest || null);
+      }
+      if (activationPayload.usage) {
+        setAiUsage((previous) => ({ ...previous, ...activationPayload.usage }));
+      }
+
       setActivationTokenCode('');
       await reloadSubscription();
       toast.success('Subscription activated successfully. Smart Study Mentor unlocked.');
