@@ -449,7 +449,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                       <Button
                         type="button"
                         variant="outline"
-                        className="h-9 border-indigo-200 bg-white text-indigo-700"
+                        className="h-9 border-indigo-200 bg-white !text-indigo-700 hover:bg-indigo-50 hover:!text-indigo-800"
                         onClick={() => paymentProofInputRef.current?.click()}
                       >
                         Upload Proof
@@ -502,7 +502,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                   <Button
                     type="button"
                     variant="outline"
-                    className="h-10 w-full border-indigo-200 bg-white text-indigo-700"
+                    className="h-10 w-full border-indigo-200 bg-white !text-indigo-700 hover:bg-indigo-50 hover:!text-indigo-800"
                     disabled={forgotCooldownSeconds > 0}
                     onClick={() => void handleForgotPasswordRequest()}
                   >
@@ -529,27 +529,27 @@ export function Profile({ onNavigate }: ProfileProps) {
                       className="h-10 border-indigo-100"
                     />
                   </div>
-                  <Button className="h-10 w-full rounded-lg bg-indigo-600 text-white" onClick={() => void handleResetPassword()}>
+                  <Button className="h-10 w-full rounded-lg bg-indigo-600 !text-white hover:bg-indigo-700" onClick={() => void handleResetPassword()}>
                     Set New Password
                   </Button>
                 </div>
               ) : null}
 
-              <Button className="h-11 w-full rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 !text-white shadow-sm" onClick={handleAuthSubmit}>
+              <Button className="h-11 w-full rounded-xl bg-gradient-to-r from-indigo-700 to-violet-600 !text-white font-semibold shadow-sm hover:from-indigo-800 hover:to-violet-700" onClick={handleAuthSubmit}>
                 {isRegisterMode ? 'Create Account' : 'Login'}
               </Button>
 
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto_auto]">
                 <Button
                   variant="outline"
-                  className="h-11 rounded-xl border-indigo-200 bg-white text-indigo-700"
+                  className="h-11 rounded-xl border-indigo-200 bg-white !text-indigo-700 hover:bg-indigo-50 hover:!text-indigo-800"
                   onClick={() => setIsRegisterMode((prev) => !prev)}
                 >
                   {isRegisterMode ? 'Use Login' : 'Create Account'}
                 </Button>
                 <Button
                   variant="outline"
-                  className="h-11 w-full rounded-xl border-indigo-200 bg-white p-0 text-indigo-500 sm:w-11"
+                  className="h-11 w-full rounded-xl border-indigo-200 bg-white p-0 !text-indigo-600 hover:bg-indigo-50 hover:!text-indigo-800 sm:w-11"
                   onClick={() => {
                     setAuthForm({
                       firstName: '',
@@ -574,7 +574,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                 </Button>
                 <Button
                   variant="outline"
-                  className="h-11 w-full rounded-xl border-indigo-200 bg-white p-0 text-indigo-500 sm:w-11"
+                  className="h-11 w-full rounded-xl border-indigo-200 bg-white p-0 !text-indigo-600 hover:bg-indigo-50 hover:!text-indigo-800 sm:w-11"
                   onClick={() => setIsRegisterMode((prev) => !prev)}
                 >
                   <UserRound className="h-4 w-4" />
@@ -594,8 +594,8 @@ export function Profile({ onNavigate }: ProfileProps) {
               </div>
 
               <div className="flex flex-wrap justify-center gap-3">
-                <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white text-lg text-slate-700">G</Button>
-                <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white text-slate-700">
+                <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white text-lg !text-slate-800 hover:bg-slate-50 hover:!text-slate-900">G</Button>
+                <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white !text-slate-800 hover:bg-slate-50 hover:!text-slate-900">
                   <Apple className="h-5 w-5" />
                 </Button>
               </div>
