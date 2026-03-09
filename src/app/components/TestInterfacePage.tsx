@@ -58,6 +58,7 @@ export function TestInterfacePage() {
 
   const [resolvedToken, setResolvedToken] = useState<string | null>(null);
   const [resolvedSessionId, setResolvedSessionId] = useState<string | null>(null);
+  const [launchResolved, setLaunchResolved] = useState(false);
 
   const getLaunchFallback = () => {
     try {
@@ -78,6 +79,7 @@ export function TestInterfacePage() {
   };
 
   useEffect(() => {
+    setError(null);
     const params = new URLSearchParams(window.location.search);
     const fromQuery = params.get('authToken');
     const launchFallback = getLaunchFallback();
@@ -87,22 +89,25 @@ export function TestInterfacePage() {
 
     const querySessionId = params.get('sessionId');
     const fallbackSessionId = launchFallback?.sessionId || null;
-    setResolvedSessionId(querySessionId || fallbackSessionId || null);
+    const sessionId = querySessionId || fallbackSessionId || null;
+    setResolvedSessionId(sessionId);
 
-    if (!token) {
-      setError('Missing authentication token. Redirecting to login page...');
+    if (!token || !sessionId) {
+      setError(!token ? 'Missing authentication token. Redirecting to login page...' : 'Missing session id. Redirecting to tests page...');
       setLoading(false);
       window.setTimeout(() => {
-        window.location.href = '/?tab=profile';
+        window.location.href = !token ? '/?tab=profile' : '/?tab=tests';
       }, 900);
       return;
     }
 
-    if (fromQuery && !fromStorage) {
+    // Always persist query token so follow-up API calls and refresh flow use the launched token.
+    if (fromQuery) {
       localStorage.setItem('net360-auth-token', fromQuery);
     }
 
     setResolvedToken(token);
+    setLaunchResolved(true);
   }, []);
 
   const startedAtLabel = useMemo(() => {
@@ -113,11 +118,7 @@ export function TestInterfacePage() {
   useEffect(() => {
     async function loadSession() {
       try {
-        if (!resolvedToken || !resolvedSessionId) return;
-
-        if (!resolvedSessionId) {
-          throw new Error('Missing sessionId. Please start a test from the Tests page.');
-        }
+        if (!launchResolved || !resolvedToken || !resolvedSessionId) return;
 
         const response = await apiRequest<{ session: TestSession }>(`/api/tests/${resolvedSessionId}`, {}, resolvedToken);
         const payload = response.session;
@@ -126,12 +127,14 @@ export function TestInterfacePage() {
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load test session.');
       } finally {
-        setLoading(false);
+        if (launchResolved && resolvedToken && resolvedSessionId) {
+          setLoading(false);
+        }
       }
     }
 
     void loadSession();
-  }, [resolvedToken, resolvedSessionId]);
+  }, [launchResolved, resolvedToken, resolvedSessionId]);
 
   useEffect(() => {
     if (!session || result || remainingSeconds <= 0) return;

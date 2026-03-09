@@ -295,10 +295,7 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
 
   const openExamWindow = (params: { sessionId: string; token: string; examWindow: Window | null }) => {
     const { sessionId, token: authToken, examWindow } = params;
-    if (!examWindow) {
-      toast.error('Popup blocked. Please allow popups and try again.');
-      return;
-    }
+    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
 
     localStorage.setItem(
       'net360-exam-launch',
@@ -311,6 +308,18 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
     );
 
     const url = `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=topic&authToken=${encodeURIComponent(authToken)}`;
+
+    if (isNativeRuntime) {
+      // Android WebView commonly blocks popups; navigate in-place after session is ready.
+      window.location.href = url;
+      return;
+    }
+
+    if (!examWindow) {
+      toast.error('Popup blocked. Please allow popups and try again.');
+      return;
+    }
+
     examWindow.location.href = url;
   };
 
@@ -326,9 +335,11 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
       return;
     }
 
-    // Open popup synchronously from button click to avoid browser popup blockers.
-    const examWindow = window.open('/exam-interface', '_blank', 'width=1400,height=900');
-    if (!examWindow) {
+    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+
+    // Open popup synchronously for browsers. Native uses same-window redirect after session creation.
+    const examWindow = isNativeRuntime ? null : window.open('/exam-interface', '_blank', 'width=1400,height=900');
+    if (!isNativeRuntime && !examWindow) {
       toast.error('Popup blocked. Please allow popups and try again.');
       return;
     }
@@ -349,9 +360,9 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
       });
 
       openExamWindow({ sessionId: session.id, token: authToken, examWindow });
-      toast.success('Section test launched in a new window.');
+      toast.success(isNativeRuntime ? 'Section test launched.' : 'Section test launched in a new window.');
     } catch (error) {
-      examWindow.close();
+      if (examWindow) examWindow.close();
       toast.error(error instanceof Error ? error.message : 'Could not start section test.');
     } finally {
       setLaunchingSectionKey(null);
@@ -365,8 +376,9 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
       return;
     }
 
-    const examWindow = window.open('/exam-interface', '_blank', 'width=1400,height=900');
-    if (!examWindow) {
+    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+    const examWindow = isNativeRuntime ? null : window.open('/exam-interface', '_blank', 'width=1400,height=900');
+    if (!isNativeRuntime && !examWindow) {
       toast.error('Popup blocked. Please allow popups and try again.');
       return;
     }
@@ -389,7 +401,7 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
           });
 
           openExamWindow({ sessionId: session.id, token: authToken, examWindow });
-          toast.success('Topic test launched in a new window.');
+          toast.success(isNativeRuntime ? 'Topic test launched.' : 'Topic test launched in a new window.');
           return;
         } catch (error) {
           lastError = error;
@@ -398,7 +410,7 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
 
       throw lastError instanceof Error ? lastError : new Error('No questions available for this topic.');
     } catch (error) {
-      examWindow.close();
+      if (examWindow) examWindow.close();
       toast.error(error instanceof Error ? error.message : 'Could not start topic test.');
     } finally {
       setLaunchingSectionKey(null);
