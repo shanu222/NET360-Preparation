@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
 import OpenAI from 'openai';
-import pdfParse from 'pdf-parse';
+import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import mammoth from 'mammoth';
 import { connectMongo } from './lib/mongo.js';
 import { UserModel } from './models/User.js';
