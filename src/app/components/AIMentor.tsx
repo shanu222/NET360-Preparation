@@ -241,6 +241,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
   const [activationRequest, setActivationRequest] = useState<PremiumActivationRequest | null>(null);
   const [subscription, setSubscription] = useState<SubscriptionInfo>(emptySubscription);
   const [aiUsage, setAiUsage] = useState<UsageInfo | null>(null);
+  const subscriptionRef = useRef<SubscriptionInfo>(emptySubscription);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const premiumProofInputRef = useRef<HTMLInputElement | null>(null);
@@ -261,17 +262,24 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
   const applySubscription = (nextSubscription?: Partial<SubscriptionInfo> | null) => {
     const normalized = normalizeSubscriptionForUi(nextSubscription);
-    setSubscription(normalized);
+    const current = subscriptionRef.current;
+    // Do not downgrade an already-active subscription unless it is truly expired.
+    const shouldKeepCurrentActive = current.isActive && isSubscriptionActiveNow(current) && !normalized.isActive;
+    const resolved = shouldKeepCurrentActive ? normalizeSubscriptionForUi(current) : normalized;
+
+    subscriptionRef.current = resolved;
+    setSubscription(resolved);
     if (user?.id) {
-      writeCachedPremiumSubscription(user.id, normalized);
+      writeCachedPremiumSubscription(user.id, resolved);
     }
-    return normalized;
+    return resolved;
   };
 
   useEffect(() => {
     if (!token || !user) {
       setPlanData(null);
       setSubscription(emptySubscription);
+      subscriptionRef.current = emptySubscription;
       setActivationRequest(null);
       return;
     }
