@@ -11,6 +11,12 @@ import { Textarea } from '../app/components/ui/textarea';
 import { toast } from 'sonner';
 import { Preparation } from '../app/components/Preparation';
 import type { SubjectKey } from '../app/lib/mcq';
+import {
+  downloadBlobFile,
+  downloadDataUrlFile,
+  openBlobPreview,
+  openDataUrlPreview,
+} from '../app/lib/filePreview';
 
 const FLAT_TOPIC_SUBJECTS = new Set(['quantitative-mathematics', 'design-aptitude']);
 
@@ -823,7 +829,9 @@ export default function AdminApp() {
   const openPracticeFile = (file?: { dataUrl: string } | null) => {
     const dataUrl = String(file?.dataUrl || '').trim();
     if (!dataUrl) return;
-    window.open(dataUrl, '_blank', 'noopener,noreferrer');
+    if (!openDataUrlPreview(dataUrl)) {
+      toast.error('Could not open file preview.');
+    }
   };
 
   const downloadPracticeFile = (file?: { dataUrl: string; name: string } | null) => {
@@ -831,12 +839,9 @@ export default function AdminApp() {
     const name = String(file?.name || 'practice-file');
     if (!dataUrl) return;
 
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = name;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    if (!downloadDataUrlFile(dataUrl, name)) {
+      toast.error('Could not download file.');
+    }
   };
 
   const loadAdminData = async (activeToken: string) => {
@@ -1236,21 +1241,21 @@ export default function AdminApp() {
 
   const openPaymentProof = async (path: string, fileName: string, fallbackDataUrl?: string, download = false) => {
     const fallback = String(fallbackDataUrl || '').trim();
+    const previewWindow = !download ? window.open('', '_blank', 'noopener,noreferrer') : null;
 
     if (!authToken) {
       if (fallback.startsWith('data:')) {
         if (download) {
-          const anchor = document.createElement('a');
-          anchor.href = fallback;
-          anchor.download = fileName || 'payment-proof';
-          document.body.appendChild(anchor);
-          anchor.click();
-          document.body.removeChild(anchor);
+          if (!downloadDataUrlFile(fallback, fileName || 'payment-proof')) {
+            toast.error('Could not download payment proof file.');
+          }
         } else {
-          window.open(fallback, '_blank', 'noopener,noreferrer');
+          const opened = openDataUrlPreview(fallback);
+          if (!opened && previewWindow) previewWindow.close();
         }
         return;
       }
+      if (previewWindow) previewWindow.close();
       toast.error('Session expired. Please log in again to access payment proof.');
       return;
     }
@@ -1267,35 +1272,26 @@ export default function AdminApp() {
       }
 
       const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
 
       if (download) {
-        const anchor = document.createElement('a');
-        anchor.href = objectUrl;
-        anchor.download = fileName || 'payment-proof';
-        document.body.appendChild(anchor);
-        anchor.click();
-        document.body.removeChild(anchor);
+        downloadBlobFile(blob, fileName || 'payment-proof');
       } else {
-        window.open(objectUrl, '_blank', 'noopener,noreferrer');
+        openBlobPreview(blob, previewWindow);
       }
-
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
       return;
     } catch {
       if (fallback.startsWith('data:')) {
         if (download) {
-          const anchor = document.createElement('a');
-          anchor.href = fallback;
-          anchor.download = fileName || 'payment-proof';
-          document.body.appendChild(anchor);
-          anchor.click();
-          document.body.removeChild(anchor);
+          if (!downloadDataUrlFile(fallback, fileName || 'payment-proof')) {
+            toast.error('Could not download payment proof file.');
+          }
         } else {
-          window.open(fallback, '_blank', 'noopener,noreferrer');
+          const opened = openDataUrlPreview(fallback);
+          if (!opened && previewWindow) previewWindow.close();
         }
         return;
       }
+      if (previewWindow) previewWindow.close();
       toast.error('Could not open payment proof. Please try again.');
     }
   };
@@ -3292,15 +3288,36 @@ export default function AdminApp() {
                       <div className="space-y-2">
                         <p className="text-xs uppercase tracking-wide text-muted-foreground">Attachments</p>
                         {item.attachments.map((file) => (
-                          <a
+                          <div
                             key={`${item.id}-${file.name}`}
-                            href={file.dataUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="block rounded-md border px-3 py-2 text-sm hover:bg-slate-50"
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
                           >
-                            {file.name} • {file.mimeType}
-                          </a>
+                            <span className="min-w-0 truncate">{file.name} • {file.mimeType}</span>
+                            <div className="flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  if (!openDataUrlPreview(file.dataUrl)) {
+                                    toast.error('Could not open attachment preview.');
+                                  }
+                                }}
+                              >
+                                View
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  if (!downloadDataUrlFile(file.dataUrl, file.name || 'attachment')) {
+                                    toast.error('Could not download attachment.');
+                                  }
+                                }}
+                              >
+                                Download
+                              </Button>
+                            </div>
+                          </div>
                         ))}
                       </div>
                     ) : null}

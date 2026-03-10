@@ -5,6 +5,10 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { apiRequest } from '../lib/api';
+import {
+  downloadDataUrlFile as downloadDataUrlFileSafe,
+  openDataUrlPreview,
+} from '../lib/filePreview';
 
 type Tool = 'pen' | 'eraser';
 
@@ -46,18 +50,18 @@ function isImageMimeType(mimeType?: string | null) {
 function openDataUrlFile(file?: { dataUrl?: string | null } | null) {
   const dataUrl = String(file?.dataUrl || '').trim();
   if (!dataUrl) return;
-  window.open(dataUrl, '_blank', 'noopener,noreferrer');
+  if (!openDataUrlPreview(dataUrl)) {
+    toast.error('Could not open file preview.');
+  }
 }
 
 function downloadDataUrlFile(file?: { dataUrl?: string | null; name?: string | null } | null) {
   const dataUrl = String(file?.dataUrl || '').trim();
   if (!dataUrl) return;
-  const link = document.createElement('a');
-  link.href = dataUrl;
-  link.download = String(file?.name || 'practice-file');
-  document.body.appendChild(link);
-  link.click();
-  document.body.removeChild(link);
+  const downloaded = downloadDataUrlFileSafe(dataUrl, String(file?.name || 'practice-file'));
+  if (!downloaded) {
+    toast.error('Could not download this file.');
+  }
 }
 
 const PEN_COLORS = [
