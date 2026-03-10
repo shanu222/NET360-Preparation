@@ -37,8 +37,6 @@ interface AuthContextValue {
       size: number;
       dataUrl: string;
     };
-    contactMethod: 'whatsapp';
-    contactValue: string;
   }) => Promise<void>;
   registerWithToken: (params: {
     email: string;
@@ -174,8 +172,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     paymentMethod,
     paymentTransactionId,
     paymentProof,
-    contactMethod,
-    contactValue,
   }) => {
     await apiRequest('/api/auth/signup-request', {
       method: 'POST',
@@ -187,8 +183,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         paymentMethod,
         paymentTransactionId,
         paymentProof,
-        contactMethod,
-        contactValue,
       }),
     });
   };

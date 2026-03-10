@@ -11,6 +11,8 @@ import bcrypt from 'bcryptjs';
 import OpenAI from 'openai';
 import nodemailer from 'nodemailer';
 import Twilio from 'twilio';
+import PDFDocument from 'pdfkit';
+import { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import mammoth from 'mammoth';
 import { connectMongo } from './lib/mongo.js';
@@ -1428,8 +1430,8 @@ function serializeSignupRequest(item) {
       size: Number(item.paymentProof?.size || 0),
       dataUrl: String(item.paymentProof?.dataUrl || ''),
     },
-    contactMethod: normalizeContactMethod(item.contactMethod || 'whatsapp'),
-    contactValue: String(item.contactValue || ''),
+    contactMethod: 'in_app',
+    contactValue: String(item.mobileNumber || ''),
     status: item.status,
     notes: item.notes || '',
     reviewedAt: item.reviewedAt ? new Date(item.reviewedAt).toISOString() : null,
@@ -1454,8 +1456,8 @@ function serializePremiumSubscriptionRequest(item, planName = '') {
       size: Number(item.paymentProof?.size || 0),
       dataUrl: String(item.paymentProof?.dataUrl || ''),
     },
-    contactMethod: normalizeContactMethod(item.contactMethod || 'whatsapp'),
-    contactValue: String(item.contactValue || ''),
+    contactMethod: 'in_app',
+    contactValue: String(item.mobileNumber || ''),
     status: String(item.status || 'pending'),
     notes: String(item.notes || ''),
     reviewedAt: item.reviewedAt ? new Date(item.reviewedAt).toISOString() : null,
@@ -1688,6 +1690,62 @@ function normalizeStructuredTutorPayload(input, fallback = null) {
   };
 }
 
+function normalizeComparableText(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function dedupeSentenceList(values, maxItems = 7) {
+  const seen = new Set();
+  const normalized = [];
+
+  for (const value of values || []) {
+    const text = String(value || '').trim();
+    if (!text) continue;
+    const comparable = normalizeComparableText(text);
+    if (!comparable || seen.has(comparable)) continue;
+    seen.add(comparable);
+    normalized.push(text);
+    if (normalized.length >= maxItems) break;
+  }
+
+  return normalized;
+}
+
+function tightenStructuredTutorAnswer(input, fallback = null) {
+  const normalized = normalizeStructuredTutorPayload(input, fallback);
+  if (!normalized) return fallback;
+
+  const cleanConcept = normalized.conceptExplanation
+    .replace(/\s+/g, ' ')
+    .replace(/\b(step\s*by\s*step|step-by-step solution)\b[:\-]?/gi, '')
+    .trim();
+
+  const cleanSteps = dedupeSentenceList(
+    normalized.stepByStepSolution
+      .map((step) => step.replace(/^\d+[.)-]?\s*/, '').trim())
+      .filter(Boolean),
+    6,
+  );
+
+  const cleanFinalAnswer = normalized.finalAnswer.replace(/\s+/g, ' ').trim();
+  const cleanShortestTrick = normalized.shortestTrick.replace(/\s+/g, ' ').trim();
+
+  if (!cleanConcept || !cleanSteps.length || !cleanFinalAnswer || !cleanShortestTrick) {
+    return fallback;
+  }
+
+  return {
+    conceptExplanation: cleanConcept,
+    stepByStepSolution: cleanSteps,
+    finalAnswer: cleanFinalAnswer,
+    shortestTrick: cleanShortestTrick,
+  };
+}
+
 function splitLinesToBullets(value) {
   return String(value || '')
     .split(/\r?\n/)
@@ -1752,72 +1810,48 @@ function parseStructuredAnswerSections(answerText) {
 }
 
 function buildStructuredDocumentPdfBuffer({ title, subtitle = '', sections = [] }) {
-  const lines = [];
-  lines.push({ text: title, size: 22, color: '1 1 1', gap: 18 });
-  if (subtitle) {
-    lines.push({ text: subtitle, size: 10, color: '1 1 1', gap: 18 });
-  }
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margins: { top: 56, bottom: 56, left: 54, right: 54 } });
+    const chunks = [];
 
-  sections.forEach((section, sectionIndex) => {
-    lines.push({ text: String(section.heading || `Section ${sectionIndex + 1}`), size: 14, color: '0.2 0.24 0.55', gap: 14 });
-    const sectionLines = Array.isArray(section.lines) ? section.lines : [];
-    if (!sectionLines.length) {
-      lines.push({ text: 'No content available.', size: 11, gap: 10 });
-    } else {
-      sectionLines.forEach((line) => {
-        lines.push({ text: String(line || ''), size: 11, gap: 12 });
-      });
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    doc.font('Helvetica-Bold').fontSize(21).fillColor('#1e3a8a').text(String(title || 'NET360 Export'), {
+      align: 'left',
+    });
+
+    if (subtitle) {
+      doc.moveDown(0.2);
+      doc.font('Helvetica').fontSize(10).fillColor('#475569').text(String(subtitle), { align: 'left' });
     }
-    lines.push({ text: '', size: 10, gap: 6 });
+
+    doc.moveDown(0.9);
+
+    sections.forEach((section, sectionIndex) => {
+      const heading = String(section?.heading || `Section ${sectionIndex + 1}`);
+      const lines = Array.isArray(section?.lines) ? section.lines : [];
+
+      doc.font('Helvetica-Bold').fontSize(14).fillColor('#0f172a').text(heading, { underline: false });
+      doc.moveDown(0.25);
+
+      if (!lines.length) {
+        doc.font('Helvetica-Oblique').fontSize(11).fillColor('#64748b').text('No content available.');
+      } else {
+        lines.forEach((line) => {
+          doc.font('Helvetica').fontSize(11).fillColor('#1f2937').text(`• ${String(line || '')}`, {
+            paragraphGap: 6,
+            indent: 12,
+          });
+        });
+      }
+
+      doc.moveDown(0.65);
+    });
+
+    doc.end();
   });
-
-  let y = 792 - 58;
-  const content = [];
-  content.push('q');
-  content.push('0.2 0.24 0.65 rg');
-  content.push('0 720 612 72 re f');
-  content.push('Q');
-
-  for (const line of lines) {
-    const size = line.size || 11;
-    const color = line.color || '0.12 0.14 0.2';
-    const drawY = line.color === '1 1 1' ? y : y - 2;
-    content.push('BT');
-    content.push(`/F1 ${size} Tf`);
-    content.push(`${color} rg`);
-    content.push(`40 ${Math.max(drawY, 42)} Td`);
-    content.push(`(${pdfEscape(line.text)}) Tj`);
-    content.push('ET');
-    y -= line.gap || (size + 6);
-    if (y < 48) break;
-  }
-
-  const stream = content.join('\n');
-
-  const objects = [
-    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
-    '2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n',
-    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n',
-    '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
-    `5 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}\nendstream\nendobj\n`,
-  ];
-
-  let pdf = '%PDF-1.4\n';
-  const offsets = [0];
-  for (const obj of objects) {
-    offsets.push(pdf.length);
-    pdf += obj;
-  }
-
-  const xrefOffset = pdf.length;
-  pdf += `xref\n0 ${objects.length + 1}\n`;
-  pdf += '0000000000 65535 f \n';
-  for (let i = 1; i < offsets.length; i += 1) {
-    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
-  }
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-
-  return Buffer.from(pdf, 'utf8');
 }
 
 function escapeHtml(value) {
@@ -1829,38 +1863,59 @@ function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-function buildStructuredWordBuffer({ title, subtitle = '', sections = [] }) {
-  const sectionHtml = sections
-    .map((section) => {
-      const heading = escapeHtml(section.heading || 'Section');
-      const lines = Array.isArray(section.lines) ? section.lines : [];
-      const listItems = lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('');
-      return `<section><h2>${heading}</h2>${listItems ? `<ul>${listItems}</ul>` : '<p>No content available.</p>'}</section>`;
-    })
-    .join('');
+async function buildStructuredWordBuffer({ title, subtitle = '', sections = [] }) {
+  const document = new Document({
+    sections: [
+      {
+        children: [
+          new Paragraph({
+            text: String(title || 'NET360 Export'),
+            heading: HeadingLevel.TITLE,
+            spacing: { after: 160 },
+          }),
+          ...(subtitle
+            ? [new Paragraph({
+              children: [new TextRun({ text: String(subtitle), color: '475569', size: 20 })],
+              spacing: { after: 260 },
+              alignment: AlignmentType.LEFT,
+            })]
+            : []),
+          ...sections.flatMap((section, sectionIndex) => {
+            const heading = String(section?.heading || `Section ${sectionIndex + 1}`);
+            const lines = Array.isArray(section?.lines) ? section.lines : [];
 
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8" />
-  <title>${escapeHtml(title)}</title>
-  <style>
-    body { font-family: Calibri, Arial, sans-serif; color: #1f2937; line-height: 1.5; margin: 24px; }
-    h1 { color: #1e3a8a; margin: 0 0 6px; }
-    h2 { color: #1e3a8a; margin: 20px 0 8px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; }
-    p.meta { color: #475569; margin: 0 0 14px; }
-    ul { margin: 0; padding-left: 22px; }
-    li { margin: 0 0 6px; }
-  </style>
-</head>
-<body>
-  <h1>${escapeHtml(title)}</h1>
-  ${subtitle ? `<p class="meta">${escapeHtml(subtitle)}</p>` : ''}
-  ${sectionHtml}
-</body>
-</html>`;
+            const children = [
+              new Paragraph({
+                text: heading,
+                heading: HeadingLevel.HEADING_2,
+                spacing: { before: 180, after: 120 },
+              }),
+            ];
 
-  return Buffer.from(html, 'utf8');
+            if (!lines.length) {
+              children.push(new Paragraph({
+                children: [new TextRun({ text: 'No content available.', italics: true, color: '64748b' })],
+                spacing: { after: 120 },
+              }));
+            } else {
+              lines.forEach((line) => {
+                children.push(new Paragraph({
+                  text: String(line || ''),
+                  bullet: { level: 0 },
+                  spacing: { after: 80 },
+                }));
+              });
+            }
+
+            children.push(new Paragraph({ text: '', spacing: { after: 80 } }));
+            return children;
+          }),
+        ],
+      },
+    ],
+  });
+
+  return Packer.toBuffer(document);
 }
 
 function normalizeMentorExportFormat(raw) {
@@ -3405,8 +3460,6 @@ app.post('/api/auth/signup-request', async (req, res) => {
     const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber);
     const paymentMethod = normalizePaymentMethod(req.body?.paymentMethod);
     const paymentTransactionId = sanitizePlainText(req.body?.paymentTransactionId || '', 120);
-    const contactMethod = normalizeContactMethod(req.body?.contactMethod || 'whatsapp');
-    const contactValueRaw = String(req.body?.contactValue || '').trim();
 
     let paymentProof;
     try {
@@ -3416,10 +3469,8 @@ app.post('/api/auth/signup-request', async (req, res) => {
       return;
     }
 
-    const contactValue = normalizeMobileNumber(contactValueRaw || mobileNumber);
-
-    if (!email || !mobileNumber || !paymentTransactionId || !paymentMethod || !contactMethod || !contactValue) {
-      res.status(400).json({ error: 'Email, mobile number, payment method, transaction ID, payment proof, and contact details are required.' });
+    if (!email || !mobileNumber || !paymentTransactionId || !paymentMethod) {
+      res.status(400).json({ error: 'Email, mobile number, payment method, transaction ID, and payment proof are required.' });
       return;
     }
 
@@ -3438,13 +3489,8 @@ app.post('/api/auth/signup-request', async (req, res) => {
       return;
     }
 
-    if (contactMethod !== 'whatsapp') {
-      res.status(400).json({ error: 'Contact method must be whatsapp.' });
-      return;
-    }
-
-    if (!isValidWhatsAppNumber(contactValue)) {
-      res.status(400).json({ error: 'Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).' });
+    if (!isValidWhatsAppNumber(mobileNumber)) {
+      res.status(400).json({ error: 'Enter a valid mobile number in international format (e.g. +923XXXXXXXXX).' });
       return;
     }
 
@@ -3490,8 +3536,6 @@ app.post('/api/auth/signup-request', async (req, res) => {
       paymentMethod,
       paymentTransactionId,
       paymentProof,
-      contactMethod,
-      contactValue,
       status: 'pending',
     });
 
@@ -3501,6 +3545,62 @@ app.post('/api/auth/signup-request', async (req, res) => {
     });
   } catch {
     res.status(500).json({ error: 'Could not submit signup request.' });
+  }
+});
+
+app.post('/api/auth/signup-token-inbox', async (req, res) => {
+  try {
+    const email = normalizeEmail(req.body?.email);
+    const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber);
+
+    if (!email || !mobileNumber) {
+      res.status(400).json({ error: 'Email and mobile number are required.' });
+      return;
+    }
+
+    const signupRequest = await SignupRequestModel.findOne({
+      email,
+      mobileNumber,
+      status: 'approved',
+      signupTokenId: { $ne: null },
+    }).sort({ updatedAt: -1 });
+
+    if (!signupRequest?.signupTokenId) {
+      res.json({ tokenCode: '', requestStatus: 'pending' });
+      return;
+    }
+
+    const signupToken = await SignupTokenModel.findById(signupRequest.signupTokenId);
+    if (!signupToken) {
+      res.json({ tokenCode: '', requestStatus: 'pending' });
+      return;
+    }
+
+    if (signupToken.status !== 'active') {
+      res.json({ tokenCode: '', requestStatus: signupToken.status });
+      return;
+    }
+
+    if (!signupToken.inAppSentAt) {
+      res.json({ tokenCode: '', requestStatus: 'approved' });
+      return;
+    }
+
+    if (new Date(signupToken.expiresAt).getTime() <= Date.now()) {
+      signupToken.status = 'expired';
+      await signupToken.save();
+      res.json({ tokenCode: '', requestStatus: 'expired' });
+      return;
+    }
+
+    res.json({
+      tokenCode: signupToken.code,
+      requestStatus: 'sent',
+      sentAt: signupToken.inAppSentAt ? new Date(signupToken.inAppSentAt).toISOString() : null,
+      expiresAt: signupToken.expiresAt ? new Date(signupToken.expiresAt).toISOString() : null,
+    });
+  } catch {
+    res.status(500).json({ error: 'Could not load signup token inbox.' });
   }
 });
 
@@ -5864,7 +5964,7 @@ app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
         ],
       });
       const raw = completion.choices?.[0]?.message?.content?.trim() || '';
-      structuredAnswer = normalizeStructuredTutorPayload(extractJsonObject(raw), null);
+      structuredAnswer = tightenStructuredTutorAnswer(extractJsonObject(raw), null);
       if (structuredAnswer) {
         answer = formatStructuredStudyResponse({
           conceptExplanation: structuredAnswer.conceptExplanation,
@@ -5975,16 +6075,16 @@ app.post('/api/ai/mentor/export', authMiddleware, async (req, res) => {
   const baseName = `net360-${tool}-${dateTag}`;
 
   if (format === 'pdf') {
-    const bytes = buildStructuredDocumentPdfBuffer(payload);
+    const bytes = await buildStructuredDocumentPdfBuffer(payload);
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${baseName}.pdf"`);
     res.send(bytes);
     return;
   }
 
-  const bytes = buildStructuredWordBuffer(payload);
-  res.setHeader('Content-Type', 'application/msword');
-  res.setHeader('Content-Disposition', `attachment; filename="${baseName}.doc"`);
+  const bytes = await buildStructuredWordBuffer(payload);
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+  res.setHeader('Content-Disposition', `attachment; filename="${baseName}.docx"`);
   res.send(bytes);
 });
 
@@ -6033,8 +6133,6 @@ app.post('/api/subscriptions/request-activation', authMiddleware, async (req, re
   const planId = String(req.body?.planId || '').trim();
   const paymentMethod = normalizePaymentMethod(req.body?.paymentMethod);
   const paymentTransactionId = sanitizePlainText(req.body?.paymentTransactionId || '', 120);
-  const contactMethod = normalizeContactMethod(req.body?.contactMethod || 'whatsapp');
-  const contactValueRaw = String(req.body?.contactValue || '').trim();
   const plan = resolveSubscriptionPlan(planId);
 
   let paymentProof;
@@ -6044,9 +6142,6 @@ app.post('/api/subscriptions/request-activation', authMiddleware, async (req, re
     res.status(400).json({ error: error instanceof Error ? error.message : 'Payment proof is invalid.' });
     return;
   }
-
-  const defaultContactValue = normalizeMobileNumber(req.user.phone || '');
-  const contactValue = normalizeMobileNumber(contactValueRaw || defaultContactValue);
 
   if (!plan) {
     res.status(400).json({ error: 'Invalid plan selected.' });
@@ -6063,13 +6158,9 @@ app.post('/api/subscriptions/request-activation', authMiddleware, async (req, re
     return;
   }
 
-  if (contactMethod !== 'whatsapp') {
-    res.status(400).json({ error: 'Contact method must be whatsapp.' });
-    return;
-  }
-
-  if (!isValidWhatsAppNumber(contactValue)) {
-    res.status(400).json({ error: 'Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).' });
+  const normalizedMobile = normalizeMobileNumber(req.user.phone || '');
+  if (!isValidWhatsAppNumber(normalizedMobile)) {
+    res.status(400).json({ error: 'Your account mobile number must be in international format (e.g. +923XXXXXXXXX).' });
     return;
   }
 
@@ -6085,13 +6176,11 @@ app.post('/api/subscriptions/request-activation', authMiddleware, async (req, re
   const request = await PremiumSubscriptionRequestModel.create({
     userId: req.user._id,
     email: req.user.email,
-    mobileNumber: normalizeMobileNumber(req.user.phone || ''),
+    mobileNumber: normalizedMobile,
     planId: plan.id,
     paymentMethod,
     paymentTransactionId,
     paymentProof,
-    contactMethod,
-    contactValue,
     status: 'pending',
   });
 
@@ -6099,6 +6188,49 @@ app.post('/api/subscriptions/request-activation', authMiddleware, async (req, re
     ok: true,
     request: serializePremiumSubscriptionRequest(request, plan.name),
     message: 'Premium activation request submitted. Wait for admin verification and token.',
+  });
+});
+
+app.get('/api/subscriptions/activation-token-inbox', authMiddleware, async (req, res) => {
+  const request = await PremiumSubscriptionRequestModel.findOne({
+    userId: req.user._id,
+    status: 'approved',
+    activationTokenId: { $ne: null },
+  }).sort({ updatedAt: -1 });
+
+  if (!request?.activationTokenId) {
+    res.json({ tokenCode: '', requestStatus: 'pending' });
+    return;
+  }
+
+  const activationToken = await PremiumActivationTokenModel.findById(request.activationTokenId);
+  if (!activationToken) {
+    res.json({ tokenCode: '', requestStatus: 'pending' });
+    return;
+  }
+
+  if (activationToken.status !== 'active') {
+    res.json({ tokenCode: '', requestStatus: activationToken.status });
+    return;
+  }
+
+  if (!activationToken.inAppSentAt) {
+    res.json({ tokenCode: '', requestStatus: 'approved' });
+    return;
+  }
+
+  if (new Date(activationToken.expiresAt).getTime() <= Date.now()) {
+    activationToken.status = 'expired';
+    await activationToken.save();
+    res.json({ tokenCode: '', requestStatus: 'expired' });
+    return;
+  }
+
+  res.json({
+    tokenCode: activationToken.code,
+    requestStatus: 'sent',
+    sentAt: activationToken.inAppSentAt ? new Date(activationToken.inAppSentAt).toISOString() : null,
+    expiresAt: activationToken.expiresAt ? new Date(activationToken.expiresAt).toISOString() : null,
   });
 });
 
@@ -6866,17 +6998,32 @@ app.get('/api/admin/subscriptions/requests', authMiddleware, requireAdmin, async
   if (q) {
     filter.$or = [
       { email: { $regex: q, $options: 'i' } },
-      { contactValue: { $regex: q, $options: 'i' } },
+      { mobileNumber: { $regex: q, $options: 'i' } },
       { paymentTransactionId: { $regex: q, $options: 'i' } },
       { planId: { $regex: q, $options: 'i' } },
     ];
   }
 
   const requests = await PremiumSubscriptionRequestModel.find(filter).sort({ createdAt: -1 }).limit(400).lean();
+  const tokenIds = requests
+    .map((item) => item.activationTokenId)
+    .filter(Boolean);
+  const tokens = tokenIds.length
+    ? await PremiumActivationTokenModel.find({ _id: { $in: tokenIds } }, { _id: 1, inAppSentAt: 1, status: 1 }).lean()
+    : [];
+  const tokenById = new Map(tokens.map((item) => [String(item._id), item]));
+
   res.json({
     requests: requests.map((item) => {
       const plan = resolveSubscriptionPlan(item.planId);
-      return serializePremiumSubscriptionRequest(item, plan?.name || '');
+      const serialized = serializePremiumSubscriptionRequest(item, plan?.name || '');
+      const token = item.activationTokenId ? tokenById.get(String(item.activationTokenId)) : null;
+      const codeDeliveryStatus = token?.inAppSentAt ? 'sent' : token ? 'pending_send' : 'not_generated';
+      return {
+        ...serialized,
+        codeDeliveryStatus,
+        codeSentAt: token?.inAppSentAt ? new Date(token.inAppSentAt).toISOString() : null,
+      };
     }),
   });
 });
@@ -6947,6 +7094,47 @@ app.post('/api/admin/subscriptions/requests/:requestId/approve', authMiddleware,
   });
 });
 
+app.post('/api/admin/subscriptions/requests/:requestId/send-code', authMiddleware, requireAdmin, async (req, res) => {
+  const request = await PremiumSubscriptionRequestModel.findById(req.params.requestId);
+  if (!request) {
+    res.status(404).json({ error: 'Premium activation request not found.' });
+    return;
+  }
+
+  if (request.status !== 'approved' || !request.activationTokenId) {
+    res.status(400).json({ error: 'Approve and generate token before sending code.' });
+    return;
+  }
+
+  const tokenDoc = await PremiumActivationTokenModel.findById(request.activationTokenId);
+  if (!tokenDoc) {
+    res.status(404).json({ error: 'Activation token not found for this request.' });
+    return;
+  }
+
+  if (tokenDoc.status !== 'active') {
+    res.status(400).json({ error: 'Only active tokens can be sent in-app.' });
+    return;
+  }
+
+  if (new Date(tokenDoc.expiresAt).getTime() <= Date.now()) {
+    tokenDoc.status = 'expired';
+    await tokenDoc.save();
+    res.status(400).json({ error: 'Token expired. Approve request again to generate a new code.' });
+    return;
+  }
+
+  tokenDoc.inAppSentAt = new Date();
+  tokenDoc.inAppSentByAdminId = req.user._id;
+  await tokenDoc.save();
+
+  res.json({
+    ok: true,
+    requestId: String(request._id),
+    sentAt: tokenDoc.inAppSentAt ? new Date(tokenDoc.inAppSentAt).toISOString() : null,
+  });
+});
+
 app.post('/api/admin/subscriptions/requests/:requestId/reject', authMiddleware, requireAdmin, async (req, res) => {
   const request = await PremiumSubscriptionRequestModel.findById(req.params.requestId);
   if (!request) {
@@ -6974,8 +7162,25 @@ app.get('/api/admin/signup-requests', authMiddleware, requireAdmin, async (req, 
   const filter = status === 'all' ? {} : { status };
 
   const requests = await SignupRequestModel.find(filter).sort({ createdAt: -1 }).limit(300).lean();
+  const tokenIds = requests
+    .map((item) => item.signupTokenId)
+    .filter(Boolean);
+  const tokens = tokenIds.length
+    ? await SignupTokenModel.find({ _id: { $in: tokenIds } }, { _id: 1, inAppSentAt: 1, status: 1 }).lean()
+    : [];
+  const tokenById = new Map(tokens.map((item) => [String(item._id), item]));
+
   res.json({
-    requests: requests.map((item) => serializeSignupRequest(item)),
+    requests: requests.map((item) => {
+      const serialized = serializeSignupRequest(item);
+      const token = item.signupTokenId ? tokenById.get(String(item.signupTokenId)) : null;
+      const codeDeliveryStatus = token?.inAppSentAt ? 'sent' : token ? 'pending_send' : 'not_generated';
+      return {
+        ...serialized,
+        codeDeliveryStatus,
+        codeSentAt: token?.inAppSentAt ? new Date(token.inAppSentAt).toISOString() : null,
+      };
+    }),
   });
 });
 
@@ -7061,6 +7266,47 @@ app.post('/api/admin/signup-requests/:requestId/approve', authMiddleware, requir
   });
 });
 
+app.post('/api/admin/signup-requests/:requestId/send-code', authMiddleware, requireAdmin, async (req, res) => {
+  const request = await SignupRequestModel.findById(req.params.requestId);
+  if (!request) {
+    res.status(404).json({ error: 'Signup request not found.' });
+    return;
+  }
+
+  if (request.status !== 'approved' || !request.signupTokenId) {
+    res.status(400).json({ error: 'Approve and generate token before sending code.' });
+    return;
+  }
+
+  const tokenDoc = await SignupTokenModel.findById(request.signupTokenId);
+  if (!tokenDoc) {
+    res.status(404).json({ error: 'Signup token not found for this request.' });
+    return;
+  }
+
+  if (tokenDoc.status !== 'active') {
+    res.status(400).json({ error: 'Only active tokens can be sent in-app.' });
+    return;
+  }
+
+  if (new Date(tokenDoc.expiresAt).getTime() <= Date.now()) {
+    tokenDoc.status = 'expired';
+    await tokenDoc.save();
+    res.status(400).json({ error: 'Token expired. Approve request again to generate a new code.' });
+    return;
+  }
+
+  tokenDoc.inAppSentAt = new Date();
+  tokenDoc.inAppSentByAdminId = req.user._id;
+  await tokenDoc.save();
+
+  res.json({
+    ok: true,
+    requestId: String(request._id),
+    sentAt: tokenDoc.inAppSentAt ? new Date(tokenDoc.inAppSentAt).toISOString() : null,
+  });
+});
+
 app.post('/api/admin/signup-requests/:requestId/reject', authMiddleware, requireAdmin, async (req, res) => {
   const request = await SignupRequestModel.findById(req.params.requestId);
   if (!request) {
@@ -7117,9 +7363,164 @@ app.get('/api/admin/users', authMiddleware, requireAdmin, async (req, res) => {
       email: item.email,
       firstName: item.firstName || '',
       lastName: item.lastName || '',
+      mobileNumber: item.phone || '',
       role: item.role || 'student',
       createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
     })),
+  });
+});
+
+app.post('/api/admin/users/create', authMiddleware, requireAdmin, async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const firstName = sanitizeHumanName(req.body?.firstName || '');
+  const lastName = sanitizeHumanName(req.body?.lastName || '');
+  const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber || '');
+  const password = String(req.body?.password || '');
+  const planId = String(req.body?.planId || '').trim();
+  const activatePlan = Boolean(req.body?.activatePlan);
+
+  if (!email || !password || !mobileNumber) {
+    res.status(400).json({ error: 'Email, mobile number, and password are required.' });
+    return;
+  }
+
+  if (!isValidEmail(email)) {
+    res.status(400).json({ error: 'Enter a valid email address.' });
+    return;
+  }
+
+  if (!isValidMobileNumber(mobileNumber)) {
+    res.status(400).json({ error: 'Enter a valid mobile number.' });
+    return;
+  }
+
+  if (password.length < 8) {
+    res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    return;
+  }
+
+  const [existingByEmail, existingByMobile] = await Promise.all([
+    UserModel.findOne({ email }).lean(),
+    findUserByMobileNumber(mobileNumber),
+  ]);
+
+  if (existingByEmail || existingByMobile) {
+    const matchedBy = existingByEmail && existingByMobile
+      ? 'both'
+      : existingByEmail
+        ? 'email'
+        : 'mobile';
+    res.status(409).json({ error: `Account already exists for this ${getDuplicateAccountFieldLabel(matchedBy)}.` });
+    return;
+  }
+
+  let subscription = {
+    status: 'inactive',
+    planId: '',
+    billingCycle: '',
+    startedAt: null,
+    expiresAt: null,
+    paymentReference: '',
+    lastActivatedAt: null,
+  };
+
+  if (activatePlan) {
+    const plan = resolveSubscriptionPlan(planId);
+    if (!plan) {
+      res.status(400).json({ error: 'Valid planId is required when activatePlan is enabled.' });
+      return;
+    }
+    const startedAt = new Date();
+    const expiresAt = new Date(startedAt.getTime() + plan.expiresInDays * 24 * 60 * 60 * 1000);
+    subscription = {
+      status: 'active',
+      planId: plan.id,
+      billingCycle: plan.billingCycle,
+      startedAt,
+      expiresAt,
+      paymentReference: `admin-created-${Date.now()}`,
+      lastActivatedAt: startedAt,
+    };
+  }
+
+  const passwordHash = await hashPassword(password);
+  const user = await UserModel.create({
+    email,
+    passwordHash,
+    firstName,
+    lastName,
+    phone: mobileNumber,
+    role: 'student',
+    subscription,
+  });
+
+  res.status(201).json({
+    ok: true,
+    user: {
+      id: String(user._id),
+      email: user.email,
+      firstName: user.firstName || '',
+      lastName: user.lastName || '',
+      mobileNumber: user.phone || '',
+      subscription: {
+        ...normalizeSubscription(user),
+        isActive: isSubscriptionActive(normalizeSubscription(user)),
+      },
+    },
+  });
+});
+
+app.post('/api/admin/subscriptions/assign', authMiddleware, requireAdmin, async (req, res) => {
+  const email = normalizeEmail(req.body?.email);
+  const planId = String(req.body?.planId || '').trim();
+  const status = String(req.body?.status || 'active').trim().toLowerCase();
+  const paymentReference = sanitizePlainText(req.body?.paymentReference || `admin-${Date.now()}`, 120);
+
+  if (!email || !planId) {
+    res.status(400).json({ error: 'User email and planId are required.' });
+    return;
+  }
+
+  const user = await UserModel.findOne({ email });
+  if (!user) {
+    res.status(404).json({ error: 'User not found for provided email.' });
+    return;
+  }
+
+  const plan = resolveSubscriptionPlan(planId);
+  if (!plan) {
+    res.status(400).json({ error: 'Invalid planId provided.' });
+    return;
+  }
+
+  if (!['active', 'inactive', 'expired', 'cancelled'].includes(status)) {
+    res.status(400).json({ error: 'status must be active, inactive, expired, or cancelled.' });
+    return;
+  }
+
+  const startedAt = new Date();
+  const expiresAt = new Date(startedAt.getTime() + plan.expiresInDays * 24 * 60 * 60 * 1000);
+  user.subscription = {
+    status,
+    planId: plan.id,
+    billingCycle: plan.billingCycle,
+    startedAt,
+    expiresAt,
+    paymentReference,
+    lastActivatedAt: startedAt,
+  };
+  await user.save();
+
+  res.json({
+    ok: true,
+    userId: String(user._id),
+    email: user.email,
+    subscription: {
+      ...normalizeSubscription(user),
+      isActive: isSubscriptionActive(normalizeSubscription(user)),
+      planName: plan.name,
+      dailyAiLimit: plan.dailyAiLimit,
+    },
   });
 });
 

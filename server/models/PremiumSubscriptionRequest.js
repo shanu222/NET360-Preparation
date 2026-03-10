@@ -21,12 +21,11 @@ const premiumSubscriptionRequestSchema = new mongoose.Schema(
     },
     contactMethod: {
       type: String,
-      enum: ['sms', 'email', 'whatsapp'],
-      required: true,
-      default: 'sms',
+      enum: ['sms', 'email', 'whatsapp', 'in_app'],
+      default: 'in_app',
       index: true,
     },
-    contactValue: { type: String, required: true, trim: true },
+    contactValue: { type: String, default: '', trim: true },
     status: {
       type: String,
       enum: ['pending', 'approved', 'rejected', 'completed'],

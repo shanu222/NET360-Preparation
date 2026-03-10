@@ -14,6 +14,8 @@ const premiumActivationTokenSchema = new mongoose.Schema(
     },
     expiresAt: { type: Date, required: true, index: true },
     usedAt: { type: Date, default: null },
+    inAppSentAt: { type: Date, default: null, index: true },
+    inAppSentByAdminId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
   },
   { timestamps: true },
 );

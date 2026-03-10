@@ -41,8 +41,6 @@ export function Profile({ onNavigate }: ProfileProps) {
       size: number;
       dataUrl: string;
     },
-    contactMethod: 'whatsapp' as 'whatsapp',
-    contactValue: '',
     tokenCode: '',
   });
   const [forgotEmail, setForgotEmail] = useState('');
@@ -57,6 +55,8 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
   const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+  const [isPersonalInfoExpanded, setIsPersonalInfoExpanded] = useState(true);
+  const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
 
   useEffect(() => {
     setLocalProfile(profile);
@@ -94,6 +94,50 @@ export function Profile({ onNavigate }: ProfileProps) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [forgotCooldownSeconds]);
+
+  useEffect(() => {
+    if (authMode !== 'register') return;
+
+    const email = authForm.email.trim();
+    const mobileNumber = authForm.mobileNumber.trim();
+    if (!email || !mobileNumber) return;
+
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const pullSignupToken = async () => {
+      try {
+        const payload = await apiRequest<{ tokenCode?: string; requestStatus?: string }>('/api/auth/signup-token-inbox', {
+          method: 'POST',
+          body: JSON.stringify({ email, mobileNumber }),
+        });
+
+        if (cancelled || !payload?.tokenCode) return;
+
+        setAuthForm((previous) => {
+          if (previous.tokenCode === payload.tokenCode) return previous;
+          return {
+            ...previous,
+            tokenCode: String(payload.tokenCode || '').toUpperCase(),
+          };
+        });
+      } catch {
+        // Ignore transient inbox polling errors.
+      }
+    };
+
+    void pullSignupToken();
+    timer = window.setInterval(() => {
+      void pullSignupToken();
+    }, 12000);
+
+    return () => {
+      cancelled = true;
+      if (timer) {
+        window.clearInterval(timer);
+      }
+    };
+  }, [authMode, authForm.email, authForm.mobileNumber]);
 
   const avatarText = useMemo(() => {
     const first = localProfile.firstName?.trim()[0] ?? 'S';
@@ -160,8 +204,6 @@ export function Profile({ onNavigate }: ProfileProps) {
             paymentMethod: authForm.paymentMethod,
             paymentTransactionId: authForm.paymentTransactionId,
             paymentProof: authForm.paymentProof,
-            contactMethod: authForm.contactMethod,
-            contactValue: authForm.mobileNumber.trim(),
           });
           toast.success('Signup request submitted. Wait for admin approval, then use token to complete signup.');
         }
@@ -262,6 +304,7 @@ export function Profile({ onNavigate }: ProfileProps) {
         city: localProfile.city,
       });
       toast.success('Personal information saved to server.');
+      setIsPersonalInfoExpanded(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not save profile.');
     }
@@ -277,6 +320,7 @@ export function Profile({ onNavigate }: ProfileProps) {
         testDate: localProfile.testDate,
       });
       toast.success('Preparation details updated on server.');
+      setIsPreparationExpanded(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update details.');
     }
@@ -397,7 +441,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                 {isRecoveryMode
                   ? 'Enter your registered email and mobile number to generate a reset token instantly in-app.'
                   : isRegisterMode
-                  ? 'Pay via Easypaisa/JazzCash/Bank Transfer, upload proof, then complete signup with admin-issued token.'
+                  ? 'Pay via Easypaisa/JazzCash/Bank Transfer, upload proof, then complete signup after admin approval and in-app code delivery.'
                   : 'Users can only stay logged in on one device at a time.'}
               </CardDescription>
             </CardHeader>
@@ -518,7 +562,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                     placeholder="e.g. +923001234567"
                     className="h-11 border-indigo-100"
                   />
-                  <p className="text-xs text-slate-500">This mobile number will be used for account verification and token delivery.</p>
+                  <p className="text-xs text-slate-500">This mobile number is used for account verification and admin approval matching.</p>
                 </div>
               ) : null}
 
@@ -565,22 +609,6 @@ export function Profile({ onNavigate }: ProfileProps) {
                     </div>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="token-contact-method">Token Delivery Method</Label>
-                    <Select
-                      value={authForm.contactMethod}
-                      onValueChange={() => setAuthForm((prev) => ({ ...prev, contactMethod: 'whatsapp' }))}
-                    >
-                      <SelectTrigger id="token-contact-method" className="h-11 border-indigo-100">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-slate-500">Signup token will be sent to your registered mobile number.</p>
-                  </div>
-
                   <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-sm text-indigo-900">Payment Proof</p>
@@ -621,6 +649,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                       placeholder="NET-XXXX-XXXX-XXXX"
                       className="h-11 border-indigo-100"
                     />
+                    <p className="text-xs text-slate-500">This code appears automatically after admin clicks Send Code in the admin panel.</p>
                   </div>
                 </>
               ) : null}
@@ -789,10 +818,35 @@ export function Profile({ onNavigate }: ProfileProps) {
 
         <Card className="lg:col-span-2">
           <CardHeader>
-            <CardTitle>Personal Information</CardTitle>
-            <CardDescription>Your previous details are prefilled. You can update city only.</CardDescription>
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div>
+                <CardTitle>Personal Information</CardTitle>
+                <CardDescription>
+                  {isPersonalInfoExpanded
+                    ? 'Your previous details are prefilled. You can update city only.'
+                    : 'Saved profile summary. Expand only when you need to edit.'}
+                </CardDescription>
+              </div>
+              {!isPersonalInfoExpanded ? (
+                <Button type="button" variant="outline" onClick={() => setIsPersonalInfoExpanded(true)}>
+                  Edit Profile
+                </Button>
+              ) : null}
+            </div>
           </CardHeader>
           <CardContent className="space-y-4">
+            {!isPersonalInfoExpanded ? (
+              <div className="grid gap-2 rounded-lg border bg-slate-50/70 p-3 text-sm md:grid-cols-2">
+                <p><span className="text-muted-foreground">First Name:</span> {localProfile.firstName || 'Not set'}</p>
+                <p><span className="text-muted-foreground">Last Name:</span> {localProfile.lastName || 'Not set'}</p>
+                <p><span className="text-muted-foreground">Email:</span> {localProfile.email || user.email || 'Not set'}</p>
+                <p><span className="text-muted-foreground">Phone:</span> {localProfile.phone || 'Not set'}</p>
+                <p className="md:col-span-2"><span className="text-muted-foreground">City:</span> {localProfile.city || 'Not set'}</p>
+              </div>
+            ) : null}
+
+            {isPersonalInfoExpanded ? (
+              <>
             <div className="grid md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="first-name">First Name</Label>
@@ -831,19 +885,52 @@ export function Profile({ onNavigate }: ProfileProps) {
               </Select>
             </div>
 
-            <Button onClick={savePersonalInfo}>Save Changes</Button>
+            <div className="flex flex-wrap gap-2">
+              <Button onClick={savePersonalInfo}>Save Changes</Button>
+              <Button type="button" variant="outline" onClick={() => setIsPersonalInfoExpanded(false)}>
+                Cancel
+              </Button>
+            </div>
+              </>
+            ) : null}
           </CardContent>
         </Card>
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Target className="w-5 h-5" />
-            NET Preparation Details
-          </CardTitle>
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <Target className="w-5 h-5" />
+                NET Preparation Details
+              </CardTitle>
+              <CardDescription>
+                {isPreparationExpanded
+                  ? 'Set your target program and exam details.'
+                  : 'Saved preparation summary. Expand when you want to edit.'}
+              </CardDescription>
+            </div>
+            {!isPreparationExpanded ? (
+              <Button type="button" variant="outline" onClick={() => setIsPreparationExpanded(true)}>
+                Edit Profile
+              </Button>
+            ) : null}
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {!isPreparationExpanded ? (
+            <div className="grid gap-2 rounded-lg border bg-slate-50/70 p-3 text-sm md:grid-cols-2">
+              <p><span className="text-muted-foreground">Target Program:</span> {localProfile.targetProgram || 'Not set'}</p>
+              <p><span className="text-muted-foreground">Test Series:</span> {localProfile.testSeries || 'Not set'}</p>
+              <p><span className="text-muted-foreground">SSC %:</span> {localProfile.sscPercentage || 'Not set'}</p>
+              <p><span className="text-muted-foreground">HSSC %:</span> {localProfile.hsscPercentage || 'Not set'}</p>
+              <p className="md:col-span-2"><span className="text-muted-foreground">NET Test Date:</span> {localProfile.testDate || 'Not set'}</p>
+            </div>
+          ) : null}
+
+          {isPreparationExpanded ? (
+            <>
           <div className="grid md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="target-program">Target Program</Label>
@@ -893,7 +980,14 @@ export function Profile({ onNavigate }: ProfileProps) {
             <Input id="test-date" type="date" value={localProfile.testDate} onChange={(e) => updateField('testDate', e.target.value)} />
           </div>
 
-          <Button onClick={savePreparationDetails}>Update Details</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={savePreparationDetails}>Update Details</Button>
+            <Button type="button" variant="outline" onClick={() => setIsPreparationExpanded(false)}>
+              Cancel
+            </Button>
+          </div>
+            </>
+          ) : null}
         </CardContent>
       </Card>
 
@@ -981,7 +1075,7 @@ export function Profile({ onNavigate }: ProfileProps) {
           </div>
         </CardHeader>
         {showDeleteAccountPanel ? (
-          <CardContent className="space-y-3" autoComplete="off">
+          <CardContent className="space-y-3">
             <p className="text-sm text-red-700/90">
               If you want to use the service again in the future, you will need to create a new account and obtain access again.
             </p>

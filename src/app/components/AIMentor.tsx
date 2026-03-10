@@ -119,8 +119,8 @@ interface PremiumActivationRequest {
     size: number;
     dataUrl: string;
   };
-  contactMethod: 'whatsapp';
-  contactValue: string;
+  contactMethod?: 'in_app';
+  contactValue?: string;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   notes?: string;
   createdAt: string | null;
@@ -146,6 +146,28 @@ interface StructuredTutorAnswer {
   stepByStepSolution: string[];
   finalAnswer: string;
   shortestTrick: string;
+}
+
+interface ChatMessage {
+  role: 'user' | 'ai';
+  message: string;
+  structuredAnswer?: StructuredTutorAnswer;
+}
+
+function formatStructuredTutorAnswer(answer: StructuredTutorAnswer) {
+  return [
+    'Concept Explanation',
+    answer.conceptExplanation,
+    '',
+    'Step-by-Step Solution',
+    ...answer.stepByStepSolution.map((step, index) => `${index + 1}. ${step}`),
+    '',
+    'Final Answer',
+    answer.finalAnswer,
+    '',
+    'Quick Trick or Shortcut Method',
+    answer.shortestTrick,
+  ].join('\n');
 }
 
 const emptySubscription: SubscriptionInfo = {
@@ -238,8 +260,6 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
   const [selectedPlanId, setSelectedPlanId] = useState('');
   const [paymentMethod, setPaymentMethod] = useState<'easypaisa' | 'jazzcash' | 'bank_transfer'>('easypaisa');
   const [paymentTransactionId, setPaymentTransactionId] = useState('');
-  const [contactMethod, setContactMethod] = useState<'whatsapp'>('whatsapp');
-  const [contactValue, setContactValue] = useState('');
   const [paymentProof, setPaymentProof] = useState<null | {
     name: string;
     mimeType: string;
@@ -262,7 +282,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
   const [solverQuestionText, setSolverQuestionText] = useState('');
   const [solverResult, setSolverResult] = useState<SolverPayload | null>(null);
 
-  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'ai'; message: string }>>([
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     { role: 'ai', message: "Hi! I'm your Smart Study Mentor for NET preparation. Ask me any concept or past-paper question." },
   ]);
 
@@ -346,6 +366,45 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     };
   }, [token, user]);
 
+  useEffect(() => {
+    if (!token || !user) return;
+    if (subscription.isActive) return;
+
+    let cancelled = false;
+    let timer: number | null = null;
+
+    const loadActivationCode = async () => {
+      try {
+        const payload = await apiRequest<{ tokenCode?: string; requestStatus?: string }>(
+          '/api/subscriptions/activation-token-inbox',
+          {},
+          token,
+        );
+
+        if (cancelled || !payload?.tokenCode) return;
+
+        setActivationTokenCode((previous) => {
+          const incoming = String(payload.tokenCode || '').toUpperCase();
+          return previous === incoming ? previous : incoming;
+        });
+      } catch {
+        // Ignore transient polling errors.
+      }
+    };
+
+    void loadActivationCode();
+    timer = window.setInterval(() => {
+      void loadActivationCode();
+    }, 12000);
+
+    return () => {
+      cancelled = true;
+      if (timer) {
+        window.clearInterval(timer);
+      }
+    };
+  }, [token, user, subscription.isActive]);
+
   const reloadSubscription = async (): Promise<SubscriptionRefreshResult | null> => {
     if (!token) return null;
     try {
@@ -395,23 +454,9 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       );
 
       const structured = payload.structuredAnswer;
-      const answerText = structured
-        ? [
-          'Concept Explanation',
-          structured.conceptExplanation,
-          '',
-          'Step-by-Step Solution',
-          ...structured.stepByStepSolution.map((step, index) => `${index + 1}. ${step}`),
-          '',
-          'Final Answer',
-          structured.finalAnswer,
-          '',
-          'Quick Trick or Shortcut Method',
-          structured.shortestTrick,
-        ].join('\n')
-        : payload.answer;
+      const answerText = structured ? formatStructuredTutorAnswer(structured) : payload.answer;
 
-      setChatMessages((previous) => [...previous, { role: 'ai', message: answerText }]);
+      setChatMessages((previous) => [...previous, { role: 'ai', message: answerText, structuredAnswer: structured }]);
       if (payload.usage) {
         setAiUsage((previous) => ({ ...previous, ...payload.usage }));
       }
@@ -480,7 +525,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
             format,
             payload: {
               question: lastUser?.message || question,
-              answer: lastAi.message,
+              answer: lastAi.structuredAnswer ? formatStructuredTutorAnswer(lastAi.structuredAnswer) : lastAi.message,
             },
           }),
         },
@@ -621,8 +666,6 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     }
   };
 
-  const isValidInternationalWhatsApp = (value: string) => /^\+[1-9]\d{7,14}$/.test(value.trim());
-
   const solveQuestion = async () => {
     if (!token || !user) {
       toast.error('Login required to use premium solver.');
@@ -695,16 +738,6 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       return;
     }
 
-    if (!contactValue.trim()) {
-      toast.error('Enter contact details to receive your activation token.');
-      return;
-    }
-
-    if (!isValidInternationalWhatsApp(contactValue)) {
-      toast.error('Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).');
-      return;
-    }
-
     setIsSubmittingActivationRequest(true);
     try {
       await apiRequest<{ request: PremiumActivationRequest }>(
@@ -716,8 +749,6 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
             paymentMethod,
             paymentTransactionId: paymentTransactionId.trim(),
             paymentProof,
-            contactMethod,
-            contactValue: contactValue.trim(),
           }),
         },
         token,
@@ -725,6 +756,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       await reloadSubscription();
       setPaymentTransactionId('');
       setPaymentProof(null);
+      setActivationTokenCode('');
       toast.success('Activation request submitted. Admin will verify and send your token.');
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not submit activation request.');
@@ -934,29 +966,8 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                 </div>
               </div>
 
-              <div className="grid gap-2 md:grid-cols-2">
-                <div className="space-y-1.5">
-                  <Label htmlFor="premium-contact-method">Token Delivery Method</Label>
-                  <Select value={contactMethod} onValueChange={() => setContactMethod('whatsapp')}>
-                    <SelectTrigger id="premium-contact-method" className="border-indigo-100">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="whatsapp">WhatsApp</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="premium-contact-value">WhatsApp Number</Label>
-                  <Input
-                    id="premium-contact-value"
-                    value={contactValue}
-                    onChange={(e) => setContactValue(e.target.value)}
-                    placeholder="+923XXXXXXXXX"
-                    className="border-indigo-100"
-                  />
-                  <p className="text-xs text-slate-500">Use international format with country code (e.g. +923001234567).</p>
-                </div>
+              <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs text-slate-700">
+                Activation code delivery is now fully in-app. After admin approval, they can click Send Code and your token field below will auto-fill.
               </div>
 
               <div className="space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs text-slate-700">
@@ -1009,6 +1020,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                   placeholder="PREM-XXXX-XXXX-XXXX"
                   className="border-emerald-200"
                 />
+                <p className="text-xs text-emerald-700">This field auto-populates when admin sends your code in-app.</p>
                 <Button
                   onClick={() => void activateWithToken()}
                   disabled={isActivatingWithToken}
@@ -1101,7 +1113,35 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                                   : 'border border-indigo-100 bg-white text-slate-700'
                               }`}
                             >
-                              <p>{msg.message}</p>
+                              {msg.role === 'ai' && msg.structuredAnswer ? (
+                                <div className="space-y-3">
+                                  <div className="space-y-1">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600">Concept Explanation</p>
+                                    <p className="leading-relaxed text-slate-700">{msg.structuredAnswer.conceptExplanation}</p>
+                                  </div>
+
+                                  <div className="space-y-1">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-indigo-600">Step-by-Step Solution</p>
+                                    <ol className="list-decimal space-y-1.5 pl-5 text-slate-700">
+                                      {msg.structuredAnswer.stepByStepSolution.map((step, stepIndex) => (
+                                        <li key={`step-${index}-${stepIndex}`} className="leading-relaxed">{step}</li>
+                                      ))}
+                                    </ol>
+                                  </div>
+
+                                  <div className="space-y-1 rounded-lg border border-emerald-100 bg-emerald-50/70 p-2.5">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-emerald-700">Final Answer</p>
+                                    <p className="font-medium leading-relaxed text-emerald-900">{msg.structuredAnswer.finalAnswer}</p>
+                                  </div>
+
+                                  <div className="space-y-1 rounded-lg border border-amber-100 bg-amber-50/70 p-2.5">
+                                    <p className="text-[11px] font-semibold uppercase tracking-wide text-amber-700">Quick Trick</p>
+                                    <p className="leading-relaxed text-amber-900">{msg.structuredAnswer.shortestTrick}</p>
+                                  </div>
+                                </div>
+                              ) : (
+                                <p className="whitespace-pre-line">{msg.message}</p>
+                              )}
                             </div>
                           </div>
                         ))}

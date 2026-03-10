@@ -8,6 +8,17 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../app/components/ui/t
 import { Badge } from '../app/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../app/components/ui/select';
 import { Textarea } from '../app/components/ui/textarea';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '../app/components/ui/alert-dialog';
 import { toast } from 'sonner';
 import { Preparation } from '../app/components/Preparation';
 import type { SubjectKey } from '../app/lib/mcq';
@@ -40,6 +51,7 @@ interface AdminUser {
   email: string;
   firstName: string;
   lastName: string;
+  mobileNumber?: string;
   role: 'student' | 'admin';
   createdAt: string | null;
 }
@@ -139,13 +151,15 @@ interface SignupRequest {
     dataUrl: string;
     fileUrl?: string;
   };
-  contactMethod?: 'whatsapp';
+  contactMethod?: 'in_app';
   contactValue?: string;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   notes?: string;
   reviewedAt: string | null;
   reviewedByEmail: string;
   createdAt: string | null;
+  codeDeliveryStatus?: 'not_generated' | 'pending_send' | 'sent';
+  codeSentAt?: string | null;
 }
 
 interface PremiumSubscriptionRequest {
@@ -164,13 +178,15 @@ interface PremiumSubscriptionRequest {
     dataUrl: string;
     fileUrl?: string;
   };
-  contactMethod: 'whatsapp';
+  contactMethod: 'in_app';
   contactValue: string;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   notes?: string;
   reviewedAt: string | null;
   reviewedByEmail: string;
   createdAt: string | null;
+  codeDeliveryStatus?: 'not_generated' | 'pending_send' | 'sent';
+  codeSentAt?: string | null;
 }
 
 interface AdminMCQ {
@@ -562,6 +578,45 @@ function isSupportedPracticeFile(file: File) {
   return PRACTICE_FILE_MIME_TYPES.has(mime) || PRACTICE_FILE_NAME_PATTERN.test(file.name || '');
 }
 
+function generateTemporaryPassword(length = 12) {
+  const lowers = 'abcdefghjkmnpqrstuvwxyz';
+  const uppers = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const digits = '23456789';
+  const symbols = '!@#$%*?';
+  const allChars = `${lowers}${uppers}${digits}${symbols}`;
+
+  const randomIndex = (max: number) => {
+    if (max <= 0) return 0;
+    if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+      const buffer = new Uint32Array(1);
+      crypto.getRandomValues(buffer);
+      return buffer[0] % max;
+    }
+    return Math.floor(Math.random() * max);
+  };
+
+  const required = [
+    lowers[randomIndex(lowers.length)],
+    uppers[randomIndex(uppers.length)],
+    digits[randomIndex(digits.length)],
+    symbols[randomIndex(symbols.length)],
+  ];
+
+  const result = [...required];
+  while (result.length < Math.max(8, length)) {
+    result.push(allChars[randomIndex(allChars.length)]);
+  }
+
+  for (let i = result.length - 1; i > 0; i -= 1) {
+    const j = randomIndex(i + 1);
+    const temp = result[i];
+    result[i] = result[j];
+    result[j] = temp;
+  }
+
+  return result.join('');
+}
+
 export default function AdminApp() {
   const activeView = new URLSearchParams(window.location.search).get('view');
   const isQuestionBankView = activeView === 'question-bank';
@@ -574,6 +629,16 @@ export default function AdminApp() {
   const [authForm, setAuthForm] = useState({ email: '', password: '' });
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [createUserForm, setCreateUserForm] = useState({
+    firstName: '',
+    lastName: '',
+    email: '',
+    mobileNumber: '',
+    password: '',
+    activatePlan: false,
+    planId: 'basic_monthly',
+  });
+  const [isCreatingUser, setIsCreatingUser] = useState(false);
   const [signupRequests, setSignupRequests] = useState<SignupRequest[]>([]);
   const [mcqs, setMcqs] = useState<AdminMCQ[]>([]);
   const [mcqStructure, setMcqStructure] = useState<AdminMcqBankStructureItem[]>([]);
@@ -589,6 +654,13 @@ export default function AdminApp() {
   const [subscriptionOverview, setSubscriptionOverview] = useState<AdminSubscriptionOverview | null>(null);
   const [subscriptionUsers, setSubscriptionUsers] = useState<AdminSubscriptionUser[]>([]);
   const [subscriptionFilter, setSubscriptionFilter] = useState('all');
+  const [assignPlanForm, setAssignPlanForm] = useState({
+    email: '',
+    planId: 'basic_monthly',
+    status: 'active',
+  });
+  const [isAssigningPlan, setIsAssigningPlan] = useState(false);
+  const [isAssignPlanConfirmOpen, setIsAssignPlanConfirmOpen] = useState(false);
   const [premiumRequests, setPremiumRequests] = useState<PremiumSubscriptionRequest[]>([]);
   const [premiumRequestStatusFilter, setPremiumRequestStatusFilter] = useState('all');
   const [premiumRequestQuery, setPremiumRequestQuery] = useState('');
@@ -637,6 +709,11 @@ export default function AdminApp() {
         .includes(needle),
     );
   }, [mcqs, query]);
+
+  const selectedDirectAssignPlanName = useMemo(() => {
+    const matched = (subscriptionOverview?.plans || []).find((item) => item.id === assignPlanForm.planId);
+    return matched?.name || assignPlanForm.planId || 'Unknown plan';
+  }, [subscriptionOverview, assignPlanForm.planId]);
 
   const filteredPracticeQuestions = useMemo(() => {
     if (!practiceQuery.trim()) return practiceQuestions;
@@ -1128,6 +1205,96 @@ export default function AdminApp() {
     }
   };
 
+  const createUserAccount = async () => {
+    if (!authToken) return;
+
+    if (!createUserForm.email.trim() || !createUserForm.mobileNumber.trim() || !createUserForm.password.trim()) {
+      toast.error('Email, mobile number, and password are required.');
+      return;
+    }
+
+    if (createUserForm.password.trim().length < 8) {
+      toast.error('Password must be at least 8 characters.');
+      return;
+    }
+
+    try {
+      setIsCreatingUser(true);
+      await apiRequest('/api/admin/users/create', {
+        method: 'POST',
+        body: JSON.stringify({
+          firstName: createUserForm.firstName,
+          lastName: createUserForm.lastName,
+          email: createUserForm.email.trim(),
+          mobileNumber: createUserForm.mobileNumber.trim(),
+          password: createUserForm.password,
+          activatePlan: createUserForm.activatePlan,
+          planId: createUserForm.planId,
+        }),
+      }, authToken);
+
+      toast.success('User account created successfully.');
+      setCreateUserForm({
+        firstName: '',
+        lastName: '',
+        email: '',
+        mobileNumber: '',
+        password: '',
+        activatePlan: false,
+        planId: createUserForm.planId,
+      });
+      await loadAdminData(authToken);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not create user account.');
+    } finally {
+      setIsCreatingUser(false);
+    }
+  };
+
+  const fillGeneratedTemporaryPassword = async () => {
+    const generated = generateTemporaryPassword(12);
+    setCreateUserForm((prev) => ({ ...prev, password: generated }));
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(generated);
+        toast.success('Temporary password generated and copied.');
+        return;
+      }
+    } catch {
+      // Continue with generated-only success feedback.
+    }
+
+    toast.success('Temporary password generated.');
+  };
+
+  const copyTemporaryPassword = async () => {
+    const currentPassword = createUserForm.password.trim();
+    if (!currentPassword) {
+      toast.error('Enter or generate a password first.');
+      return;
+    }
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(currentPassword);
+      } else {
+        const temp = document.createElement('textarea');
+        temp.value = currentPassword;
+        temp.style.position = 'fixed';
+        temp.style.opacity = '0';
+        document.body.appendChild(temp);
+        temp.focus();
+        temp.select();
+        document.execCommand('copy');
+        document.body.removeChild(temp);
+      }
+      toast.success('Password copied.');
+    } catch {
+      toast.error('Could not copy password.');
+    }
+  };
+
   const approveSignupRequest = async (request: SignupRequest) => {
     if (!authToken) return;
     try {
@@ -1219,24 +1386,19 @@ export default function AdminApp() {
     }
   };
 
-  const sendTokenShortcut = (
-    method: 'whatsapp',
-    targetValue: string,
-    tokenCode: string,
-    purpose: 'signup' | 'premium',
-  ) => {
-    const target = String(targetValue || '').trim();
-    const message = purpose === 'premium'
-      ? `NET360 premium activation token: ${tokenCode}. Use this to activate your subscription.`
-      : `NET360 signup token: ${tokenCode}. Use this to complete your registration.`;
+  const sendCodeInApp = async (requestId: string, purpose: 'signup' | 'premium') => {
+    if (!authToken) return;
+    try {
+      const endpoint = purpose === 'premium'
+        ? `/api/admin/subscriptions/requests/${requestId}/send-code`
+        : `/api/admin/signup-requests/${requestId}/send-code`;
 
-    if (!target) {
-      toast.error('WhatsApp number is missing for this request.');
-      return;
+      await apiRequest(endpoint, { method: 'POST' }, authToken);
+      toast.success('Code sent in-app successfully. User token field will auto-fill.');
+      await loadAdminData(authToken);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not send code in-app.');
     }
-
-    const waUrl = `https://wa.me/${encodeURIComponent(target.replace(/\D/g, ''))}?text=${encodeURIComponent(message)}`;
-    window.open(waUrl, '_blank', 'noopener,noreferrer');
   };
 
   const openPaymentProof = async (path: string, fileName: string, fallbackDataUrl?: string, download = false) => {
@@ -1622,6 +1784,35 @@ export default function AdminApp() {
       await loadAdminData(authToken);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update subscription.');
+    }
+  };
+
+  const assignSubscriptionByEmail = async () => {
+    if (!authToken) return;
+
+    if (!assignPlanForm.email.trim() || !assignPlanForm.planId.trim()) {
+      toast.error('User email and plan are required.');
+      return;
+    }
+
+    try {
+      setIsAssigningPlan(true);
+      await apiRequest('/api/admin/subscriptions/assign', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: assignPlanForm.email.trim(),
+          planId: assignPlanForm.planId,
+          status: assignPlanForm.status,
+          paymentReference: `admin-${Date.now()}`,
+        }),
+      }, authToken);
+
+      toast.success('Subscription assigned successfully.');
+      await loadAdminData(authToken);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not assign subscription.');
+    } finally {
+      setIsAssigningPlan(false);
     }
   };
 
@@ -2216,6 +2407,104 @@ export default function AdminApp() {
         <TabsContent value="users" className="space-y-3">
           <Card>
             <CardHeader>
+              <CardTitle>Create Account (Admin)</CardTitle>
+              <CardDescription>Create student accounts directly without signup token flow.</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid gap-2 md:grid-cols-2">
+                <div className="space-y-1">
+                  <Label htmlFor="admin-create-first-name">First Name</Label>
+                  <Input
+                    id="admin-create-first-name"
+                    value={createUserForm.firstName}
+                    onChange={(e) => setCreateUserForm((prev) => ({ ...prev, firstName: e.target.value }))}
+                    placeholder="First name"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="admin-create-last-name">Last Name</Label>
+                  <Input
+                    id="admin-create-last-name"
+                    value={createUserForm.lastName}
+                    onChange={(e) => setCreateUserForm((prev) => ({ ...prev, lastName: e.target.value }))}
+                    placeholder="Last name"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="admin-create-email">Email</Label>
+                  <Input
+                    id="admin-create-email"
+                    type="email"
+                    value={createUserForm.email}
+                    onChange={(e) => setCreateUserForm((prev) => ({ ...prev, email: e.target.value }))}
+                    placeholder="student@example.com"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="admin-create-mobile">Mobile Number</Label>
+                  <Input
+                    id="admin-create-mobile"
+                    value={createUserForm.mobileNumber}
+                    onChange={(e) => setCreateUserForm((prev) => ({ ...prev, mobileNumber: e.target.value }))}
+                    placeholder="+923001234567"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="admin-create-password">Temporary Password</Label>
+                  <Input
+                    id="admin-create-password"
+                    type="password"
+                    value={createUserForm.password}
+                    onChange={(e) => setCreateUserForm((prev) => ({ ...prev, password: e.target.value }))}
+                    placeholder="At least 8 characters"
+                  />
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" variant="outline" size="sm" onClick={() => void fillGeneratedTemporaryPassword()}>
+                      Generate Temporary Password
+                    </Button>
+                    <Button type="button" variant="outline" size="sm" onClick={() => void copyTemporaryPassword()}>
+                      Copy Password
+                    </Button>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="admin-create-plan">Initial Plan (Optional)</Label>
+                  <Select
+                    value={createUserForm.planId}
+                    onValueChange={(value) => setCreateUserForm((prev) => ({ ...prev, planId: value }))}
+                  >
+                    <SelectTrigger id="admin-create-plan">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(subscriptionOverview?.plans || []).map((plan) => (
+                        <SelectItem key={plan.id} value={plan.id}>{plan.name}</SelectItem>
+                      ))}
+                      {!(subscriptionOverview?.plans || []).length ? <SelectItem value="basic_monthly">Basic Plan</SelectItem> : null}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={createUserForm.activatePlan}
+                  onChange={(e) => setCreateUserForm((prev) => ({ ...prev, activatePlan: e.target.checked }))}
+                />
+                Activate selected plan immediately after account creation
+              </label>
+
+              <div>
+                <Button onClick={() => void createUserAccount()} disabled={isCreatingUser}>
+                  {isCreatingUser ? 'Creating Account...' : 'Create Account'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>Registered Users</CardTitle>
               <CardDescription>Remove users when needed</CardDescription>
             </CardHeader>
@@ -2229,6 +2518,7 @@ export default function AdminApp() {
                       {' • '}
                       {user.createdAt ? new Date(user.createdAt).toLocaleString() : 'Unknown date'}
                     </p>
+                    <p className="text-xs text-muted-foreground">Mobile: {user.mobileNumber || 'N/A'}</p>
                     <Badge variant="outline" className="mt-1">{user.role}</Badge>
                   </div>
                   <Button variant="destructive" size="sm" onClick={() => void removeUser(user)}>
@@ -2244,7 +2534,7 @@ export default function AdminApp() {
           <Card>
             <CardHeader>
               <CardTitle>Payment Approval Requests</CardTitle>
-              <CardDescription>Verify transaction details + proof, then approve to generate signup token.</CardDescription>
+              <CardDescription>Verify transaction details + proof, approve to generate code, then send it in-app.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2 max-h-[520px] overflow-auto">
               {signupRequests.map((request) => (
@@ -2262,9 +2552,17 @@ export default function AdminApp() {
                       <p className="text-xs text-muted-foreground">
                         Transaction ID: {request.paymentTransactionId}
                       </p>
-                      <p className="text-xs text-muted-foreground">
-                        WhatsApp Number: {request.contactValue || request.mobileNumber || 'N/A'}
-                      </p>
+                      <p className="text-xs text-muted-foreground">Mobile: {request.mobileNumber || 'N/A'}</p>
+                      <div className="mt-1">
+                        <Badge
+                          variant="outline"
+                          className={request.codeDeliveryStatus === 'sent' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-amber-300 bg-amber-50 text-amber-700'}
+                        >
+                          {request.codeDeliveryStatus === 'sent'
+                            ? `Sent In-App${request.codeSentAt ? ` • ${new Date(request.codeSentAt).toLocaleString()}` : ''}`
+                            : 'Pending Send'}
+                        </Badge>
+                      </div>
                       <p className="text-xs text-muted-foreground">
                         {request.createdAt ? new Date(request.createdAt).toLocaleString() : 'Unknown time'}
                       </p>
@@ -2307,16 +2605,16 @@ export default function AdminApp() {
                         className="h-6 px-2 text-[11px]"
                         onClick={() => void copyToken(issuedTokens[request.id])}
                       >
-                        Copy
+                        Copy Code
                       </Button>
                       <Button
                         type="button"
                         size="sm"
                         variant="outline"
                         className="h-6 px-2 text-[11px]"
-                        onClick={() => sendTokenShortcut('whatsapp', request.contactValue || request.mobileNumber, issuedTokens[request.id], 'signup')}
+                        onClick={() => void sendCodeInApp(request.id, 'signup')}
                       >
-                        Send Token
+                        Send Code
                       </Button>
                     </div>
                   ) : null}
@@ -2337,7 +2635,7 @@ export default function AdminApp() {
           <Card>
             <CardHeader>
               <CardTitle>Premium Subscription Management</CardTitle>
-              <CardDescription>Verify premium payments, generate activation tokens, and send via WhatsApp.</CardDescription>
+              <CardDescription>Verify premium payments, generate activation codes, and send directly in-app.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="grid gap-2 md:grid-cols-[220px_1fr]">
@@ -2382,9 +2680,17 @@ export default function AdminApp() {
                         <p className="text-xs text-muted-foreground">
                           Transaction ID: {request.paymentTransactionId}
                         </p>
-                        <p className="text-xs text-muted-foreground">
-                          WhatsApp Number: {request.contactValue || request.mobileNumber || 'N/A'}
-                        </p>
+                        <p className="text-xs text-muted-foreground">Mobile: {request.mobileNumber || 'N/A'}</p>
+                        <div className="mt-1">
+                          <Badge
+                            variant="outline"
+                            className={request.codeDeliveryStatus === 'sent' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-amber-300 bg-amber-50 text-amber-700'}
+                          >
+                            {request.codeDeliveryStatus === 'sent'
+                              ? `Sent In-App${request.codeSentAt ? ` • ${new Date(request.codeSentAt).toLocaleString()}` : ''}`
+                              : 'Pending Send'}
+                          </Badge>
+                        </div>
                         <p className="text-xs text-muted-foreground">
                           {request.createdAt ? new Date(request.createdAt).toLocaleString() : 'Unknown time'}
                         </p>
@@ -2425,16 +2731,16 @@ export default function AdminApp() {
                             className="h-7 px-2 text-[11px]"
                             onClick={() => void copyToken(issuedPremiumTokens[request.id])}
                           >
-                            Copy Token
+                            Copy Code
                           </Button>
                           <Button
                             type="button"
                             size="sm"
                             variant="outline"
                             className="h-7 px-2 text-[11px]"
-                            onClick={() => sendTokenShortcut('whatsapp', request.contactValue, issuedPremiumTokens[request.id], 'premium')}
+                            onClick={() => void sendCodeInApp(request.id, 'premium')}
                           >
-                            Send Token
+                            Send Code
                           </Button>
                         </>
                       ) : null}
@@ -2856,6 +3162,93 @@ export default function AdminApp() {
         </TabsContent>
 
         <TabsContent value="subscriptions" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Assign Plan Directly (Admin)</CardTitle>
+              <CardDescription>Activate or update a subscription by user email without token or user-side request.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 md:grid-cols-[1.3fr_1fr_1fr_auto] md:items-end">
+              <div className="space-y-1">
+                <Label htmlFor="assign-plan-email">User Email</Label>
+                <Input
+                  id="assign-plan-email"
+                  type="email"
+                  value={assignPlanForm.email}
+                  onChange={(e) => setAssignPlanForm((prev) => ({ ...prev, email: e.target.value }))}
+                  placeholder="student@example.com"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="assign-plan-id">Plan</Label>
+                <Select
+                  value={assignPlanForm.planId}
+                  onValueChange={(value) => setAssignPlanForm((prev) => ({ ...prev, planId: value }))}
+                >
+                  <SelectTrigger id="assign-plan-id">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(subscriptionOverview?.plans || []).map((plan) => (
+                      <SelectItem key={plan.id} value={plan.id}>{plan.name}</SelectItem>
+                    ))}
+                    {!(subscriptionOverview?.plans || []).length ? <SelectItem value="basic_monthly">Basic Plan</SelectItem> : null}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="assign-plan-status">Status</Label>
+                <Select
+                  value={assignPlanForm.status}
+                  onValueChange={(value) => setAssignPlanForm((prev) => ({ ...prev, status: value }))}
+                >
+                  <SelectTrigger id="assign-plan-status">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="inactive">Inactive</SelectItem>
+                    <SelectItem value="expired">Expired</SelectItem>
+                    <SelectItem value="cancelled">Cancelled</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <AlertDialog open={isAssignPlanConfirmOpen} onOpenChange={setIsAssignPlanConfirmOpen}>
+                <AlertDialogTrigger asChild>
+                  <Button
+                    disabled={
+                      isAssigningPlan
+                      || !assignPlanForm.email.trim()
+                      || !assignPlanForm.planId.trim()
+                    }
+                  >
+                    {isAssigningPlan ? 'Assigning...' : 'Assign Plan'}
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Confirm Subscription Assignment</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This will overwrite the current subscription for {assignPlanForm.email.trim() || 'this user'}.
+                      New plan: {selectedDirectAssignPlanName} ({assignPlanForm.status}).
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={isAssigningPlan}>Cancel</AlertDialogCancel>
+                    <AlertDialogAction
+                      disabled={isAssigningPlan}
+                      onClick={() => {
+                        setIsAssignPlanConfirmOpen(false);
+                        void assignSubscriptionByEmail();
+                      }}
+                    >
+                      Confirm Assign
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>Subscription Plans</CardTitle>

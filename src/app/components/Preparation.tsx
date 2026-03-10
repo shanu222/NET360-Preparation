@@ -32,14 +32,35 @@ const tabItems: Array<{ key: TabKey; label: string }> = [
   { key: 'design-aptitude', label: 'Design Aptitude' },
 ];
 
-const tabTriggerToneByKey: Record<TabKey, string> = {
-  mathematics: 'data-[state=active]:from-indigo-600 data-[state=active]:to-violet-500',
-  physics: 'data-[state=active]:from-cyan-600 data-[state=active]:to-blue-500',
-  english: 'data-[state=active]:from-rose-600 data-[state=active]:to-pink-500',
-  biology: 'data-[state=active]:from-emerald-600 data-[state=active]:to-teal-500',
-  chemistry: 'data-[state=active]:from-amber-500 data-[state=active]:to-orange-500',
-  'quantitative-mathematics': 'data-[state=active]:from-fuchsia-600 data-[state=active]:to-violet-500',
-  'design-aptitude': 'data-[state=active]:from-purple-600 data-[state=active]:to-indigo-500',
+const tabTriggerToneByKey: Record<TabKey, { idle: string; active: string }> = {
+  mathematics: {
+    idle: 'border-indigo-200 bg-indigo-50/80 text-indigo-700 hover:bg-indigo-100',
+    active: 'data-[state=active]:from-indigo-600 data-[state=active]:to-violet-500 data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)]',
+  },
+  physics: {
+    idle: 'border-cyan-200 bg-cyan-50/80 text-cyan-700 hover:bg-cyan-100',
+    active: 'data-[state=active]:from-cyan-600 data-[state=active]:to-blue-500 data-[state=active]:shadow-[0_12px_24px_rgba(8,145,178,0.35)]',
+  },
+  english: {
+    idle: 'border-rose-200 bg-rose-50/80 text-rose-700 hover:bg-rose-100',
+    active: 'data-[state=active]:from-rose-600 data-[state=active]:to-pink-500 data-[state=active]:shadow-[0_12px_24px_rgba(225,29,72,0.32)]',
+  },
+  biology: {
+    idle: 'border-emerald-200 bg-emerald-50/80 text-emerald-700 hover:bg-emerald-100',
+    active: 'data-[state=active]:from-emerald-600 data-[state=active]:to-teal-500 data-[state=active]:shadow-[0_12px_24px_rgba(5,150,105,0.33)]',
+  },
+  chemistry: {
+    idle: 'border-amber-200 bg-amber-50/80 text-amber-700 hover:bg-amber-100',
+    active: 'data-[state=active]:from-amber-500 data-[state=active]:to-orange-500 data-[state=active]:shadow-[0_12px_24px_rgba(245,158,11,0.34)]',
+  },
+  'quantitative-mathematics': {
+    idle: 'border-fuchsia-200 bg-fuchsia-50/80 text-fuchsia-700 hover:bg-fuchsia-100',
+    active: 'data-[state=active]:from-fuchsia-600 data-[state=active]:to-violet-500 data-[state=active]:shadow-[0_12px_24px_rgba(192,38,211,0.34)]',
+  },
+  'design-aptitude': {
+    idle: 'border-purple-200 bg-purple-50/80 text-purple-700 hover:bg-purple-100',
+    active: 'data-[state=active]:from-purple-600 data-[state=active]:to-indigo-500 data-[state=active]:shadow-[0_12px_24px_rgba(124,58,237,0.34)]',
+  },
 };
 
 const FLAT_TOPIC_TABS: Record<'quantitative-mathematics' | 'design-aptitude', { title: string; topics: string[] }> = {
@@ -436,12 +457,12 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
 
       <Tabs defaultValue="mathematics">
         <div className="overflow-x-auto pb-1">
-          <TabsList className="inline-flex h-auto min-w-max gap-2 rounded-2xl border border-indigo-100 bg-white/80 p-1.5 shadow-sm">
+          <TabsList className="inline-flex h-auto min-w-max gap-2 rounded-2xl border border-indigo-100/80 bg-gradient-to-r from-white to-indigo-50/60 p-1.5 shadow-sm">
             {tabItems.map((tab) => (
               <TabsTrigger
                 key={tab.key}
                 value={tab.key}
-                className={`min-w-[150px] rounded-xl border border-indigo-100/80 bg-white/90 text-[12px] text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)] transition-all duration-200 hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-white hover:text-indigo-900 data-[state=active]:border-transparent data-[state=active]:bg-gradient-to-r data-[state=active]:font-semibold data-[state=active]:text-slate-900 data-[state=active]:shadow-[0_10px_20px_rgba(79,70,229,0.3)] sm:text-sm ${tabTriggerToneByKey[tab.key]}`}
+                className={`min-w-[150px] rounded-xl border px-3 py-1.5 text-[12px] font-semibold tracking-[0.01em] transition-all duration-300 ease-out hover:-translate-y-0.5 data-[state=active]:-translate-y-0.5 data-[state=active]:bg-gradient-to-r data-[state=active]:text-white data-[state=active]:ring-2 data-[state=active]:ring-white/60 sm:text-sm ${tabTriggerToneByKey[tab.key].idle} ${tabTriggerToneByKey[tab.key].active}`}
               >
                 {tab.label}
               </TabsTrigger>

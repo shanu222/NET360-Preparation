@@ -231,6 +231,7 @@ export function Community() {
   const [scoreRangeMin, setScoreRangeMin] = useState(0);
   const [scoreRangeMax, setScoreRangeMax] = useState(200);
   const [bio, setBio] = useState('');
+  const [isCommunityProfileExpanded, setIsCommunityProfileExpanded] = useState(true);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Array<CommunityUser & { connectionStatus?: string }>>([]);
@@ -280,6 +281,15 @@ export function Community() {
     () => quizChallenges.find((item) => item.id === selectedQuizChallengeId) || null,
     [quizChallenges, selectedQuizChallengeId],
   );
+
+  const hasCommunityProfileData = useMemo(() => {
+    return Boolean(
+      usernameInput.trim()
+      || bio.trim()
+      || subjectsNeedHelpInput.trim()
+      || profilePictureDataUrl.trim(),
+    );
+  }, [usernameInput, bio, subjectsNeedHelpInput, profilePictureDataUrl]);
 
   const loadLeaderboardAndBadges = async (period: 'weekly' | 'monthly') => {
     if (!token) return;
@@ -350,6 +360,7 @@ export function Community() {
     setScoreRangeMin(Number(profilePayload.profile?.testScoreRange?.min ?? 0));
     setScoreRangeMax(Number(profilePayload.profile?.testScoreRange?.max ?? 200));
     setBio(profilePayload.profile?.bio || '');
+    setIsCommunityProfileExpanded(!(profilePayload.profile?.username || profilePayload.profile?.bio));
 
     setIncomingRequests(requestsPayload.incoming || []);
     setOutgoingRequests(requestsPayload.outgoing || []);
@@ -552,6 +563,7 @@ export function Community() {
       setProfile(payload.profile);
       setProfilePictureDataUrl(payload.profile?.profilePictureUrl || profilePictureDataUrl);
       setProfilePictureUploadName('');
+      setIsCommunityProfileExpanded(false);
       toast.success('Community profile updated.');
       await refreshCommunity();
     } catch (error) {
@@ -800,10 +812,38 @@ export function Community() {
         <TabsContent value="discover-students" className="mt-0 space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Community Profile</CardTitle>
-              <CardDescription>Set your NET goals and preferences so matching is productive.</CardDescription>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <CardTitle>Community Profile</CardTitle>
+                  <CardDescription>
+                    {isCommunityProfileExpanded
+                      ? 'Set your NET goals and preferences so matching is productive.'
+                      : 'Saved profile summary. Use Edit Profile to update details.'}
+                  </CardDescription>
+                </div>
+                {!isCommunityProfileExpanded ? (
+                  <Button type="button" variant="outline" onClick={() => setIsCommunityProfileExpanded(true)}>
+                    Edit Profile
+                  </Button>
+                ) : null}
+              </div>
             </CardHeader>
             <CardContent className="space-y-3">
+              {!isCommunityProfileExpanded ? (
+                <div className="grid gap-2 rounded-lg border bg-slate-50/70 p-3 text-sm md:grid-cols-2">
+                  <p><span className="text-muted-foreground">Username:</span> {usernameInput || 'Not set'}</p>
+                  <p><span className="text-muted-foreground">Target NET:</span> {targetNetType || 'Not set'}</p>
+                  <p><span className="text-muted-foreground">Help Subjects:</span> {subjectsNeedHelpInput || 'Not set'}</p>
+                  <p><span className="text-muted-foreground">Preparation:</span> {preparationLevel}</p>
+                  <p><span className="text-muted-foreground">Study Time:</span> {studyTimePreference}</p>
+                  <p><span className="text-muted-foreground">Score Range:</span> {scoreRangeMin} - {scoreRangeMax}</p>
+                  <p className="md:col-span-2"><span className="text-muted-foreground">Bio:</span> {bio || 'Not set'}</p>
+                  <p className="md:col-span-2"><span className="text-muted-foreground">Profile Picture:</span> {hasCommunityProfileData && profilePictureDataUrl ? 'Added' : 'Not set'}</p>
+                </div>
+              ) : null}
+
+              {isCommunityProfileExpanded ? (
+                <>
               <div className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-1.5">
                   <Label>Community Username</Label>
@@ -899,7 +939,16 @@ export function Community() {
                 <p className="text-sm text-muted-foreground">Allow other students to view my profile picture</p>
               </div>
 
-              <Button onClick={() => void saveCommunityProfile()}>Save Community Profile</Button>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={() => void saveCommunityProfile()}>Save Community Profile</Button>
+                {hasCommunityProfileData ? (
+                  <Button type="button" variant="outline" onClick={() => setIsCommunityProfileExpanded(false)}>
+                    Cancel
+                  </Button>
+                ) : null}
+              </div>
+                </>
+              ) : null}
             </CardContent>
           </Card>
 

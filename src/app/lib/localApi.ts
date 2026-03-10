@@ -90,7 +90,7 @@ interface LocalSignupRequest {
   paymentMethod: 'easypaisa' | 'jazzcash' | 'bank_transfer';
   paymentTransactionId: string;
   paymentProof: LocalPaymentProof;
-  contactMethod: 'whatsapp';
+  contactMethod: 'in_app';
   contactValue: string;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   notes: string;
@@ -110,6 +110,8 @@ interface LocalSignupToken {
   expiresAt: string;
   usedAt: string | null;
   usedByUserId: string | null;
+  inAppSentAt: string | null;
+  inAppSentByAdminId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -123,7 +125,7 @@ interface LocalPremiumSubscriptionRequest {
   paymentMethod: 'easypaisa' | 'jazzcash' | 'bank_transfer';
   paymentTransactionId: string;
   paymentProof: LocalPaymentProof;
-  contactMethod: 'whatsapp';
+  contactMethod: 'in_app';
   contactValue: string;
   status: 'pending' | 'approved' | 'rejected' | 'completed';
   notes: string;
@@ -143,6 +145,8 @@ interface LocalPremiumActivationToken {
   status: 'active' | 'used' | 'expired' | 'revoked';
   expiresAt: string;
   usedAt: string | null;
+  inAppSentAt: string | null;
+  inAppSentByAdminId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -645,8 +649,8 @@ function serializeSignupRequest(item: LocalSignupRequest) {
     paymentMethod: item.paymentMethod,
     paymentTransactionId: item.paymentTransactionId,
     paymentProof: item.paymentProof,
-    contactMethod: item.contactMethod,
-    contactValue: item.contactValue,
+    contactMethod: 'in_app',
+    contactValue: item.mobileNumber,
     status: item.status,
     notes: item.notes,
     reviewedAt: item.reviewedAt,
@@ -667,8 +671,8 @@ function serializePremiumSubscriptionRequest(item: LocalPremiumSubscriptionReque
     paymentMethod: item.paymentMethod,
     paymentTransactionId: item.paymentTransactionId,
     paymentProof: item.paymentProof,
-    contactMethod: item.contactMethod,
-    contactValue: item.contactValue,
+    contactMethod: 'in_app',
+    contactValue: item.mobileNumber,
     status: item.status,
     notes: item.notes,
     reviewedAt: item.reviewedAt,
@@ -1776,8 +1780,6 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const mobileNumber = normalizeMobileNumber(body.mobileNumber);
     const paymentMethod = normalizePaymentMethod(body.paymentMethod);
     const paymentTransactionId = String(body.paymentTransactionId || '').trim();
-    const contactMethod = normalizeContactMethod(body.contactMethod || 'whatsapp');
-    const contactValue = normalizeMobileNumber(body.contactValue || mobileNumber);
 
     let paymentProof: LocalPaymentProof;
     try {
@@ -1786,8 +1788,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       throw new Error(error instanceof Error ? error.message : 'Payment proof is invalid.');
     }
 
-    if (!email || !mobileNumber || !paymentMethod || !paymentTransactionId || !contactMethod || !contactValue) {
-      throw new Error('Email, mobile number, payment method, transaction ID, payment proof, and contact details are required.');
+    if (!email || !mobileNumber || !paymentMethod || !paymentTransactionId) {
+      throw new Error('Email, mobile number, payment method, transaction ID, and payment proof are required.');
     }
     if (!isValidEmail(email)) {
       throw new Error('Enter a valid email address.');
@@ -1798,11 +1800,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     if (!['easypaisa', 'jazzcash', 'bank_transfer'].includes(paymentMethod)) {
       throw new Error('Payment method must be one of: easypaisa, jazzcash, bank_transfer.');
     }
-    if (contactMethod !== 'whatsapp') {
-      throw new Error('Contact method must be whatsapp.');
-    }
-    if (!isValidWhatsAppNumber(contactValue)) {
-      throw new Error('Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).');
+    if (!isValidWhatsAppNumber(mobileNumber)) {
+      throw new Error('Enter a valid mobile number in international format (e.g. +923XXXXXXXXX).');
     }
 
     if (db.users.some((item) => item.email === email)) {
@@ -1822,8 +1821,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       paymentMethod,
       paymentTransactionId,
       paymentProof,
-      contactMethod,
-      contactValue,
+      contactMethod: 'in_app',
+      contactValue: mobileNumber,
       status: 'pending',
       notes: '',
       reviewedByEmail: '',
@@ -1838,6 +1837,51 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     return {
       request: serializeSignupRequest(request),
       message: 'Signup request submitted. Wait for admin approval and token.',
+    } as T;
+  }
+
+  if (url.pathname === '/api/auth/signup-token-inbox' && method === 'POST') {
+    const db = readDb();
+    const email = normalizeEmail(body.email);
+    const mobileNumber = normalizeMobileNumber(body.mobileNumber);
+
+    if (!email || !mobileNumber) {
+      throw new Error('Email and mobile number are required.');
+    }
+
+    const request = db.signupRequests
+      .filter((item) => item.email === email && item.mobileNumber === mobileNumber && item.status === 'approved')
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+
+    if (!request || !request.signupTokenId) {
+      return { tokenCode: '', requestStatus: 'pending' } as T;
+    }
+
+    const tokenItem = db.signupTokens.find((item) => item.id === request.signupTokenId);
+    if (!tokenItem) {
+      return { tokenCode: '', requestStatus: 'pending' } as T;
+    }
+
+    if (tokenItem.status !== 'active') {
+      return { tokenCode: '', requestStatus: tokenItem.status } as T;
+    }
+
+    if (!tokenItem.inAppSentAt) {
+      return { tokenCode: '', requestStatus: 'approved' } as T;
+    }
+
+    if (new Date(tokenItem.expiresAt).getTime() <= Date.now()) {
+      tokenItem.status = 'expired';
+      tokenItem.updatedAt = new Date().toISOString();
+      writeDb(db);
+      return { tokenCode: '', requestStatus: 'expired' } as T;
+    }
+
+    return {
+      tokenCode: tokenItem.code,
+      requestStatus: 'sent',
+      sentAt: tokenItem.inAppSentAt,
+      expiresAt: tokenItem.expiresAt,
     } as T;
   }
 
@@ -2160,8 +2204,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const planId = String(body.planId || '').trim();
     const paymentMethod = normalizePaymentMethod(body.paymentMethod);
     const paymentTransactionId = String(body.paymentTransactionId || '').trim();
-    const contactMethod = normalizeContactMethod(body.contactMethod || 'whatsapp');
-    const contactValue = normalizeMobileNumber(body.contactValue || user.phone);
+    const normalizedMobile = normalizeMobileNumber(user.phone || '');
     const plan = resolveSubscriptionPlan(planId);
 
     let paymentProof: LocalPaymentProof;
@@ -2174,8 +2217,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     if (!plan) throw new Error('Invalid plan selected.');
     if (!paymentMethod) throw new Error('Payment method must be one of: easypaisa, jazzcash, bank_transfer.');
     if (!paymentTransactionId || paymentTransactionId.length < 4) throw new Error('Payment transaction ID is required for verification.');
-    if (contactMethod !== 'whatsapp') throw new Error('Contact method must be whatsapp.');
-    if (!isValidWhatsAppNumber(contactValue)) throw new Error('Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).');
+    if (!isValidWhatsAppNumber(normalizedMobile)) throw new Error('Your account mobile number must be in international format (e.g. +923XXXXXXXXX).');
 
     if (db.premiumSubscriptionRequests.some((item) => item.userId === user.id && item.status === 'pending')) {
       throw new Error('A premium activation request is already pending for your account.');
@@ -2191,8 +2233,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       paymentMethod,
       paymentTransactionId,
       paymentProof,
-      contactMethod,
-      contactValue,
+      contactMethod: 'in_app',
+      contactValue: normalizedMobile,
       status: 'pending',
       notes: '',
       reviewedByEmail: '',
@@ -2208,6 +2250,45 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       ok: true,
       request: serializePremiumSubscriptionRequest(request),
       message: 'Premium activation request submitted. Wait for admin verification and token.',
+    } as T;
+  }
+
+  if (url.pathname === '/api/subscriptions/activation-token-inbox' && method === 'GET') {
+    const { db, user } = requireAuth(token);
+
+    const request = db.premiumSubscriptionRequests
+      .filter((item) => item.userId === user.id && item.status === 'approved')
+      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
+
+    if (!request || !request.activationTokenId) {
+      return { tokenCode: '', requestStatus: 'pending' } as T;
+    }
+
+    const tokenItem = db.premiumActivationTokens.find((item) => item.id === request.activationTokenId);
+    if (!tokenItem) {
+      return { tokenCode: '', requestStatus: 'pending' } as T;
+    }
+
+    if (tokenItem.status !== 'active') {
+      return { tokenCode: '', requestStatus: tokenItem.status } as T;
+    }
+
+    if (!tokenItem.inAppSentAt) {
+      return { tokenCode: '', requestStatus: 'approved' } as T;
+    }
+
+    if (new Date(tokenItem.expiresAt).getTime() <= Date.now()) {
+      tokenItem.status = 'expired';
+      tokenItem.updatedAt = new Date().toISOString();
+      writeDb(db);
+      return { tokenCode: '', requestStatus: 'expired' } as T;
+    }
+
+    return {
+      tokenCode: tokenItem.code,
+      requestStatus: 'sent',
+      sentAt: tokenItem.inAppSentAt,
+      expiresAt: tokenItem.expiresAt,
     } as T;
   }
 
@@ -2369,11 +2450,21 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       .filter((item) => {
         if (status !== 'all' && item.status !== status) return false;
         if (!q) return true;
-        const blob = [item.email, item.contactValue, item.paymentTransactionId, item.planId].join(' ').toLowerCase();
+        const blob = [item.email, item.mobileNumber, item.paymentTransactionId, item.planId].join(' ').toLowerCase();
         return blob.includes(q);
       })
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .map((item) => serializePremiumSubscriptionRequest(item));
+      .map((item) => {
+        const token = item.activationTokenId
+          ? db.premiumActivationTokens.find((entry) => entry.id === item.activationTokenId)
+          : null;
+        const codeDeliveryStatus = token?.inAppSentAt ? 'sent' : token ? 'pending_send' : 'not_generated';
+        return {
+          ...serializePremiumSubscriptionRequest(item),
+          codeDeliveryStatus,
+          codeSentAt: token?.inAppSentAt || null,
+        };
+      });
 
     return { requests } as T;
   }
@@ -2417,6 +2508,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       status: 'active',
       expiresAt,
       usedAt: null,
+      inAppSentAt: null,
+      inAppSentByAdminId: null,
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
     };
@@ -2437,6 +2530,31 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         expiresAt,
       },
     } as T;
+  }
+
+  if (/^\/api\/admin\/subscriptions\/requests\/[^/]+\/send-code$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAdmin(token);
+    const requestId = url.pathname.split('/')[5];
+    const request = db.premiumSubscriptionRequests.find((item) => item.id === requestId);
+    if (!request) throw new Error('Premium activation request not found.');
+    if (request.status !== 'approved' || !request.activationTokenId) throw new Error('Approve and generate token before sending code.');
+
+    const tokenItem = db.premiumActivationTokens.find((item) => item.id === request.activationTokenId);
+    if (!tokenItem) throw new Error('Activation token not found for this request.');
+    if (tokenItem.status !== 'active') throw new Error('Only active tokens can be sent in-app.');
+
+    if (new Date(tokenItem.expiresAt).getTime() <= Date.now()) {
+      tokenItem.status = 'expired';
+      tokenItem.updatedAt = new Date().toISOString();
+      writeDb(db);
+      throw new Error('Token expired. Approve request again to generate a new code.');
+    }
+
+    tokenItem.inAppSentAt = new Date().toISOString();
+    tokenItem.inAppSentByAdminId = user.id;
+    tokenItem.updatedAt = tokenItem.inAppSentAt;
+    writeDb(db);
+    return { ok: true, requestId, sentAt: tokenItem.inAppSentAt } as T;
   }
 
   if (/^\/api\/admin\/subscriptions\/requests\/[^/]+\/reject$/.test(url.pathname) && method === 'POST') {
@@ -2462,7 +2580,17 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const requests = db.signupRequests
       .filter((item) => (status === 'all' ? true : item.status === status))
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
-      .map((item) => serializeSignupRequest(item));
+      .map((item) => {
+        const token = item.signupTokenId
+          ? db.signupTokens.find((entry) => entry.id === item.signupTokenId)
+          : null;
+        const codeDeliveryStatus = token?.inAppSentAt ? 'sent' : token ? 'pending_send' : 'not_generated';
+        return {
+          ...serializeSignupRequest(item),
+          codeDeliveryStatus,
+          codeSentAt: token?.inAppSentAt || null,
+        };
+      });
     return { requests } as T;
   }
 
@@ -2504,6 +2632,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       expiresAt,
       usedAt: null,
       usedByUserId: null,
+      inAppSentAt: null,
+      inAppSentByAdminId: null,
       createdAt: now.toISOString(),
       updatedAt: now.toISOString(),
     };
@@ -2524,6 +2654,31 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         expiresAt,
       },
     } as T;
+  }
+
+  if (/^\/api\/admin\/signup-requests\/[^/]+\/send-code$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAdmin(token);
+    const requestId = url.pathname.split('/')[4];
+    const request = db.signupRequests.find((item) => item.id === requestId);
+    if (!request) throw new Error('Signup request not found.');
+    if (request.status !== 'approved' || !request.signupTokenId) throw new Error('Approve and generate token before sending code.');
+
+    const tokenItem = db.signupTokens.find((item) => item.id === request.signupTokenId);
+    if (!tokenItem) throw new Error('Signup token not found for this request.');
+    if (tokenItem.status !== 'active') throw new Error('Only active tokens can be sent in-app.');
+
+    if (new Date(tokenItem.expiresAt).getTime() <= Date.now()) {
+      tokenItem.status = 'expired';
+      tokenItem.updatedAt = new Date().toISOString();
+      writeDb(db);
+      throw new Error('Token expired. Approve request again to generate a new code.');
+    }
+
+    tokenItem.inAppSentAt = new Date().toISOString();
+    tokenItem.inAppSentByAdminId = user.id;
+    tokenItem.updatedAt = tokenItem.inAppSentAt;
+    writeDb(db);
+    return { ok: true, requestId, sentAt: tokenItem.inAppSentAt } as T;
   }
 
   if (/^\/api\/admin\/signup-requests\/[^/]+\/reject$/.test(url.pathname) && method === 'POST') {
@@ -3763,11 +3918,152 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         email: item.email,
         firstName: item.firstName,
         lastName: item.lastName,
+        mobileNumber: item.phone || '',
         role: item.role,
         createdAt: null,
       }))
       .sort((a, b) => a.email.localeCompare(b.email));
     return { users } as T;
+  }
+
+  if (url.pathname === '/api/admin/users/create' && method === 'POST') {
+    const { db } = requireAdmin(token);
+    const email = normalizeEmail(body.email);
+    const firstName = String(body.firstName || '').trim();
+    const lastName = String(body.lastName || '').trim();
+    const mobileNumber = normalizeMobileNumber(body.mobileNumber);
+    const password = String(body.password || '');
+    const planId = String(body.planId || '').trim();
+    const activatePlan = Boolean(body.activatePlan);
+
+    if (!email || !mobileNumber || !password) {
+      throw new Error('Email, mobile number, and password are required.');
+    }
+    if (!isValidEmail(email)) {
+      throw new Error('Enter a valid email address.');
+    }
+    if (!isValidMobileNumber(mobileNumber)) {
+      throw new Error('Enter a valid mobile number.');
+    }
+    if (password.length < 8) {
+      throw new Error('Password must be at least 8 characters.');
+    }
+    if (db.users.some((item) => item.email === email)) {
+      throw new Error('Account already exists for this email.');
+    }
+    if (db.users.some((item) => compactMobile(item.phone) === compactMobile(mobileNumber))) {
+      throw new Error('Account already exists for this mobile number.');
+    }
+
+    const now = new Date();
+    let subscription = defaultSubscription();
+    if (activatePlan) {
+      const plan = resolveSubscriptionPlan(planId);
+      if (!plan) {
+        throw new Error('Valid planId is required when activatePlan is enabled.');
+      }
+      const expiresAt = new Date(now.getTime() + plan.expiresInDays * 24 * 60 * 60 * 1000);
+      subscription = {
+        status: 'active',
+        planId: plan.id,
+        billingCycle: plan.billingCycle,
+        startedAt: now.toISOString(),
+        expiresAt: expiresAt.toISOString(),
+        paymentReference: `admin-created-${Date.now()}`,
+        lastActivatedAt: now.toISOString(),
+      };
+    }
+
+    const newUser: LocalUser = {
+      id: `user-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+      email,
+      password,
+      firstName,
+      lastName,
+      phone: mobileNumber,
+      city: '',
+      targetProgram: '',
+      testSeries: '',
+      sscPercentage: '',
+      hsscPercentage: '',
+      testDate: '',
+      role: 'student',
+      preferences: defaultPreferences(),
+      progress: defaultProgress(),
+      subscription,
+      refreshTokens: [],
+      resetPasswordToken: null,
+      resetPasswordExpiresAt: null,
+    };
+
+    db.users.unshift(newUser);
+    writeDb(db);
+
+    return {
+      ok: true,
+      user: {
+        id: newUser.id,
+        email: newUser.email,
+        firstName: newUser.firstName,
+        lastName: newUser.lastName,
+        mobileNumber: newUser.phone,
+        subscription: {
+          ...newUser.subscription,
+          isActive: isSubscriptionActive(newUser.subscription),
+        },
+      },
+    } as T;
+  }
+
+  if (url.pathname === '/api/admin/subscriptions/assign' && method === 'POST') {
+    const { db } = requireAdmin(token);
+    const email = normalizeEmail(body.email);
+    const planId = String(body.planId || '').trim();
+    const status = String(body.status || 'active').trim().toLowerCase();
+    const paymentReference = String(body.paymentReference || `admin-${Date.now()}`).trim();
+
+    if (!email || !planId) {
+      throw new Error('User email and planId are required.');
+    }
+
+    const user = db.users.find((item) => item.email === email);
+    if (!user) {
+      throw new Error('User not found for provided email.');
+    }
+
+    const plan = resolveSubscriptionPlan(planId);
+    if (!plan) {
+      throw new Error('Invalid planId provided.');
+    }
+
+    if (!['active', 'inactive', 'expired', 'cancelled'].includes(status)) {
+      throw new Error('status must be active, inactive, expired, or cancelled.');
+    }
+
+    const startedAt = new Date();
+    const expiresAt = new Date(startedAt.getTime() + plan.expiresInDays * 24 * 60 * 60 * 1000);
+    user.subscription = {
+      status: status as LocalSubscription['status'],
+      planId: plan.id,
+      billingCycle: plan.billingCycle,
+      startedAt: startedAt.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+      paymentReference,
+      lastActivatedAt: startedAt.toISOString(),
+    };
+
+    writeDb(db);
+    return {
+      ok: true,
+      userId: user.id,
+      email: user.email,
+      subscription: {
+        ...user.subscription,
+        isActive: isSubscriptionActive(user.subscription),
+        planName: plan.name,
+        dailyAiLimit: plan.dailyAiLimit,
+      },
+    } as T;
   }
 
   if (/^\/api\/admin\/users\/[^/]+$/.test(url.pathname) && method === 'DELETE') {
