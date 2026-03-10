@@ -1,6 +1,6 @@
-import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { Difficulty, MCQ, SubjectKey } from '../lib/mcq';
-import { apiRequest } from '../lib/api';
+import { apiRequest, buildApiUrl } from '../lib/api';
 import { useAuth } from './AuthContext';
 
 interface TestAttempt {
@@ -138,30 +138,67 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<ProfileState>(defaultProfile);
   const [preferences, setPreferences] = useState<PreferencesState>(defaultPreferences);
 
+  const applyUserPayload = useCallback((userData: ProfileState & { preferences: PreferencesState }) => {
+    setProfile({
+      firstName: userData.firstName || '',
+      lastName: userData.lastName || '',
+      email: userData.email || '',
+      phone: userData.phone || '',
+      city: userData.city || '',
+      targetProgram: userData.targetProgram || '',
+      testSeries: userData.testSeries || '',
+      sscPercentage: userData.sscPercentage || '',
+      hsscPercentage: userData.hsscPercentage || '',
+      testDate: userData.testDate || '',
+    });
+    setPreferences(userData.preferences || defaultPreferences);
+  }, []);
+
+  const loadMcqData = useCallback(async () => {
+    const payload = await apiRequest<{ mcqs: MCQ[] }>('/api/mcqs');
+    setMcqs(payload.mcqs || []);
+  }, []);
+
+  const loadUserData = useCallback(async (authToken: string, silent = false) => {
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
+
+    try {
+      const mePayload = await apiRequest<{ user: ProfileState & { preferences: PreferencesState } }>('/api/auth/me', {}, authToken);
+      const attemptsPayload = await apiRequest<{ attempts: TestAttempt[] }>('/api/tests/attempts', {}, authToken);
+      applyUserPayload(mePayload.user);
+      setAttempts((attemptsPayload.attempts || []) as TestAttempt[]);
+      if (!silent) {
+        setError(null);
+      }
+    } catch (err) {
+      if (!silent) {
+        setError(err instanceof Error ? err.message : 'Failed to load user data');
+      }
+    } finally {
+      if (!silent) {
+        setLoading(false);
+      }
+    }
+  }, [applyUserPayload]);
+
   useEffect(() => {
     let cancelled = false;
 
-    async function loadMcqData() {
-      try {
-        const payload = await apiRequest<{ mcqs: MCQ[] }>('/api/mcqs');
-        if (!cancelled) {
-          setMcqs(payload.mcqs || []);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          const message = err instanceof Error ? err.message : 'Could not load MCQ dataset';
-          setError(message);
-          setMcqs([]);
-        }
+    void loadMcqData().catch((err) => {
+      if (!cancelled) {
+        const message = err instanceof Error ? err.message : 'Could not load MCQ dataset';
+        setError(message);
+        setMcqs([]);
       }
-    }
-
-    void loadMcqData();
+    });
 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [loadMcqData]);
 
   useEffect(() => {
     if (!user) {
@@ -172,49 +209,81 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    let cancelled = false;
+    void loadUserData(token || localStorage.getItem('net360-auth-token') || '').catch(() => undefined);
+  }, [token, user, loadUserData]);
 
-    async function loadUserData() {
-      setLoading(true);
-      setError(null);
-      try {
-        const mePayload = await apiRequest<{ user: ProfileState & { preferences: PreferencesState } }>('/api/auth/me', {}, token);
-        const attemptsPayload = await apiRequest<{ attempts: TestAttempt[] }>('/api/tests/attempts', {}, token);
+  useEffect(() => {
+    const authToken = token || localStorage.getItem('net360-auth-token');
+    if (!authToken) return;
 
-        if (!cancelled) {
-          const userData = mePayload.user;
-          setProfile({
-            firstName: userData.firstName || '',
-            lastName: userData.lastName || '',
-            email: userData.email || '',
-            phone: userData.phone || '',
-            city: userData.city || '',
-            targetProgram: userData.targetProgram || '',
-            testSeries: userData.testSeries || '',
-            sscPercentage: userData.sscPercentage || '',
-            hsscPercentage: userData.hsscPercentage || '',
-            testDate: userData.testDate || '',
-          });
-          setPreferences(userData.preferences || defaultPreferences);
-          setAttempts((attemptsPayload.attempts || []) as TestAttempt[]);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : 'Failed to load user data');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
+    let closed = false;
+    let reconnectTimer: number | null = null;
+    let source: EventSource | null = null;
+
+    const closeCurrent = () => {
+      if (source) {
+        source.close();
+        source = null;
       }
-    }
+    };
 
-    void loadUserData();
+    const connect = () => {
+      if (closed) return;
+      closeCurrent();
+
+      source = new EventSource(`${buildApiUrl('/api/stream')}?token=${encodeURIComponent(authToken)}`);
+
+      const runSync = () => {
+        if (document.hidden) return;
+        void loadMcqData().catch(() => undefined);
+        if (user) {
+          void loadUserData(authToken, true).catch(() => undefined);
+        }
+      };
+
+      source.addEventListener('sync', runSync);
+
+      source.addEventListener('heartbeat', () => {
+        // Keeps stream warm; no action required.
+      });
+
+      source.onerror = () => {
+        closeCurrent();
+        if (closed) return;
+        reconnectTimer = window.setTimeout(() => {
+          connect();
+        }, 3000);
+      };
+    };
+
+    connect();
 
     return () => {
-      cancelled = true;
+      closed = true;
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+      }
+      closeCurrent();
     };
-  }, [token, user]);
+  }, [token, user, loadMcqData, loadUserData]);
+
+  useEffect(() => {
+    if (!user) return;
+    const authToken = token || localStorage.getItem('net360-auth-token');
+    if (!authToken) return;
+
+    const onVisibility = () => {
+      if (document.hidden) return;
+      void loadUserData(authToken, true).catch(() => undefined);
+      void loadMcqData().catch(() => undefined);
+    };
+
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [token, user, loadUserData, loadMcqData]);
 
   const mcqsBySubject = useMemo(() => {
     const grouped: Record<SubjectKey, MCQ[]> = {

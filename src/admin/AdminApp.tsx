@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiRequest } from '../app/lib/api';
+import { apiRequest, buildApiUrl } from '../app/lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
 import { Button } from '../app/components/ui/button';
 import { Input } from '../app/components/ui/input';
@@ -1230,6 +1230,62 @@ export default function AdminApp() {
   }, [
     authToken,
     refreshToken,
+    subscriptionFilter,
+    premiumRequestStatusFilter,
+    premiumRequestQuery,
+    passwordRecoveryStatusFilter,
+    passwordRecoveryQuery,
+  ]);
+
+  useEffect(() => {
+    if (!authToken || !ready) return;
+
+    let closed = false;
+    let reconnectTimer: number | null = null;
+    let source: EventSource | null = null;
+
+    const closeCurrent = () => {
+      if (source) {
+        source.close();
+        source = null;
+      }
+    };
+
+    const connect = () => {
+      if (closed) return;
+      closeCurrent();
+      source = new EventSource(`${buildApiUrl('/api/stream')}?token=${encodeURIComponent(authToken)}`);
+
+      source.addEventListener('sync', () => {
+        if (document.hidden) return;
+        void loadAdminData(authToken).catch(() => undefined);
+      });
+
+      source.addEventListener('heartbeat', () => {
+        // Keepalive only.
+      });
+
+      source.onerror = () => {
+        closeCurrent();
+        if (closed) return;
+        reconnectTimer = window.setTimeout(() => {
+          connect();
+        }, 3000);
+      };
+    };
+
+    connect();
+
+    return () => {
+      closed = true;
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+      }
+      closeCurrent();
+    };
+  }, [
+    authToken,
+    ready,
     subscriptionFilter,
     premiumRequestStatusFilter,
     premiumRequestQuery,

@@ -39,6 +39,7 @@ import { PremiumSubscriptionRequestModel } from './models/PremiumSubscriptionReq
 import { PremiumActivationTokenModel } from './models/PremiumActivationToken.js';
 import { PasswordRecoveryRequestModel } from './models/PasswordRecoveryRequest.js';
 import { SupportChatMessageModel } from './models/SupportChatMessage.js';
+import { SecurityAuditEventModel } from './models/SecurityAuditEvent.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -144,6 +145,101 @@ const SUBSCRIPTION_PLANS = {
 
 const app = express();
 
+const sseClients = {
+  student: new Map(),
+  admin: new Map(),
+};
+
+function buildCspDirectives() {
+  const connectSources = ["'self'", 'https:', 'http:', 'ws:', 'wss:'];
+  return {
+    defaultSrc: ["'self'"],
+    baseUri: ["'self'"],
+    objectSrc: ["'none'"],
+    frameAncestors: ["'none'"],
+    imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+    fontSrc: ["'self'", 'data:'],
+    styleSrc: ["'self'", "'unsafe-inline'"],
+    scriptSrc: ["'self'"],
+    connectSrc: connectSources,
+    upgradeInsecureRequests: IS_PRODUCTION ? [] : null,
+  };
+}
+
+async function logSecurityEvent(req, {
+  eventType,
+  severity = 'warning',
+  actorUserId = null,
+  actorEmail = '',
+  metadata = {},
+}) {
+  try {
+    await SecurityAuditEventModel.create({
+      eventType,
+      severity,
+      actorUserId,
+      actorEmail: String(actorEmail || '').trim().toLowerCase(),
+      ipAddress: String(req.ip || ''),
+      userAgent: String(req.headers['user-agent'] || '').slice(0, 250),
+      path: String(req.originalUrl || req.path || ''),
+      method: String(req.method || '').toUpperCase(),
+      metadata,
+      occurredAt: new Date(),
+    });
+  } catch {
+    // Avoid blocking user flows when audit storage is unavailable.
+  }
+}
+
+function addSseClient(role, userId, res) {
+  const streamRole = role === 'admin' ? 'admin' : 'student';
+  const clientId = crypto.randomUUID();
+  const bucket = sseClients[streamRole];
+  bucket.set(clientId, { userId: String(userId || ''), res });
+
+  res.write(`event: sync\ndata: ${JSON.stringify({ type: 'connected', role: streamRole, ts: Date.now() })}\n\n`);
+
+  reqCleanup(res, () => {
+    bucket.delete(clientId);
+  });
+
+  return clientId;
+}
+
+function reqCleanup(res, cb) {
+  res.on('close', cb);
+  res.on('finish', cb);
+}
+
+function broadcastSyncEvent({ role = 'all', event = 'sync', data = {} }) {
+  const payload = `event: ${event}\ndata: ${JSON.stringify({ ...data, ts: Date.now() })}\n\n`;
+  const targets = [];
+
+  if (role === 'all' || role === 'student') {
+    targets.push(...Array.from(sseClients.student.entries()));
+  }
+  if (role === 'all' || role === 'admin') {
+    targets.push(...Array.from(sseClients.admin.entries()));
+  }
+
+  targets.forEach(([clientId, client]) => {
+    try {
+      client.res.write(payload);
+    } catch {
+      if (sseClients.student.has(clientId)) {
+        sseClients.student.delete(clientId);
+      }
+      if (sseClients.admin.has(clientId)) {
+        sseClients.admin.delete(clientId);
+      }
+    }
+  });
+}
+
+setInterval(() => {
+  broadcastSyncEvent({ role: 'all', event: 'heartbeat', data: { type: 'heartbeat' } });
+}, 25000).unref();
+
 const PAYMENT_PROOF_ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
   'image/jpg',
@@ -159,6 +255,10 @@ app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
     referrerPolicy: { policy: 'no-referrer' },
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: buildCspDirectives(),
+    },
   }),
 );
 
@@ -1520,6 +1620,13 @@ function defaultProgress() {
     analytics: {
       weeklyProgress: [],
       accuracyTrend: [],
+      subjectInsights: [],
+      averageSecondsPerQuestion: 0,
+      adaptiveProfile: {
+        level: 'balanced',
+        strengths: [],
+        weaknesses: [],
+      },
     },
     studyPlan: null,
   };
@@ -2437,6 +2544,7 @@ function serializeQuizChallenge(challenge, currentUserId) {
   const myResult = isChallenger ? challenge.challengerResult : challenge.opponentResult;
   const opponentResult = isChallenger ? challenge.opponentResult : challenge.challengerResult;
   const revealAnswers = String(challenge.status) === 'completed';
+  const questionSetHash = hashToken((challenge.questions || []).map((item) => String(item.questionId || '')).join('|'));
 
   return {
     id: String(challenge._id),
@@ -2448,6 +2556,7 @@ function serializeQuizChallenge(challenge, currentUserId) {
     topic: String(challenge.topic || ''),
     difficulty: String(challenge.difficulty || 'Medium'),
     questionCount: Number(challenge.questionCount || 0),
+    questionSetHash,
     durationSeconds: Number(challenge.durationSeconds || 0),
     status: String(challenge.status || 'pending'),
     invitedAt: challenge.invitedAt ? new Date(challenge.invitedAt).toISOString() : null,
@@ -3051,19 +3160,42 @@ async function issueAuthPayload(user, req) {
   };
 }
 
-async function authMiddleware(req, res, next) {
+function extractAccessToken(req) {
   const authHeader = req.headers.authorization || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice('Bearer '.length) : null;
+  if (authHeader.startsWith('Bearer ')) {
+    return authHeader.slice('Bearer '.length);
+  }
+  return String(req.query?.token || '').trim() || null;
+}
+
+async function resolveAuthenticatedUserFromToken(token) {
+  const payload = jwt.verify(token, JWT_SECRET);
+  const user = await UserModel.findById(payload.userId);
+  if (!user) {
+    return { user: null, payload };
+  }
+  return { user, payload };
+}
+
+async function authMiddleware(req, res, next) {
+  const token = extractAccessToken(req);
 
   if (!token) {
+    await logSecurityEvent(req, {
+      eventType: 'auth.missing_token',
+      severity: 'warning',
+    });
     res.status(401).json({ error: 'Missing authentication token.' });
     return;
   }
 
   try {
-    const payload = jwt.verify(token, JWT_SECRET);
-    const user = await UserModel.findById(payload.userId);
+    const { user, payload } = await resolveAuthenticatedUserFromToken(token);
     if (!user) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.user_not_found',
+        severity: 'warning',
+      });
       res.status(401).json({ error: 'User not found.' });
       return;
     }
@@ -3074,6 +3206,12 @@ async function authMiddleware(req, res, next) {
       const tokenSessionId = String(payload.sessionId || '');
       const activeSessionId = String(user.activeSession?.sessionId || '');
       if (!tokenSessionId || !activeSessionId || tokenSessionId !== activeSessionId) {
+        await logSecurityEvent(req, {
+          eventType: 'auth.session_mismatch',
+          severity: 'warning',
+          actorUserId: user._id,
+          actorEmail: user.email,
+        });
         res.status(401).json({ error: 'Session is no longer active. Please log in again.' });
         return;
       }
@@ -3085,12 +3223,22 @@ async function authMiddleware(req, res, next) {
     req.user = user;
     next();
   } catch {
+    await logSecurityEvent(req, {
+      eventType: 'auth.invalid_token',
+      severity: 'warning',
+    });
     res.status(401).json({ error: 'Invalid or expired token.' });
   }
 }
 
-function requireAdmin(req, res, next) {
+async function requireAdmin(req, res, next) {
   if (req.user?.role !== 'admin') {
+    await logSecurityEvent(req, {
+      eventType: 'auth.admin_required',
+      severity: 'critical',
+      actorUserId: req.user?._id || null,
+      actorEmail: req.user?.email || '',
+    });
     res.status(403).json({ error: 'Admin access required.' });
     return;
   }
@@ -3250,26 +3398,43 @@ function pickFromPoolsByDistribution({ distribution, pool, totalQuestions, usedI
   return selected.slice(0, totalQuestions);
 }
 
-function generateAdaptiveSet({ profile, allQuestions, weakTopics, questionCount }) {
+function generateAdaptiveSet({ profile, allQuestions, weakTopics, questionCount, userProgress }) {
   const profileSubjects = Array.from(
     new Set(profile.distribution.flatMap((item) => item.sourceSubjects)),
   );
   const inScope = allQuestions.filter((item) => profileSubjects.includes(item.subject));
 
   const weakSet = new Set((weakTopics || []).map((item) => String(item).toLowerCase()));
+  const averageScore = Number(userProgress?.averageScore || 0);
+  const averageSecondsPerQuestion = Number(userProgress?.analytics?.averageSecondsPerQuestion || 0);
 
   const weakPool = inScope.filter((item) => weakSet.has(String(item.subject).toLowerCase()) || weakSet.has(String(item.topic).toLowerCase()));
   const mediumPool = inScope.filter((item) => item.difficulty === 'Medium');
   const hardPool = inScope.filter((item) => item.difficulty === 'Hard');
+  const easyPool = inScope.filter((item) => item.difficulty === 'Easy');
 
-  const easyCount = Math.max(1, Math.round(questionCount * 0.4));
-  const mediumCount = Math.max(1, Math.round(questionCount * 0.4));
+  let easyRatio = 0.4;
+  let mediumRatio = 0.4;
+  let hardRatio = 0.2;
+
+  if (averageScore >= 80 && (averageSecondsPerQuestion === 0 || averageSecondsPerQuestion <= 75)) {
+    easyRatio = 0.2;
+    mediumRatio = 0.4;
+    hardRatio = 0.4;
+  } else if (averageScore < 55 || averageSecondsPerQuestion >= 120) {
+    easyRatio = 0.55;
+    mediumRatio = 0.3;
+    hardRatio = 0.15;
+  }
+
+  const easyCount = Math.max(1, Math.round(questionCount * easyRatio));
+  const mediumCount = Math.max(1, Math.round(questionCount * mediumRatio));
   const hardCount = Math.max(1, questionCount - easyCount - mediumCount);
 
   const selected = [];
   const usedIds = new Set();
 
-  const fromWeak = shuffle(weakPool);
+  const fromWeak = shuffle(weakPool.length ? weakPool : easyPool);
   for (const question of fromWeak) {
     if (usedIds.has(String(question._id))) continue;
     selected.push(question);
@@ -3356,17 +3521,40 @@ async function refreshUserProgress(userId) {
   const averageScore = scores.length ? Math.round(scores.reduce((sum, v) => sum + v, 0) / scores.length) : 0;
 
   const bySubject = new Map();
+  let totalElapsedSeconds = 0;
   attempts.forEach((item) => {
     const current = bySubject.get(item.subject) || { total: 0, count: 0 };
     current.total += Number(item.score) || 0;
     current.count += 1;
     bySubject.set(item.subject, current);
+    const elapsed = Number(item.metadata?.elapsedSeconds || 0);
+    if (elapsed > 0) {
+      totalElapsedSeconds += elapsed;
+      return;
+    }
+    totalElapsedSeconds += Math.max(0, Number(item.durationMinutes || 0) * 60);
   });
 
   const weakTopics = [];
+  const subjectInsights = [];
   for (const [subject, aggregate] of bySubject.entries()) {
     const avg = aggregate.count ? aggregate.total / aggregate.count : 0;
+    subjectInsights.push({ subject, averageScore: Number(avg.toFixed(1)), attempts: aggregate.count });
     if (avg < 60) weakTopics.push(subject);
+  }
+
+  subjectInsights.sort((a, b) => b.averageScore - a.averageScore);
+  const strengths = subjectInsights.filter((item) => item.averageScore >= 75).map((item) => item.subject);
+  const weaknesses = subjectInsights.filter((item) => item.averageScore < 60).map((item) => item.subject);
+  const averageSecondsPerQuestion = totalQuestions > 0
+    ? Number((totalElapsedSeconds / totalQuestions).toFixed(1))
+    : 0;
+
+  let level = 'balanced';
+  if (averageScore >= 80 && (averageSecondsPerQuestion === 0 || averageSecondsPerQuestion <= 75)) {
+    level = 'advanced';
+  } else if (averageScore < 55 || averageSecondsPerQuestion >= 120) {
+    level = 'foundation';
   }
 
   await UserModel.findByIdAndUpdate(userId, {
@@ -3381,12 +3569,55 @@ async function refreshUserProgress(userId) {
       'progress.practiceHistory': attempts.slice(0, 200),
       'progress.analytics.weeklyProgress': attempts.slice(0, 12).map((item) => ({ date: item.attemptedAt, score: item.score })),
       'progress.analytics.accuracyTrend': attempts.slice(0, 12).map((item) => ({ date: item.attemptedAt, accuracy: item.score })),
+      'progress.analytics.subjectInsights': subjectInsights,
+      'progress.analytics.averageSecondsPerQuestion': averageSecondsPerQuestion,
+      'progress.analytics.adaptiveProfile': {
+        level,
+        strengths,
+        weaknesses,
+      },
     },
   });
 }
 
 app.get('/api/health', async (req, res) => {
   res.json({ status: 'ok', service: 'net360-api', mongo: 'connected' });
+});
+
+app.get('/api/recommendations/adaptive', authMiddleware, async (req, res) => {
+  const questionCount = clamp(Number(req.query.questionCount) || 15, 5, 40);
+  const preferredSubject = String(req.query.subject || '').trim().toLowerCase();
+  const weakTopics = Array.isArray(req.user.progress?.weakTopics)
+    ? req.user.progress.weakTopics.map((item) => String(item || '').toLowerCase()).filter(Boolean)
+    : [];
+
+  const subjectFilter = preferredSubject ? { subject: preferredSubject } : {};
+  const pool = await MCQModel.find(subjectFilter).select(MCQ_SELECT).limit(1200).lean();
+  if (!pool.length) {
+    res.status(404).json({ error: 'No questions available for adaptive recommendation.' });
+    return;
+  }
+
+  const selected = generateAdaptiveSet({
+    profile: {
+      distribution: [{ sourceSubjects: Array.from(new Set(pool.map((item) => String(item.subject || '').toLowerCase()))) }],
+    },
+    allQuestions: pool,
+    weakTopics,
+    questionCount,
+    userProgress: req.user.progress || defaultProgress(),
+  });
+
+  res.json({
+    recommendation: {
+      level: String(req.user.progress?.analytics?.adaptiveProfile?.level || 'balanced'),
+      strengths: req.user.progress?.analytics?.adaptiveProfile?.strengths || [],
+      weaknesses: req.user.progress?.analytics?.adaptiveProfile?.weaknesses || weakTopics,
+      averageScore: Number(req.user.progress?.averageScore || 0),
+      averageSecondsPerQuestion: Number(req.user.progress?.analytics?.averageSecondsPerQuestion || 0),
+    },
+    mcqs: selected.map((item) => serializeMcq(item)),
+  });
 });
 
 app.get('/api/public/nust-updates', async (req, res) => {
@@ -3733,23 +3964,44 @@ app.post('/api/auth/login', async (req, res) => {
     const forceLogoutOtherDevice = Boolean(req.body?.forceLogoutOtherDevice);
     const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
     if (!email || !password) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.login_missing_credentials',
+        severity: 'warning',
+        actorEmail: email,
+      });
       res.status(400).json({ error: 'Email and password are required.' });
       return;
     }
 
     if (!isValidEmail(email)) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.login_invalid_email',
+        severity: 'warning',
+        actorEmail: email,
+      });
       res.status(400).json({ error: 'Enter a valid email address.' });
       return;
     }
 
     const user = await UserModel.findOne({ email });
     if (!user) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.login_user_not_found',
+        severity: 'warning',
+        actorEmail: email,
+      });
       res.status(401).json({ error: 'Invalid credentials.' });
       return;
     }
 
     const isValid = await bcrypt.compare(String(password), user.passwordHash || '');
     if (!isValid) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.login_invalid_password',
+        severity: 'warning',
+        actorUserId: user._id,
+        actorEmail: user.email,
+      });
       res.status(401).json({ error: 'Invalid credentials.' });
       return;
     }
@@ -3758,6 +4010,16 @@ app.post('/api/auth/login', async (req, res) => {
     if (role === 'student') {
       const activeSession = user.activeSession || null;
       if (activeSession && activeSession.deviceId && activeSession.deviceId !== deviceId && !forceLogoutOtherDevice) {
+        await logSecurityEvent(req, {
+          eventType: 'auth.active_session_conflict',
+          severity: 'warning',
+          actorUserId: user._id,
+          actorEmail: user.email,
+          metadata: {
+            existingDeviceId: activeSession.deviceId,
+            attemptedDeviceId: deviceId,
+          },
+        });
         res.status(409).json({
           error: 'You are already logged in on another device. Logout there first or confirm switch.',
           code: 'active_session_exists',
@@ -3778,8 +4040,18 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const payload = await issueAuthPayload(user, req);
+    await logSecurityEvent(req, {
+      eventType: 'auth.login_success',
+      severity: 'info',
+      actorUserId: user._id,
+      actorEmail: user.email,
+    });
     res.json(payload);
   } catch {
+    await logSecurityEvent(req, {
+      eventType: 'auth.login_error',
+      severity: 'critical',
+    });
     res.status(500).json({ error: 'Login failed.' });
   }
 });
@@ -3787,6 +4059,10 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/auth/refresh', async (req, res) => {
   const refreshToken = String(req.body?.refreshToken || '').trim();
   if (!refreshToken) {
+    await logSecurityEvent(req, {
+      eventType: 'auth.refresh_missing_token',
+      severity: 'warning',
+    });
     res.status(400).json({ error: 'Refresh token is required.' });
     return;
   }
@@ -3794,12 +4070,20 @@ app.post('/api/auth/refresh', async (req, res) => {
   try {
     const payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
     if (payload?.type !== 'refresh') {
+      await logSecurityEvent(req, {
+        eventType: 'auth.refresh_invalid_type',
+        severity: 'warning',
+      });
       res.status(401).json({ error: 'Invalid refresh token.' });
       return;
     }
 
     const user = await UserModel.findById(payload.userId);
     if (!user) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.refresh_user_not_found',
+        severity: 'warning',
+      });
       res.status(401).json({ error: 'User not found.' });
       return;
     }
@@ -3808,6 +4092,12 @@ app.post('/api/auth/refresh', async (req, res) => {
     const found = (user.refreshTokens || []).find((item) => item.tokenHash === tokenHash && new Date(item.expiresAt).getTime() > Date.now());
 
     if (!found) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.refresh_revoked',
+        severity: 'warning',
+        actorUserId: user._id,
+        actorEmail: user.email,
+      });
       res.status(401).json({ error: 'Refresh token revoked or expired.' });
       return;
     }
@@ -3818,6 +4108,12 @@ app.post('/api/auth/refresh', async (req, res) => {
       if (!tokenSessionId || !activeSessionId || tokenSessionId !== activeSessionId) {
         user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
         await user.save();
+        await logSecurityEvent(req, {
+          eventType: 'auth.refresh_session_mismatch',
+          severity: 'warning',
+          actorUserId: user._id,
+          actorEmail: user.email,
+        });
         res.status(401).json({ error: 'Session ended. Please log in again.' });
         return;
       }
@@ -3827,8 +4123,18 @@ app.post('/api/auth/refresh', async (req, res) => {
     await user.save();
 
     const newPayload = await issueAuthPayload(user, req);
+    await logSecurityEvent(req, {
+      eventType: 'auth.refresh_success',
+      severity: 'info',
+      actorUserId: user._id,
+      actorEmail: user.email,
+    });
     res.json(newPayload);
   } catch {
+    await logSecurityEvent(req, {
+      eventType: 'auth.refresh_invalid_token',
+      severity: 'warning',
+    });
     res.status(401).json({ error: 'Invalid or expired refresh token.' });
   }
 });
@@ -3856,8 +4162,18 @@ app.post('/api/auth/logout', async (req, res) => {
       }
 
       await user.save();
+      await logSecurityEvent(req, {
+        eventType: 'auth.logout_success',
+        severity: 'info',
+        actorUserId: user._id,
+        actorEmail: user.email,
+      });
     }
   } catch {
+    await logSecurityEvent(req, {
+      eventType: 'auth.logout_invalid_token',
+      severity: 'warning',
+    });
     // Ignore invalid token on logout.
   }
 
@@ -4031,6 +4347,32 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   res.json({ user: userPublic(req.user) });
 });
 
+app.get('/api/stream', async (req, res) => {
+  const token = extractAccessToken(req);
+  if (!token) {
+    res.status(401).json({ error: 'Missing authentication token.' });
+    return;
+  }
+
+  try {
+    const { user } = await resolveAuthenticatedUserFromToken(token);
+    if (!user) {
+      res.status(401).json({ error: 'User not found.' });
+      return;
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders?.();
+
+    addSseClient(user.role === 'admin' ? 'admin' : 'student', user._id, res);
+  } catch {
+    res.status(401).json({ error: 'Invalid or expired token.' });
+  }
+});
+
 app.put('/api/auth/profile', authMiddleware, async (req, res) => {
   if (Object.prototype.hasOwnProperty.call(req.body, 'firstName')) {
     req.user.firstName = sanitizeHumanName(req.body.firstName || '');
@@ -4061,6 +4403,14 @@ app.put('/api/auth/profile', authMiddleware, async (req, res) => {
   }
 
   await req.user.save();
+  broadcastSyncEvent({
+    role: 'student',
+    event: 'sync',
+    data: { type: 'profile.updated', userId: String(req.user._id) },
+  });
+  if ((req.user.role || 'student') === 'admin') {
+    broadcastSyncEvent({ role: 'admin', event: 'sync', data: { type: 'admin.profile.updated' } });
+  }
   res.json({ user: userPublic(req.user) });
 });
 
@@ -4073,6 +4423,11 @@ app.put('/api/auth/preferences', authMiddleware, async (req, res) => {
   };
 
   await req.user.save();
+  broadcastSyncEvent({
+    role: 'student',
+    event: 'sync',
+    data: { type: 'preferences.updated', userId: String(req.user._id) },
+  });
   res.json({ user: userPublic(req.user) });
 });
 
@@ -6734,6 +7089,7 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
       allQuestions: allInProfile,
       weakTopics,
       questionCount: desiredQuestions,
+      userProgress: req.user.progress || defaultProgress(),
     });
   } else {
     const filter = {
@@ -6910,6 +7266,12 @@ app.post('/api/tests/:sessionId/finish', authMiddleware, async (req, res) => {
   });
 
   await refreshUserProgress(req.user._id);
+  broadcastSyncEvent({
+    role: 'student',
+    event: 'sync',
+    data: { type: 'attempt.finished', userId: String(req.user._id), sessionId: String(session._id) },
+  });
+  broadcastSyncEvent({ role: 'admin', event: 'sync', data: { type: 'admin.analytics.updated' } });
   res.status(201).json({ attempt: serializeAttempt(attempt) });
 });
 
@@ -7869,6 +8231,8 @@ app.post('/api/admin/mcqs/bulk-delete', authMiddleware, requireAdmin, async (req
 
   const result = await MCQModel.deleteMany(filter);
 
+  broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'bulk-delete' } });
+
   res.json({
     ok: true,
     mode,
@@ -7882,6 +8246,8 @@ app.delete('/api/admin/mcqs/purge-all', authMiddleware, requireAdmin, async (_re
     TestSessionModel.deleteMany({}),
     AttemptModel.deleteMany({}),
   ]);
+
+  broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'purge-all' } });
 
   res.json({
     ok: true,
@@ -7991,6 +8357,8 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
     source: 'Admin',
   });
 
+  broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'create' } });
+
   res.status(201).json({
     mcq: serializeMcq(mcq),
   });
@@ -8026,6 +8394,8 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
     return;
   }
 
+  broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'update' } });
+
   res.json({
     mcq: serializeMcq(mcq),
   });
@@ -8043,6 +8413,8 @@ app.delete('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, r
     res.status(404).json({ error: 'MCQ not found.' });
     return;
   }
+
+  broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'delete' } });
 
   res.json({ ok: true, removedMcqId: mcqId });
 });

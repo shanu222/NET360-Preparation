@@ -14,6 +14,8 @@ import { apiRequest } from '../lib/api';
 import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK, PAYMENT_METHODS } from '../lib/paymentMethods';
 
+const ADVERTISEMENT_PREVIEW_SRC = '/advertisement-page.webp';
+
 interface ProfileProps {
   onNavigate?: (section: string) => void;
 }
@@ -801,20 +803,17 @@ export function Profile({ onNavigate }: ProfileProps) {
             <div className="pointer-events-none absolute -left-24 -bottom-16 h-56 w-80 rounded-full bg-indigo-400/12 blur-3xl" />
             <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-72 rounded-full bg-violet-300/14 blur-3xl" />
             <CardHeader>
-              <CardTitle className="text-slate-800">Your Result</CardTitle>
-              <CardDescription className="text-slate-600">Login or register to sync your email, account access, and progress.</CardDescription>
+              <CardTitle className="text-slate-800">Featured Advertisement</CardTitle>
+              <CardDescription className="text-slate-600">Latest update and announcements for NET360 students.</CardDescription>
             </CardHeader>
             <CardContent className="relative pb-7">
-              <div className="mx-auto mt-4 flex h-56 max-w-md items-end justify-center gap-3 rounded-2xl bg-gradient-to-b from-[#f9faff] to-[#edf1ff] p-4">
-                <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-indigo-500 shadow-sm">
-                  <Bot className="h-8 w-8" />
-                </div>
-                <div className="inline-flex h-20 w-28 items-center justify-center rounded-2xl bg-white text-indigo-600 shadow-sm">
-                  <GraduationCap className="h-10 w-10" />
-                </div>
-                <div className="mb-6 inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-white text-violet-500 shadow-sm">
-                  <FlaskConical className="h-8 w-8" />
-                </div>
+              <div className="mx-auto mt-4 w-full max-w-[680px] rounded-2xl border border-indigo-100/80 bg-white/70 p-2 shadow-[0_18px_34px_rgba(79,70,229,0.14)] backdrop-blur-sm">
+                <img
+                  src={ADVERTISEMENT_PREVIEW_SRC}
+                  alt="NET360 advertisement"
+                  className="w-full rounded-xl object-cover"
+                  loading="lazy"
+                />
               </div>
             </CardContent>
           </Card>

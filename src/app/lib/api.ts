@@ -47,6 +47,10 @@ function resolveApiPath(path: string) {
   return `${effectiveBaseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
 }
 
+export function buildApiUrl(path: string) {
+  return resolveApiPath(path);
+}
+
 function shouldUseForcedLocalMode() {
   return env.VITE_FORCE_LOCAL_API === 'true' && canFallbackToLocalMode();
 }

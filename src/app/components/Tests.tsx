@@ -47,6 +47,22 @@ interface NetTypeProfile {
   durationMinutes: number;
 }
 
+interface AdaptiveRecommendationPayload {
+  recommendation: {
+    level: string;
+    strengths: string[];
+    weaknesses: string[];
+    averageScore: number;
+    averageSecondsPerQuestion: number;
+  };
+  mcqs: Array<{
+    id: string;
+    subject: SubjectKey;
+    topic: string;
+    difficulty: 'Easy' | 'Medium' | 'Hard';
+  }>;
+}
+
 const NET_PROFILES: NetTypeProfile[] = [
   {
     id: 'net-engineering',
@@ -174,6 +190,8 @@ export function Tests({ onNavigate }: TestsProps) {
   const [selectedSubject, setSelectedSubject] = useState<SubjectKey>('mathematics');
   const [launchingKind, setLaunchingKind] = useState<TestKind | null>(null);
   const [subjectPickerOpen, setSubjectPickerOpen] = useState(false);
+  const [adaptiveRecommendation, setAdaptiveRecommendation] = useState<AdaptiveRecommendationPayload | null>(null);
+  const [adaptiveLoading, setAdaptiveLoading] = useState(false);
 
   const resolveLaunchToken = async () => {
     const inMemory = token;
@@ -256,7 +274,12 @@ export function Tests({ onNavigate }: TestsProps) {
     examWindow.location.href = url;
   };
 
-  const beginTest = async (kind: TestKind, subjectOverride?: SubjectKey) => {
+  const beginTest = async (
+    kind: TestKind,
+    subjectOverride?: SubjectKey,
+    questionCountOverride?: number,
+    topicOverride?: string,
+  ) => {
     if (!selectedNetType) {
       toast.error('Select a NET type first.');
       return;
@@ -285,7 +308,9 @@ export function Tests({ onNavigate }: TestsProps) {
       );
 
       const questionCount =
-        kind === 'full-mock'
+        typeof questionCountOverride === 'number' && questionCountOverride > 0
+          ? questionCountOverride
+          : kind === 'full-mock'
           ? selectedNetType.totalQuestions
           : kind === 'subject-wise'
             ? (directSubjectDistribution?.mcqs || 60)
@@ -295,11 +320,11 @@ export function Tests({ onNavigate }: TestsProps) {
         subject: subjectToUse,
         difficulty: 'Medium',
         topic:
-          kind === 'full-mock'
+          topicOverride || (kind === 'full-mock'
             ? `${selectedNetType.name} Full Mock`
             : kind === 'adaptive'
               ? 'Adaptive Flow'
-              : 'Subject Focus',
+              : 'Subject Focus'),
         mode,
         questionCount,
         netType: selectedNetType.id,
@@ -325,6 +350,62 @@ export function Tests({ onNavigate }: TestsProps) {
     }
     void beginTest(kind);
   };
+
+  useEffect(() => {
+    if (!selectedNetType) {
+      setAdaptiveRecommendation(null);
+      return;
+    }
+
+    const authToken = token || localStorage.getItem('net360-auth-token');
+    if (!authToken) {
+      setAdaptiveRecommendation(null);
+      return;
+    }
+
+    const preferredSubject = subjectOptions[0]?.key || selectedSubject;
+    let cancelled = false;
+
+    const loadAdaptiveRecommendation = async () => {
+      setAdaptiveLoading(true);
+      try {
+        const payload = await apiRequest<AdaptiveRecommendationPayload>(
+          `/api/recommendations/adaptive?questionCount=24&subject=${encodeURIComponent(preferredSubject)}`,
+          {},
+          authToken,
+        );
+        if (!cancelled) {
+          setAdaptiveRecommendation(payload);
+        }
+      } catch {
+        if (!cancelled) {
+          setAdaptiveRecommendation(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setAdaptiveLoading(false);
+        }
+      }
+    };
+
+    void loadAdaptiveRecommendation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedNetType, selectedSubject, subjectOptions, token]);
+
+  const recommendedSubjectBreakdown = useMemo(() => {
+    if (!adaptiveRecommendation?.mcqs?.length) return [];
+    const map = new Map<SubjectKey, number>();
+    adaptiveRecommendation.mcqs.forEach((item) => {
+      map.set(item.subject, Number(map.get(item.subject) || 0) + 1);
+    });
+    return Array.from(map.entries())
+      .map(([subject, count]) => ({ subject, count }))
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 4);
+  }, [adaptiveRecommendation]);
 
   return (
     <div className="space-y-5">
@@ -446,6 +527,75 @@ export function Tests({ onNavigate }: TestsProps) {
       {selectedNetType ? (
         <section className="space-y-3 opacity-100 translate-y-0 transition-all duration-300">
           <h2 className="text-lg text-indigo-950">Step 3: Test Type Selection</h2>
+
+          <Card className="rounded-2xl border-indigo-100 bg-white/95 shadow-[0_12px_26px_rgba(93,109,201,0.10)]">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-indigo-950">
+                <Brain className="h-5 w-5 text-indigo-600" />
+                Recommended Adaptive Set
+              </CardTitle>
+              <CardDescription>
+                Personalized from your latest accuracy and solving speed.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              {adaptiveLoading ? (
+                <div className="flex items-center gap-2 rounded-lg border border-indigo-100 bg-indigo-50/40 px-3 py-2 text-sm text-indigo-800">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Preparing adaptive recommendation...
+                </div>
+              ) : adaptiveRecommendation ? (
+                <>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    <StatCard title="Adaptive Level" value={adaptiveRecommendation.recommendation.level} />
+                    <StatCard title="Avg Score" value={`${Math.round(adaptiveRecommendation.recommendation.averageScore || 0)}%`} />
+                    <StatCard title="Avg Speed" value={`${Math.round(adaptiveRecommendation.recommendation.averageSecondsPerQuestion || 0)} sec/q`} />
+                    <StatCard title="Set Size" value={`${adaptiveRecommendation.mcqs.length} MCQs`} />
+                  </div>
+
+                  <div className="flex flex-wrap gap-2 text-xs">
+                    {recommendedSubjectBreakdown.map((item) => (
+                      <span key={item.subject} className="rounded-md bg-indigo-50 px-2 py-1 text-indigo-800">
+                        {getSubjectLabel(item.subject)}: {item.count}
+                      </span>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-wrap gap-2">
+                    {(adaptiveRecommendation.recommendation.weaknesses || []).slice(0, 4).map((weak) => (
+                      <Badge key={`weak-${weak}`} variant="outline" className="border-amber-200 bg-amber-50 text-amber-800">
+                        Improve: {weak}
+                      </Badge>
+                    ))}
+                    {(adaptiveRecommendation.recommendation.strengths || []).slice(0, 3).map((strong) => (
+                      <Badge key={`strong-${strong}`} variant="outline" className="border-emerald-200 bg-emerald-50 text-emerald-800">
+                        Strength: {strong}
+                      </Badge>
+                    ))}
+                  </div>
+
+                  <Button
+                    className="bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
+                    onClick={() => {
+                      const topSubject = recommendedSubjectBreakdown[0]?.subject || selectedSubject;
+                      void beginTest(
+                        'adaptive',
+                        topSubject,
+                        adaptiveRecommendation.mcqs.length || 24,
+                        'Adaptive Recommendation Set',
+                      );
+                    }}
+                    disabled={Boolean(launchingKind)}
+                  >
+                    {launchingKind === 'adaptive' ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />}
+                    Start Recommended Adaptive Test
+                  </Button>
+                </>
+              ) : (
+                <p className="text-sm text-slate-600">Complete a few tests to unlock personalized adaptive recommendations.</p>
+              )}
+            </CardContent>
+          </Card>
 
           <div className="grid gap-4 lg:grid-cols-3">
             {TEST_TYPE_CARDS.map((card) => {
