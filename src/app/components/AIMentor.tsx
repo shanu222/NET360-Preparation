@@ -1005,12 +1005,26 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                       <div key={key} className="rounded-md border border-emerald-100 bg-white px-2.5 py-2 text-xs text-slate-700">
                         <p className="font-semibold text-emerald-900">{method.label}</p>
                         <p className="mt-1">{method.instructions}</p>
-                        <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1.5">
-                          <p className="truncate"><span className="text-slate-500">{method.accountLabel}:</span> {method.accountValue}</p>
-                          <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => void copyPaymentValue(method.accountValue, method.accountLabel)}>
-                            <Copy className="mr-1 h-3 w-3" />
-                            Copy
-                          </Button>
+                        {method.holderValue ? (
+                          <p className="mt-1.5 text-[11px] text-slate-700">
+                            <span className="text-slate-500">{method.holderLabel || 'Account Title'}:</span> {method.holderValue}
+                          </p>
+                        ) : null}
+                        <div className="mt-2 space-y-1.5">
+                          {[
+                            { label: method.accountLabel, value: method.accountValue, copyable: true },
+                            ...(method.extraDetails || []),
+                          ].map((detail) => (
+                            <div key={`${key}-${detail.label}`} className="flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1.5">
+                              <p className="truncate"><span className="text-slate-500">{detail.label}:</span> {detail.value}</p>
+                              {detail.copyable ? (
+                                <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => void copyPaymentValue(detail.value, detail.label)}>
+                                  <Copy className="mr-1 h-3 w-3" />
+                                  Copy
+                                </Button>
+                              ) : null}
+                            </div>
+                          ))}
                         </div>
                       </div>
                     ))}
