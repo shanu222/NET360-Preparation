@@ -65,6 +65,10 @@ Create environment variables for backend service:
 Frontend environment variable:
 
 - `VITE_API_BASE_URL` = full backend URL in production, for example `https://net360-api.onrender.com`
+- `VITE_MOBILE_API_BASE_URL` = optional native override for Android/iOS builds
+- `VITE_DISABLE_LOCAL_API_FALLBACK` = set `true` for production mobile builds to require live backend
+
+For Android packaging, use `.env.android.example` as a baseline.
 
 ## Render Deployment (Recommended Split)
 

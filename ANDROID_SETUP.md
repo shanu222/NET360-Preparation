@@ -9,8 +9,8 @@ This project now supports a native Android app shell using Capacitor while reusi
 - Build/sync scripts in `package.json`
 - Mobile-safe API behavior in `src/app/lib/api.ts`
   - Native runtime uses `VITE_MOBILE_API_BASE_URL` (or falls back to `VITE_API_BASE_URL`)
+  - If no API base URL is provided, non-premium endpoints can fall back to local mode (unless disabled)
   - Local fallback can be disabled via `VITE_DISABLE_LOCAL_API_FALLBACK=true`
-  - Clear error messages if API base URL is missing in mobile mode
 - Global UI crash guard via `ErrorBoundary`
 - Optional native plugins:
   - Splash screen (`@capacitor/splash-screen`)
@@ -43,6 +43,7 @@ Important:
 
 - API URL must be HTTPS and reachable from real Android devices.
 - Use the same backend used by web so all admin updates and MCQ changes appear in mobile immediately.
+- For release builds, set `VITE_DISABLE_LOCAL_API_FALLBACK=true` to enforce live backend usage.
 
 ## 3) Build and sync Android project
 

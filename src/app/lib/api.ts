@@ -30,10 +30,7 @@ function canFallbackToLocalMode() {
   if (env.VITE_FORCE_LOCAL_API === 'true') {
     return true;
   }
-  if (env.VITE_DISABLE_LOCAL_API_FALLBACK === 'true') {
-    return false;
-  }
-  return !isNativeCapacitorRuntime();
+  return env.VITE_DISABLE_LOCAL_API_FALLBACK !== 'true';
 }
 
 function resolveApiPath(path: string) {
@@ -108,10 +105,6 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
 
   if (shouldUseForcedLocalMode()) {
     return localApiRequest<T>(path, options, token);
-  }
-
-  if (isNativeCapacitorRuntime() && !getEffectiveApiBaseUrl() && path.startsWith('/api/')) {
-    throw new Error('Mobile API is not configured. Set VITE_API_BASE_URL or VITE_MOBILE_API_BASE_URL before building Android app.');
   }
 
   const buildHeaders = (authToken?: string | null) => {
@@ -238,10 +231,6 @@ export async function downloadReport(path: string, token?: string | null): Promi
     return localDownloadReport(format, token);
   }
 
-  if (isNativeCapacitorRuntime() && !getEffectiveApiBaseUrl() && path.startsWith('/api/')) {
-    throw new Error('Mobile API is not configured. Set VITE_API_BASE_URL or VITE_MOBILE_API_BASE_URL before building Android app.');
-  }
-
   const headers = new Headers();
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
@@ -285,10 +274,6 @@ export async function downloadBinary(path: string, options: RequestInit = {}, to
 
   if (shouldUseForcedLocalMode()) {
     throw new Error('Export is unavailable in forced local mode. Connect to the API backend and try again.');
-  }
-
-  if (isNativeCapacitorRuntime() && !getEffectiveApiBaseUrl() && path.startsWith('/api/')) {
-    throw new Error('Mobile API is not configured. Set VITE_API_BASE_URL or VITE_MOBILE_API_BASE_URL before building Android app.');
   }
 
   const headers = new Headers(options.headers || {});
