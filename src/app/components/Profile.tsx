@@ -6,7 +6,7 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { Apple, Bot, FlaskConical, GraduationCap, LogOut, RefreshCw, Settings, Target, UserRound, Award } from 'lucide-react';
+import { Apple, Bot, ChevronDown, ChevronUp, FlaskConical, GraduationCap, LogOut, RefreshCw, Settings, Target, UserRound, Award } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
@@ -53,6 +53,7 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [paymentProofReadProgress, setPaymentProofReadProgress] = useState(0);
   const [isReadingPaymentProof, setIsReadingPaymentProof] = useState(false);
   const [registerConflictBanner, setRegisterConflictBanner] = useState('');
+  const [showDeleteAccountPanel, setShowDeleteAccountPanel] = useState(false);
   const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
   const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
@@ -70,6 +71,13 @@ export function Profile({ onNavigate }: ProfileProps) {
       email: previous.email || user.email || '',
     }));
   }, [user]);
+
+  useEffect(() => {
+    // Always reset delete-account inputs when opening profile for a user session.
+    setShowDeleteAccountPanel(false);
+    setDeleteAccountConfirmationText('');
+    setDeleteAccountPassword('');
+  }, [user?.id]);
 
   useEffect(() => {
     return () => {
@@ -357,6 +365,18 @@ export function Profile({ onNavigate }: ProfileProps) {
     } finally {
       setIsDeletingAccount(false);
     }
+  };
+
+  const toggleDeleteAccountPanel = () => {
+    setShowDeleteAccountPanel((previous) => {
+      const next = !previous;
+      // Ensure fields are never prefilled when panel opens.
+      if (next) {
+        setDeleteAccountConfirmationText('');
+        setDeleteAccountPassword('');
+      }
+      return next;
+    });
   };
 
   if (!user) {
@@ -947,43 +967,61 @@ export function Profile({ onNavigate }: ProfileProps) {
 
       <Card className="border-red-200 bg-red-50/40">
         <CardHeader>
-          <CardTitle className="text-red-700">Danger Zone: Delete Account</CardTitle>
-          <CardDescription className="text-red-700/90">
-            Deleting your account will permanently remove your access to the platform. If you want to use the service again in the future, you will need to create a new account and obtain access again.
-          </CardDescription>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <CardTitle className="text-red-700">Danger Zone: Delete Account</CardTitle>
+              <CardDescription className="text-red-700/90">
+                Deleting your account will permanently remove your access to the platform.
+              </CardDescription>
+            </div>
+            <Button type="button" size="sm" variant="outline" className="border-red-300 bg-white text-red-700 hover:bg-red-50" onClick={toggleDeleteAccountPanel}>
+              Delete Account
+              {showDeleteAccountPanel ? <ChevronUp className="ml-1.5 h-4 w-4" /> : <ChevronDown className="ml-1.5 h-4 w-4" />}
+            </Button>
+          </div>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="space-y-2">
-            <Label htmlFor="delete-account-confirmation-text">Type DELETE to confirm</Label>
-            <Input
-              id="delete-account-confirmation-text"
-              value={deleteAccountConfirmationText}
-              onChange={(e) => setDeleteAccountConfirmationText(e.target.value)}
-              placeholder="DELETE"
-              className="border-red-200 bg-white"
-            />
-            <p className="text-xs text-red-700/90">Enter DELETE in uppercase to continue.</p>
-          </div>
+        {showDeleteAccountPanel ? (
+          <CardContent className="space-y-3" autoComplete="off">
+            <p className="text-sm text-red-700/90">
+              If you want to use the service again in the future, you will need to create a new account and obtain access again.
+            </p>
 
-          <div className="space-y-2">
-            <Label htmlFor="delete-account-password">Confirm with your registration password</Label>
-            <Input
-              id="delete-account-password"
-              type="password"
-              value={deleteAccountPassword}
-              onChange={(e) => setDeleteAccountPassword(e.target.value)}
-              placeholder="Enter password to confirm"
-              className="border-red-200 bg-white"
-            />
-          </div>
-          <Button
-            variant="destructive"
-            onClick={() => void handleDeleteAccount()}
-            disabled={isDeletingAccount || !deleteAccountPassword.trim() || deleteAccountConfirmationText.trim() !== 'DELETE'}
-          >
-            {isDeletingAccount ? 'Deleting Account...' : 'Delete Account Permanently'}
-          </Button>
-        </CardContent>
+            <div className="space-y-2">
+              <Label htmlFor="delete-account-confirmation-text">Type DELETE to confirm</Label>
+              <Input
+                id="delete-account-confirmation-text"
+                name="delete-account-confirmation-text"
+                autoComplete="off"
+                value={deleteAccountConfirmationText}
+                onChange={(e) => setDeleteAccountConfirmationText(e.target.value)}
+                placeholder="DELETE"
+                className="border-red-200 bg-white"
+              />
+              <p className="text-xs text-red-700/90">Enter DELETE in uppercase to continue.</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="delete-account-password">Confirm with your registration password</Label>
+              <Input
+                id="delete-account-password"
+                name="delete-account-password"
+                type="password"
+                autoComplete="new-password"
+                value={deleteAccountPassword}
+                onChange={(e) => setDeleteAccountPassword(e.target.value)}
+                placeholder="Enter password to confirm"
+                className="border-red-200 bg-white"
+              />
+            </div>
+            <Button
+              variant="destructive"
+              onClick={() => void handleDeleteAccount()}
+              disabled={isDeletingAccount || !deleteAccountPassword.trim() || deleteAccountConfirmationText.trim() !== 'DELETE'}
+            >
+              {isDeletingAccount ? 'Deleting Account...' : 'Delete Account Permanently'}
+            </Button>
+          </CardContent>
+        ) : null}
       </Card>
     </div>
   );
