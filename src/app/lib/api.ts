@@ -102,6 +102,10 @@ function parseRetryAfterSeconds(headerValue: string | null): number | undefined 
 }
 
 export async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
+  if (shouldUseForcedLocalMode() && isPremiumSensitivePath(path)) {
+    throw new Error('AI mentor features require live backend mode. Disable VITE_FORCE_LOCAL_API and configure VITE_API_BASE_URL.');
+  }
+
   if (shouldUseForcedLocalMode()) {
     return localApiRequest<T>(path, options, token);
   }
@@ -275,6 +279,10 @@ export async function downloadReport(path: string, token?: string | null): Promi
 }
 
 export async function downloadBinary(path: string, options: RequestInit = {}, token?: string | null): Promise<{ blob: Blob; filename: string }> {
+  if (shouldUseForcedLocalMode() && isPremiumSensitivePath(path)) {
+    throw new Error('AI mentor export requires live backend mode. Disable VITE_FORCE_LOCAL_API and configure VITE_API_BASE_URL.');
+  }
+
   if (shouldUseForcedLocalMode()) {
     throw new Error('Export is unavailable in forced local mode. Connect to the API backend and try again.');
   }

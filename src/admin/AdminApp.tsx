@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Loader2, RefreshCw } from 'lucide-react';
 import { apiRequest, buildApiUrl } from '../app/lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
 import { Button } from '../app/components/ui/button';
@@ -72,6 +73,24 @@ interface AdminOverview {
     not_found: number;
   };
   pendingQuestionSubmissions?: number;
+}
+
+interface AdminSystemStatus {
+  openai: {
+    configured: boolean;
+    model: string;
+    keySource: string;
+  };
+  serverTime: string;
+}
+
+interface AdminConfigVariable {
+  key: string;
+  isSecret: boolean;
+  description: string;
+  updatedByEmail: string;
+  updatedAt: string | null;
+  valuePreview: string;
 }
 
 interface PasswordRecoveryRequest {
@@ -658,6 +677,18 @@ export default function AdminApp() {
 
   const [authForm, setAuthForm] = useState({ email: '', password: '' });
   const [overview, setOverview] = useState<AdminOverview | null>(null);
+  const [systemStatus, setSystemStatus] = useState<AdminSystemStatus | null>(null);
+  const [isRefreshingSystemStatus, setIsRefreshingSystemStatus] = useState(false);
+  const [configVariables, setConfigVariables] = useState<AdminConfigVariable[]>([]);
+  const [isRefreshingConfigVariables, setIsRefreshingConfigVariables] = useState(false);
+  const [isSavingConfigVariable, setIsSavingConfigVariable] = useState(false);
+  const [isDeletingConfigVariable, setIsDeletingConfigVariable] = useState<string | null>(null);
+  const [configForm, setConfigForm] = useState({
+    key: '',
+    value: '',
+    description: '',
+    isSecret: true,
+  });
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [createUserForm, setCreateUserForm] = useState({
     firstName: '',
@@ -1069,6 +1100,8 @@ export default function AdminApp() {
       communityReportsPayload,
       supportConversationsPayload,
       structurePayload,
+      systemStatusPayload,
+      configVariablesPayload,
     ] = await Promise.all([
       apiRequest<AdminOverview>('/api/admin/overview', {}, activeToken),
       apiRequest<{ users: AdminUser[] }>('/api/admin/users', {}, activeToken),
@@ -1105,6 +1138,15 @@ export default function AdminApp() {
       apiRequest<{ reports: AdminCommunityReport[] }>('/api/admin/community/reports', {}, activeToken).catch(() => ({ reports: [] })),
       apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations', {}, activeToken).catch(() => ({ conversations: [] })),
       apiRequest<{ structure: AdminMcqBankStructureItem[] }>('/api/admin/mcq-bank/structure', {}, activeToken).catch(() => ({ structure: [] })),
+      apiRequest<AdminSystemStatus>('/api/admin/system-status', {}, activeToken).catch(() => ({
+        openai: {
+          configured: false,
+          model: 'unknown',
+          keySource: 'missing',
+        },
+        serverTime: new Date().toISOString(),
+      })),
+      apiRequest<{ variables: AdminConfigVariable[] }>('/api/admin/configurations', {}, activeToken).catch(() => ({ variables: [] })),
     ]);
 
     setOverview(overviewPayload);
@@ -1126,6 +1168,8 @@ export default function AdminApp() {
     setCommunityReports(communityReportsPayload.reports || []);
     setSupportConversations(supportConversationsPayload.conversations || []);
     setMcqStructure(structurePayload.structure || []);
+    setSystemStatus(systemStatusPayload);
+    setConfigVariables(configVariablesPayload.variables || []);
   };
 
   const loadBankMcqs = async (
@@ -1147,6 +1191,111 @@ export default function AdminApp() {
       setBankMcqs(payload.mcqs || []);
     } finally {
       setBankLoading(false);
+    }
+  };
+
+  const refreshSystemStatus = async () => {
+    if (!authToken) {
+      toast.error('Login required to refresh system status.');
+      return;
+    }
+
+    setIsRefreshingSystemStatus(true);
+    try {
+      const payload = await apiRequest<AdminSystemStatus>('/api/admin/system-status', {}, authToken);
+      setSystemStatus(payload);
+      toast.success('System status refreshed.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not refresh system status.');
+    } finally {
+      setIsRefreshingSystemStatus(false);
+    }
+  };
+
+  const refreshConfigVariables = async () => {
+    if (!authToken) {
+      toast.error('Login required to refresh configuration list.');
+      return;
+    }
+
+    setIsRefreshingConfigVariables(true);
+    try {
+      const payload = await apiRequest<{ variables: AdminConfigVariable[] }>('/api/admin/configurations', {}, authToken);
+      setConfigVariables(payload.variables || []);
+      toast.success('Configuration list refreshed.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not refresh configurations.');
+    } finally {
+      setIsRefreshingConfigVariables(false);
+    }
+  };
+
+  const saveConfigVariable = async () => {
+    if (!authToken) {
+      toast.error('Login required to save configuration.');
+      return;
+    }
+
+    const key = configForm.key.trim().toUpperCase();
+    if (!key) {
+      toast.error('Configuration key is required.');
+      return;
+    }
+    if (!configForm.value.trim()) {
+      toast.error('Configuration value is required.');
+      return;
+    }
+
+    setIsSavingConfigVariable(true);
+    try {
+      await apiRequest<{ variable: AdminConfigVariable }>(
+        `/api/admin/configurations/${encodeURIComponent(key)}`,
+        {
+          method: 'PUT',
+          body: JSON.stringify({
+            key,
+            value: configForm.value,
+            description: configForm.description,
+            isSecret: configForm.isSecret,
+          }),
+        },
+        authToken,
+      );
+
+      setConfigForm({ key: '', value: '', description: '', isSecret: true });
+      await refreshConfigVariables();
+      if (activeTab !== 'system-config') {
+        await refreshSystemStatus();
+      }
+      toast.success('Configuration saved securely.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not save configuration.');
+    } finally {
+      setIsSavingConfigVariable(false);
+    }
+  };
+
+  const deleteConfigVariable = async (key: string) => {
+    if (!authToken) {
+      toast.error('Login required to delete configuration.');
+      return;
+    }
+
+    const approved = window.confirm(`Delete configuration ${key}? This cannot be undone.`);
+    if (!approved) return;
+
+    setIsDeletingConfigVariable(key);
+    try {
+      await apiRequest(`/api/admin/configurations/${encodeURIComponent(key)}`, { method: 'DELETE' }, authToken);
+      await refreshConfigVariables();
+      if (activeTab !== 'system-config') {
+        await refreshSystemStatus();
+      }
+      toast.success(`Deleted configuration ${key}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not delete configuration.');
+    } finally {
+      setIsDeletingConfigVariable(null);
     }
   };
 
@@ -2709,6 +2858,33 @@ export default function AdminApp() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle>System Status</CardTitle>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-8"
+              onClick={() => void refreshSystemStatus()}
+              disabled={isRefreshingSystemStatus}
+            >
+              {isRefreshingSystemStatus ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+              {isRefreshingSystemStatus ? 'Refreshing...' : 'Refresh'}
+            </Button>
+          </div>
+          <CardDescription>Live backend connectivity check for AI mentor services.</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-2">
+          <Badge className={systemStatus?.openai?.configured ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}>
+            OpenAI: {systemStatus?.openai?.configured ? 'Configured' : 'Missing key'}
+          </Badge>
+          <Badge variant="outline">Model: {systemStatus?.openai?.model || 'unknown'}</Badge>
+          <Badge variant="outline">Key source: {systemStatus?.openai?.keySource || 'missing'}</Badge>
+        </CardContent>
+      </Card>
+
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0 space-y-4">
         <div className="overflow-x-auto pb-1">
           <TabsList className="inline-flex h-auto min-w-max gap-1">
@@ -2722,8 +2898,128 @@ export default function AdminApp() {
             <TabsTrigger className="min-w-[140px]" value="submissions">Submissions</TabsTrigger>
             <TabsTrigger className="min-w-[190px]" value="community-moderation">Community Moderation</TabsTrigger>
             <TabsTrigger className="min-w-[150px]" value="subscriptions">Subscriptions</TabsTrigger>
+            <TabsTrigger className="min-w-[170px]" value="system-config">System Config</TabsTrigger>
           </TabsList>
         </div>
+
+        <TabsContent value="system-config" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <CardTitle>Secure Configuration Management</CardTitle>
+                  <CardDescription>Add, update, or remove API keys and runtime variables encrypted at rest.</CardDescription>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => void refreshConfigVariables()}
+                  disabled={isRefreshingConfigVariables}
+                >
+                  {isRefreshingConfigVariables ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+                  {isRefreshingConfigVariables ? 'Refreshing...' : 'Refresh List'}
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="config-key">Key (e.g. OPENAI_API_KEY)</Label>
+                  <Input
+                    id="config-key"
+                    value={configForm.key}
+                    onChange={(e) => setConfigForm((prev) => ({ ...prev, key: e.target.value.toUpperCase() }))}
+                    placeholder="OPENAI_API_KEY"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="config-secret-mode">Type</Label>
+                  <Select
+                    value={configForm.isSecret ? 'secret' : 'plain'}
+                    onValueChange={(value) => setConfigForm((prev) => ({ ...prev, isSecret: value === 'secret' }))}
+                  >
+                    <SelectTrigger id="config-secret-mode">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="secret">Secret (masked)</SelectItem>
+                      <SelectItem value="plain">Plain config</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="config-value">Value</Label>
+                <Textarea
+                  id="config-value"
+                  value={configForm.value}
+                  onChange={(e) => setConfigForm((prev) => ({ ...prev, value: e.target.value }))}
+                  placeholder="Paste secure value"
+                  className="min-h-[100px]"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="config-description">Description (optional)</Label>
+                <Input
+                  id="config-description"
+                  value={configForm.description}
+                  onChange={(e) => setConfigForm((prev) => ({ ...prev, description: e.target.value }))}
+                  placeholder="What this key/config is used for"
+                />
+              </div>
+
+              <div className="flex justify-end">
+                <Button type="button" onClick={() => void saveConfigVariable()} disabled={isSavingConfigVariable}>
+                  {isSavingConfigVariable ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                  {isSavingConfigVariable ? 'Saving...' : 'Save Configuration'}
+                </Button>
+              </div>
+
+              <div className="rounded-lg border">
+                <div className="grid grid-cols-1 gap-3 p-3 text-sm md:grid-cols-[1.2fr_1fr_0.8fr_0.8fr] md:items-center">
+                  <p className="font-medium">Key</p>
+                  <p className="font-medium">Value Preview</p>
+                  <p className="font-medium">Updated By</p>
+                  <p className="font-medium text-right">Actions</p>
+                </div>
+
+                {(configVariables || []).map((item) => (
+                  <div key={item.key} className="grid grid-cols-1 gap-3 border-t p-3 text-sm md:grid-cols-[1.2fr_1fr_0.8fr_0.8fr] md:items-center">
+                    <div>
+                      <p className="font-medium text-slate-900">{item.key}</p>
+                      {item.description ? <p className="text-xs text-muted-foreground">{item.description}</p> : null}
+                      <p className="text-xs text-muted-foreground">{item.isSecret ? 'Secret' : 'Plain'}{item.updatedAt ? ` • ${new Date(item.updatedAt).toLocaleString()}` : ''}</p>
+                    </div>
+                    <p className="font-mono text-xs break-all text-slate-700">{item.valuePreview || '-'}</p>
+                    <p className="text-xs text-muted-foreground">{item.updatedByEmail || '-'}</p>
+                    <div className="flex justify-end">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="border-rose-200 text-rose-700 hover:bg-rose-50"
+                        onClick={() => void deleteConfigVariable(item.key)}
+                        disabled={isDeletingConfigVariable === item.key}
+                      >
+                        {isDeletingConfigVariable === item.key ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+                        {isDeletingConfigVariable === item.key ? 'Deleting...' : 'Delete'}
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+
+                {!configVariables.length ? (
+                  <div className="border-t px-3 py-6 text-center text-sm text-muted-foreground">
+                    No configuration values stored yet.
+                  </div>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="support-chat" className="space-y-3">
           <Card>

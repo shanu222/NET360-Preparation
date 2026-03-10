@@ -40,6 +40,7 @@ import { PremiumActivationTokenModel } from './models/PremiumActivationToken.js'
 import { PasswordRecoveryRequestModel } from './models/PasswordRecoveryRequest.js';
 import { SupportChatMessageModel } from './models/SupportChatMessage.js';
 import { SecurityAuditEventModel } from './models/SecurityAuditEvent.js';
+import { RuntimeConfigModel } from './models/RuntimeConfig.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -79,10 +80,21 @@ const TWILIO_ACCOUNT_SID = String(process.env.TWILIO_ACCOUNT_SID || '').trim();
 const TWILIO_AUTH_TOKEN = String(process.env.TWILIO_AUTH_TOKEN || '').trim();
 const TWILIO_PHONE_NUMBER = String(process.env.TWILIO_PHONE_NUMBER || '').trim();
 const TWILIO_WHATSAPP_FROM = String(process.env.TWILIO_WHATSAPP_FROM || '').trim();
+const CONFIG_ENCRYPTION_KEY = String(process.env.CONFIG_ENCRYPTION_KEY || JWT_SECRET || '').trim();
+const CONFIG_CRYPTO_KEY = CONFIG_ENCRYPTION_KEY
+  ? crypto.createHash('sha256').update(CONFIG_ENCRYPTION_KEY).digest()
+  : null;
 
 const openai = MODEL_PROVIDER_KEY
   ? new OpenAI({ apiKey: MODEL_PROVIDER_KEY })
   : null;
+
+const runtimeConfigCache = {
+  valueByKey: new Map(),
+  fetchedAt: 0,
+};
+
+const RUNTIME_CONFIG_CACHE_MS = 10_000;
 
 const smtpTransporter = SMTP_USER && SMTP_PASS
   ? nodemailer.createTransport({
@@ -1494,6 +1506,119 @@ function normalizePaymentProof(input) {
   };
 }
 
+function normalizeConfigKey(value) {
+  return String(value || '').trim().toUpperCase();
+}
+
+function isValidConfigKey(value) {
+  return /^[A-Z][A-Z0-9_]{1,79}$/.test(String(value || ''));
+}
+
+function encryptConfigValue(plainText) {
+  if (!CONFIG_CRYPTO_KEY) {
+    throw new Error('CONFIG_ENCRYPTION_KEY is missing on server.');
+  }
+
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', CONFIG_CRYPTO_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(String(plainText || ''), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v1:${iv.toString('base64')}:${tag.toString('base64')}:${encrypted.toString('base64')}`;
+}
+
+function decryptConfigValue(cipherText) {
+  if (!CONFIG_CRYPTO_KEY) {
+    throw new Error('CONFIG_ENCRYPTION_KEY is missing on server.');
+  }
+
+  const raw = String(cipherText || '');
+  const parts = raw.split(':');
+  if (parts.length !== 4 || parts[0] !== 'v1') {
+    throw new Error('Invalid encrypted config payload.');
+  }
+
+  const iv = Buffer.from(parts[1], 'base64');
+  const tag = Buffer.from(parts[2], 'base64');
+  const data = Buffer.from(parts[3], 'base64');
+  const decipher = crypto.createDecipheriv('aes-256-gcm', CONFIG_CRYPTO_KEY, iv);
+  decipher.setAuthTag(tag);
+  const decrypted = Buffer.concat([decipher.update(data), decipher.final()]);
+  return decrypted.toString('utf8');
+}
+
+function maskConfigValue(value) {
+  const text = String(value || '');
+  if (!text) return '';
+  if (text.length <= 4) return '*'.repeat(text.length);
+  return `${text.slice(0, 2)}${'*'.repeat(Math.max(4, text.length - 4))}${text.slice(-2)}`;
+}
+
+async function readRuntimeConfigMap(forceRefresh = false) {
+  const now = Date.now();
+  if (!forceRefresh && runtimeConfigCache.fetchedAt > 0 && (now - runtimeConfigCache.fetchedAt) < RUNTIME_CONFIG_CACHE_MS) {
+    return runtimeConfigCache.valueByKey;
+  }
+
+  const rows = await RuntimeConfigModel.find({}).select('key encryptedValue').lean();
+  const next = new Map();
+  for (const row of rows) {
+    const key = normalizeConfigKey(row?.key || '');
+    if (!key || !row?.encryptedValue) continue;
+    try {
+      next.set(key, decryptConfigValue(row.encryptedValue));
+    } catch {
+      // Ignore broken encrypted entries to keep app running.
+    }
+  }
+
+  runtimeConfigCache.valueByKey = next;
+  runtimeConfigCache.fetchedAt = now;
+  return next;
+}
+
+function clearRuntimeConfigCache() {
+  runtimeConfigCache.valueByKey = new Map();
+  runtimeConfigCache.fetchedAt = 0;
+}
+
+async function getRuntimeConfigValue(key, fallback = '') {
+  const normalized = normalizeConfigKey(key);
+  if (!normalized) return fallback;
+  const map = await readRuntimeConfigMap(false);
+  if (map.has(normalized)) return String(map.get(normalized) || '');
+  return fallback;
+}
+
+async function getOpenAiRuntimeSettings() {
+  const runtimeModel = await getRuntimeConfigValue('MODEL_PROVIDER_MODEL', '');
+  const runtimeOpenAiModel = await getRuntimeConfigValue('OPENAI_MODEL', '');
+  const runtimeProviderKey = await getRuntimeConfigValue('MODEL_PROVIDER_API_KEY', '');
+  const runtimeOpenAiKey = await getRuntimeConfigValue('OPENAI_API_KEY', '');
+
+  const model = runtimeModel || runtimeOpenAiModel || OPENAI_MODEL;
+  const apiKey = runtimeProviderKey || runtimeOpenAiKey || MODEL_PROVIDER_KEY;
+  const keySource = runtimeProviderKey
+    ? 'MODEL_PROVIDER_API_KEY'
+    : runtimeOpenAiKey
+      ? 'OPENAI_API_KEY'
+      : process.env.MODEL_PROVIDER_API_KEY
+        ? 'MODEL_PROVIDER_API_KEY'
+        : process.env.OPENAI_API_KEY
+          ? 'OPENAI_API_KEY'
+          : 'missing';
+
+  return { model, apiKey, keySource };
+}
+
+async function getOpenAiClientContext() {
+  const settings = await getOpenAiRuntimeSettings();
+  return {
+    model: settings.model,
+    keySource: settings.keySource,
+    client: settings.apiKey ? new OpenAI({ apiKey: settings.apiKey }) : null,
+  };
+}
+
 function buildSafeDownloadName(rawName, fallback = 'payment-proof') {
   const base = String(rawName || '').trim() || fallback;
   return base.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
@@ -1917,6 +2042,22 @@ function parseStructuredAnswerSections(answerText) {
   };
 }
 
+function normalizePdfText(value) {
+  return String(value || '')
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-')
+    .replace(/[\u2022]/g, '-')
+    .replace(/[\u00D7]/g, 'x')
+    .replace(/[\u00F7]/g, '/')
+    .replace(/[\u2264]/g, '<=')
+    .replace(/[\u2265]/g, '>=')
+    .replace(/[\u221A]/g, 'sqrt')
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function buildStructuredDocumentPdfBuffer({ title, subtitle = '', sections = [] }) {
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margins: { top: 56, bottom: 56, left: 54, right: 54 } });
@@ -1926,19 +2067,19 @@ function buildStructuredDocumentPdfBuffer({ title, subtitle = '', sections = [] 
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    doc.font('Helvetica-Bold').fontSize(21).fillColor('#1e3a8a').text(String(title || 'NET360 Export'), {
+    doc.font('Helvetica-Bold').fontSize(21).fillColor('#1e3a8a').text(normalizePdfText(title || 'NET360 Export'), {
       align: 'left',
     });
 
     if (subtitle) {
       doc.moveDown(0.2);
-      doc.font('Helvetica').fontSize(10).fillColor('#475569').text(String(subtitle), { align: 'left' });
+      doc.font('Helvetica').fontSize(10).fillColor('#475569').text(normalizePdfText(subtitle), { align: 'left' });
     }
 
     doc.moveDown(0.9);
 
     sections.forEach((section, sectionIndex) => {
-      const heading = String(section?.heading || `Section ${sectionIndex + 1}`);
+      const heading = normalizePdfText(section?.heading || `Section ${sectionIndex + 1}`);
       const lines = Array.isArray(section?.lines) ? section.lines : [];
 
       doc.font('Helvetica-Bold').fontSize(14).fillColor('#0f172a').text(heading, { underline: false });
@@ -1948,7 +2089,8 @@ function buildStructuredDocumentPdfBuffer({ title, subtitle = '', sections = [] 
         doc.font('Helvetica-Oblique').fontSize(11).fillColor('#64748b').text('No content available.');
       } else {
         lines.forEach((line) => {
-          doc.font('Helvetica').fontSize(11).fillColor('#1f2937').text(`• ${String(line || '')}`, {
+          const cleanLine = normalizePdfText(line || '');
+          doc.font('Helvetica').fontSize(11).fillColor('#1f2937').text(`- ${cleanLine}`, {
             paragraphGap: 6,
             indent: 12,
           });
@@ -2053,7 +2195,8 @@ function buildMentorExportPayload({ tool, payload, user }) {
   if (tool === 'doubt-support') {
     const question = String(payload?.question || '').trim();
     const answer = String(payload?.answer || '').trim();
-    const parsed = parseStructuredAnswerSections(answer);
+    const parsed = normalizeStructuredTutorPayload(payload?.structuredAnswer || {}, null)
+      || parseStructuredAnswerSections(answer);
 
     return {
       title: 'NET360 Doubt Support Export',
@@ -3582,6 +3725,21 @@ async function refreshUserProgress(userId) {
 
 app.get('/api/health', async (req, res) => {
   res.json({ status: 'ok', service: 'net360-api', mongo: 'connected' });
+});
+
+app.get('/api/admin/system-status', authMiddleware, requireAdmin, async (_req, res) => {
+  const openAiContext = await getOpenAiClientContext();
+  const configured = Boolean(openAiContext.client);
+  const keySource = openAiContext.keySource;
+
+  res.json({
+    openai: {
+      configured,
+      model: openAiContext.model,
+      keySource,
+    },
+    serverTime: new Date().toISOString(),
+  });
 });
 
 app.get('/api/recommendations/adaptive', authMiddleware, async (req, res) => {
@@ -6490,99 +6648,67 @@ app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
     return;
   }
 
+  const openAiContext = await getOpenAiClientContext();
+  const aiClient = openAiContext.client;
+  const aiModel = openAiContext.model;
+
+  if (!aiClient) {
+    res.status(503).json({ error: 'OpenAI API is not configured. Set OPENAI_API_KEY on the server to use Ask Doubt.' });
+    return;
+  }
+
   let answer = '';
   let structuredAnswer = null;
 
-  if (openai) {
-    try {
-      const completion = await openai.chat.completions.create({
-        model: OPENAI_MODEL,
-        temperature: 0.15,
-        messages: [
-          {
-            role: 'system',
-            content: [
-              'You are NET360 Smart Study Mentor for exam preparation.',
-              'Return ONLY valid JSON with keys: conceptExplanation (string), stepByStepSolution (array of strings), finalAnswer (string), shortestTrick (string).',
-              'Make the explanation precise, exam-oriented, and educational.',
-              'For conceptual questions, include a short illustrative example in one step.',
-              'For numerical/procedural questions, include ordered solution steps and unit checks when relevant.',
-              'Do not include markdown, code fences, or extra keys.',
-            ].join('\n'),
-          },
-          {
-            role: 'user',
-            content: context ? `Context: ${context}\n\nQuestion: ${message}` : message,
-          },
-        ],
-      });
-      const raw = completion.choices?.[0]?.message?.content?.trim() || '';
-      structuredAnswer = tightenStructuredTutorAnswer(extractJsonObject(raw), null);
-      if (structuredAnswer) {
-        answer = formatStructuredStudyResponse({
-          conceptExplanation: structuredAnswer.conceptExplanation,
-          steps: structuredAnswer.stepByStepSolution,
-          finalAnswer: structuredAnswer.finalAnswer,
-          quickTrick: structuredAnswer.shortestTrick,
-        });
-      }
-    } catch {
-      answer = '';
-    }
+  try {
+    const completion = await aiClient.chat.completions.create({
+      model: aiModel,
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You are NET360 Smart Study Mentor powered by OpenAI.',
+            'Solve as a top tutor: clear concept teaching + exam strategy.',
+            'Return strict JSON only with EXACT keys:',
+            'conceptExplanation: string',
+            'stepByStepSolution: string[]',
+            'finalAnswer: string',
+            'shortestTrick: string',
+            'Rules:',
+            '- conceptExplanation: 3 to 6 concise lines, beginner-friendly.',
+            '- stepByStepSolution: 4 to 8 numbered-ready steps, each one actionable and specific.',
+            '- finalAnswer: one crisp final result/conclusion.',
+            '- shortestTrick: fast MCQ method, elimination trick, or shortcut formula where applicable.',
+            '- For math/physics/chemistry, include formula usage and unit sanity checks when relevant.',
+            '- No markdown, no code fences, no extra keys.',
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: context ? `Context: ${context}\n\nStudent question: ${message}` : `Student question: ${message}`,
+        },
+      ],
+    });
+
+    const raw = completion.choices?.[0]?.message?.content?.trim() || '';
+    structuredAnswer = tightenStructuredTutorAnswer(extractJsonObject(raw), null);
+  } catch {
+    structuredAnswer = null;
   }
 
-  if (!answer) {
-    const normalized = message.toLowerCase();
-    if (normalized.includes('integration')) {
-      answer = formatStructuredStudyResponse({
-        conceptExplanation: 'Integration by parts is best used when the integrand is a product of two functions where direct integration is difficult.',
-        steps: [
-          'Choose u and dv using LIATE so differentiation simplifies u.',
-          'Compute du and v correctly before substitution.',
-          'Apply integral(udv) = uv - integral(vdu).',
-          'Simplify the remaining integral and combine constants.',
-        ],
-        finalAnswer: 'Use LIATE-based substitution and complete the remaining integral after applying uv - integral(vdu).',
-        quickTrick: 'Try substitution first when an inner derivative is present; use integration by parts when substitution stalls.',
-      });
-    } else if (normalized.includes('physics') || normalized.includes('newton') || normalized.includes('force')) {
-      answer = formatStructuredStudyResponse({
-        conceptExplanation: 'Force and motion questions are solved fastest by converting the statement into a clean free-body diagram and equation set.',
-        steps: [
-          'Draw the free-body diagram and mark all forces with directions.',
-          'Set coordinate axes and resolve components if needed.',
-          'Apply Newton\'s laws with correct sign convention.',
-          'Solve algebraically and validate units.',
-        ],
-        finalAnswer: 'Use the free-body diagram plus Newton\'s laws to compute the required value with consistent signs and units.',
-        quickTrick: 'In MCQs, eliminate options with impossible direction/sign before full calculation.',
-      });
-    } else if (normalized.includes('chemistry')) {
-      answer = formatStructuredStudyResponse({
-        conceptExplanation: 'Chemistry performance improves when questions are classified into concept buckets before solving.',
-        steps: [
-          'Identify whether the question is periodic trend, bonding, stoichiometry, or equilibrium.',
-          'Write the core rule/equation for that bucket.',
-          'Substitute values carefully and check units/mole ratios.',
-          'Cross-check the result against chemical feasibility.',
-        ],
-        finalAnswer: 'Classify first, apply the correct governing rule, then verify chemical feasibility.',
-        quickTrick: 'For objective questions, use option elimination from trend direction before detailed math.',
-      });
-    } else {
-      answer = formatStructuredStudyResponse({
-        conceptExplanation: 'A strong preparation approach combines concept clarity, worked examples, and timed practice.',
-        steps: [
-          'Start with a short concept summary for the topic.',
-          'Solve one representative example with reasoning.',
-          'Attempt timed MCQs and review mistakes immediately.',
-          'Repeat with a slightly harder variation of the same concept.',
-        ],
-        finalAnswer: 'Use an iterative cycle of concept, example, timed practice, and error review.',
-        quickTrick: 'Track repeated mistakes in one notebook and revise those patterns daily.',
-      });
-    }
+  if (!structuredAnswer) {
+    res.status(502).json({ error: 'Could not generate a structured response from OpenAI right now. Please try again.' });
+    return;
   }
+
+  answer = formatStructuredStudyResponse({
+    conceptExplanation: structuredAnswer.conceptExplanation,
+    steps: structuredAnswer.stepByStepSolution,
+    finalAnswer: structuredAnswer.finalAnswer,
+    quickTrick: structuredAnswer.shortestTrick,
+  });
 
   const parsedAnswer = parseStructuredAnswerSections(answer);
 
@@ -6883,6 +7009,15 @@ app.post('/api/ai/mentor/solve-image', authMiddleware, async (req, res) => {
   const premium = ensurePremiumAccess(req.user, res);
   if (!premium) return;
 
+  const openAiContext = await getOpenAiClientContext();
+  const aiClient = openAiContext.client;
+  const aiModel = openAiContext.model;
+
+  if (!aiClient) {
+    res.status(503).json({ error: 'OpenAI API is not configured. Set OPENAI_API_KEY on the server to use Question Solver.' });
+    return;
+  }
+
   const imageDataUrl = String(req.body?.imageDataUrl || '').trim();
   const providedText = String(req.body?.questionText || '').trim();
   const mimeType = String(req.body?.mimeType || '').trim().toLowerCase();
@@ -6912,10 +7047,10 @@ app.post('/api/ai/mentor/solve-image', authMiddleware, async (req, res) => {
 
   let extractedQuestion = providedText;
 
-  if (!extractedQuestion && imageDataUrl && openai) {
+  if (!extractedQuestion && imageDataUrl && aiClient) {
     try {
-      const ocrCompletion = await openai.chat.completions.create({
-        model: OPENAI_MODEL,
+      const ocrCompletion = await aiClient.chat.completions.create({
+        model: aiModel,
         temperature: 0,
         messages: [
           {
@@ -6943,55 +7078,49 @@ app.post('/api/ai/mentor/solve-image', authMiddleware, async (req, res) => {
 
   const subject = inferSubject(extractedQuestion);
   const topic = inferTopic(extractedQuestion, subject);
-  let structured = fallbackStructuredSolver(extractedQuestion, subject, topic);
+  let structured = null;
 
-  if (openai) {
-    try {
-      const prompt = [
-        'You are an expert NET exam tutor and problem-solver.',
-        `Detected subject: ${subject}`,
-        `Detected topic: ${topic}`,
-        'Solve the question accurately and educationally like a human tutor.',
-        'Return ONLY valid JSON with EXACT keys:',
-        'conceptExplanation: string',
-        'stepByStepSolution: string[]',
-        'finalAnswer: string',
-        'shortestTrick: string',
-        'Requirements:',
-        '- Explain core concept clearly but briefly.',
-        '- Provide 4 to 8 sequential, exam-ready steps.',
-        '- Include formula substitutions where relevant.',
-        '- Final answer must be explicit and unambiguous.',
-        '- shortestTrick must be a practical faster method for similar MCQs, not a repeat of full steps.',
-        '- If information is missing/ambiguous, state assumptions clearly in steps and still provide best solution path.',
-        'Question:',
-        extractedQuestion,
-      ].join('\n');
+  try {
+    const prompt = [
+      'You are an expert NET exam tutor and problem-solver.',
+      `Detected subject: ${subject}`,
+      `Detected topic: ${topic}`,
+      'Solve the question accurately and educationally like ChatGPT teaching a student.',
+      'Return ONLY valid JSON with EXACT keys:',
+      'conceptExplanation: string',
+      'stepByStepSolution: string[]',
+      'finalAnswer: string',
+      'shortestTrick: string',
+      'Requirements:',
+      '- conceptExplanation: clear and concise, 3 to 6 lines.',
+      '- stepByStepSolution: 4 to 8 ordered steps, each explicit and practical.',
+      '- Include formulas, substitutions, and unit checks where relevant.',
+      '- finalAnswer must be explicit and unambiguous.',
+      '- shortestTrick must be a fast test-taking method for similar problems.',
+      '- If information is ambiguous, state assumptions and proceed logically.',
+      'Question:',
+      extractedQuestion,
+    ].join('\n');
 
-      const solveCompletion = await openai.chat.completions.create({
-        model: OPENAI_MODEL,
-        temperature: 0.15,
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: 'Return strict JSON only. No markdown. No code fences. No extra keys.' },
-          { role: 'user', content: prompt },
-        ],
-      });
+    const solveCompletion = await aiClient.chat.completions.create({
+      model: aiModel,
+      temperature: 0.15,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: 'Return strict JSON only. No markdown. No code fences. No extra keys.' },
+        { role: 'user', content: prompt },
+      ],
+    });
 
-      const raw = (solveCompletion.choices?.[0]?.message?.content || '').trim();
-      const parsed = extractJsonObject(raw);
-      const normalized = normalizeStructuredTutorPayload(parsed, null);
-      if (normalized) {
-        structured = {
-          conceptExplanation: normalized.conceptExplanation,
-          stepByStepSolution: normalized.stepByStepSolution,
-          finalAnswer: normalized.finalAnswer,
-          shortestTrick: normalized.shortestTrick,
-        };
-      }
-    } catch {
-      // Fall back to deterministic structured guidance.
-    }
+    const raw = (solveCompletion.choices?.[0]?.message?.content || '').trim();
+    const parsed = extractJsonObject(raw);
+    structured = tightenStructuredTutorAnswer(parsed, null);
+  } catch {
+    structured = null;
+  }
+
+  if (!structured) {
+    structured = fallbackStructuredSolver(extractedQuestion, subject, topic);
   }
 
   usage.solverCount = (usage.solverCount || 0) + 1;
@@ -7345,6 +7474,102 @@ app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) =>
     averageScore,
     recentAttempts: latestAttempts.map((item) => serializeAttempt(item)),
   });
+});
+
+app.get('/api/admin/configurations', authMiddleware, requireAdmin, async (_req, res) => {
+  if (!CONFIG_CRYPTO_KEY) {
+    res.status(503).json({ error: 'Secure config service is unavailable because CONFIG_ENCRYPTION_KEY is missing.' });
+    return;
+  }
+
+  const rows = await RuntimeConfigModel.find({}).sort({ key: 1 }).lean();
+  const variables = rows.map((item) => {
+    let valuePreview = '';
+    try {
+      const plain = decryptConfigValue(item.encryptedValue || '');
+      valuePreview = item.isSecret ? maskConfigValue(plain) : String(plain || '').slice(0, 120);
+    } catch {
+      valuePreview = '[decryption-error]';
+    }
+
+    return {
+      key: String(item.key || ''),
+      isSecret: Boolean(item.isSecret),
+      description: String(item.description || ''),
+      updatedByEmail: String(item.updatedByEmail || ''),
+      updatedAt: item.updatedAt ? new Date(item.updatedAt).toISOString() : null,
+      valuePreview,
+    };
+  });
+
+  res.json({ variables });
+});
+
+app.put('/api/admin/configurations/:key', authMiddleware, requireAdmin, async (req, res) => {
+  if (!CONFIG_CRYPTO_KEY) {
+    res.status(503).json({ error: 'Secure config service is unavailable because CONFIG_ENCRYPTION_KEY is missing.' });
+    return;
+  }
+
+  const key = normalizeConfigKey(req.params.key || req.body?.key || '');
+  const value = String(req.body?.value || '');
+  const description = sanitizePlainText(req.body?.description || '', 220);
+  const isSecret = req.body?.isSecret !== false;
+
+  if (!isValidConfigKey(key)) {
+    res.status(400).json({ error: 'Invalid key. Use uppercase letters, numbers, and underscore only (e.g. OPENAI_API_KEY).' });
+    return;
+  }
+
+  if (!value.trim()) {
+    res.status(400).json({ error: 'Value is required.' });
+    return;
+  }
+
+  if (value.length > 8000) {
+    res.status(400).json({ error: 'Value is too long. Maximum 8000 characters.' });
+    return;
+  }
+
+  const encryptedValue = encryptConfigValue(value);
+  const saved = await RuntimeConfigModel.findOneAndUpdate(
+    { key },
+    {
+      $set: {
+        key,
+        encryptedValue,
+        isSecret,
+        description,
+        updatedByEmail: String(req.user?.email || ''),
+      },
+    },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  ).lean();
+
+  clearRuntimeConfigCache();
+
+  res.json({
+    variable: {
+      key: String(saved?.key || key),
+      isSecret: Boolean(saved?.isSecret),
+      description: String(saved?.description || ''),
+      updatedByEmail: String(saved?.updatedByEmail || ''),
+      updatedAt: saved?.updatedAt ? new Date(saved.updatedAt).toISOString() : null,
+      valuePreview: isSecret ? maskConfigValue(value) : value.slice(0, 120),
+    },
+  });
+});
+
+app.delete('/api/admin/configurations/:key', authMiddleware, requireAdmin, async (req, res) => {
+  const key = normalizeConfigKey(req.params.key || '');
+  if (!isValidConfigKey(key)) {
+    res.status(400).json({ error: 'Invalid key.' });
+    return;
+  }
+
+  await RuntimeConfigModel.deleteOne({ key });
+  clearRuntimeConfigCache();
+  res.json({ ok: true, key });
 });
 
 app.get('/api/admin/password-recovery-requests', authMiddleware, requireAdmin, async (req, res) => {

@@ -529,6 +529,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
             payload: {
               question: lastUser?.message || question,
               answer: lastAi.structuredAnswer ? formatStructuredTutorAnswer(lastAi.structuredAnswer) : lastAi.message,
+              structuredAnswer: lastAi.structuredAnswer || null,
             },
           }),
         },
