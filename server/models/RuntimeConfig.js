@@ -11,6 +11,4 @@ const runtimeConfigSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
-runtimeConfigSchema.index({ key: 1 }, { unique: true });
-
 export const RuntimeConfigModel = mongoose.models.RuntimeConfig || mongoose.model('RuntimeConfig', runtimeConfigSchema);
