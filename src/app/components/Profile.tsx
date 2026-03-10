@@ -52,6 +52,10 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [forgotCooldownSeconds, setForgotCooldownSeconds] = useState(0);
   const [paymentProofReadProgress, setPaymentProofReadProgress] = useState(0);
   const [isReadingPaymentProof, setIsReadingPaymentProof] = useState(false);
+  const [registerConflictBanner, setRegisterConflictBanner] = useState('');
+  const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
+  const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState('');
+  const [isDeletingAccount, setIsDeletingAccount] = useState(false);
 
   useEffect(() => {
     setLocalProfile(profile);
@@ -100,6 +104,10 @@ export function Profile({ onNavigate }: ProfileProps) {
 
   const handleAuthSubmit = async () => {
     try {
+      if (isRegisterMode) {
+        setRegisterConflictBanner('');
+      }
+
       if (!authForm.email) {
         toast.error('Email is required.');
         return;
@@ -173,6 +181,10 @@ export function Profile({ onNavigate }: ProfileProps) {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Authentication failed.';
+      const typed = error as Error & { status?: number };
+      if (isRegisterMode && typed.status === 409) {
+        setRegisterConflictBanner(message);
+      }
       toast.error(message);
     }
   };
@@ -310,6 +322,43 @@ export function Profile({ onNavigate }: ProfileProps) {
     }
   };
 
+  const handleDeleteAccount = async () => {
+    if (!deleteAccountPassword.trim()) {
+      toast.error('Enter your registration password to confirm account deletion.');
+      return;
+    }
+
+    if (deleteAccountConfirmationText.trim() !== 'DELETE') {
+      toast.error('Type DELETE exactly to confirm permanent account deletion.');
+      return;
+    }
+
+    const approved = window.confirm(
+      'Deleting your account is permanent and will remove your access to the platform. If you want to use NET360 again later, you will need to create a new account and obtain access again. Continue?',
+    );
+    if (!approved) return;
+
+    try {
+      setIsDeletingAccount(true);
+      const payload = await apiRequest<{ message: string }>('/api/auth/delete-account', {
+        method: 'POST',
+        body: JSON.stringify({
+          password: deleteAccountPassword,
+          confirmationText: deleteAccountConfirmationText.trim(),
+        }),
+      });
+
+      toast.success(payload.message || 'Account deleted successfully.');
+      setDeleteAccountPassword('');
+      setDeleteAccountConfirmationText('');
+      logout();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not delete account.');
+    } finally {
+      setIsDeletingAccount(false);
+    }
+  };
+
   if (!user) {
     return (
       <div className="space-y-5">
@@ -421,11 +470,20 @@ export function Profile({ onNavigate }: ProfileProps) {
                   id="auth-email"
                   type="email"
                   value={authForm.email}
-                  onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
+                    onChange={(e) => {
+                      setRegisterConflictBanner('');
+                      setAuthForm((prev) => ({ ...prev, email: e.target.value }));
+                    }}
                   placeholder="student@example.com"
                   className="h-11 border-indigo-100"
                 />
               </div>
+
+                {isRegisterMode && registerConflictBanner ? (
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900" role="alert" aria-live="polite">
+                    {registerConflictBanner}
+                  </div>
+                ) : null}
 
               {isRegisterMode ? (
                 <div className="space-y-1.5">
@@ -433,7 +491,10 @@ export function Profile({ onNavigate }: ProfileProps) {
                   <Input
                     id="mobile-number"
                     value={authForm.mobileNumber}
-                    onChange={(e) => setAuthForm((prev) => ({ ...prev, mobileNumber: e.target.value }))}
+                    onChange={(e) => {
+                      setRegisterConflictBanner('');
+                      setAuthForm((prev) => ({ ...prev, mobileNumber: e.target.value }));
+                    }}
                     placeholder="e.g. +923001234567"
                     className="h-11 border-indigo-100"
                   />
@@ -560,7 +621,10 @@ export function Profile({ onNavigate }: ProfileProps) {
                         ? 'bg-gradient-to-r from-indigo-700 to-violet-600 !text-white shadow-sm hover:from-indigo-800 hover:to-violet-700'
                         : 'bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-700'
                     }`}
-                    onClick={() => setAuthMode('login')}
+                    onClick={() => {
+                      setRegisterConflictBanner('');
+                      setAuthMode('login');
+                    }}
                   >
                     Login
                   </Button>
@@ -572,7 +636,10 @@ export function Profile({ onNavigate }: ProfileProps) {
                         ? 'bg-gradient-to-r from-indigo-700 to-violet-600 !text-white shadow-sm hover:from-indigo-800 hover:to-violet-700'
                         : 'bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-700'
                     }`}
-                    onClick={() => setAuthMode('register')}
+                    onClick={() => {
+                      setRegisterConflictBanner('');
+                      setAuthMode('register');
+                    }}
                   >
                     Create Account
                   </Button>
@@ -584,7 +651,10 @@ export function Profile({ onNavigate }: ProfileProps) {
                         ? 'bg-gradient-to-r from-indigo-700 to-violet-600 !text-white shadow-sm hover:from-indigo-800 hover:to-violet-700'
                         : 'bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-700'
                     }`}
-                    onClick={() => setAuthMode('recovery')}
+                    onClick={() => {
+                      setRegisterConflictBanner('');
+                      setAuthMode('recovery');
+                    }}
                   >
                     Recover Password
                   </Button>
@@ -872,6 +942,47 @@ export function Profile({ onNavigate }: ProfileProps) {
               {preferences.performanceReports ? 'Enabled' : 'Disabled'}
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-red-200 bg-red-50/40">
+        <CardHeader>
+          <CardTitle className="text-red-700">Danger Zone: Delete Account</CardTitle>
+          <CardDescription className="text-red-700/90">
+            Deleting your account will permanently remove your access to the platform. If you want to use the service again in the future, you will need to create a new account and obtain access again.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="space-y-2">
+            <Label htmlFor="delete-account-confirmation-text">Type DELETE to confirm</Label>
+            <Input
+              id="delete-account-confirmation-text"
+              value={deleteAccountConfirmationText}
+              onChange={(e) => setDeleteAccountConfirmationText(e.target.value)}
+              placeholder="DELETE"
+              className="border-red-200 bg-white"
+            />
+            <p className="text-xs text-red-700/90">Enter DELETE in uppercase to continue.</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="delete-account-password">Confirm with your registration password</Label>
+            <Input
+              id="delete-account-password"
+              type="password"
+              value={deleteAccountPassword}
+              onChange={(e) => setDeleteAccountPassword(e.target.value)}
+              placeholder="Enter password to confirm"
+              className="border-red-200 bg-white"
+            />
+          </div>
+          <Button
+            variant="destructive"
+            onClick={() => void handleDeleteAccount()}
+            disabled={isDeletingAccount || !deleteAccountPassword.trim() || deleteAccountConfirmationText.trim() !== 'DELETE'}
+          >
+            {isDeletingAccount ? 'Deleting Account...' : 'Delete Account Permanently'}
+          </Button>
         </CardContent>
       </Card>
     </div>

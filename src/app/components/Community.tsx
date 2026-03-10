@@ -99,6 +99,63 @@ interface LeaderboardRow extends CommunityUser {
   improvement: number;
 }
 
+interface QuizChallengeQuestion {
+  questionId: string;
+  subject: string;
+  topic: string;
+  question: string;
+  options: string[];
+  difficulty: string;
+  correctAnswer?: string;
+}
+
+interface QuizChallengeResult {
+  submitted: boolean;
+  completedAt: string | null;
+  elapsedSeconds: number;
+  correctCount: number;
+  wrongCount: number;
+  unansweredCount: number;
+  accuracyScore: number;
+  speedScore: number;
+  totalScore: number;
+}
+
+interface QuizChallengeRow {
+  id: string;
+  challengerUserId: string;
+  opponentUserId: string;
+  mode: 'subject-wise' | 'mock' | 'adaptive' | 'custom' | string;
+  subject: string;
+  topic: string;
+  difficulty: string;
+  questionCount: number;
+  durationSeconds: number;
+  status: 'pending' | 'accepted' | 'in_progress' | 'completed' | 'declined' | 'cancelled' | 'expired' | string;
+  invitedAt: string | null;
+  acceptedAt: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  winnerUserId: string;
+  isChallenger: boolean;
+  myResult: QuizChallengeResult;
+  opponentResult: QuizChallengeResult;
+  questions: QuizChallengeQuestion[];
+}
+
+interface QuizLeaderboardRow {
+  rank: number;
+  userId: string;
+  username?: string;
+  name?: string;
+  avatar?: string | null;
+  totalWins: number;
+  totalMatchesPlayed: number;
+  winRate: number;
+  totalChallengesSent: number;
+  totalChallengesAccepted: number;
+}
+
 const PROFILE_PICTURE_ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -195,6 +252,19 @@ export function Community() {
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
   const [badges, setBadges] = useState<BadgeRow[]>([]);
 
+  const [quizChallenges, setQuizChallenges] = useState<QuizChallengeRow[]>([]);
+  const [quizLeaderboard, setQuizLeaderboard] = useState<QuizLeaderboardRow[]>([]);
+  const [selectedQuizChallengeId, setSelectedQuizChallengeId] = useState('');
+  const [quizMode, setQuizMode] = useState<'subject-wise' | 'mock' | 'adaptive' | 'custom'>('subject-wise');
+  const [quizSubject, setQuizSubject] = useState('mathematics');
+  const [quizTopic, setQuizTopic] = useState('');
+  const [quizDifficulty, setQuizDifficulty] = useState('Medium');
+  const [quizQuestionCount, setQuizQuestionCount] = useState(15);
+  const [quizDurationSeconds, setQuizDurationSeconds] = useState(900);
+  const [quizOpponentUserId, setQuizOpponentUserId] = useState('');
+  const [quizAnswers, setQuizAnswers] = useState<Record<string, string>>({});
+  const [quizStartedAtMs, setQuizStartedAtMs] = useState<number | null>(null);
+
   const [connections, setConnections] = useState<ConnectionRow[]>([]);
   const [activeConnectionId, setActiveConnectionId] = useState('');
   const [messages, setMessages] = useState<MessageRow[]>([]);
@@ -206,6 +276,11 @@ export function Community() {
     [connections, activeConnectionId],
   );
 
+  const selectedQuizChallenge = useMemo(
+    () => quizChallenges.find((item) => item.id === selectedQuizChallengeId) || null,
+    [quizChallenges, selectedQuizChallengeId],
+  );
+
   const loadLeaderboardAndBadges = async (period: 'weekly' | 'monthly') => {
     if (!token) return;
     const [leaderboardPayload, badgesPayload] = await Promise.all([
@@ -215,6 +290,30 @@ export function Community() {
     setLeaderboard(leaderboardPayload.leaderboard || []);
     setBadges(badgesPayload.badges || []);
   };
+
+  const loadQuizData = async () => {
+    if (!token) return;
+    const [challengesPayload, quizBoardPayload] = await Promise.all([
+      apiRequest<{ challenges: QuizChallengeRow[] }>('/api/community/quiz-challenges', {}, token),
+      apiRequest<{ leaderboard: QuizLeaderboardRow[] }>('/api/community/quiz-leaderboard', {}, token),
+    ]);
+
+    const challengeRows = challengesPayload.challenges || [];
+    setQuizChallenges(challengeRows);
+    setQuizLeaderboard(quizBoardPayload.leaderboard || []);
+
+    if (!selectedQuizChallengeId && challengeRows.length > 0) {
+      setSelectedQuizChallengeId(challengeRows[0].id);
+    } else if (selectedQuizChallengeId && !challengeRows.some((row) => row.id === selectedQuizChallengeId)) {
+      setSelectedQuizChallengeId(challengeRows[0]?.id || '');
+    }
+  };
+
+  const challengeRemainingSeconds = useMemo(() => {
+    if (!selectedQuizChallenge || !quizStartedAtMs) return 0;
+    const elapsed = Math.floor((Date.now() - quizStartedAtMs) / 1000);
+    return Math.max(0, Number(selectedQuizChallenge.durationSeconds || 0) - elapsed);
+  }, [selectedQuizChallenge, quizStartedAtMs]);
 
   const loadDiscussionRoomPosts = async (roomId: string) => {
     if (!token || !roomId) return;
@@ -276,6 +375,7 @@ export function Community() {
     }
 
     await loadLeaderboardAndBadges(leaderboardPeriod);
+    await loadQuizData();
   };
 
   useEffect(() => {
@@ -372,6 +472,9 @@ export function Community() {
 
         if (activeTab === 'leaderboard') {
           await loadLeaderboardAndBadges(leaderboardPeriod);
+        }
+        if (activeTab === 'quiz-battles') {
+          await loadQuizData();
         }
       } catch {
         // Silent polling failures; primary actions already show toasts.
@@ -587,6 +690,80 @@ export function Community() {
     }
   };
 
+  const createQuizChallenge = async () => {
+    if (!token) return;
+    if (!quizOpponentUserId) {
+      toast.error('Select a connected student to challenge.');
+      return;
+    }
+    try {
+      await apiRequest('/api/community/quiz-challenges', {
+        method: 'POST',
+        body: JSON.stringify({
+          opponentUserId: quizOpponentUserId,
+          mode: quizMode,
+          subject: quizSubject,
+          topic: quizTopic,
+          difficulty: quizDifficulty,
+          questionCount: quizQuestionCount,
+          durationSeconds: quizDurationSeconds,
+        }),
+      }, token);
+      toast.success('Quiz challenge sent.');
+      setQuizAnswers({});
+      setQuizStartedAtMs(null);
+      await loadQuizData();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not create quiz challenge.');
+    }
+  };
+
+  const respondQuizChallenge = async (challengeId: string, action: 'accept' | 'decline') => {
+    if (!token) return;
+    try {
+      await apiRequest(`/api/community/quiz-challenges/${challengeId}/respond`, {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+      }, token);
+      if (action === 'accept') {
+        setQuizStartedAtMs(Date.now());
+        setQuizAnswers({});
+      }
+      toast.success(action === 'accept' ? 'Challenge accepted.' : 'Challenge declined.');
+      await loadQuizData();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not respond to challenge.');
+    }
+  };
+
+  const startChallengeAttempt = (challengeId: string) => {
+    setSelectedQuizChallengeId(challengeId);
+    setQuizAnswers({});
+    setQuizStartedAtMs(Date.now());
+  };
+
+  const submitQuizChallenge = async () => {
+    if (!token || !selectedQuizChallenge) return;
+    const answers = selectedQuizChallenge.questions.map((question) => ({
+      questionId: question.questionId,
+      selectedOption: String(quizAnswers[question.questionId] || '').trim(),
+    }));
+    const elapsedSeconds = quizStartedAtMs ? Math.max(0, Math.floor((Date.now() - quizStartedAtMs) / 1000)) : 0;
+
+    try {
+      await apiRequest(`/api/community/quiz-challenges/${selectedQuizChallenge.id}/submit`, {
+        method: 'POST',
+        body: JSON.stringify({ answers, elapsedSeconds }),
+      }, token);
+      toast.success('Challenge submitted.');
+      setQuizStartedAtMs(null);
+      setQuizAnswers({});
+      await loadQuizData();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not submit challenge.');
+    }
+  };
+
   if (!token || !user) {
     return (
       <Card>
@@ -614,6 +791,7 @@ export function Community() {
             <TabsTrigger value="discover-students">Discover Students</TabsTrigger>
             <TabsTrigger value="study-partners">Study Partners</TabsTrigger>
             <TabsTrigger value="discussion-rooms">Discussion Rooms</TabsTrigger>
+            <TabsTrigger value="quiz-battles">Quiz Battles</TabsTrigger>
             <TabsTrigger value="leaderboard">Leaderboard</TabsTrigger>
             <TabsTrigger value="messages">Messages</TabsTrigger>
           </TabsList>
@@ -938,6 +1116,241 @@ export function Community() {
                 </div>
               </CardContent>
             </Card>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="quiz-battles" className="mt-0 space-y-4">
+          <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
+            <Card>
+              <CardHeader>
+                <CardTitle>Create Quiz Challenge</CardTitle>
+                <CardDescription>Invite a connected student to a timed MCQ battle.</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                <div className="space-y-1.5">
+                  <Label>Challenge Opponent</Label>
+                  <Select value={quizOpponentUserId} onValueChange={setQuizOpponentUserId}>
+                    <SelectTrigger><SelectValue placeholder="Select connection" /></SelectTrigger>
+                    <SelectContent>
+                      {connections.map((item) => (
+                        <SelectItem key={item.user.id} value={item.user.id}>{displayName(item.user)}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-1">
+                  <div className="space-y-1.5">
+                    <Label>Mode</Label>
+                    <Select value={quizMode} onValueChange={(value) => setQuizMode(value as 'subject-wise' | 'mock' | 'adaptive' | 'custom')}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="subject-wise">Subject-wise</SelectItem>
+                        <SelectItem value="mock">Mock Test</SelectItem>
+                        <SelectItem value="adaptive">Adaptive Weak Areas</SelectItem>
+                        <SelectItem value="custom">Custom Filters</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Subject</Label>
+                    <Select value={quizSubject} onValueChange={setQuizSubject}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="mathematics">Mathematics</SelectItem>
+                        <SelectItem value="physics">Physics</SelectItem>
+                        <SelectItem value="english">English</SelectItem>
+                        <SelectItem value="biology">Biology</SelectItem>
+                        <SelectItem value="chemistry">Chemistry</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Difficulty</Label>
+                    <Select value={quizDifficulty} onValueChange={setQuizDifficulty}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="Easy">Easy</SelectItem>
+                        <SelectItem value="Medium">Medium</SelectItem>
+                        <SelectItem value="Hard">Hard</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Topic (for custom mode)</Label>
+                  <Input value={quizTopic} onChange={(e) => setQuizTopic(e.target.value)} placeholder="e.g. trigonometry" />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1.5">
+                    <Label>Questions</Label>
+                    <Input
+                      type="number"
+                      min={5}
+                      max={40}
+                      value={quizQuestionCount}
+                      onChange={(e) => setQuizQuestionCount(Number(e.target.value || 15))}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Duration (sec)</Label>
+                    <Input
+                      type="number"
+                      min={120}
+                      max={3600}
+                      value={quizDurationSeconds}
+                      onChange={(e) => setQuizDurationSeconds(Number(e.target.value || 900))}
+                    />
+                  </div>
+                </div>
+
+                <Button onClick={() => void createQuizChallenge()} disabled={!connections.length}>Send Challenge</Button>
+              </CardContent>
+            </Card>
+
+            <div className="space-y-4">
+              <Card>
+                <CardHeader>
+                  <CardTitle>Challenge Inbox & History</CardTitle>
+                  <CardDescription>Accept invites, start attempts, and review outcomes.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2 max-h-[280px] overflow-auto">
+                  {quizChallenges.map((challenge) => {
+                    const opponent = connections.find((item) => item.user.id === (challenge.isChallenger ? challenge.opponentUserId : challenge.challengerUserId))?.user;
+                    return (
+                      <button
+                        key={challenge.id}
+                        type="button"
+                        onClick={() => setSelectedQuizChallengeId(challenge.id)}
+                        className={`w-full rounded-lg border p-3 text-left ${selectedQuizChallengeId === challenge.id ? 'border-indigo-400 bg-indigo-50' : ''}`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <p className="text-sm font-medium">{challenge.mode} {challenge.subject ? ` ${challenge.subject}` : ''}</p>
+                          <Badge variant="outline">{challenge.status}</Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {challenge.isChallenger ? 'vs' : 'from'} {opponent ? displayName(opponent) : 'Student'}  {challenge.questionCount} Q  {Math.round(challenge.durationSeconds / 60)} min
+                        </p>
+                        {challenge.status === 'pending' && !challenge.isChallenger ? (
+                          <div className="mt-2 flex gap-2">
+                            <Button size="sm" onClick={(e) => { e.stopPropagation(); void respondQuizChallenge(challenge.id, 'accept'); }}>Accept</Button>
+                            <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); void respondQuizChallenge(challenge.id, 'decline'); }}>Decline</Button>
+                          </div>
+                        ) : null}
+                        {(challenge.status === 'in_progress' || challenge.status === 'accepted') && !challenge.myResult.submitted ? (
+                          <Button
+                            className="mt-2"
+                            size="sm"
+                            variant="secondary"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              startChallengeAttempt(challenge.id);
+                            }}
+                          >
+                            Start Attempt
+                          </Button>
+                        ) : null}
+                      </button>
+                    );
+                  })}
+                  {!quizChallenges.length ? <p className="text-xs text-muted-foreground">No quiz challenges yet.</p> : null}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Battle Arena</CardTitle>
+                  <CardDescription>
+                    {selectedQuizChallenge ? `${selectedQuizChallenge.questionCount} questions | ${Math.round(selectedQuizChallenge.durationSeconds / 60)} minutes` : 'Select a challenge to play.'}
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {selectedQuizChallenge ? (
+                    <>
+                      {(selectedQuizChallenge.status === 'in_progress' || selectedQuizChallenge.status === 'accepted') && !selectedQuizChallenge.myResult.submitted ? (
+                        <>
+                          <p className="text-xs text-muted-foreground">Time left: {challengeRemainingSeconds}s</p>
+                          <div className="space-y-3 max-h-[360px] overflow-auto">
+                            {selectedQuizChallenge.questions.map((question, index) => (
+                              <div key={question.questionId} className="rounded-md border p-3">
+                                <p className="text-sm font-medium">Q{index + 1}. {question.question}</p>
+                                <div className="mt-2 grid gap-2">
+                                  {question.options.map((option) => {
+                                    const selected = quizAnswers[question.questionId] === option;
+                                    return (
+                                      <button
+                                        key={option}
+                                        type="button"
+                                        onClick={() => setQuizAnswers((prev) => ({ ...prev, [question.questionId]: option }))}
+                                        className={`rounded border px-2 py-1 text-left text-sm ${selected ? 'border-indigo-500 bg-indigo-50' : 'hover:bg-slate-50'}`}
+                                      >
+                                        {option}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                          <Button onClick={() => void submitQuizChallenge()}>Submit Challenge</Button>
+                        </>
+                      ) : (
+                        <div className="space-y-2 rounded-md border p-3 text-sm">
+                          <p>Status: {selectedQuizChallenge.status}</p>
+                          <p>Your score: {selectedQuizChallenge.myResult.totalScore.toFixed(2)} ({selectedQuizChallenge.myResult.correctCount}/{selectedQuizChallenge.questionCount} correct)</p>
+                          <p>Opponent score: {selectedQuizChallenge.opponentResult.totalScore.toFixed(2)}</p>
+                          {selectedQuizChallenge.status === 'completed' ? (
+                            <p className="font-medium">
+                              {selectedQuizChallenge.winnerUserId
+                                ? (selectedQuizChallenge.winnerUserId === user.id ? 'You won this battle.' : 'You lost this battle.')
+                                : 'Battle ended in a tie.'}
+                            </p>
+                          ) : null}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-muted-foreground">Select a challenge from inbox/history.</p>
+                  )}
+                </CardContent>
+              </Card>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Your Quiz Profile</CardTitle>
+                    <CardDescription>Wins, matches, and performance trend.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-1 text-sm">
+                    <p>Total wins: {quizLeaderboard.find((row) => row.userId === user.id)?.totalWins || 0}</p>
+                    <p>Total matches: {quizLeaderboard.find((row) => row.userId === user.id)?.totalMatchesPlayed || 0}</p>
+                    <p>Win rate: {quizLeaderboard.find((row) => row.userId === user.id)?.winRate || 0}%</p>
+                    <p>Challenges sent: {quizLeaderboard.find((row) => row.userId === user.id)?.totalChallengesSent || 0}</p>
+                    <p>Challenges accepted: {quizLeaderboard.find((row) => row.userId === user.id)?.totalChallengesAccepted || 0}</p>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Quiz Battles Leaderboard</CardTitle>
+                    <CardDescription>Top performers by wins, win rate, and volume.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-2 max-h-[220px] overflow-auto">
+                    {quizLeaderboard.map((entry) => (
+                      <div key={entry.userId} className="rounded-md border p-2 text-sm">
+                        <p className="font-medium">#{entry.rank} {entry.name || entry.username || 'Student'}</p>
+                        <p className="text-xs text-muted-foreground">Wins {entry.totalWins} | Matches {entry.totalMatchesPlayed} | Win Rate {entry.winRate}%</p>
+                      </div>
+                    ))}
+                    {!quizLeaderboard.length ? <p className="text-xs text-muted-foreground">No quiz ranking data yet.</p> : null}
+                  </CardContent>
+                </Card>
+              </div>
+            </div>
           </div>
         </TabsContent>
 

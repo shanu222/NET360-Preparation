@@ -30,6 +30,7 @@ import { CommunityMessageModel } from './models/CommunityMessage.js';
 import { CommunityReportModel } from './models/CommunityReport.js';
 import { CommunityBlockModel } from './models/CommunityBlock.js';
 import { CommunityRoomPostModel } from './models/CommunityRoomPost.js';
+import { CommunityQuizChallengeModel } from './models/CommunityQuizChallenge.js';
 import { SignupRequestModel } from './models/SignupRequest.js';
 import { SignupTokenModel } from './models/SignupToken.js';
 import { PremiumSubscriptionRequestModel } from './models/PremiumSubscriptionRequest.js';
@@ -338,7 +339,7 @@ function containsRegex(value, maxLen = 80) {
   return { $regex: escaped, $options: 'i' };
 }
 
-const COMMUNITY_PROFILE_SELECT = 'userId username shareProfilePicture profilePictureUrl favoriteSubjects targetNetType subjectsNeedHelp preparationLevel studyTimePreference testScoreRange bio createdAt';
+const COMMUNITY_PROFILE_SELECT = 'userId username shareProfilePicture profilePictureUrl favoriteSubjects targetNetType subjectsNeedHelp preparationLevel studyTimePreference testScoreRange bio quizStats createdAt';
 const COMMUNITY_USER_SELECT = 'firstName lastName targetProgram city progress.averageScore progress.weakTopics role';
 const COMMUNITY_CONNECTION_SELECT = 'participantA participantB createdAt';
 const COMMUNITY_REQUEST_SELECT = 'fromUserId toUserId status createdAt';
@@ -1137,6 +1138,43 @@ function compactMobile(value) {
   return String(value || '').replace(/\D/g, '');
 }
 
+function getDuplicateAccountFieldLabel(matchedBy) {
+  if (matchedBy === 'email') return 'email address';
+  if (matchedBy === 'mobile') return 'mobile number';
+  return 'email address or mobile number';
+}
+
+function duplicateAccountErrorMessage(matchedBy, hasActiveSubscription) {
+  const fieldLabel = getDuplicateAccountFieldLabel(matchedBy);
+  if (hasActiveSubscription) {
+    return `An active account already exists with this ${fieldLabel}. Please log in using your existing account, or use a different email address or mobile number to create a new account.`;
+  }
+  return `An account already exists with this ${fieldLabel}. Please log in using your existing account, or use a different email address or mobile number.`;
+}
+
+async function findUserByMobileNumber(mobileNumber) {
+  const targetCompact = compactMobile(mobileNumber);
+  if (!targetCompact) return null;
+
+  const exact = await UserModel.findOne({ phone: mobileNumber })
+    .select('email phone subscription')
+    .lean();
+  if (exact && compactMobile(exact.phone) === targetCompact) {
+    return exact;
+  }
+
+  // Fallback scan allows matching different formatting (+92..., spaces, dashes).
+  const candidates = await UserModel.find({ phone: { $exists: true, $ne: '' } })
+    .select('email phone subscription')
+    .lean();
+
+  return candidates.find((item) => compactMobile(item.phone) === targetCompact) || null;
+}
+
+function hasActiveSubscription(userLike) {
+  return isSubscriptionActive(normalizeSubscription(userLike));
+}
+
 function normalizePaymentProofMime(value) {
   const mime = String(value || '').trim().toLowerCase();
   if (mime === 'image/jpg') return 'image/jpeg';
@@ -1628,6 +1666,309 @@ function formatStructuredStudyResponse({ conceptExplanation, steps, finalAnswer,
   ].join('\n');
 }
 
+function normalizeStructuredTutorPayload(input, fallback = null) {
+  if (!input || typeof input !== 'object') return fallback;
+
+  const conceptExplanation = String(input.conceptExplanation || '').trim();
+  const stepByStepSolution = Array.isArray(input.stepByStepSolution)
+    ? input.stepByStepSolution.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+  const finalAnswer = String(input.finalAnswer || '').trim();
+  const shortestTrick = String(input.shortestTrick || '').trim();
+
+  if (!conceptExplanation || !stepByStepSolution.length || !finalAnswer || !shortestTrick) {
+    return fallback;
+  }
+
+  return {
+    conceptExplanation,
+    stepByStepSolution,
+    finalAnswer,
+    shortestTrick,
+  };
+}
+
+function splitLinesToBullets(value) {
+  return String(value || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function parseStructuredAnswerSections(answerText) {
+  const text = String(answerText || '').trim();
+  if (!text) {
+    return {
+      conceptExplanation: '',
+      stepByStepSolution: [],
+      finalAnswer: '',
+      shortestTrick: '',
+    };
+  }
+
+  const headingIndexes = [
+    { key: 'concept', label: 'Concept Explanation' },
+    { key: 'steps', label: 'Step-by-Step Solution' },
+    { key: 'final', label: 'Final Answer' },
+    { key: 'trick', label: 'Quick Trick or Shortcut Method' },
+  ].map((item) => ({
+    ...item,
+    index: text.toLowerCase().indexOf(item.label.toLowerCase()),
+  }));
+
+  const valid = headingIndexes.filter((item) => item.index >= 0).sort((a, b) => a.index - b.index);
+
+  if (valid.length < 2) {
+    return {
+      conceptExplanation: text,
+      stepByStepSolution: [],
+      finalAnswer: '',
+      shortestTrick: '',
+    };
+  }
+
+  const values = {
+    concept: '',
+    steps: '',
+    final: '',
+    trick: '',
+  };
+
+  valid.forEach((entry, idx) => {
+    const next = valid[idx + 1];
+    const start = entry.index + entry.label.length;
+    const end = next ? next.index : text.length;
+    values[entry.key] = text.slice(start, end).trim();
+  });
+
+  const cleanedSteps = splitLinesToBullets(values.steps).map((line) => line.replace(/^\d+[.)-]?\s*/, '').trim()).filter(Boolean);
+
+  return {
+    conceptExplanation: values.concept || text,
+    stepByStepSolution: cleanedSteps,
+    finalAnswer: values.final,
+    shortestTrick: values.trick,
+  };
+}
+
+function buildStructuredDocumentPdfBuffer({ title, subtitle = '', sections = [] }) {
+  const lines = [];
+  lines.push({ text: title, size: 22, color: '1 1 1', gap: 18 });
+  if (subtitle) {
+    lines.push({ text: subtitle, size: 10, color: '1 1 1', gap: 18 });
+  }
+
+  sections.forEach((section, sectionIndex) => {
+    lines.push({ text: String(section.heading || `Section ${sectionIndex + 1}`), size: 14, color: '0.2 0.24 0.55', gap: 14 });
+    const sectionLines = Array.isArray(section.lines) ? section.lines : [];
+    if (!sectionLines.length) {
+      lines.push({ text: 'No content available.', size: 11, gap: 10 });
+    } else {
+      sectionLines.forEach((line) => {
+        lines.push({ text: String(line || ''), size: 11, gap: 12 });
+      });
+    }
+    lines.push({ text: '', size: 10, gap: 6 });
+  });
+
+  let y = 792 - 58;
+  const content = [];
+  content.push('q');
+  content.push('0.2 0.24 0.65 rg');
+  content.push('0 720 612 72 re f');
+  content.push('Q');
+
+  for (const line of lines) {
+    const size = line.size || 11;
+    const color = line.color || '0.12 0.14 0.2';
+    const drawY = line.color === '1 1 1' ? y : y - 2;
+    content.push('BT');
+    content.push(`/F1 ${size} Tf`);
+    content.push(`${color} rg`);
+    content.push(`40 ${Math.max(drawY, 42)} Td`);
+    content.push(`(${pdfEscape(line.text)}) Tj`);
+    content.push('ET');
+    y -= line.gap || (size + 6);
+    if (y < 48) break;
+  }
+
+  const stream = content.join('\n');
+
+  const objects = [
+    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
+    '2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n',
+    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n',
+    '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
+    `5 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}\nendstream\nendobj\n`,
+  ];
+
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+  for (const obj of objects) {
+    offsets.push(pdf.length);
+    pdf += obj;
+  }
+
+  const xrefOffset = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  for (let i = 1; i < offsets.length; i += 1) {
+    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+  return Buffer.from(pdf, 'utf8');
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function buildStructuredWordBuffer({ title, subtitle = '', sections = [] }) {
+  const sectionHtml = sections
+    .map((section) => {
+      const heading = escapeHtml(section.heading || 'Section');
+      const lines = Array.isArray(section.lines) ? section.lines : [];
+      const listItems = lines.map((line) => `<li>${escapeHtml(line)}</li>`).join('');
+      return `<section><h2>${heading}</h2>${listItems ? `<ul>${listItems}</ul>` : '<p>No content available.</p>'}</section>`;
+    })
+    .join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { font-family: Calibri, Arial, sans-serif; color: #1f2937; line-height: 1.5; margin: 24px; }
+    h1 { color: #1e3a8a; margin: 0 0 6px; }
+    h2 { color: #1e3a8a; margin: 20px 0 8px; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; }
+    p.meta { color: #475569; margin: 0 0 14px; }
+    ul { margin: 0; padding-left: 22px; }
+    li { margin: 0 0 6px; }
+  </style>
+</head>
+<body>
+  <h1>${escapeHtml(title)}</h1>
+  ${subtitle ? `<p class="meta">${escapeHtml(subtitle)}</p>` : ''}
+  ${sectionHtml}
+</body>
+</html>`;
+
+  return Buffer.from(html, 'utf8');
+}
+
+function normalizeMentorExportFormat(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (value === 'pdf') return 'pdf';
+  if (value === 'word' || value === 'doc' || value === 'docx') return 'word';
+  return '';
+}
+
+function normalizeMentorExportTool(raw) {
+  const value = String(raw || '').trim().toLowerCase();
+  if (value === 'question-solve' || value === 'doubt-support' || value === 'study-planner') return value;
+  return '';
+}
+
+function toSentenceList(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item || '').trim()).filter(Boolean);
+  }
+  return splitLinesToBullets(String(value || ''));
+}
+
+function buildMentorExportPayload({ tool, payload, user }) {
+  const nowLabel = new Date().toLocaleString();
+  const studentName = `${String(user?.firstName || '').trim()} ${String(user?.lastName || '').trim()}`.trim() || 'Student';
+
+  if (tool === 'doubt-support') {
+    const question = String(payload?.question || '').trim();
+    const answer = String(payload?.answer || '').trim();
+    const parsed = parseStructuredAnswerSections(answer);
+
+    return {
+      title: 'NET360 Doubt Support Export',
+      subtitle: `Student: ${studentName} | Generated: ${nowLabel}`,
+      sections: [
+        { heading: 'Asked Question', lines: [question || 'No question provided.'] },
+        { heading: 'Concept Explanation', lines: toSentenceList(parsed.conceptExplanation) },
+        { heading: 'Step-by-Step Solution', lines: toSentenceList(parsed.stepByStepSolution) },
+        { heading: 'Final Answer', lines: toSentenceList(parsed.finalAnswer) },
+        { heading: 'Quick Trick or Shortcut Method', lines: toSentenceList(parsed.shortestTrick) },
+      ],
+    };
+  }
+
+  if (tool === 'question-solve') {
+    const questionText = String(payload?.questionText || '').trim();
+    const subject = String(payload?.subject || '').trim();
+    const topic = String(payload?.topic || '').trim();
+    const result = payload?.result || {};
+    const structured = normalizeStructuredTutorPayload(result, {
+      conceptExplanation: String(result?.conceptExplanation || '').trim(),
+      stepByStepSolution: toSentenceList(result?.stepByStepSolution),
+      finalAnswer: String(result?.finalAnswer || '').trim(),
+      shortestTrick: String(result?.shortestTrick || '').trim(),
+    });
+
+    return {
+      title: 'NET360 Question Solver Export',
+      subtitle: `Student: ${studentName} | Generated: ${nowLabel}`,
+      sections: [
+        { heading: 'Detected Context', lines: [
+          `Subject: ${subject || 'General'}`,
+          `Topic: ${topic || 'General'}`,
+        ] },
+        { heading: 'Question', lines: [questionText || 'No question text provided.'] },
+        { heading: 'Concept Explanation', lines: toSentenceList(structured?.conceptExplanation || '') },
+        { heading: 'Step-by-Step Solution', lines: toSentenceList(structured?.stepByStepSolution || []) },
+        { heading: 'Final Answer', lines: toSentenceList(structured?.finalAnswer || '') },
+        { heading: 'Shortest Trick', lines: toSentenceList(structured?.shortestTrick || '') },
+      ],
+    };
+  }
+
+  const plan = payload?.studyPlan || {};
+  const weeklyTargets = Array.isArray(plan.weeklyTargets) ? plan.weeklyTargets : [];
+  const dailySchedule = Array.isArray(plan.dailySchedule) ? plan.dailySchedule : [];
+  const roadmap = Array.isArray(plan.roadmap) ? plan.roadmap : [];
+
+  return {
+    title: 'NET360 Study Planner Export',
+    subtitle: `Student: ${studentName} | Generated: ${nowLabel}`,
+    sections: [
+      {
+        heading: 'Plan Summary',
+        lines: [
+          `Target Date: ${String(plan.targetDate || 'Not set')}`,
+          `Days Left: ${String(plan.daysLeft || 0)}`,
+          `Preparation Level: ${String(plan.preparationLevel || 'Not set')}`,
+          `Daily Study Hours: ${String(plan.dailyStudyHours || 0)}`,
+          `Weak Subjects: ${Array.isArray(plan.weakSubjects) ? plan.weakSubjects.join(', ') : ''}`,
+        ],
+      },
+      {
+        heading: 'Weekly Targets',
+        lines: weeklyTargets.map((item, idx) => `Week ${item?.week || idx + 1} (${String(item?.focus || 'Focus')}): ${String(item?.target || '')}`),
+      },
+      {
+        heading: 'Daily Schedule',
+        lines: dailySchedule.map((item) => `${String(item?.block || 'Block')}: ${String(item?.durationHours || 0)} hour(s) - ${String(item?.activity || '')}`),
+      },
+      {
+        heading: 'Roadmap',
+        lines: roadmap.map((item) => String(item || '').trim()).filter(Boolean),
+      },
+    ],
+  };
+}
+
 async function bootstrapAdminAccounts() {
   if (!ADMIN_EMAILS.length) {
     console.log('Admin bootstrap skipped: ADMIN_EMAILS is empty.');
@@ -1907,6 +2248,287 @@ async function getOrCreateCommunityProfile(user) {
 
 function connectionKey(userIdA, userIdB) {
   return [String(userIdA), String(userIdB)].sort().join(':');
+}
+
+function normalizeChallengeMode(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (['subject-wise', 'mock', 'adaptive', 'custom'].includes(raw)) return raw;
+  return '';
+}
+
+function normalizeChallengeDifficulty(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (raw === 'easy') return 'Easy';
+  if (raw === 'hard') return 'Hard';
+  return 'Medium';
+}
+
+function normalizeChallengeSubject(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (['mathematics', 'physics', 'english', 'biology', 'chemistry'].includes(raw)) return raw;
+  return '';
+}
+
+function defaultQuizStats() {
+  return {
+    totalWins: 0,
+    totalMatchesPlayed: 0,
+    totalChallengesSent: 0,
+    totalChallengesAccepted: 0,
+    subjectPerformance: [],
+  };
+}
+
+function ensureQuizStats(profile) {
+  const current = profile?.quizStats || {};
+  const normalizedRows = Array.isArray(current.subjectPerformance)
+    ? current.subjectPerformance.map((row) => ({
+      subject: String(row?.subject || '').trim().toLowerCase(),
+      matchesPlayed: Number(row?.matchesPlayed || 0),
+      wins: Number(row?.wins || 0),
+      averageAccuracy: Number(row?.averageAccuracy || 0),
+    })).filter((row) => row.subject)
+    : [];
+
+  return {
+    ...defaultQuizStats(),
+    ...current,
+    totalWins: Number(current.totalWins || 0),
+    totalMatchesPlayed: Number(current.totalMatchesPlayed || 0),
+    totalChallengesSent: Number(current.totalChallengesSent || 0),
+    totalChallengesAccepted: Number(current.totalChallengesAccepted || 0),
+    subjectPerformance: normalizedRows,
+  };
+}
+
+function formatQuizStatsForPublic(profile) {
+  const stats = ensureQuizStats(profile);
+  const totalMatchesPlayed = Number(stats.totalMatchesPlayed || 0);
+  const totalWins = Number(stats.totalWins || 0);
+  const winRate = totalMatchesPlayed > 0 ? Number(((totalWins / totalMatchesPlayed) * 100).toFixed(1)) : 0;
+  return {
+    totalWins,
+    totalMatchesPlayed,
+    winRate,
+    totalChallengesSent: Number(stats.totalChallengesSent || 0),
+    totalChallengesAccepted: Number(stats.totalChallengesAccepted || 0),
+    subjectPerformance: stats.subjectPerformance,
+  };
+}
+
+async function generateQuizChallengeQuestions({ mode, subject, topic, difficulty, questionCount, challengerUser, opponentUser }) {
+  const safeCount = clamp(Number(questionCount) || 15, 5, 40);
+  const normalizedSubject = normalizeChallengeSubject(subject);
+  const normalizedDifficulty = normalizeChallengeDifficulty(difficulty);
+  const normalizedTopic = String(topic || '').trim();
+
+  const allowedSubjects = ['mathematics', 'physics', 'english', 'biology', 'chemistry'];
+  let pool = [];
+
+  if (mode === 'subject-wise') {
+    if (!normalizedSubject) {
+      throw new Error('Subject-wise challenge requires a valid subject.');
+    }
+    pool = await MCQModel.find({ subject: normalizedSubject }).select(MCQ_SELECT).limit(500).lean();
+  } else if (mode === 'custom') {
+    const filter = {};
+    if (normalizedSubject) filter.subject = normalizedSubject;
+    if (normalizedTopic) filter.topic = containsRegex(normalizedTopic, 80);
+    if (normalizedDifficulty) filter.difficulty = normalizedDifficulty;
+    pool = await MCQModel.find(filter).select(MCQ_SELECT).limit(500).lean();
+  } else if (mode === 'adaptive') {
+    const weakTopics = Array.from(new Set([
+      ...(challengerUser?.progress?.weakTopics || []).map((item) => String(item || '').toLowerCase()),
+      ...(opponentUser?.progress?.weakTopics || []).map((item) => String(item || '').toLowerCase()),
+    ])).filter(Boolean);
+
+    const basePool = await MCQModel.find({ subject: { $in: allowedSubjects } }).select(MCQ_SELECT).limit(900).lean();
+    const filtered = weakTopics.length
+      ? basePool.filter((item) => {
+        const itemTopic = String(item.topic || '').toLowerCase();
+        const itemSubject = String(item.subject || '').toLowerCase();
+        return weakTopics.some((weak) => itemTopic.includes(weak) || itemSubject.includes(weak));
+      })
+      : [];
+    pool = filtered.length >= safeCount ? filtered : basePool;
+  } else {
+    pool = await MCQModel.find({ subject: { $in: allowedSubjects } }).select(MCQ_SELECT).limit(900).lean();
+  }
+
+  if (!pool.length) {
+    throw new Error('No quiz questions available for this challenge configuration.');
+  }
+
+  const selected = shuffle(pool).slice(0, Math.min(safeCount, pool.length));
+  if (!selected.length) {
+    throw new Error('Could not generate challenge questions.');
+  }
+
+  return selected.map((item) => ({
+    questionId: String(item._id),
+    subject: String(item.subject || '').toLowerCase(),
+    topic: String(item.topic || '').trim(),
+    question: String(item.question || '').trim(),
+    options: Array.isArray(item.options) ? item.options.map((option) => String(option || '').trim()) : [],
+    difficulty: String(item.difficulty || 'Medium'),
+    correctAnswer: String(item.answer || '').trim(),
+  }));
+}
+
+function serializeQuizChallenge(challenge, currentUserId) {
+  const meId = String(currentUserId || '');
+  const isChallenger = String(challenge.challengerUserId) === meId;
+  const myResult = isChallenger ? challenge.challengerResult : challenge.opponentResult;
+  const opponentResult = isChallenger ? challenge.opponentResult : challenge.challengerResult;
+  const revealAnswers = String(challenge.status) === 'completed';
+
+  return {
+    id: String(challenge._id),
+    connectionId: String(challenge.connectionId),
+    challengerUserId: String(challenge.challengerUserId),
+    opponentUserId: String(challenge.opponentUserId),
+    mode: String(challenge.mode || ''),
+    subject: String(challenge.subject || ''),
+    topic: String(challenge.topic || ''),
+    difficulty: String(challenge.difficulty || 'Medium'),
+    questionCount: Number(challenge.questionCount || 0),
+    durationSeconds: Number(challenge.durationSeconds || 0),
+    status: String(challenge.status || 'pending'),
+    invitedAt: challenge.invitedAt ? new Date(challenge.invitedAt).toISOString() : null,
+    acceptedAt: challenge.acceptedAt ? new Date(challenge.acceptedAt).toISOString() : null,
+    startedAt: challenge.startedAt ? new Date(challenge.startedAt).toISOString() : null,
+    endedAt: challenge.endedAt ? new Date(challenge.endedAt).toISOString() : null,
+    winnerUserId: challenge.winnerUserId ? String(challenge.winnerUserId) : '',
+    isChallenger,
+    myResult: {
+      submitted: Boolean(myResult?.submitted),
+      completedAt: myResult?.completedAt ? new Date(myResult.completedAt).toISOString() : null,
+      elapsedSeconds: Number(myResult?.elapsedSeconds || 0),
+      correctCount: Number(myResult?.correctCount || 0),
+      wrongCount: Number(myResult?.wrongCount || 0),
+      unansweredCount: Number(myResult?.unansweredCount || 0),
+      accuracyScore: Number(myResult?.accuracyScore || 0),
+      speedScore: Number(myResult?.speedScore || 0),
+      totalScore: Number(myResult?.totalScore || 0),
+    },
+    opponentResult: {
+      submitted: Boolean(opponentResult?.submitted),
+      completedAt: opponentResult?.completedAt ? new Date(opponentResult.completedAt).toISOString() : null,
+      elapsedSeconds: Number(opponentResult?.elapsedSeconds || 0),
+      correctCount: Number(opponentResult?.correctCount || 0),
+      wrongCount: Number(opponentResult?.wrongCount || 0),
+      unansweredCount: Number(opponentResult?.unansweredCount || 0),
+      accuracyScore: Number(opponentResult?.accuracyScore || 0),
+      speedScore: Number(opponentResult?.speedScore || 0),
+      totalScore: Number(opponentResult?.totalScore || 0),
+    },
+    questions: Array.isArray(challenge.questions)
+      ? challenge.questions.map((item) => ({
+        questionId: String(item.questionId || ''),
+        subject: String(item.subject || ''),
+        topic: String(item.topic || ''),
+        question: String(item.question || ''),
+        options: Array.isArray(item.options) ? item.options.map((option) => String(option || '')) : [],
+        difficulty: String(item.difficulty || 'Medium'),
+        correctAnswer: revealAnswers ? String(item.correctAnswer || '') : '',
+      }))
+      : [],
+  };
+}
+
+function scoreQuizChallengeSubmission(challenge, answers, elapsedSeconds) {
+  const questionMap = new Map(
+    (challenge.questions || []).map((item) => [String(item.questionId || ''), String(item.correctAnswer || '').trim().toLowerCase()]),
+  );
+
+  const answerMap = new Map();
+  (Array.isArray(answers) ? answers : []).forEach((row) => {
+    const qid = String(row?.questionId || '').trim();
+    if (!qid || !questionMap.has(qid)) return;
+    answerMap.set(qid, String(row?.selectedOption || '').trim());
+  });
+
+  let correctCount = 0;
+  let wrongCount = 0;
+  let unansweredCount = 0;
+
+  Array.from(questionMap.entries()).forEach(([qid, correctAnswer]) => {
+    const selected = String(answerMap.get(qid) || '').trim();
+    if (!selected) {
+      unansweredCount += 1;
+      return;
+    }
+
+    if (selected.toLowerCase() === correctAnswer) {
+      correctCount += 1;
+    } else {
+      wrongCount += 1;
+    }
+  });
+
+  const totalQuestions = Math.max(1, Number(challenge.questionCount || questionMap.size || 1));
+  const safeElapsed = clamp(Number(elapsedSeconds) || 0, 0, Number(challenge.durationSeconds || 3600));
+  const accuracyScore = Number(((correctCount / totalQuestions) * 100).toFixed(2));
+  const speedRatio = safeElapsed > 0 ? (safeElapsed / Math.max(1, Number(challenge.durationSeconds || 3600))) : 0;
+  const speedScore = Number(Math.max(0, (100 - (speedRatio * 100))).toFixed(2));
+  const totalScore = Number(((accuracyScore * 0.85) + (speedScore * 0.15)).toFixed(2));
+
+  return {
+    safeElapsed,
+    correctCount,
+    wrongCount,
+    unansweredCount,
+    accuracyScore,
+    speedScore,
+    totalScore,
+    answerRows: Array.from(answerMap.entries()).map(([questionId, selectedOption]) => ({ questionId, selectedOption })),
+  };
+}
+
+async function applyQuizStatsToProfiles(challenge) {
+  const subjectKey = normalizeChallengeSubject(challenge.subject) || 'mixed';
+  const winnerId = challenge.winnerUserId ? String(challenge.winnerUserId) : '';
+  const entries = [
+    { userId: String(challenge.challengerUserId), result: challenge.challengerResult },
+    { userId: String(challenge.opponentUserId), result: challenge.opponentResult },
+  ];
+
+  for (const entry of entries) {
+    const user = await UserModel.findById(entry.userId).lean();
+    if (!user) continue;
+    const profile = await getOrCreateCommunityProfile(user);
+    const stats = ensureQuizStats(profile);
+
+    stats.totalMatchesPlayed += 1;
+    if (winnerId && winnerId === entry.userId) {
+      stats.totalWins += 1;
+    }
+
+    const rows = Array.isArray(stats.subjectPerformance) ? stats.subjectPerformance : [];
+    const existing = rows.find((row) => String(row.subject || '').toLowerCase() === subjectKey);
+    if (!existing) {
+      rows.push({
+        subject: subjectKey,
+        matchesPlayed: 1,
+        wins: winnerId && winnerId === entry.userId ? 1 : 0,
+        averageAccuracy: Number(entry.result?.accuracyScore || 0),
+      });
+    } else {
+      const nextMatches = Number(existing.matchesPlayed || 0) + 1;
+      const currentAverage = Number(existing.averageAccuracy || 0);
+      existing.averageAccuracy = Number((((currentAverage * Number(existing.matchesPlayed || 0)) + Number(entry.result?.accuracyScore || 0)) / nextMatches).toFixed(2));
+      existing.matchesPlayed = nextMatches;
+      if (winnerId && winnerId === entry.userId) {
+        existing.wins = Number(existing.wins || 0) + 1;
+      }
+    }
+
+    profile.quizStats = {
+      ...stats,
+      subjectPerformance: rows,
+    };
+    await profile.save();
+  }
 }
 
 async function getCommunityRestriction(userId) {
@@ -2826,15 +3448,37 @@ app.post('/api/auth/signup-request', async (req, res) => {
       return;
     }
 
-    const existingUser = await UserModel.findOne({ email }).lean();
-    if (existingUser) {
-      res.status(409).json({ error: 'Email is already registered.' });
+    const [existingByEmail, existingByMobile] = await Promise.all([
+      UserModel.findOne({ email }).select('email phone subscription').lean(),
+      findUserByMobileNumber(mobileNumber),
+    ]);
+
+    if (existingByEmail || existingByMobile) {
+      const matchedBy = existingByEmail && existingByMobile
+        ? 'both'
+        : existingByEmail
+          ? 'email'
+          : 'mobile';
+      const matchedUser = existingByEmail || existingByMobile;
+      res.status(409).json({
+        error: duplicateAccountErrorMessage(matchedBy, hasActiveSubscription(matchedUser)),
+      });
       return;
     }
 
-    const existingPending = await SignupRequestModel.findOne({ email, status: 'pending' }).lean();
+    const existingPending = await SignupRequestModel.findOne({
+      status: 'pending',
+      $or: [{ email }, { mobileNumber }],
+    }).lean();
     if (existingPending) {
-      res.status(409).json({ error: 'A pending signup request already exists for this email.' });
+      const matchedBy = normalizeEmail(existingPending.email) === email
+        ? 'email'
+        : compactMobile(existingPending.mobileNumber) === compactMobile(mobileNumber)
+          ? 'mobile'
+          : 'both';
+      res.status(409).json({
+        error: `A pending signup request already exists for this ${getDuplicateAccountFieldLabel(matchedBy)}. Please wait for admin review or use different details.`,
+      });
       return;
     }
 
@@ -2884,9 +3528,11 @@ app.post('/api/auth/register-with-token', async (req, res) => {
       return;
     }
 
-    const existingUser = await UserModel.findOne({ email }).lean();
-    if (existingUser) {
-      res.status(409).json({ error: 'Email is already registered.' });
+    const existingByEmail = await UserModel.findOne({ email }).select('email phone subscription').lean();
+    if (existingByEmail) {
+      res.status(409).json({
+        error: duplicateAccountErrorMessage('email', hasActiveSubscription(existingByEmail)),
+      });
       return;
     }
 
@@ -2927,6 +3573,14 @@ app.post('/api/auth/register-with-token', async (req, res) => {
     const mobileNumber = normalizeMobileNumber(signupRequest.mobileNumber);
     if (!mobileNumber) {
       res.status(400).json({ error: 'Mobile number is missing on signup request. Contact admin.' });
+      return;
+    }
+
+    const existingByMobile = await findUserByMobileNumber(mobileNumber);
+    if (existingByMobile) {
+      res.status(409).json({
+        error: duplicateAccountErrorMessage('mobile', hasActiveSubscription(existingByMobile)),
+      });
       return;
     }
 
@@ -3107,6 +3761,70 @@ app.post('/api/auth/logout', async (req, res) => {
   }
 
   res.json({ message: 'Logged out.' });
+});
+
+app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
+  try {
+    const password = String(req.body?.password || '');
+    const confirmationText = String(req.body?.confirmationText || '').trim();
+    if (!password) {
+      res.status(400).json({ error: 'Password is required to delete account.' });
+      return;
+    }
+
+    if (confirmationText !== 'DELETE') {
+      res.status(400).json({ error: 'Type DELETE to confirm permanent account deletion.' });
+      return;
+    }
+
+    const user = await UserModel.findById(req.user._id).select('_id passwordHash role email phone');
+    if (!user) {
+      res.status(404).json({ error: 'Account not found.' });
+      return;
+    }
+
+    const passwordMatches = await bcrypt.compare(password, String(user.passwordHash || ''));
+    if (!passwordMatches) {
+      res.status(401).json({ error: 'Incorrect password. Account deletion cancelled.' });
+      return;
+    }
+
+    const userId = user._id;
+
+    await Promise.all([
+      AttemptModel.deleteMany({ userId }),
+      TestSessionModel.deleteMany({ userId }),
+      AIUsageModel.deleteMany({ userId }),
+      PasswordRecoveryRequestModel.deleteMany({ userId }),
+      SignupRequestModel.deleteMany({ email: normalizeEmail(user.email) }),
+      SignupTokenModel.deleteMany({ email: normalizeEmail(user.email) }),
+      PremiumSubscriptionRequestModel.deleteMany({ userId }),
+      CommunityProfileModel.deleteMany({ userId }),
+      CommunityConnectionRequestModel.deleteMany({
+        $or: [{ fromUserId: userId }, { toUserId: userId }],
+      }),
+      CommunityConnectionModel.deleteMany({
+        $or: [{ participantA: userId }, { participantB: userId }],
+      }),
+      CommunityMessageModel.deleteMany({ senderUserId: userId }),
+      CommunityReportModel.deleteMany({
+        $or: [{ reporterUserId: userId }, { reportedUserId: userId }],
+      }),
+      CommunityBlockModel.deleteMany({ userId }),
+      CommunityRoomPostModel.deleteMany({ authorUserId: userId }),
+      CommunityQuizChallengeModel.deleteMany({
+        $or: [{ challengerUserId: userId }, { opponentUserId: userId }],
+      }),
+    ]);
+
+    await UserModel.deleteOne({ _id: userId });
+
+    res.json({
+      message: 'Your account has been permanently deleted. To use NET360 again, create a new account and obtain access again.',
+    });
+  } catch {
+    res.status(500).json({ error: 'Could not delete account. Please try again.' });
+  }
 });
 
 app.post('/api/auth/forgot-password', async (req, res) => {
@@ -3849,6 +4567,383 @@ app.get('/api/community/leaderboard', authMiddleware, async (req, res) => {
     .map((item, index) => ({ ...item, rank: index + 1 }));
 
   res.json({ leaderboard, period });
+});
+
+app.post('/api/community/quiz-challenges', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
+  try {
+    const currentUser = await UserModel.findById(req.user._id).lean();
+    if (!currentUser) {
+      res.status(404).json({ error: 'User not found.' });
+      return;
+    }
+
+    const {
+      opponentUserId,
+      mode,
+      subject = '',
+      topic = '',
+      difficulty = 'Medium',
+      questionCount = 15,
+      durationSeconds = 900,
+    } = req.body || {};
+
+    const normalizedMode = normalizeChallengeMode(mode);
+    if (!normalizedMode) {
+      res.status(400).json({ error: 'Invalid challenge mode.' });
+      return;
+    }
+
+    const opponentId = String(opponentUserId || '').trim();
+    if (!isValidObjectId(opponentId)) {
+      res.status(400).json({ error: 'Valid opponent user id is required.' });
+      return;
+    }
+
+    if (opponentId === String(currentUser._id)) {
+      res.status(400).json({ error: 'You cannot challenge yourself.' });
+      return;
+    }
+
+    const opponentUser = await UserModel.findById(opponentId).lean();
+    if (!opponentUser || opponentUser.role !== 'student') {
+      res.status(404).json({ error: 'Opponent not found.' });
+      return;
+    }
+
+    const connected = await CommunityConnectionModel.findOne({
+      participantKey: connectionKey(currentUser._id, opponentUser._id),
+    }).lean();
+    if (!connected) {
+      res.status(403).json({ error: 'You can only challenge connected users.' });
+      return;
+    }
+
+    const inFlight = await CommunityQuizChallengeModel.findOne({
+      connectionId: connected._id,
+      status: { $in: ['pending', 'accepted', 'in_progress'] },
+      $or: [
+        { challengerUserId: currentUser._id, opponentUserId: opponentUser._id },
+        { challengerUserId: opponentUser._id, opponentUserId: currentUser._id },
+      ],
+    }).lean();
+    if (inFlight) {
+      res.status(409).json({ error: 'An in-flight challenge already exists for this connection.' });
+      return;
+    }
+
+    const normalizedSubject = normalizeChallengeSubject(subject);
+    if (normalizedMode === 'subject-wise' && !normalizedSubject) {
+      res.status(400).json({ error: 'Please select a valid subject for subject-wise challenge.' });
+      return;
+    }
+
+    const finalQuestionCount = clamp(Number(questionCount) || 15, 5, 40);
+    const finalDuration = clamp(Number(durationSeconds) || 900, 120, 3600);
+
+    const questions = await generateQuizChallengeQuestions({
+      mode: normalizedMode,
+      subject: normalizedSubject,
+      topic,
+      difficulty,
+      questionCount: finalQuestionCount,
+      challengerUser: currentUser,
+      opponentUser,
+    });
+
+    const challenge = await CommunityQuizChallengeModel.create({
+      connectionId: connected._id,
+      challengerUserId: currentUser._id,
+      opponentUserId: opponentUser._id,
+      mode: normalizedMode,
+      subject: normalizedSubject,
+      topic: String(topic || '').trim(),
+      difficulty: normalizeChallengeDifficulty(difficulty),
+      questionCount: questions.length,
+      durationSeconds: finalDuration,
+      status: 'pending',
+      invitedAt: new Date(),
+      questions,
+      challengerResult: {
+        userId: currentUser._id,
+        submitted: false,
+      },
+      opponentResult: {
+        userId: opponentUser._id,
+        submitted: false,
+      },
+    });
+
+    const challengerProfile = await getOrCreateCommunityProfile(currentUser);
+    const challengerStats = ensureQuizStats(challengerProfile);
+    challengerStats.totalChallengesSent += 1;
+    challengerProfile.quizStats = challengerStats;
+    await challengerProfile.save();
+
+    const loaded = await CommunityQuizChallengeModel.findById(challenge._id).lean();
+    res.status(201).json({ challenge: serializeQuizChallenge(loaded, req.user._id) });
+  } catch (error) {
+    console.error('community quiz challenge create error', error);
+    res.status(500).json({ error: 'Failed to create quiz challenge.' });
+  }
+});
+
+app.post('/api/community/quiz-challenges/:id/respond', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
+  try {
+    const challengeId = String(req.params.id || '').trim();
+    if (!isValidObjectId(challengeId)) {
+      res.status(400).json({ error: 'Valid challenge id is required.' });
+      return;
+    }
+
+    const challenge = await CommunityQuizChallengeModel.findById(challengeId);
+    if (!challenge) {
+      res.status(404).json({ error: 'Challenge not found.' });
+      return;
+    }
+
+    if (String(challenge.opponentUserId) !== String(req.user._id)) {
+      res.status(403).json({ error: 'Only the challenged user can respond.' });
+      return;
+    }
+
+    if (String(challenge.status) !== 'pending') {
+      res.status(409).json({ error: 'Challenge is already responded.' });
+      return;
+    }
+
+    const action = String(req.body?.action || '').trim().toLowerCase();
+    if (!['accept', 'decline'].includes(action)) {
+      res.status(400).json({ error: 'Action must be accept or decline.' });
+      return;
+    }
+
+    if (action === 'decline') {
+      challenge.status = 'declined';
+      challenge.endedAt = new Date();
+      await challenge.save();
+      res.json({ challenge: serializeQuizChallenge(challenge.toObject(), req.user._id) });
+      return;
+    }
+
+    challenge.status = 'in_progress';
+    challenge.acceptedAt = new Date();
+    challenge.startedAt = new Date();
+    await challenge.save();
+
+    const user = await UserModel.findById(req.user._id).lean();
+    if (user) {
+      const profile = await getOrCreateCommunityProfile(user);
+      const stats = ensureQuizStats(profile);
+      stats.totalChallengesAccepted += 1;
+      profile.quizStats = stats;
+      await profile.save();
+    }
+
+    res.json({ challenge: serializeQuizChallenge(challenge.toObject(), req.user._id) });
+  } catch (error) {
+    console.error('community quiz challenge respond error', error);
+    res.status(500).json({ error: 'Failed to respond to challenge.' });
+  }
+});
+
+app.get('/api/community/quiz-challenges', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  try {
+    const status = String(req.query.status || '').trim().toLowerCase();
+    const filter = {
+      $or: [{ challengerUserId: req.user._id }, { opponentUserId: req.user._id }],
+    };
+    if (['pending', 'accepted', 'in_progress', 'completed', 'declined', 'cancelled', 'expired'].includes(status)) {
+      filter.status = status;
+    }
+
+    const challenges = await CommunityQuizChallengeModel.find(filter)
+      .sort({ updatedAt: -1 })
+      .limit(120)
+      .lean();
+
+    res.json({
+      challenges: challenges.map((item) => serializeQuizChallenge(item, req.user._id)),
+    });
+  } catch (error) {
+    console.error('community quiz challenge list error', error);
+    res.status(500).json({ error: 'Failed to load challenges.' });
+  }
+});
+
+app.get('/api/community/quiz-challenges/:id', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  try {
+    const challengeId = String(req.params.id || '').trim();
+    if (!isValidObjectId(challengeId)) {
+      res.status(400).json({ error: 'Valid challenge id is required.' });
+      return;
+    }
+
+    const challenge = await CommunityQuizChallengeModel.findById(challengeId).lean();
+    if (!challenge) {
+      res.status(404).json({ error: 'Challenge not found.' });
+      return;
+    }
+
+    const viewerId = String(req.user._id);
+    if (![String(challenge.challengerUserId), String(challenge.opponentUserId)].includes(viewerId)) {
+      res.status(403).json({ error: 'You cannot view this challenge.' });
+      return;
+    }
+
+    res.json({ challenge: serializeQuizChallenge(challenge, req.user._id) });
+  } catch (error) {
+    console.error('community quiz challenge detail error', error);
+    res.status(500).json({ error: 'Failed to load challenge.' });
+  }
+});
+
+app.post('/api/community/quiz-challenges/:id/submit', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
+  try {
+    const challengeId = String(req.params.id || '').trim();
+    if (!isValidObjectId(challengeId)) {
+      res.status(400).json({ error: 'Valid challenge id is required.' });
+      return;
+    }
+
+    const challenge = await CommunityQuizChallengeModel.findById(challengeId);
+    if (!challenge) {
+      res.status(404).json({ error: 'Challenge not found.' });
+      return;
+    }
+
+    const me = String(req.user._id);
+    const isChallenger = String(challenge.challengerUserId) === me;
+    const isOpponent = String(challenge.opponentUserId) === me;
+    if (!isChallenger && !isOpponent) {
+      res.status(403).json({ error: 'You cannot submit this challenge.' });
+      return;
+    }
+
+    if (!['in_progress', 'accepted'].includes(String(challenge.status))) {
+      res.status(409).json({ error: 'Challenge is not active.' });
+      return;
+    }
+
+    const startedAtMs = challenge.startedAt ? new Date(challenge.startedAt).getTime() : Date.now();
+    const expiryMs = startedAtMs + (Number(challenge.durationSeconds || 0) * 1000);
+    if (Date.now() > expiryMs) {
+      challenge.status = 'expired';
+      challenge.endedAt = new Date();
+      await challenge.save();
+      res.status(410).json({ error: 'Challenge time has expired.' });
+      return;
+    }
+
+    const answers = Array.isArray(req.body?.answers) ? req.body.answers : [];
+    const elapsedSeconds = Number(req.body?.elapsedSeconds || 0);
+    const scored = scoreQuizChallengeSubmission(challenge, answers, elapsedSeconds);
+
+    const baseResult = {
+      submitted: true,
+      completedAt: new Date(),
+      elapsedSeconds: scored.safeElapsed,
+      answers: scored.answerRows,
+      correctCount: scored.correctCount,
+      wrongCount: scored.wrongCount,
+      unansweredCount: scored.unansweredCount,
+      accuracyScore: scored.accuracyScore,
+      speedScore: scored.speedScore,
+      totalScore: scored.totalScore,
+    };
+
+    if (isChallenger) {
+      challenge.challengerResult = {
+        ...(challenge.challengerResult?.toObject ? challenge.challengerResult.toObject() : challenge.challengerResult),
+        ...baseResult,
+      };
+    } else {
+      challenge.opponentResult = {
+        ...(challenge.opponentResult?.toObject ? challenge.opponentResult.toObject() : challenge.opponentResult),
+        ...baseResult,
+      };
+    }
+
+    const challengerSubmitted = Boolean(challenge.challengerResult?.submitted);
+    const opponentSubmitted = Boolean(challenge.opponentResult?.submitted);
+    if (challengerSubmitted && opponentSubmitted) {
+      const challengerScore = Number(challenge.challengerResult?.totalScore || 0);
+      const opponentScore = Number(challenge.opponentResult?.totalScore || 0);
+      if (challengerScore > opponentScore) {
+        challenge.winnerUserId = challenge.challengerUserId;
+      } else if (opponentScore > challengerScore) {
+        challenge.winnerUserId = challenge.opponentUserId;
+      } else {
+        const challengerElapsed = Number(challenge.challengerResult?.elapsedSeconds || 0);
+        const opponentElapsed = Number(challenge.opponentResult?.elapsedSeconds || 0);
+        if (challengerElapsed < opponentElapsed) {
+          challenge.winnerUserId = challenge.challengerUserId;
+        } else if (opponentElapsed < challengerElapsed) {
+          challenge.winnerUserId = challenge.opponentUserId;
+        } else {
+          challenge.winnerUserId = null;
+        }
+      }
+      challenge.status = 'completed';
+      challenge.endedAt = new Date();
+    } else {
+      challenge.status = 'in_progress';
+    }
+
+    await challenge.save();
+    if (String(challenge.status) === 'completed') {
+      await applyQuizStatsToProfiles(challenge);
+    }
+
+    const loaded = await CommunityQuizChallengeModel.findById(challenge._id).lean();
+    res.json({ challenge: serializeQuizChallenge(loaded, req.user._id) });
+  } catch (error) {
+    console.error('community quiz challenge submit error', error);
+    res.status(500).json({ error: 'Failed to submit challenge.' });
+  }
+});
+
+app.get('/api/community/quiz-leaderboard', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  try {
+    const profiles = await CommunityProfileModel.find({})
+      .select('userId username name avatar quizStats')
+      .sort({ 'quizStats.totalWins': -1, 'quizStats.totalMatchesPlayed': -1 })
+      .limit(100)
+      .lean();
+
+    const leaderboard = profiles
+      .map((profile) => {
+        const stats = formatQuizStatsForPublic(profile);
+        return {
+          userId: String(profile.userId || ''),
+          username: String(profile.username || ''),
+          name: String(profile.name || ''),
+          avatar: profile.avatar || null,
+          ...stats,
+        };
+      })
+      .filter((row) => row.totalMatchesPlayed > 0)
+      .sort((a, b) => {
+        if (b.totalWins !== a.totalWins) return b.totalWins - a.totalWins;
+        if (b.winRate !== a.winRate) return b.winRate - a.winRate;
+        return b.totalMatchesPlayed - a.totalMatchesPlayed;
+      })
+      .slice(0, 30)
+      .map((item, index) => ({ ...item, rank: index + 1 }));
+
+    res.json({ leaderboard });
+  } catch (error) {
+    console.error('community quiz leaderboard error', error);
+    res.status(500).json({ error: 'Failed to load quiz leaderboard.' });
+  }
 });
 
 app.get('/api/community/groups', authMiddleware, async (req, res) => {
@@ -4743,23 +5838,23 @@ app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
   }
 
   let answer = '';
+  let structuredAnswer = null;
 
   if (openai) {
     try {
       const completion = await openai.chat.completions.create({
         model: OPENAI_MODEL,
-        temperature: 0.3,
+        temperature: 0.15,
         messages: [
           {
             role: 'system',
             content: [
               'You are NET360 Smart Study Mentor for exam preparation.',
-              'Always return your guidance in this exact plain-text structure:',
-              'Concept Explanation',
-              'Step-by-Step Solution',
-              'Final Answer',
-              'Quick Trick or Shortcut Method',
-              'Keep it concise, educational, and teacher-like.',
+              'Return ONLY valid JSON with keys: conceptExplanation (string), stepByStepSolution (array of strings), finalAnswer (string), shortestTrick (string).',
+              'Make the explanation precise, exam-oriented, and educational.',
+              'For conceptual questions, include a short illustrative example in one step.',
+              'For numerical/procedural questions, include ordered solution steps and unit checks when relevant.',
+              'Do not include markdown, code fences, or extra keys.',
             ].join('\n'),
           },
           {
@@ -4768,7 +5863,16 @@ app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
           },
         ],
       });
-      answer = completion.choices?.[0]?.message?.content?.trim() || '';
+      const raw = completion.choices?.[0]?.message?.content?.trim() || '';
+      structuredAnswer = normalizeStructuredTutorPayload(extractJsonObject(raw), null);
+      if (structuredAnswer) {
+        answer = formatStructuredStudyResponse({
+          conceptExplanation: structuredAnswer.conceptExplanation,
+          steps: structuredAnswer.stepByStepSolution,
+          finalAnswer: structuredAnswer.finalAnswer,
+          quickTrick: structuredAnswer.shortestTrick,
+        });
+      }
     } catch {
       answer = '';
     }
@@ -4827,13 +5931,61 @@ app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
     }
   }
 
+  const parsedAnswer = parseStructuredAnswerSections(answer);
+
   res.json({
     answer,
+    structuredAnswer: {
+      conceptExplanation: parsedAnswer.conceptExplanation,
+      stepByStepSolution: parsedAnswer.stepByStepSolution,
+      finalAnswer: parsedAnswer.finalAnswer,
+      shortestTrick: parsedAnswer.shortestTrick,
+    },
     usage: {
       usedToday: usage.chatCount,
       remainingToday: Math.max(0, premium.plan.dailyAiLimit - usage.chatCount),
     },
   });
+});
+
+app.post('/api/ai/mentor/export', authMiddleware, async (req, res) => {
+  const premium = ensurePremiumAccess(req.user, res);
+  if (!premium) return;
+
+  const format = normalizeMentorExportFormat(req.body?.format);
+  const tool = normalizeMentorExportTool(req.body?.tool);
+
+  if (!format) {
+    res.status(400).json({ error: 'Export format must be pdf or word.' });
+    return;
+  }
+
+  if (!tool) {
+    res.status(400).json({ error: 'Export tool must be one of: question-solve, doubt-support, study-planner.' });
+    return;
+  }
+
+  const payload = buildMentorExportPayload({
+    tool,
+    payload: req.body?.payload || {},
+    user: req.user,
+  });
+
+  const dateTag = new Date().toISOString().slice(0, 10);
+  const baseName = `net360-${tool}-${dateTag}`;
+
+  if (format === 'pdf') {
+    const bytes = buildStructuredDocumentPdfBuffer(payload);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${baseName}.pdf"`);
+    res.send(bytes);
+    return;
+  }
+
+  const bytes = buildStructuredWordBuffer(payload);
+  res.setHeader('Content-Type', 'application/msword');
+  res.setHeader('Content-Disposition', `attachment; filename="${baseName}.doc"`);
+  res.send(bytes);
 });
 
 app.get('/api/subscriptions/plans', (_req, res) => {
@@ -5111,35 +6263,46 @@ app.post('/api/ai/mentor/solve-image', authMiddleware, async (req, res) => {
   if (openai) {
     try {
       const prompt = [
-        'You are NET360 Premium Question Solver with a custom educational guidance layer.',
+        'You are an expert NET exam tutor and problem-solver.',
         `Detected subject: ${subject}`,
         `Detected topic: ${topic}`,
-        'Return only valid JSON with keys: conceptExplanation (string), stepByStepSolution (array of strings), finalAnswer (string), shortestTrick (string).',
-        'Write crisp educational responses, not generic chatbot text. Keep steps exam-oriented and practical.',
+        'Solve the question accurately and educationally like a human tutor.',
+        'Return ONLY valid JSON with EXACT keys:',
+        'conceptExplanation: string',
+        'stepByStepSolution: string[]',
+        'finalAnswer: string',
+        'shortestTrick: string',
+        'Requirements:',
+        '- Explain core concept clearly but briefly.',
+        '- Provide 4 to 8 sequential, exam-ready steps.',
+        '- Include formula substitutions where relevant.',
+        '- Final answer must be explicit and unambiguous.',
+        '- shortestTrick must be a practical faster method for similar MCQs, not a repeat of full steps.',
+        '- If information is missing/ambiguous, state assumptions clearly in steps and still provide best solution path.',
         'Question:',
         extractedQuestion,
       ].join('\n');
 
       const solveCompletion = await openai.chat.completions.create({
         model: OPENAI_MODEL,
-        temperature: 0.2,
+        temperature: 0.15,
+        response_format: { type: 'json_object' },
         messages: [
-          { role: 'system', content: 'Return strict JSON only, no markdown.' },
+          { role: 'system', content: 'Return strict JSON only. No markdown. No code fences. No extra keys.' },
           { role: 'user', content: prompt },
         ],
       });
 
       const raw = (solveCompletion.choices?.[0]?.message?.content || '').trim();
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed?.conceptExplanation && Array.isArray(parsed?.stepByStepSolution) && parsed?.finalAnswer && parsed?.shortestTrick) {
-          structured = {
-            conceptExplanation: String(parsed.conceptExplanation),
-            stepByStepSolution: parsed.stepByStepSolution.map((item) => String(item)),
-            finalAnswer: String(parsed.finalAnswer),
-            shortestTrick: String(parsed.shortestTrick),
-          };
-        }
+      const parsed = extractJsonObject(raw);
+      const normalized = normalizeStructuredTutorPayload(parsed, null);
+      if (normalized) {
+        structured = {
+          conceptExplanation: normalized.conceptExplanation,
+          stepByStepSolution: normalized.stepByStepSolution,
+          finalAnswer: normalized.finalAnswer,
+          shortestTrick: normalized.shortestTrick,
+        };
       }
     } catch {
       // Fall back to deterministic structured guidance.

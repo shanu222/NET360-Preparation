@@ -16,6 +16,23 @@ const communityProfileSchema = new mongoose.Schema(
       max: { type: Number, default: 200 },
     },
     bio: { type: String, default: '' },
+    quizStats: {
+      totalWins: { type: Number, default: 0 },
+      totalMatchesPlayed: { type: Number, default: 0 },
+      totalChallengesSent: { type: Number, default: 0 },
+      totalChallengesAccepted: { type: Number, default: 0 },
+      subjectPerformance: {
+        type: [
+          {
+            subject: { type: String, default: '' },
+            matchesPlayed: { type: Number, default: 0 },
+            wins: { type: Number, default: 0 },
+            averageAccuracy: { type: Number, default: 0 },
+          },
+        ],
+        default: [],
+      },
+    },
   },
   { timestamps: true },
 );

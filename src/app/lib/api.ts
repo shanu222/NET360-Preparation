@@ -269,3 +269,43 @@ export async function downloadReport(path: string, token?: string | null): Promi
 
   return { blob, filename };
 }
+
+export async function downloadBinary(path: string, options: RequestInit = {}, token?: string | null): Promise<{ blob: Blob; filename: string }> {
+  if (shouldUseForcedLocalMode()) {
+    throw new Error('Export is unavailable in forced local mode. Connect to the API backend and try again.');
+  }
+
+  if (isNativeCapacitorRuntime() && !getEffectiveApiBaseUrl() && path.startsWith('/api/')) {
+    throw new Error('Mobile API is not configured. Set VITE_API_BASE_URL or VITE_MOBILE_API_BASE_URL before building Android app.');
+  }
+
+  const headers = new Headers(options.headers || {});
+  if (!headers.has('Content-Type') && options.body) {
+    headers.set('Content-Type', 'application/json');
+  }
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+
+  const response = await fetch(resolveApiPath(path), {
+    ...options,
+    headers,
+  });
+
+  if (!response.ok) {
+    let errorMessage = `Export failed (${response.status})`;
+    try {
+      const payload = await response.json();
+      errorMessage = payload?.error || errorMessage;
+    } catch {
+      // Keep fallback export error.
+    }
+    throw new Error(errorMessage);
+  }
+
+  const disposition = response.headers.get('Content-Disposition') || '';
+  const match = disposition.match(/filename="?([^";]+)"?/i);
+  const filename = match?.[1] || 'document.dat';
+  const blob = await response.blob();
+  return { blob, filename };
+}

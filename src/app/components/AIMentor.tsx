@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   Clock3,
   Crown,
+  Download,
   FileQuestion,
   Lock,
   MessageSquare,
@@ -25,7 +26,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
-import { apiRequest } from '../lib/api';
+import { apiRequest, downloadBinary } from '../lib/api';
 import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
 
 interface AIMentorProps {
@@ -140,6 +141,13 @@ interface SolverPayload {
   usage: UsageInfo;
 }
 
+interface StructuredTutorAnswer {
+  conceptExplanation: string;
+  stepByStepSolution: string[];
+  finalAnswer: string;
+  shortestTrick: string;
+}
+
 const emptySubscription: SubscriptionInfo = {
   status: 'inactive',
   planId: '',
@@ -218,6 +226,9 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
   const [planData, setPlanData] = useState<StudyPlan | null>(null);
   const [isGeneratingPlan, setIsGeneratingPlan] = useState(false);
   const [isAskingAI, setIsAskingAI] = useState(false);
+  const [isExportingChat, setIsExportingChat] = useState(false);
+  const [isExportingSolver, setIsExportingSolver] = useState(false);
+  const [isExportingPlanner, setIsExportingPlanner] = useState(false);
   const [isLoadingSubscription, setIsLoadingSubscription] = useState(false);
   const [isSubmittingActivationRequest, setIsSubmittingActivationRequest] = useState(false);
   const [isActivatingWithToken, setIsActivatingWithToken] = useState(false);
@@ -367,7 +378,11 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     setIsAskingAI(true);
 
     try {
-      const payload = await apiRequest<{ answer: string; usage?: { usedToday: number; remainingToday: number } }>(
+      const payload = await apiRequest<{
+        answer: string;
+        structuredAnswer?: StructuredTutorAnswer;
+        usage?: { usedToday: number; remainingToday: number };
+      }>(
         '/api/ai/mentor/chat',
         {
           method: 'POST',
@@ -379,7 +394,24 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
         token,
       );
 
-      setChatMessages((previous) => [...previous, { role: 'ai', message: payload.answer }]);
+      const structured = payload.structuredAnswer;
+      const answerText = structured
+        ? [
+          'Concept Explanation',
+          structured.conceptExplanation,
+          '',
+          'Step-by-Step Solution',
+          ...structured.stepByStepSolution.map((step, index) => `${index + 1}. ${step}`),
+          '',
+          'Final Answer',
+          structured.finalAnswer,
+          '',
+          'Quick Trick or Shortcut Method',
+          structured.shortestTrick,
+        ].join('\n')
+        : payload.answer;
+
+      setChatMessages((previous) => [...previous, { role: 'ai', message: answerText }]);
       if (payload.usage) {
         setAiUsage((previous) => ({ ...previous, ...payload.usage }));
       }
@@ -409,6 +441,133 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       ]);
     } finally {
       setIsAskingAI(false);
+    }
+  };
+
+  const triggerDownload = (blob: Blob, filename: string) => {
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(objectUrl);
+  };
+
+  const exportDoubtSupport = async (format: 'pdf' | 'word') => {
+    if (!token || !user) {
+      toast.error('Login required to export doubt support output.');
+      return;
+    }
+
+    const lastAi = [...chatMessages].reverse().find((item) => item.role === 'ai' && !item.message.startsWith("Hi! I'm your Smart Study Mentor"));
+    const lastUser = [...chatMessages].reverse().find((item) => item.role === 'user');
+
+    if (!lastAi) {
+      toast.error('Ask at least one question before exporting.');
+      return;
+    }
+
+    setIsExportingChat(true);
+    try {
+      const { blob, filename } = await downloadBinary(
+        '/api/ai/mentor/export',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            tool: 'doubt-support',
+            format,
+            payload: {
+              question: lastUser?.message || question,
+              answer: lastAi.message,
+            },
+          }),
+        },
+        token,
+      );
+
+      triggerDownload(blob, filename);
+      toast.success(`Doubt support exported as ${format.toUpperCase()}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not export doubt support response.');
+    } finally {
+      setIsExportingChat(false);
+    }
+  };
+
+  const exportSolverOutput = async (format: 'pdf' | 'word') => {
+    if (!token || !user) {
+      toast.error('Login required to export solver output.');
+      return;
+    }
+    if (!solverResult) {
+      toast.error('Solve a question first, then export the result.');
+      return;
+    }
+
+    setIsExportingSolver(true);
+    try {
+      const { blob, filename } = await downloadBinary(
+        '/api/ai/mentor/export',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            tool: 'question-solve',
+            format,
+            payload: {
+              questionText: solverResult.questionText || solverQuestionText,
+              subject: solverResult.detected.subject,
+              topic: solverResult.detected.topic,
+              result: solverResult.result,
+            },
+          }),
+        },
+        token,
+      );
+
+      triggerDownload(blob, filename);
+      toast.success(`Question solver output exported as ${format.toUpperCase()}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not export solver output.');
+    } finally {
+      setIsExportingSolver(false);
+    }
+  };
+
+  const exportStudyPlanner = async (format: 'pdf' | 'word') => {
+    if (!token || !user) {
+      toast.error('Login required to export study planner.');
+      return;
+    }
+    if (!planData) {
+      toast.error('Generate a study plan first, then export it.');
+      return;
+    }
+
+    setIsExportingPlanner(true);
+    try {
+      const { blob, filename } = await downloadBinary(
+        '/api/ai/mentor/export',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            tool: 'study-planner',
+            format,
+            payload: {
+              studyPlan: planData,
+            },
+          }),
+        },
+        token,
+      );
+
+      triggerDownload(blob, filename);
+      toast.success(`Study planner exported as ${format.toUpperCase()}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not export study planner.');
+    } finally {
+      setIsExportingPlanner(false);
     }
   };
 
@@ -906,6 +1065,26 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                       Chat with Study Assistant
                     </CardTitle>
                     <CardDescription>Premium chatbot with plan-based daily limits</CardDescription>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isExportingChat}
+                        onClick={() => void exportDoubtSupport('pdf')}
+                      >
+                        <Download className="mr-1.5 h-3.5 w-3.5" />
+                        {isExportingChat ? 'Exporting...' : 'Export PDF'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isExportingChat}
+                        onClick={() => void exportDoubtSupport('word')}
+                      >
+                        <Download className="mr-1.5 h-3.5 w-3.5" />
+                        {isExportingChat ? 'Exporting...' : 'Export Word'}
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <ScrollArea className="h-[320px] rounded-xl border border-indigo-100 bg-[#fafbff] p-3 pr-4 sm:h-[360px]">
@@ -1025,6 +1204,26 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                   <CardHeader className="pb-3">
                     <CardTitle className="text-2xl text-indigo-950">Guided Solution Output</CardTitle>
                     <CardDescription>Concept explanation, steps, final answer, and speed trick</CardDescription>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isExportingSolver || !solverResult}
+                        onClick={() => void exportSolverOutput('pdf')}
+                      >
+                        <Download className="mr-1.5 h-3.5 w-3.5" />
+                        {isExportingSolver ? 'Exporting...' : 'Export PDF'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isExportingSolver || !solverResult}
+                        onClick={() => void exportSolverOutput('word')}
+                      >
+                        <Download className="mr-1.5 h-3.5 w-3.5" />
+                        {isExportingSolver ? 'Exporting...' : 'Export Word'}
+                      </Button>
+                    </div>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {solverResult ? (
@@ -1048,7 +1247,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                         </div>
 
                         <InfoBlock icon={CheckCircle2} title="Final Answer" body={solverResult.result.finalAnswer} />
-                        <InfoBlock icon={Zap} title="Shortest Trick" body={solverResult.result.shortestTrick} />
+                        <InfoBlock icon={Zap} title="Short Trick / Faster Method" body={solverResult.result.shortestTrick} />
                       </>
                     ) : (
                       <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
@@ -1136,6 +1335,26 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                     <CardHeader className="pb-3">
                       <CardTitle className="text-2xl text-indigo-950">Your Study Plan ({planData.daysLeft} Days Left)</CardTitle>
                       <CardDescription>Saved to your account and synced across sessions</CardDescription>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={isExportingPlanner}
+                          onClick={() => void exportStudyPlanner('pdf')}
+                        >
+                          <Download className="mr-1.5 h-3.5 w-3.5" />
+                          {isExportingPlanner ? 'Exporting...' : 'Export PDF'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={isExportingPlanner}
+                          onClick={() => void exportStudyPlanner('word')}
+                        >
+                          <Download className="mr-1.5 h-3.5 w-3.5" />
+                          {isExportingPlanner ? 'Exporting...' : 'Export Word'}
+                        </Button>
+                      </div>
                     </CardHeader>
                     <CardContent className="space-y-3">
                       {planData.weeklyTargets.map((item) => (
@@ -1200,7 +1419,7 @@ function InfoBlock({
         <Icon className="h-4 w-4 text-indigo-400" />
         {title}
       </p>
-      <p className="text-sm text-slate-700">{body}</p>
+      <p className="whitespace-pre-line text-sm text-slate-700">{body}</p>
     </div>
   );
 }
