@@ -11,6 +11,7 @@ import {
   Trophy,
   Sparkles,
 } from 'lucide-react';
+import { toast } from 'sonner';
 import { Progress } from './ui/progress';
 import { useAppData } from '../context/AppDataContext';
 
@@ -216,7 +217,15 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                 window.open(url.toString(), '_blank', 'noopener,noreferrer');
               }}
             />
-            <QuickActionCard icon={Brain} title="Study Assistant" tone="from-sky-100 to-white" onClick={() => onNavigate('smart-mentor')} />
+            <QuickActionCard
+              icon={Brain}
+              title="Study Assistant"
+              tone="from-sky-100 to-white"
+              disabled
+              onClick={() => {
+                toast.message('Coming Soon');
+              }}
+            />
             <QuickActionCard icon={Calculator} title="Merit Predictor" tone="from-amber-100 to-white" onClick={() => onNavigate('merit-calculator')} />
           </div>
 
@@ -282,17 +291,24 @@ function QuickActionCard({
   title,
   tone,
   onClick,
+  disabled = false,
 }: {
   icon: ComponentType<{ className?: string }>;
   title: string;
   tone: string;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`group rounded-2xl border border-indigo-100 bg-gradient-to-br ${tone} p-4 text-left transition-all hover:-translate-y-0.5 hover:shadow-[0_12px_28px_rgba(88,103,195,0.18)]`}
+      aria-disabled={disabled}
+      className={`group rounded-2xl border border-indigo-100 bg-gradient-to-br ${tone} p-4 text-left transition-all ${
+        disabled
+          ? 'cursor-not-allowed opacity-70'
+          : 'hover:-translate-y-0.5 hover:shadow-[0_12px_28px_rgba(88,103,195,0.18)]'
+      }`}
     >
       <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-white text-indigo-700 shadow-sm">
         <Icon className="h-5 w-5" />

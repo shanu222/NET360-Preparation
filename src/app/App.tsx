@@ -8,7 +8,6 @@ import { NUSTSchoolsCampuses } from './components/NUSTSchoolsCampuses';
 import { NETTypes } from './components/NETTypes';
 import { PracticeBoard } from './components/PracticeBoard';
 import { QuestionContribution } from './components/QuestionContribution';
-import { AIMentor } from './components/AIMentor';
 import { Preparation } from './components/Preparation';
 import { Tests } from './components/Tests';
 import { Analytics } from './components/Analytics';
@@ -41,9 +40,10 @@ import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from './components/ui/sheet';
 import { AppDataProvider } from './context/AppDataContext';
 import { AuthProvider } from './context/AuthContext';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
 
 export default function App() {
+  const smartMentorTabId = 'smart-mentor';
   const [setupCompleted, setSetupCompleted] = useState(() => isTermsAccepted());
   const [activeTab, setActiveTab] = useState(() => {
     const tab = new URLSearchParams(window.location.search).get('tab');
@@ -91,6 +91,10 @@ export default function App() {
   const activeNavigationItem = navigationItems.find((item) => item.id === activeTab);
   const activeTitle = activeNavigationItem?.label || 'Dashboard';
 
+  const handleSmartMentorComingSoon = () => {
+    toast.message('Coming Soon');
+  };
+
   const NavigationContent = () => (
     <nav className="space-y-1.5">
       {navigationItems.map((item) => {
@@ -99,10 +103,19 @@ export default function App() {
           <button
             key={item.id}
             onClick={() => {
+              if (item.id === smartMentorTabId) {
+                handleSmartMentorComingSoon();
+                return;
+              }
               setActiveTab(item.id);
               setMobileMenuOpen(false);
             }}
+            aria-disabled={item.id === smartMentorTabId}
             className={`w-full grid grid-cols-[18px_minmax(0,1fr)] items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 ${
+              item.id === smartMentorTabId
+                ? 'cursor-not-allowed opacity-70 text-indigo-100/85 hover:bg-white/8'
+                : ''
+            } ${
               activeTab === item.id
                 ? 'bg-white/22 text-white shadow-[0_8px_20px_rgba(26,24,89,0.38)]'
                 : 'text-indigo-100 hover:bg-white/12'
@@ -219,7 +232,10 @@ export default function App() {
                 </TabsContent>
 
                 <TabsContent value="smart-mentor" className="mt-0 net360-page">
-                  <AIMentor onNavigate={setActiveTab} />
+                  <div className="rounded-2xl border border-indigo-100 bg-white/90 p-8 text-center shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
+                    <p className="text-xl font-semibold text-indigo-950">Coming Soon for Smart Study Mentor</p>
+                    <p className="mt-2 text-sm text-slate-600">This feature is currently unavailable.</p>
+                  </div>
                 </TabsContent>
 
                 <TabsContent value="preparation" className="mt-0 net360-page">
