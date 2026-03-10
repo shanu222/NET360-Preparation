@@ -1016,42 +1016,6 @@ export default function AdminApp() {
     }
   };
 
-  const sendAdminDesktopTestNotification = async () => {
-    if (!canUseDesktopNotifications) {
-      toast.error('Desktop notifications are not supported in this browser.');
-      return;
-    }
-
-    if (Notification.permission !== 'granted') {
-      if (Notification.permission === 'denied') {
-        toast.error('Desktop notifications are blocked in browser settings.');
-        return;
-      }
-
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
-        toast.error('Notification permission was not granted.');
-        return;
-      }
-    }
-
-    setAdminDesktopAlertsPreference(true);
-
-    try {
-      const notification = new Notification('NET360 Admin Test', {
-        body: 'Desktop notifications are working for this admin tab.',
-        tag: 'net360-support-admin-test',
-      });
-      notification.onclick = () => {
-        window.focus();
-        notification.close();
-      };
-      toast.success('Test desktop notification sent.');
-    } catch {
-      toast.error('Could not deliver test notification.');
-    }
-  };
-
   const clearAdminSession = () => {
     setToken(null);
     setRefreshToken(null);
@@ -2720,9 +2684,6 @@ export default function AdminApp() {
                     Enable Desktop Alerts
                   </Button>
                 )}
-                <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => void sendAdminDesktopTestNotification()}>
-                  Test Notification
-                </Button>
               </div>
             </CardHeader>
             <CardContent>

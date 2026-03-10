@@ -63,6 +63,16 @@ const tabTriggerToneByKey: Record<TabKey, { idle: string; active: string }> = {
   },
 };
 
+const tabWidthPresetByKey: Record<TabKey, string> = {
+  mathematics: 'min-w-[152px] max-w-[186px] sm:min-w-[164px] sm:max-w-[194px]',
+  physics: 'min-w-[132px] max-w-[164px] sm:min-w-[144px] sm:max-w-[172px]',
+  english: 'min-w-[132px] max-w-[164px] sm:min-w-[142px] sm:max-w-[172px]',
+  biology: 'min-w-[132px] max-w-[164px] sm:min-w-[144px] sm:max-w-[172px]',
+  chemistry: 'min-w-[144px] max-w-[174px] sm:min-w-[154px] sm:max-w-[182px]',
+  'quantitative-mathematics': 'min-w-[208px] max-w-[246px] sm:min-w-[228px] sm:max-w-[262px]',
+  'design-aptitude': 'min-w-[176px] max-w-[212px] sm:min-w-[190px] sm:max-w-[224px]',
+};
+
 const FLAT_TOPIC_TABS: Record<'quantitative-mathematics' | 'design-aptitude', { title: string; topics: string[] }> = {
   'quantitative-mathematics': {
     title: 'Quantitative Mathematics',
@@ -457,12 +467,12 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
 
       <Tabs defaultValue="mathematics">
         <div className="overflow-x-auto pb-1">
-          <TabsList className="inline-flex h-auto min-w-max gap-2 rounded-2xl border border-indigo-100/80 bg-gradient-to-r from-white to-indigo-50/60 p-1.5 shadow-sm">
+          <TabsList className="inline-flex h-auto min-w-max flex-nowrap gap-2 rounded-2xl border border-indigo-100/80 bg-gradient-to-r from-white to-indigo-50/60 p-1.5 shadow-sm lg:min-w-0 lg:flex-wrap lg:justify-center">
             {tabItems.map((tab) => (
               <TabsTrigger
                 key={tab.key}
                 value={tab.key}
-                className={`min-w-[150px] rounded-xl border px-3 py-1.5 text-[12px] font-semibold tracking-[0.01em] transition-all duration-300 ease-out hover:-translate-y-0.5 data-[state=active]:-translate-y-0.5 data-[state=active]:bg-gradient-to-r data-[state=active]:text-white data-[state=active]:ring-2 data-[state=active]:ring-white/60 sm:text-sm ${tabTriggerToneByKey[tab.key].idle} ${tabTriggerToneByKey[tab.key].active}`}
+                className={`!flex-none min-h-[2.55rem] rounded-xl border px-3 py-1.5 text-center text-[12px] font-semibold leading-tight tracking-[0.01em] whitespace-normal break-words transition-all duration-300 ease-out hover:-translate-y-0.5 data-[state=active]:-translate-y-0.5 data-[state=active]:bg-gradient-to-r data-[state=active]:text-white data-[state=active]:ring-2 data-[state=active]:ring-white/60 sm:text-sm ${tabWidthPresetByKey[tab.key]} ${tabTriggerToneByKey[tab.key].idle} ${tabTriggerToneByKey[tab.key].active}`}
               >
                 {tab.label}
               </TabsTrigger>

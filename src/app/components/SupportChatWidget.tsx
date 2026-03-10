@@ -124,42 +124,6 @@ export function SupportChatWidget() {
     }
   };
 
-  const sendDesktopTestNotification = async () => {
-    if (!canUseDesktopNotifications) {
-      toast.error('Desktop notifications are not supported in this browser.');
-      return;
-    }
-
-    if (Notification.permission !== 'granted') {
-      if (Notification.permission === 'denied') {
-        toast.error('Desktop notifications are blocked in browser settings.');
-        return;
-      }
-
-      const permission = await Notification.requestPermission();
-      if (permission !== 'granted') {
-        toast.error('Notification permission was not granted.');
-        return;
-      }
-    }
-
-    setDesktopAlertsPreference(true);
-
-    try {
-      const notification = new Notification('NET360 Support Test', {
-        body: 'Desktop notifications are working for this tab.',
-        tag: 'net360-support-user-test',
-      });
-      notification.onclick = () => {
-        window.focus();
-        notification.close();
-      };
-      toast.success('Test desktop notification sent.');
-    } catch {
-      toast.error('Could not deliver test notification.');
-    }
-  };
-
   const canUseChat = Boolean(token && user && user.role !== 'admin');
 
   const panelPosition = useMemo(() => {
@@ -303,9 +267,6 @@ export function SupportChatWidget() {
                   Enable Desktop Alerts
                 </Button>
               )}
-              <Button type="button" size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => void sendDesktopTestNotification()}>
-                Test Notification
-              </Button>
             </div>
           </CardHeader>
           <CardContent className="space-y-3">
