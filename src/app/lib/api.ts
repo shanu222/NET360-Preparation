@@ -5,6 +5,7 @@ type RuntimeEnv = {
   VITE_MOBILE_API_BASE_URL?: string;
   VITE_FORCE_LOCAL_API?: string;
   VITE_DISABLE_LOCAL_API_FALLBACK?: string;
+  VITE_ADMIN_ONLY?: string;
 };
 
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
@@ -98,6 +99,21 @@ function parseRetryAfterSeconds(headerValue: string | null): number | undefined 
   return undefined;
 }
 
+function isLikelyHtmlResponse(response: Response, bodyText: string) {
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('text/html')) {
+    return true;
+  }
+  return /^\s*</.test(bodyText);
+}
+
+function buildHtmlInsteadOfJsonError(path: string) {
+  return new Error(
+    `API configuration error: ${path} returned HTML instead of JSON. ` +
+    'Check VITE_API_BASE_URL / VITE_MOBILE_API_BASE_URL and ensure it points to the backend API service.',
+  );
+}
+
 export async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
   if (shouldUseForcedLocalMode() && isPremiumSensitivePath(path)) {
     throw new Error('AI mentor features require live backend mode. Disable VITE_FORCE_LOCAL_API and configure VITE_API_BASE_URL.');
@@ -131,7 +147,16 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
       });
       if (!response.ok) return null;
 
-      const payload = await response.json() as { token?: string; refreshToken?: string };
+      let payload: { token?: string; refreshToken?: string };
+      try {
+        payload = await response.json() as { token?: string; refreshToken?: string };
+      } catch {
+        const bodyText = await response.text().catch(() => '');
+        if (isLikelyHtmlResponse(response, bodyText)) {
+          throw buildHtmlInsteadOfJsonError('/api/auth/refresh');
+        }
+        return null;
+      }
       if (!payload?.token) return null;
 
       localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
@@ -172,7 +197,18 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
         });
 
         if (retryResponse.ok) {
-          return retryResponse.json() as Promise<T>;
+          try {
+            return await retryResponse.json() as T;
+          } catch {
+            const bodyText = await retryResponse.text().catch(() => '');
+            if (isLikelyHtmlResponse(retryResponse, bodyText)) {
+              if (canFallbackToLocalMode() && !(hasAuthToken && isPremiumSensitivePath(path))) {
+                return localApiRequest<T>(path, options, token);
+              }
+              throw buildHtmlInsteadOfJsonError(path);
+            }
+            throw new Error(`Unexpected API response format for ${path}. Expected JSON.`);
+          }
         }
 
         response = retryResponse;
@@ -194,6 +230,16 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
 
     if (response.status === 413 && errorMessage === `Request failed (${response.status})`) {
       errorMessage = 'Uploaded file is too large. Upload a JPG, PNG, or PDF up to 5MB.';
+    }
+
+    if (
+      response.status === 404
+      && path.startsWith('/api/')
+      && !getEffectiveApiBaseUrl()
+      && env.VITE_ADMIN_ONLY === 'true'
+      && errorMessage === `Request failed (${response.status})`
+    ) {
+      errorMessage = 'Admin portal API is not configured. Set VITE_API_BASE_URL to your backend service URL and redeploy.';
     }
 
     const error = new Error(errorMessage) as Error & {
@@ -221,7 +267,22 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
     throw error;
   }
 
-  return response.json() as Promise<T>;
+  try {
+    return await response.json() as T;
+  } catch {
+    const bodyText = await response.text().catch(() => '');
+    const looksHtml = isLikelyHtmlResponse(response, bodyText);
+
+    if (looksHtml && canFallbackToLocalMode() && !(hasAuthToken && isPremiumSensitivePath(path))) {
+      return localApiRequest<T>(path, options, token);
+    }
+
+    if (looksHtml) {
+      throw buildHtmlInsteadOfJsonError(path);
+    }
+
+    throw new Error(`Unexpected API response format for ${path}. Expected JSON.`);
+  }
 }
 
 export async function downloadReport(path: string, token?: string | null): Promise<{ blob: Blob; filename: string }> {
