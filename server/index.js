@@ -38,6 +38,7 @@ import { SignupTokenModel } from './models/SignupToken.js';
 import { PremiumSubscriptionRequestModel } from './models/PremiumSubscriptionRequest.js';
 import { PremiumActivationTokenModel } from './models/PremiumActivationToken.js';
 import { PasswordRecoveryRequestModel } from './models/PasswordRecoveryRequest.js';
+import { SupportChatMessageModel } from './models/SupportChatMessage.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -5432,6 +5433,70 @@ app.get('/api/community/study-partners', authMiddleware, async (req, res) => {
   res.json({ studyPartners: matches });
 });
 
+app.get('/api/support-chat/messages', authMiddleware, async (req, res) => {
+  const userId = String(req.user._id);
+  const messages = await SupportChatMessageModel.find({ userId })
+    .sort({ createdAt: 1 })
+    .limit(400)
+    .lean();
+
+  await SupportChatMessageModel.updateMany(
+    {
+      userId,
+      senderRole: 'admin',
+      readByUser: false,
+    },
+    { $set: { readByUser: true } },
+  );
+
+  const unreadFromAdmin = messages.reduce((count, item) => {
+    if (item.senderRole === 'admin' && !item.readByUser) return count + 1;
+    return count;
+  }, 0);
+
+  res.json({
+    unreadFromAdmin,
+    messages: messages.map((item) => ({
+      id: String(item._id),
+      userId: String(item.userId),
+      senderRole: String(item.senderRole || 'user'),
+      text: String(item.text || ''),
+      createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+    })),
+  });
+});
+
+app.post('/api/support-chat/messages', authMiddleware, async (req, res) => {
+  const text = String(req.body?.text || '').trim();
+  if (!text) {
+    res.status(400).json({ error: 'Message text is required.' });
+    return;
+  }
+  if (text.length > 1500) {
+    res.status(400).json({ error: 'Message is too long.' });
+    return;
+  }
+
+  const created = await SupportChatMessageModel.create({
+    userId: req.user._id,
+    senderRole: 'user',
+    senderUserId: req.user._id,
+    text,
+    readByUser: true,
+    readByAdmin: false,
+  });
+
+  res.status(201).json({
+    message: {
+      id: String(created._id),
+      userId: String(created.userId),
+      senderRole: String(created.senderRole || 'user'),
+      text: String(created.text || ''),
+      createdAt: created.createdAt ? new Date(created.createdAt).toISOString() : null,
+    },
+  });
+});
+
 app.get('/api/admin/community/reports', authMiddleware, requireAdmin, async (_req, res) => {
   const { page, limit, skip } = readPagination(_req.query, { defaultLimit: 100, maxLimit: 300 });
   const reports = await CommunityReportModel.find()
@@ -5454,6 +5519,139 @@ app.get('/api/admin/community/reports', authMiddleware, requireAdmin, async (_re
       chatSnapshot: Array.isArray(item.chatSnapshot) ? item.chatSnapshot : [],
       createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
     })),
+  });
+});
+
+app.get('/api/admin/support-chat/conversations', authMiddleware, requireAdmin, async (_req, res) => {
+  const recentMessages = await SupportChatMessageModel.find({})
+    .sort({ createdAt: -1 })
+    .limit(2000)
+    .lean();
+
+  const byUserId = new Map();
+  for (const item of recentMessages) {
+    const userId = String(item.userId);
+    if (!byUserId.has(userId)) {
+      byUserId.set(userId, {
+        userId,
+        lastMessageText: String(item.text || ''),
+        lastMessageAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+        unreadForAdmin: 0,
+      });
+    }
+    if (item.senderRole === 'user' && !item.readByAdmin) {
+      byUserId.get(userId).unreadForAdmin += 1;
+    }
+  }
+
+  const userIds = Array.from(byUserId.keys());
+  const users = userIds.length
+    ? await UserModel.find({ _id: { $in: userIds } }).select('firstName lastName email phone').lean()
+    : [];
+  const userMap = new Map(users.map((item) => [String(item._id), item]));
+
+  const conversations = Array.from(byUserId.values())
+    .map((entry) => {
+      const user = userMap.get(entry.userId);
+      return {
+        userId: entry.userId,
+        userName: user ? `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim() : 'Unknown User',
+        email: user?.email || '',
+        mobileNumber: user?.phone || '',
+        lastMessageText: entry.lastMessageText,
+        lastMessageAt: entry.lastMessageAt,
+        unreadForAdmin: entry.unreadForAdmin,
+      };
+    })
+    .sort((a, b) => new Date(String(b.lastMessageAt || 0)).getTime() - new Date(String(a.lastMessageAt || 0)).getTime());
+
+  res.json({ conversations });
+});
+
+app.get('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmin, async (req, res) => {
+  const userId = String(req.params.userId || '').trim();
+  if (!isValidObjectId(userId)) {
+    res.status(400).json({ error: 'Valid user id is required.' });
+    return;
+  }
+
+  const targetUser = await UserModel.findById(userId).select('firstName lastName email phone').lean();
+  if (!targetUser) {
+    res.status(404).json({ error: 'User not found.' });
+    return;
+  }
+
+  const messages = await SupportChatMessageModel.find({ userId })
+    .sort({ createdAt: 1 })
+    .limit(500)
+    .lean();
+
+  await SupportChatMessageModel.updateMany(
+    {
+      userId,
+      senderRole: 'user',
+      readByAdmin: false,
+    },
+    { $set: { readByAdmin: true } },
+  );
+
+  res.json({
+    user: {
+      id: String(targetUser._id),
+      name: `${String(targetUser.firstName || '').trim()} ${String(targetUser.lastName || '').trim()}`.trim(),
+      email: targetUser.email || '',
+      mobileNumber: targetUser.phone || '',
+    },
+    messages: messages.map((item) => ({
+      id: String(item._id),
+      userId: String(item.userId),
+      senderRole: String(item.senderRole || 'user'),
+      text: String(item.text || ''),
+      createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+    })),
+  });
+});
+
+app.post('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmin, async (req, res) => {
+  const userId = String(req.params.userId || '').trim();
+  const text = String(req.body?.text || '').trim();
+
+  if (!isValidObjectId(userId)) {
+    res.status(400).json({ error: 'Valid user id is required.' });
+    return;
+  }
+  if (!text) {
+    res.status(400).json({ error: 'Message text is required.' });
+    return;
+  }
+  if (text.length > 1500) {
+    res.status(400).json({ error: 'Message is too long.' });
+    return;
+  }
+
+  const targetUser = await UserModel.findById(userId).lean();
+  if (!targetUser) {
+    res.status(404).json({ error: 'User not found.' });
+    return;
+  }
+
+  const created = await SupportChatMessageModel.create({
+    userId,
+    senderRole: 'admin',
+    senderUserId: req.user._id,
+    text,
+    readByUser: false,
+    readByAdmin: true,
+  });
+
+  res.status(201).json({
+    message: {
+      id: String(created._id),
+      userId: String(created.userId),
+      senderRole: String(created.senderRole || 'admin'),
+      text: String(created.text || ''),
+      createdAt: created.createdAt ? new Date(created.createdAt).toISOString() : null,
+    },
   });
 });
 

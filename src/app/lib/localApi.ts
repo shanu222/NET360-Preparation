@@ -376,6 +376,17 @@ interface LocalCommunityBlock {
   sourceReportId: string;
 }
 
+interface LocalSupportChatMessage {
+  id: string;
+  userId: string;
+  senderRole: 'user' | 'admin';
+  senderUserId: string;
+  text: string;
+  readByUser: boolean;
+  readByAdmin: boolean;
+  createdAt: string;
+}
+
 interface LocalDb {
   users: LocalUser[];
   signupRequests: LocalSignupRequest[];
@@ -396,6 +407,7 @@ interface LocalDb {
   communityMessages: LocalCommunityMessage[];
   communityReports: LocalCommunityReport[];
   communityBlocks: LocalCommunityBlock[];
+  supportChatMessages: LocalSupportChatMessage[];
 }
 
 const DB_STORAGE_KEY = 'net360-local-db-v8';
@@ -992,6 +1004,7 @@ function readDb(): LocalDb {
       communityMessages: [],
       communityReports: [],
       communityBlocks: [],
+      supportChatMessages: [],
     };
   }
 
@@ -1030,6 +1043,7 @@ function readDb(): LocalDb {
       communityMessages: parsed.communityMessages || [],
       communityReports: parsed.communityReports || [],
       communityBlocks: parsed.communityBlocks || [],
+      supportChatMessages: parsed.supportChatMessages || [],
     };
   } catch {
     return {
@@ -1052,6 +1066,7 @@ function readDb(): LocalDb {
       communityMessages: [],
       communityReports: [],
       communityBlocks: [],
+      supportChatMessages: [],
     };
   }
 }
@@ -3044,6 +3059,174 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
 
     writeDb(db);
     return { studyPartners } as T;
+  }
+
+  if (url.pathname === '/api/support-chat/messages' && method === 'GET') {
+    const { db, user } = requireAuth(token);
+    const userId = user.id;
+
+    const unreadFromAdmin = db.supportChatMessages.filter((item) => (
+      item.userId === userId && item.senderRole === 'admin' && !item.readByUser
+    )).length;
+
+    db.supportChatMessages.forEach((item) => {
+      if (item.userId === userId && item.senderRole === 'admin' && !item.readByUser) {
+        item.readByUser = true;
+      }
+    });
+
+    const messages = db.supportChatMessages
+      .filter((item) => item.userId === userId)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      .map((item) => ({
+        id: item.id,
+        userId: item.userId,
+        senderRole: item.senderRole,
+        text: item.text,
+        createdAt: item.createdAt,
+      }));
+
+    writeDb(db);
+    return { unreadFromAdmin, messages } as T;
+  }
+
+  if (url.pathname === '/api/support-chat/messages' && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const text = String(body.text || '').trim();
+    if (!text) throw new Error('Message text is required.');
+    if (text.length > 1500) throw new Error('Message is too long.');
+
+    const created: LocalSupportChatMessage = {
+      id: `support-msg-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+      userId: user.id,
+      senderRole: 'user',
+      senderUserId: user.id,
+      text,
+      readByUser: true,
+      readByAdmin: false,
+      createdAt: new Date().toISOString(),
+    };
+    db.supportChatMessages.push(created);
+    writeDb(db);
+
+    return {
+      message: {
+        id: created.id,
+        userId: created.userId,
+        senderRole: created.senderRole,
+        text: created.text,
+        createdAt: created.createdAt,
+      },
+    } as T;
+  }
+
+  if (url.pathname === '/api/admin/support-chat/conversations' && method === 'GET') {
+    const { db } = requireAdmin(token);
+    const byUser = new Map<string, {
+      userId: string;
+      unreadForAdmin: number;
+      lastMessageText: string;
+      lastMessageAt: string | null;
+    }>();
+
+    const sorted = [...db.supportChatMessages].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    sorted.forEach((item) => {
+      if (!byUser.has(item.userId)) {
+        byUser.set(item.userId, {
+          userId: item.userId,
+          unreadForAdmin: 0,
+          lastMessageText: item.text,
+          lastMessageAt: item.createdAt,
+        });
+      }
+      if (item.senderRole === 'user' && !item.readByAdmin) {
+        byUser.get(item.userId)!.unreadForAdmin += 1;
+      }
+    });
+
+    const conversations = Array.from(byUser.values())
+      .map((entry) => {
+        const target = db.users.find((item) => item.id === entry.userId);
+        return {
+          userId: entry.userId,
+          userName: target ? `${target.firstName || ''} ${target.lastName || ''}`.trim() || target.email : 'Unknown User',
+          email: target?.email || '',
+          mobileNumber: target?.phone || '',
+          unreadForAdmin: entry.unreadForAdmin,
+          lastMessageText: entry.lastMessageText,
+          lastMessageAt: entry.lastMessageAt,
+        };
+      })
+      .sort((a, b) => new Date(String(b.lastMessageAt || 0)).getTime() - new Date(String(a.lastMessageAt || 0)).getTime());
+
+    return { conversations } as T;
+  }
+
+  if (/^\/api\/admin\/support-chat\/messages\/[^/]+$/.test(url.pathname) && method === 'GET') {
+    const { db } = requireAdmin(token);
+    const userId = url.pathname.split('/')[5];
+    const target = db.users.find((item) => item.id === userId);
+    if (!target) throw new Error('User not found.');
+
+    db.supportChatMessages.forEach((item) => {
+      if (item.userId === userId && item.senderRole === 'user' && !item.readByAdmin) {
+        item.readByAdmin = true;
+      }
+    });
+
+    const messages = db.supportChatMessages
+      .filter((item) => item.userId === userId)
+      .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+      .map((item) => ({
+        id: item.id,
+        userId: item.userId,
+        senderRole: item.senderRole,
+        text: item.text,
+        createdAt: item.createdAt,
+      }));
+
+    writeDb(db);
+    return {
+      user: {
+        id: target.id,
+        name: `${target.firstName || ''} ${target.lastName || ''}`.trim(),
+        email: target.email,
+        mobileNumber: target.phone || '',
+      },
+      messages,
+    } as T;
+  }
+
+  if (/^\/api\/admin\/support-chat\/messages\/[^/]+$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAdmin(token);
+    const userId = url.pathname.split('/')[5];
+    const text = String(body.text || '').trim();
+    if (!db.users.some((item) => item.id === userId)) throw new Error('User not found.');
+    if (!text) throw new Error('Message text is required.');
+    if (text.length > 1500) throw new Error('Message is too long.');
+
+    const created: LocalSupportChatMessage = {
+      id: `support-msg-${Date.now()}-${Math.round(Math.random() * 10000)}`,
+      userId,
+      senderRole: 'admin',
+      senderUserId: user.id,
+      text,
+      readByUser: false,
+      readByAdmin: true,
+      createdAt: new Date().toISOString(),
+    };
+    db.supportChatMessages.push(created);
+    writeDb(db);
+
+    return {
+      message: {
+        id: created.id,
+        userId: created.userId,
+        senderRole: created.senderRole,
+        text: created.text,
+        createdAt: created.createdAt,
+      },
+    } as T;
   }
 
   if (url.pathname === '/api/admin/community/reports' && method === 'GET') {

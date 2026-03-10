@@ -15,6 +15,7 @@ import { Analytics } from './components/Analytics';
 import { MeritCalculator } from './components/MeritCalculator';
 import { Profile } from './components/Profile';
 import { Community } from './components/Community';
+import { SupportChatWidget } from './components/SupportChatWidget';
 import { FirstTimeSetup, isTermsAccepted } from './components/FirstTimeSetup';
 import { 
   Home, 
@@ -251,6 +252,7 @@ export default function App() {
       </div>
 
       <Toaster richColors position="top-right" />
+      <SupportChatWidget />
     </AppDataProvider>
     </AuthProvider>
   );

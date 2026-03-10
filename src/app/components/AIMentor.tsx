@@ -13,6 +13,7 @@ import {
   Calendar,
   CheckCircle2,
   Clock3,
+  Copy,
   Crown,
   Download,
   FileQuestion,
@@ -28,6 +29,7 @@ import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest, downloadBinary } from '../lib/api';
 import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
+import { PAYMENT_METHODS } from '../lib/paymentMethods';
 
 interface AIMentorProps {
   onNavigate?: (section: string) => void;
@@ -268,6 +270,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
   }>(null);
   const [premiumProofReadProgress, setPremiumProofReadProgress] = useState(0);
   const [isReadingPremiumProof, setIsReadingPremiumProof] = useState(false);
+  const [showPaymentMethods, setShowPaymentMethods] = useState(false);
   const [activationTokenCode, setActivationTokenCode] = useState('');
   const [activationRequest, setActivationRequest] = useState<PremiumActivationRequest | null>(null);
   const [subscription, setSubscription] = useState<SubscriptionInfo>(emptySubscription);
@@ -765,6 +768,27 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     }
   };
 
+  const copyPaymentValue = async (value: string, label: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const temp = document.createElement('textarea');
+        temp.value = value;
+        temp.style.position = 'fixed';
+        temp.style.opacity = '0';
+        document.body.appendChild(temp);
+        temp.focus();
+        temp.select();
+        document.execCommand('copy');
+        document.body.removeChild(temp);
+      }
+      toast.success(`${label} copied.`);
+    } catch {
+      toast.error('Could not copy value.');
+    }
+  };
+
   const activateWithToken = async () => {
     if (!token || !user) {
       toast.error('Please login first.');
@@ -964,6 +988,34 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
                     className="border-indigo-100"
                   />
                 </div>
+              </div>
+
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 px-3 py-2">
+                <button
+                  type="button"
+                  className="flex w-full items-center justify-between text-left"
+                  onClick={() => setShowPaymentMethods((prev) => !prev)}
+                >
+                  <span className="text-sm font-medium text-emerald-900">Available Payment Methods</span>
+                  {showPaymentMethods ? <Clock3 className="h-4 w-4 text-emerald-700" /> : <Clock3 className="h-4 w-4 text-emerald-700" />}
+                </button>
+                {showPaymentMethods ? (
+                  <div className="mt-2 space-y-2">
+                    {(Object.entries(PAYMENT_METHODS) as Array<[keyof typeof PAYMENT_METHODS, (typeof PAYMENT_METHODS)[keyof typeof PAYMENT_METHODS]]>).map(([key, method]) => (
+                      <div key={key} className="rounded-md border border-emerald-100 bg-white px-2.5 py-2 text-xs text-slate-700">
+                        <p className="font-semibold text-emerald-900">{method.label}</p>
+                        <p className="mt-1">{method.instructions}</p>
+                        <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1.5">
+                          <p className="truncate"><span className="text-slate-500">{method.accountLabel}:</span> {method.accountValue}</p>
+                          <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => void copyPaymentValue(method.accountValue, method.accountLabel)}>
+                            <Copy className="mr-1 h-3 w-3" />
+                            Copy
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
               </div>
 
               <div className="rounded-lg border border-indigo-100 bg-indigo-50/60 px-3 py-2 text-xs text-slate-700">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../app/lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
 import { Button } from '../app/components/ui/button';
@@ -30,6 +30,7 @@ import {
 } from '../app/lib/filePreview';
 
 const FLAT_TOPIC_SUBJECTS = new Set(['quantitative-mathematics', 'design-aptitude']);
+const ADMIN_SUPPORT_DESKTOP_ALERTS_KEY = 'net360-support-desktop-alerts-admin';
 
 type SelectedHierarchy =
   | {
@@ -293,6 +294,34 @@ interface AdminCommunityReport {
     createdAt?: string | null;
   }>;
   createdAt: string | null;
+}
+
+interface AdminSupportConversation {
+  userId: string;
+  userName: string;
+  email: string;
+  mobileNumber: string;
+  lastMessageText: string;
+  lastMessageAt: string | null;
+  unreadForAdmin: number;
+}
+
+interface AdminSupportMessage {
+  id: string;
+  userId: string;
+  senderRole: 'user' | 'admin';
+  text: string;
+  createdAt: string | null;
+}
+
+interface AdminSupportThreadPayload {
+  user: {
+    id: string;
+    name: string;
+    email: string;
+    mobileNumber: string;
+  };
+  messages: AdminSupportMessage[];
 }
 
 interface LoginUser {
@@ -625,6 +654,7 @@ export default function AdminApp() {
   const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_KEY));
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
+  const [activeTab, setActiveTab] = useState('users');
 
   const [authForm, setAuthForm] = useState({ email: '', password: '' });
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -692,6 +722,24 @@ export default function AdminApp() {
   const [submissionReviewNotes, setSubmissionReviewNotes] = useState<Record<string, string>>({});
   const [communityReports, setCommunityReports] = useState<AdminCommunityReport[]>([]);
   const [communityReportNotes, setCommunityReportNotes] = useState<Record<string, string>>({});
+  const [supportConversations, setSupportConversations] = useState<AdminSupportConversation[]>([]);
+  const [selectedSupportUserId, setSelectedSupportUserId] = useState('');
+  const [activeSupportUser, setActiveSupportUser] = useState<AdminSupportThreadPayload['user'] | null>(null);
+  const [supportMessages, setSupportMessages] = useState<AdminSupportMessage[]>([]);
+  const [supportReplyText, setSupportReplyText] = useState('');
+  const [supportConversationQuery, setSupportConversationQuery] = useState('');
+  const [adminDesktopAlertsEnabled, setAdminDesktopAlertsEnabled] = useState<boolean>(() => {
+    try {
+      return sessionStorage.getItem(ADMIN_SUPPORT_DESKTOP_ALERTS_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [isSupportThreadLoading, setIsSupportThreadLoading] = useState(false);
+  const [isSendingSupportReply, setIsSendingSupportReply] = useState(false);
+  const didHydrateSupportRef = useRef(false);
+  const lastUnreadTotalRef = useRef(0);
+  const lastUserMessageInThreadRef = useRef('');
   const [contributionPolicy, setContributionPolicy] = useState<AdminContributionPolicy>({
     maxSubmissionsPerDay: 5,
     maxFilesPerSubmission: 3,
@@ -802,6 +850,15 @@ export default function AdminApp() {
     });
   }, [questionSubmissions, submissionStatusFilter, submissionSubjectFilter, submissionQuery]);
 
+  const filteredSupportConversations = useMemo(() => {
+    const needle = supportConversationQuery.trim().toLowerCase();
+    if (!needle) return supportConversations;
+    return supportConversations.filter((item) => {
+      const blob = [item.userName, item.email, item.mobileNumber, item.lastMessageText].join(' ').toLowerCase();
+      return blob.includes(needle);
+    });
+  }, [supportConversations, supportConversationQuery]);
+
   const submissionSubjects = useMemo(() => {
     return Array.from(new Set(questionSubmissions.map((item) => item.subject).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [questionSubmissions]);
@@ -884,6 +941,117 @@ export default function AdminApp() {
 
   const authToken = token;
 
+  const playNotificationTone = () => {
+    try {
+      const AudioCtx = (window.AudioContext || (window as Window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
+      if (!AudioCtx) return;
+      const context = new AudioCtx();
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      oscillator.type = 'triangle';
+      oscillator.frequency.value = 930;
+      gain.gain.value = 0.03;
+      oscillator.connect(gain);
+      gain.connect(context.destination);
+      oscillator.start();
+      oscillator.stop(context.currentTime + 0.1);
+    } catch {
+      // Ignore notification tone errors.
+    }
+  };
+
+  const canUseDesktopNotifications = typeof window !== 'undefined' && 'Notification' in window;
+
+  const setAdminDesktopAlertsPreference = (enabled: boolean) => {
+    setAdminDesktopAlertsEnabled(enabled);
+    try {
+      sessionStorage.setItem(ADMIN_SUPPORT_DESKTOP_ALERTS_KEY, enabled ? '1' : '0');
+    } catch {
+      // Ignore storage failures.
+    }
+  };
+
+  const enableAdminDesktopAlerts = async () => {
+    if (!canUseDesktopNotifications) {
+      toast.error('Desktop notifications are not supported in this browser.');
+      return;
+    }
+
+    if (Notification.permission === 'granted') {
+      setAdminDesktopAlertsPreference(true);
+      toast.success('Desktop alerts enabled for this tab.');
+      return;
+    }
+
+    if (Notification.permission === 'denied') {
+      toast.error('Desktop notifications are blocked in browser settings.');
+      return;
+    }
+
+    const permission = await Notification.requestPermission();
+    if (permission === 'granted') {
+      setAdminDesktopAlertsPreference(true);
+      toast.success('Desktop alerts enabled for this tab.');
+    } else {
+      toast.error('Notification permission was not granted.');
+    }
+  };
+
+  const notifyAdminDesktop = (title: string, body: string) => {
+    if (!adminDesktopAlertsEnabled || !canUseDesktopNotifications) return;
+    if (Notification.permission !== 'granted') return;
+    if (!document.hidden) return;
+
+    try {
+      const notification = new Notification(title, {
+        body,
+        tag: 'net360-support-admin',
+      });
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+    } catch {
+      // Ignore notification delivery errors.
+    }
+  };
+
+  const sendAdminDesktopTestNotification = async () => {
+    if (!canUseDesktopNotifications) {
+      toast.error('Desktop notifications are not supported in this browser.');
+      return;
+    }
+
+    if (Notification.permission !== 'granted') {
+      if (Notification.permission === 'denied') {
+        toast.error('Desktop notifications are blocked in browser settings.');
+        return;
+      }
+
+      const permission = await Notification.requestPermission();
+      if (permission !== 'granted') {
+        toast.error('Notification permission was not granted.');
+        return;
+      }
+    }
+
+    setAdminDesktopAlertsPreference(true);
+
+    try {
+      const notification = new Notification('NET360 Admin Test', {
+        body: 'Desktop notifications are working for this admin tab.',
+        tag: 'net360-support-admin-test',
+      });
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+      toast.success('Test desktop notification sent.');
+    } catch {
+      toast.error('Could not deliver test notification.');
+    }
+  };
+
   const clearAdminSession = () => {
     setToken(null);
     setRefreshToken(null);
@@ -935,6 +1103,7 @@ export default function AdminApp() {
       premiumRequestsPayload,
       passwordRecoveryPayload,
       communityReportsPayload,
+      supportConversationsPayload,
       structurePayload,
     ] = await Promise.all([
       apiRequest<AdminOverview>('/api/admin/overview', {}, activeToken),
@@ -970,6 +1139,7 @@ export default function AdminApp() {
         activeToken,
       ).catch(() => ({ requests: [] })),
       apiRequest<{ reports: AdminCommunityReport[] }>('/api/admin/community/reports', {}, activeToken).catch(() => ({ reports: [] })),
+      apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations', {}, activeToken).catch(() => ({ conversations: [] })),
       apiRequest<{ structure: AdminMcqBankStructureItem[] }>('/api/admin/mcq-bank/structure', {}, activeToken).catch(() => ({ structure: [] })),
     ]);
 
@@ -990,6 +1160,7 @@ export default function AdminApp() {
     setPremiumRequests(premiumRequestsPayload.requests || []);
     setPasswordRecoveryRequests(passwordRecoveryPayload.requests || []);
     setCommunityReports(communityReportsPayload.reports || []);
+    setSupportConversations(supportConversationsPayload.conversations || []);
     setMcqStructure(structurePayload.structure || []);
   };
 
@@ -1401,6 +1572,42 @@ export default function AdminApp() {
     }
   };
 
+  const loadSupportThread = async (userId: string, activeToken = authToken) => {
+    if (!activeToken || !userId) return;
+    try {
+      setIsSupportThreadLoading(true);
+      const payload = await apiRequest<AdminSupportThreadPayload>(`/api/admin/support-chat/messages/${userId}`, {}, activeToken);
+      setActiveSupportUser(payload.user || null);
+      setSupportMessages(payload.messages || []);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not load support thread.');
+    } finally {
+      setIsSupportThreadLoading(false);
+    }
+  };
+
+  const sendSupportReply = async () => {
+    if (!authToken || !selectedSupportUserId || !supportReplyText.trim()) return;
+    try {
+      setIsSendingSupportReply(true);
+      await apiRequest(`/api/admin/support-chat/messages/${selectedSupportUserId}`, {
+        method: 'POST',
+        body: JSON.stringify({ text: supportReplyText.trim() }),
+      }, authToken);
+      setSupportReplyText('');
+      await Promise.all([
+        loadSupportThread(selectedSupportUserId),
+        apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations', {}, authToken)
+          .then((payload) => setSupportConversations(payload.conversations || []))
+          .catch(() => undefined),
+      ]);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not send support reply.');
+    } finally {
+      setIsSendingSupportReply(false);
+    }
+  };
+
   const openPaymentProof = async (path: string, fileName: string, fallbackDataUrl?: string, download = false) => {
     const fallback = String(fallbackDataUrl || '').trim();
     const previewWindow = !download ? window.open('', '_blank', 'noopener,noreferrer') : null;
@@ -1457,6 +1664,99 @@ export default function AdminApp() {
       toast.error('Could not open payment proof. Please try again.');
     }
   };
+
+  useEffect(() => {
+    if (!authToken) return;
+    if (!selectedSupportUserId) {
+      if (supportConversations.length) {
+        setSelectedSupportUserId(supportConversations[0].userId);
+      }
+      return;
+    }
+
+    void loadSupportThread(selectedSupportUserId, authToken);
+  }, [selectedSupportUserId, authToken]);
+
+  useEffect(() => {
+    if (!supportConversations.length) {
+      setSelectedSupportUserId('');
+      setActiveSupportUser(null);
+      setSupportMessages([]);
+      return;
+    }
+
+    const selectedExistsInAll = supportConversations.some((item) => item.userId === selectedSupportUserId);
+    const selectedExistsInFiltered = filteredSupportConversations.some((item) => item.userId === selectedSupportUserId);
+    const shouldReselect = !selectedSupportUserId || !selectedExistsInAll || (supportConversationQuery.trim() && !selectedExistsInFiltered);
+
+    if (shouldReselect) {
+      const source = filteredSupportConversations.length ? filteredSupportConversations : supportConversations;
+      setSelectedSupportUserId(source[0].userId);
+    }
+  }, [supportConversations, filteredSupportConversations, selectedSupportUserId, supportConversationQuery]);
+
+  useEffect(() => {
+    lastUserMessageInThreadRef.current = '';
+  }, [selectedSupportUserId]);
+
+  useEffect(() => {
+    const unreadTotal = supportConversations.reduce((sum, item) => sum + Number(item.unreadForAdmin || 0), 0);
+    if (!didHydrateSupportRef.current) {
+      didHydrateSupportRef.current = true;
+      lastUnreadTotalRef.current = unreadTotal;
+      return;
+    }
+
+    if (unreadTotal > lastUnreadTotalRef.current) {
+      const latestIncoming = supportConversations.find((item) => Number(item.unreadForAdmin || 0) > 0);
+      playNotificationTone();
+      toast.message('New incoming support message');
+      notifyAdminDesktop(
+        'NET360 Support Admin',
+        latestIncoming
+          ? `${latestIncoming.userName || latestIncoming.email}: ${latestIncoming.lastMessageText || 'New message'}`
+          : 'You have new incoming support messages.',
+      );
+    }
+    lastUnreadTotalRef.current = unreadTotal;
+  }, [supportConversations]);
+
+  useEffect(() => {
+    const latestUserMessage = [...supportMessages].reverse().find((item) => item.senderRole === 'user');
+    const latestUserMessageId = latestUserMessage?.id || '';
+    if (!latestUserMessageId) return;
+
+    if (!lastUserMessageInThreadRef.current) {
+      lastUserMessageInThreadRef.current = latestUserMessageId;
+      return;
+    }
+
+    if (latestUserMessageId !== lastUserMessageInThreadRef.current) {
+      lastUserMessageInThreadRef.current = latestUserMessageId;
+      playNotificationTone();
+      toast.message('New message in active support thread');
+      notifyAdminDesktop(
+        'NET360 Active Thread',
+        latestUserMessage?.text || 'You have a new message in the active support thread.',
+      );
+    }
+  }, [supportMessages]);
+
+  useEffect(() => {
+    if (!authToken) return;
+
+    const timer = window.setInterval(() => {
+      void apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations', {}, authToken)
+        .then((payload) => setSupportConversations(payload.conversations || []))
+        .catch(() => undefined);
+
+      if (selectedSupportUserId) {
+        void loadSupportThread(selectedSupportUserId, authToken);
+      }
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [authToken, selectedSupportUserId]);
 
   const resetForm = () => {
     const fresh = emptyForm();
@@ -2389,12 +2689,13 @@ export default function AdminApp() {
         </CardContent>
       </Card>
 
-      <Tabs defaultValue="users" className="w-full min-w-0 space-y-4">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0 space-y-4">
         <div className="overflow-x-auto pb-1">
           <TabsList className="inline-flex h-auto min-w-max gap-1">
             <TabsTrigger className="min-w-[150px]" value="users">Users</TabsTrigger>
             <TabsTrigger className="min-w-[170px]" value="requests">Signup Requests</TabsTrigger>
             <TabsTrigger className="min-w-[190px]" value="premium-requests">Premium Requests</TabsTrigger>
+            <TabsTrigger className="min-w-[150px]" value="support-chat">Support Chat</TabsTrigger>
             <TabsTrigger className="min-w-[220px]" value="password-recovery">Password Recovery</TabsTrigger>
             <TabsTrigger className="min-w-[120px]" value="mcqs">MCQs</TabsTrigger>
             <TabsTrigger className="min-w-[150px]" value="practice-board">Practice Board</TabsTrigger>
@@ -2403,6 +2704,120 @@ export default function AdminApp() {
             <TabsTrigger className="min-w-[150px]" value="subscriptions">Subscriptions</TabsTrigger>
           </TabsList>
         </div>
+
+        <TabsContent value="support-chat" className="space-y-3">
+          <Card>
+            <CardHeader>
+              <CardTitle>Live Support Conversations</CardTitle>
+              <CardDescription>View student messages in real time and reply directly from admin panel.</CardDescription>
+              <div className="flex justify-end gap-2">
+                {adminDesktopAlertsEnabled ? (
+                  <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => setAdminDesktopAlertsPreference(false)}>
+                    Desktop Alerts: On
+                  </Button>
+                ) : (
+                  <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => void enableAdminDesktopAlerts()}>
+                    Enable Desktop Alerts
+                  </Button>
+                )}
+                <Button type="button" size="sm" variant="outline" className="h-8 text-xs" onClick={() => void sendAdminDesktopTestNotification()}>
+                  Test Notification
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="grid gap-3 lg:grid-cols-[300px_1fr]">
+                <div className="space-y-2 rounded-lg border p-2">
+                  <Input
+                    value={supportConversationQuery}
+                    onChange={(e) => setSupportConversationQuery(e.target.value)}
+                    placeholder="Search by name, email, mobile, or message"
+                  />
+
+                  <div className="max-h-[500px] space-y-2 overflow-auto">
+                  {!filteredSupportConversations.length ? (
+                    <p className="p-2 text-sm text-muted-foreground">No support conversations yet.</p>
+                  ) : null}
+                  {filteredSupportConversations.map((conversation) => (
+                    <button
+                      key={conversation.userId}
+                      type="button"
+                      onClick={() => setSelectedSupportUserId(conversation.userId)}
+                      className={`w-full rounded-md border px-2.5 py-2 text-left transition ${
+                        selectedSupportUserId === conversation.userId
+                          ? 'border-indigo-300 bg-indigo-50'
+                          : 'hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="line-clamp-1 text-sm font-medium">{conversation.userName || conversation.email}</p>
+                        {conversation.unreadForAdmin > 0 ? (
+                          <Badge className="bg-rose-600 text-white">{conversation.unreadForAdmin}</Badge>
+                        ) : null}
+                      </div>
+                      <p className="line-clamp-1 text-xs text-muted-foreground">{conversation.email || 'No email'}</p>
+                      <p className="mt-1 line-clamp-2 text-xs text-slate-600">{conversation.lastMessageText || 'No message text'}</p>
+                    </button>
+                  ))}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="rounded-lg border p-3">
+                    <p className="text-sm font-medium">{activeSupportUser?.name || 'Select a conversation'}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {activeSupportUser?.email || ''}
+                      {activeSupportUser?.mobileNumber ? ` • ${activeSupportUser.mobileNumber}` : ''}
+                    </p>
+                  </div>
+
+                  <div className="max-h-[420px] space-y-2 overflow-auto rounded-lg border bg-slate-50 p-3">
+                    {isSupportThreadLoading ? <p className="text-xs text-muted-foreground">Loading thread...</p> : null}
+                    {!supportMessages.length ? <p className="text-xs text-muted-foreground">No messages in this thread.</p> : null}
+                    {supportMessages.map((item) => (
+                      <div
+                        key={item.id}
+                        className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                          item.senderRole === 'admin'
+                            ? 'ml-auto bg-indigo-600 text-white'
+                            : 'mr-auto border bg-white text-slate-700'
+                        }`}
+                      >
+                        <p>{item.text}</p>
+                        <p className={`mt-1 text-[10px] ${item.senderRole === 'admin' ? 'text-indigo-100' : 'text-slate-400'}`}>
+                          {item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="flex items-end gap-2">
+                    <Textarea
+                      value={supportReplyText}
+                      onChange={(e) => setSupportReplyText(e.target.value)}
+                      placeholder="Type support reply"
+                      className="min-h-[82px]"
+                      disabled={!selectedSupportUserId}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          void sendSupportReply();
+                        }
+                      }}
+                    />
+                    <Button
+                      className="h-10"
+                      onClick={() => void sendSupportReply()}
+                      disabled={isSendingSupportReply || !selectedSupportUserId || !supportReplyText.trim()}
+                    >
+                      {isSendingSupportReply ? 'Sending...' : 'Send'}
+                    </Button>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="users" className="space-y-3">
           <Card>

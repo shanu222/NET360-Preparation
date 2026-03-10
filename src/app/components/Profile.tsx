@@ -6,12 +6,13 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { Apple, Bot, ChevronDown, ChevronUp, FlaskConical, GraduationCap, LogOut, RefreshCw, Settings, Target, UserRound, Award } from 'lucide-react';
+import { Apple, Bot, ChevronDown, ChevronUp, Copy, FlaskConical, GraduationCap, LogOut, MessageCircle, RefreshCw, Settings, Target, UserRound, Award } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
 import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
+import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK, PAYMENT_METHODS } from '../lib/paymentMethods';
 
 interface ProfileProps {
   onNavigate?: (section: string) => void;
@@ -50,6 +51,7 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [forgotCooldownSeconds, setForgotCooldownSeconds] = useState(0);
   const [paymentProofReadProgress, setPaymentProofReadProgress] = useState(0);
   const [isReadingPaymentProof, setIsReadingPaymentProof] = useState(false);
+  const [showPaymentMethods, setShowPaymentMethods] = useState(false);
   const [registerConflictBanner, setRegisterConflictBanner] = useState('');
   const [showDeleteAccountPanel, setShowDeleteAccountPanel] = useState(false);
   const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
@@ -411,6 +413,27 @@ export function Profile({ onNavigate }: ProfileProps) {
     }
   };
 
+  const copyPaymentValue = async (value: string, label: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(value);
+      } else {
+        const temp = document.createElement('textarea');
+        temp.value = value;
+        temp.style.position = 'fixed';
+        temp.style.opacity = '0';
+        document.body.appendChild(temp);
+        temp.focus();
+        temp.select();
+        document.execCommand('copy');
+        document.body.removeChild(temp);
+      }
+      toast.success(`${label} copied.`);
+    } catch {
+      toast.error('Could not copy value.');
+    }
+  };
+
   const toggleDeleteAccountPanel = () => {
     setShowDeleteAccountPanel((previous) => {
       const next = !previous;
@@ -580,6 +603,34 @@ export function Profile({ onNavigate }: ProfileProps) {
 
               {isRegisterMode ? (
                 <>
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
+                    <button
+                      type="button"
+                      onClick={() => setShowPaymentMethods((prev) => !prev)}
+                      className="flex w-full items-center justify-between text-left"
+                    >
+                      <span className="text-sm font-medium text-emerald-900">Available Payment Methods</span>
+                      {showPaymentMethods ? <ChevronUp className="h-4 w-4 text-emerald-700" /> : <ChevronDown className="h-4 w-4 text-emerald-700" />}
+                    </button>
+                    {showPaymentMethods ? (
+                      <div className="mt-3 space-y-2">
+                        {(Object.entries(PAYMENT_METHODS) as Array<[keyof typeof PAYMENT_METHODS, (typeof PAYMENT_METHODS)[keyof typeof PAYMENT_METHODS]]>).map(([key, method]) => (
+                          <div key={key} className="rounded-lg border border-emerald-100 bg-white p-2.5 text-xs text-slate-700">
+                            <p className="font-semibold text-emerald-900">{method.label}</p>
+                            <p className="mt-1">{method.instructions}</p>
+                            <div className="mt-2 flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1.5">
+                              <p className="truncate"><span className="text-slate-500">{method.accountLabel}:</span> {method.accountValue}</p>
+                              <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => void copyPaymentValue(method.accountValue, method.accountLabel)}>
+                                <Copy className="mr-1 h-3 w-3" />
+                                Copy
+                              </Button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+
                   <div className="grid gap-2 md:grid-cols-2">
                     <div className="space-y-1.5">
                       <Label htmlFor="payment-method">Payment Method</Label>
@@ -768,6 +819,12 @@ export function Profile({ onNavigate }: ProfileProps) {
           <p className="text-muted-foreground">Manage your account and preferences</p>
         </div>
         <div className="flex gap-2">
+          <a href={NET360_ADMIN_WHATSAPP_LINK} target="_blank" rel="noreferrer">
+            <Button variant="outline" className="border-emerald-300 text-emerald-700 hover:bg-emerald-50">
+              <MessageCircle className="mr-2 h-4 w-4" />
+              WhatsApp Admin
+            </Button>
+          </a>
           <Button variant="outline" onClick={() => onNavigate?.('analytics')}>View Analytics</Button>
           <Button variant="outline" onClick={logout}>
             <LogOut className="w-4 h-4 mr-2" />
@@ -800,6 +857,13 @@ export function Profile({ onNavigate }: ProfileProps) {
             </div>
 
             <div className="pt-4 border-t space-y-3">
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50/60 p-2.5 text-xs">
+                <p className="font-medium text-emerald-900">Need instant help?</p>
+                <p className="mt-1 text-emerald-800">WhatsApp admin: {NET360_ADMIN_WHATSAPP}</p>
+                <a href={NET360_ADMIN_WHATSAPP_LINK} target="_blank" rel="noreferrer" className="mt-1 inline-block text-emerald-700 underline underline-offset-2">
+                  Open WhatsApp Chat
+                </a>
+              </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Member Since</span>
                 <span className="text-sm">Jan 2026</span>
