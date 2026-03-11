@@ -23,6 +23,9 @@ interface TestSession {
   questionCount: number;
   durationMinutes: number;
   startedAt: string;
+  cancelledAt?: string | null;
+  cancelReason?: string;
+  cancelTrigger?: string;
   questions: SessionQuestion[];
 }
 
@@ -106,7 +109,7 @@ export function TestInterfacePage() {
 
   const violationCountRef = useRef(0);
   const violationDebounceAtRef = useRef(0);
-  const hasForfeitedRef = useRef(false);
+  const hasAutoCancelledRef = useRef(false);
 
   const getLaunchFallback = () => {
     try {
@@ -189,40 +192,62 @@ export function TestInterfacePage() {
 
   const getChallengeAttemptStorageKey = (challengeId: string) => `net360-challenge-attempt-${challengeId}`;
 
-  const forfeitChallenge = async (reason: string) => {
-    if (!isChallengeMode || !resolvedChallengeId || !resolvedToken || hasForfeitedRef.current) return;
+  const cancelActiveExam = async (trigger: string) => {
+    if (!resolvedToken || result || isSubmitting || hasAutoCancelledRef.current) return;
 
-    hasForfeitedRef.current = true;
+    hasAutoCancelledRef.current = true;
+    const reason = 'Left secured test environment after warning.';
+
     try {
-      await apiRequest(`/api/community/quiz-challenges/${resolvedChallengeId}/forfeit`, {
-        method: 'POST',
-        body: JSON.stringify({
-          reason,
-          elapsedSeconds: challengeStartedAtMs ? Math.max(0, Math.floor((Date.now() - challengeStartedAtMs) / 1000)) : 0,
-        }),
-      }, resolvedToken);
+      if (isChallengeMode) {
+        if (resolvedChallengeId) {
+          await apiRequest(`/api/community/quiz-challenges/${resolvedChallengeId}/forfeit`, {
+            method: 'POST',
+            body: JSON.stringify({
+              reason,
+              trigger,
+              elapsedSeconds: challengeStartedAtMs ? Math.max(0, Math.floor((Date.now() - challengeStartedAtMs) / 1000)) : 0,
+            }),
+          }, resolvedToken);
+        }
+      } else if (resolvedSessionId) {
+        await apiRequest(`/api/tests/${resolvedSessionId}/cancel`, {
+          method: 'POST',
+          body: JSON.stringify({ reason, trigger }),
+        }, resolvedToken);
+      }
     } catch {
-      // Best effort: redirect even if network request fails.
+      // Best effort: redirect even if request fails.
     } finally {
-      toast.error('Challenge cancelled. You lost this challenge because you left the test environment.');
+      toast.error(
+        isChallengeMode
+          ? 'Challenge cancelled. You lost this challenge because you left the test environment.'
+          : 'Test cancelled because you left the secured test environment.',
+      );
       window.setTimeout(() => {
-        window.location.href = '/?tab=community';
+        window.location.href = isChallengeMode ? '/?tab=community' : '/?tab=tests';
       }, 700);
     }
   };
 
-  const handleChallengeEnvironmentViolation = (trigger: string) => {
-    if (!isChallengeMode || !resolvedChallengeId || result || hasForfeitedRef.current || isSubmitting) return;
+  const handleEnvironmentViolation = (trigger: string) => {
+    if (!resolvedToken || result || isSubmitting || hasAutoCancelledRef.current) return;
+    if (!isChallengeMode && !resolvedSessionId) return;
+    if (isChallengeMode && !resolvedChallengeId) return;
 
     const now = Date.now();
     if (now - violationDebounceAtRef.current < 600) return;
     violationDebounceAtRef.current = now;
 
     violationCountRef.current += 1;
-    toast.warning('Warning: Leaving the test will cancel the challenge and you will lose.');
+    toast.warning(
+      isChallengeMode
+        ? 'Warning: Leaving the test environment will cancel this challenge and you will lose.'
+        : 'Warning: Leaving the test environment will cancel this test.',
+    );
 
     if (violationCountRef.current >= 2) {
-      void forfeitChallenge(trigger);
+      void cancelActiveExam(trigger);
     }
   };
 
@@ -301,6 +326,9 @@ export function TestInterfacePage() {
 
         const response = await apiRequest<{ session: TestSession }>(`/api/tests/${resolvedSessionId}`, {}, resolvedToken);
         const payload = response.session;
+        if (payload.cancelledAt) {
+          throw new Error('This test session has already been cancelled.');
+        }
         setSession(payload as unknown as TestSession);
         setRemainingSeconds(Math.max(1, payload.durationMinutes * 60));
         setChallengeStartedAtMs(null);
@@ -464,25 +492,27 @@ export function TestInterfacePage() {
   };
 
   useEffect(() => {
-    if (!isChallengeMode || !session || !resolvedChallengeId || !resolvedToken || result) return;
+    if (!session || !resolvedToken || result || hasAutoCancelledRef.current) return;
+    if (isChallengeMode && !resolvedChallengeId) return;
+    if (!isChallengeMode && !resolvedSessionId) return;
 
     const onVisibilityChange = () => {
       if (document.hidden) {
-        handleChallengeEnvironmentViolation('visibilitychange');
+        handleEnvironmentViolation('visibilitychange');
       }
     };
 
     const onBlur = () => {
-      handleChallengeEnvironmentViolation('blur');
+      handleEnvironmentViolation('blur');
     };
 
     const onPopState = () => {
-      handleChallengeEnvironmentViolation('popstate');
+      handleEnvironmentViolation('popstate');
       window.history.pushState({ challengeGuard: true }, '', window.location.href);
     };
 
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      handleChallengeEnvironmentViolation('beforeunload');
+      handleEnvironmentViolation('beforeunload');
       event.preventDefault();
       event.returnValue = '';
     };
@@ -502,11 +532,11 @@ export function TestInterfacePage() {
       try {
         appStateListener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
           if (!isActive) {
-            handleChallengeEnvironmentViolation('appStateChange');
+            handleEnvironmentViolation('appStateChange');
           }
         });
         backButtonListener = await CapacitorApp.addListener('backButton', () => {
-          handleChallengeEnvironmentViolation('hardwareBackButton');
+          handleEnvironmentViolation('hardwareBackButton');
         });
       } catch {
         // Non-native runtime or listener attach failure.
@@ -523,7 +553,7 @@ export function TestInterfacePage() {
       appStateListener?.remove();
       backButtonListener?.remove();
     };
-  }, [isChallengeMode, resolvedChallengeId, resolvedToken, result, session]);
+  }, [isChallengeMode, resolvedChallengeId, resolvedSessionId, resolvedToken, result, session]);
 
   if (loading) {
     return (

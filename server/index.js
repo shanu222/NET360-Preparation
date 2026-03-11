@@ -2364,6 +2364,9 @@ function serializeSession(session) {
     durationMinutes: session.durationMinutes,
     startedAt: new Date(session.startedAt).toISOString(),
     finishedAt: session.finishedAt ? new Date(session.finishedAt).toISOString() : null,
+    cancelledAt: session.cancelledAt ? new Date(session.cancelledAt).toISOString() : null,
+    cancelReason: String(session.cancelReason || ''),
+    cancelTrigger: String(session.cancelTrigger || ''),
     questions: session.questions || [],
   };
 }
@@ -7764,6 +7767,50 @@ app.get('/api/tests/:sessionId', authMiddleware, async (req, res) => {
   res.json({ session: serializeSession(session) });
 });
 
+app.post('/api/tests/:sessionId/cancel', authMiddleware, async (req, res) => {
+  if (!isValidObjectId(req.params.sessionId)) {
+    res.status(400).json({ error: 'Invalid session id.' });
+    return;
+  }
+
+  const session = await TestSessionModel.findOne({ _id: req.params.sessionId, userId: req.user._id });
+  if (!session) {
+    res.status(404).json({ error: 'Session not found.' });
+    return;
+  }
+
+  if (session.cancelledAt) {
+    res.json({ session: serializeSession(session) });
+    return;
+  }
+
+  const existingAttempt = await AttemptModel.findOne({ sessionId: session._id, userId: req.user._id });
+  if (existingAttempt) {
+    res.status(409).json({ error: 'Session already submitted and cannot be cancelled.' });
+    return;
+  }
+
+  const reason = String(req.body?.reason || 'Left secured test environment.').trim().slice(0, 200);
+  const trigger = String(req.body?.trigger || '').trim().slice(0, 80);
+  session.cancelledAt = new Date();
+  session.cancelReason = reason;
+  session.cancelTrigger = trigger;
+  session.finishedAt = session.finishedAt || session.cancelledAt;
+  await session.save();
+
+  broadcastSyncEvent({
+    role: 'student',
+    event: 'sync',
+    data: {
+      type: 'test.session.cancelled',
+      userId: String(req.user._id),
+      sessionId: String(session._id),
+    },
+  });
+
+  res.json({ session: serializeSession(session) });
+});
+
 app.post('/api/tests/:sessionId/finish', authMiddleware, async (req, res) => {
   if (!isValidObjectId(req.params.sessionId)) {
     res.status(400).json({ error: 'Invalid session id.' });
@@ -7776,6 +7823,11 @@ app.post('/api/tests/:sessionId/finish', authMiddleware, async (req, res) => {
   const session = await TestSessionModel.findOne({ _id: req.params.sessionId, userId: req.user._id });
   if (!session) {
     res.status(404).json({ error: 'Session not found.' });
+    return;
+  }
+
+  if (session.cancelledAt) {
+    res.status(409).json({ error: 'This test session was cancelled and cannot be submitted.' });
     return;
   }
 

@@ -27,6 +27,9 @@ const testSessionSchema = new mongoose.Schema(
     durationMinutes: { type: Number, required: true },
     startedAt: { type: Date, required: true, index: true },
     finishedAt: { type: Date, default: null, index: true },
+    cancelledAt: { type: Date, default: null, index: true },
+    cancelReason: { type: String, default: '' },
+    cancelTrigger: { type: String, default: '' },
   },
   { timestamps: true },
 );
