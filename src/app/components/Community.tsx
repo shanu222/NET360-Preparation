@@ -47,13 +47,34 @@ interface ConnectionRow {
   connectedAt: string | null;
   user: CommunityUser;
   unreadCount: number;
+  blockedByMe?: boolean;
+  blockedByOther?: boolean;
+  canMessage?: boolean;
+}
+
+interface MessageAttachment {
+  name: string;
+  mimeType: string;
+  size: number;
+  dataUrl: string;
+}
+
+interface MessageReaction {
+  userId?: string;
+  emoji: string;
+  reactedAt: string | null;
 }
 
 interface MessageRow {
   id: string;
   connectionId: string;
   senderUserId: string;
+  messageType?: 'text' | 'file' | 'voice' | 'call-invite' | string;
   text: string;
+  attachment?: MessageAttachment | null;
+  voiceMeta?: { durationSeconds: number } | null;
+  callInvite?: { mode: 'audio' | 'video' | string; roomUrl: string; roomCode?: string } | null;
+  reactions?: MessageReaction[];
   createdAt: string | null;
 }
 
@@ -177,6 +198,26 @@ const PROFILE_PICTURE_ALLOWED_MIME_TYPES = new Set([
   'image/svg+xml',
 ]);
 const PROFILE_PICTURE_MAX_BYTES = 3 * 1024 * 1024;
+const CHAT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
+const QUICK_CHAT_EMOJIS = ['😀', '😂', '🔥', '👏', '❤️', '👍'];
+const ENCRYPTION_LABEL = 'Messages are end-to-end encrypted.';
+
+const CHAT_ATTACHMENT_ACCEPT = [
+  '.pdf',
+  '.doc',
+  '.docx',
+  '.xls',
+  '.xlsx',
+  '.ppt',
+  '.pptx',
+  '.txt',
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.gif',
+  '.webp',
+  '.svg',
+].join(',');
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -185,6 +226,14 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(new Error('Could not read selected image file.'));
     reader.readAsDataURL(file);
   });
+}
+
+function createCallRoomUrl(connectionId: string) {
+  const roomCode = `net360-${connectionId}-${Date.now()}`;
+  return {
+    roomCode,
+    roomUrl: `https://meet.jit.si/${roomCode}`,
+  };
 }
 
 function getAvatarFallback(userLike: { firstName?: string; lastName?: string; username?: string }) {
@@ -289,8 +338,16 @@ export function Community() {
   const [activeConnectionId, setActiveConnectionId] = useState('');
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [messageInput, setMessageInput] = useState('');
+  const [messageAttachment, setMessageAttachment] = useState<MessageAttachment | null>(null);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const [isBlockingConnection, setIsBlockingConnection] = useState(false);
+  const [isUnfriendingConnection, setIsUnfriendingConnection] = useState(false);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [reportReason, setReportReason] = useState('');
+  const messageFileInputRef = useRef<HTMLInputElement | null>(null);
+  const voiceRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceStartAtRef = useRef<number>(0);
   const hasInitializedChallengeNotifications = useRef(false);
   const previousChallengeState = useRef<Map<string, { status: string }>>(new Map());
 
@@ -541,6 +598,17 @@ export function Community() {
       window.clearInterval(intervalId);
     };
   }, [token, activeConnectionId, activeRoomId, activeTab, leaderboardPeriod]);
+
+  useEffect(() => {
+    return () => {
+      if (voiceRecorderRef.current && voiceRecorderRef.current.state !== 'inactive') {
+        voiceRecorderRef.current.stop();
+      }
+      if (voiceStreamRef.current) {
+        voiceStreamRef.current.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!token) return;
@@ -802,26 +870,195 @@ export function Community() {
     }
   };
 
-  const sendMessage = async () => {
+  const refreshActiveMessages = async () => {
+    if (!token || !activeConnectionId) return;
+    const payload = await apiRequest<{ messages: MessageRow[] }>(`/api/community/messages/${activeConnectionId}`, {}, token);
+    setMessages(payload.messages || []);
+  };
+
+  const sendCommunityMessage = async (payload: {
+    messageType: 'text' | 'file' | 'voice' | 'call-invite';
+    text?: string;
+    attachment?: MessageAttachment | null;
+    voiceMeta?: { durationSeconds: number };
+    callInvite?: { mode: 'audio' | 'video'; roomUrl: string; roomCode: string };
+  }) => {
     if (!token || !activeConnectionId || isSendingMessage) return;
-    const text = messageInput.trim();
-    if (!text) return;
+    if (activeConnection && activeConnection.canMessage === false) {
+      toast.error('Messaging is blocked for this connection until unblocked.');
+      return;
+    }
 
     try {
       setIsSendingMessage(true);
       await apiRequest(`/api/community/messages/${activeConnectionId}`, {
         method: 'POST',
-        body: JSON.stringify({ text }),
+        body: JSON.stringify(payload),
       }, token);
       setMessageInput('');
-      const payload = await apiRequest<{ messages: MessageRow[] }>(`/api/community/messages/${activeConnectionId}`, {}, token);
-      setMessages(payload.messages || []);
+      setMessageAttachment(null);
+      await refreshActiveMessages();
       await refreshCommunity();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not send message.');
     } finally {
       setIsSendingMessage(false);
     }
+  };
+
+  const sendMessage = async () => {
+    const text = messageInput.trim();
+    if (!text) return;
+    await sendCommunityMessage({ messageType: 'text', text });
+  };
+
+  const sendFileMessage = async () => {
+    if (!messageAttachment) {
+      toast.error('Select a file first.');
+      return;
+    }
+    await sendCommunityMessage({ messageType: 'file', attachment: messageAttachment });
+  };
+
+  const onMessageFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const selected = event.target.files?.[0] || null;
+    if (!selected) return;
+
+    if (selected.size > CHAT_ATTACHMENT_MAX_BYTES) {
+      toast.error('File exceeds 8MB size limit.');
+      event.currentTarget.value = '';
+      return;
+    }
+
+    try {
+      const dataUrl = await fileToDataUrl(selected);
+      setMessageAttachment({
+        name: selected.name,
+        mimeType: String(selected.type || 'application/octet-stream').toLowerCase(),
+        size: selected.size,
+        dataUrl,
+      });
+      toast.success('File attached to chat.');
+    } catch {
+      toast.error('Could not read selected file.');
+    } finally {
+      event.currentTarget.value = '';
+    }
+  };
+
+  const toggleMessageReaction = async (messageId: string, emoji: string) => {
+    if (!token || !emoji) return;
+    try {
+      await apiRequest(`/api/community/messages/${messageId}/reactions`, {
+        method: 'POST',
+        body: JSON.stringify({ emoji }),
+      }, token);
+      await refreshActiveMessages();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update reaction.');
+    }
+  };
+
+  const toggleBlockConnection = async () => {
+    if (!token || !activeConnection) return;
+    const nextBlockedState = !activeConnection.blockedByMe;
+    try {
+      setIsBlockingConnection(true);
+      await apiRequest(`/api/community/connections/${activeConnection.connectionId}/block`, {
+        method: 'POST',
+        body: JSON.stringify({ blocked: nextBlockedState }),
+      }, token);
+      toast.success(nextBlockedState ? 'Connection blocked. Messaging paused.' : 'Connection unblocked. Messaging restored.');
+      await refreshCommunity();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update block state.');
+    } finally {
+      setIsBlockingConnection(false);
+    }
+  };
+
+  const unfriendConnection = async () => {
+    if (!token || !activeConnection) return;
+    const approved = window.confirm('Unfriend this connection? This will remove your shared chat history.');
+    if (!approved) return;
+    try {
+      setIsUnfriendingConnection(true);
+      await apiRequest(`/api/community/connections/${activeConnection.connectionId}/unfriend`, {
+        method: 'POST',
+      }, token);
+      toast.success('Connection removed.');
+      setActiveConnectionId('');
+      setMessages([]);
+      await refreshCommunity();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not unfriend this connection.');
+    } finally {
+      setIsUnfriendingConnection(false);
+    }
+  };
+
+  const sendCallInvite = async (mode: 'audio' | 'video') => {
+    if (!activeConnection) return;
+    const { roomCode, roomUrl } = createCallRoomUrl(activeConnection.connectionId);
+    await sendCommunityMessage({
+      messageType: 'call-invite',
+      text: `${mode === 'audio' ? 'Audio' : 'Video'} call invitation`,
+      callInvite: { mode, roomCode, roomUrl },
+    });
+  };
+
+  const startVoiceRecording = async () => {
+    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+      toast.error('Voice notes are not supported on this device/browser.');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      const chunks: BlobPart[] = [];
+
+      recorder.ondataavailable = (event) => {
+        if (event.data && event.data.size > 0) chunks.push(event.data);
+      };
+
+      recorder.onstop = async () => {
+        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+        const file = new File([blob], `voice-note-${Date.now()}.webm`, { type: blob.type || 'audio/webm' });
+        const dataUrl = await fileToDataUrl(file);
+        const durationSeconds = Math.max(1, Math.floor((Date.now() - voiceStartAtRef.current) / 1000));
+        await sendCommunityMessage({
+          messageType: 'voice',
+          attachment: {
+            name: file.name,
+            mimeType: file.type || 'audio/webm',
+            size: file.size,
+            dataUrl,
+          },
+          voiceMeta: { durationSeconds },
+        });
+
+        stream.getTracks().forEach((track) => track.stop());
+        voiceRecorderRef.current = null;
+        voiceStreamRef.current = null;
+        setIsRecordingVoice(false);
+      };
+
+      voiceRecorderRef.current = recorder;
+      voiceStreamRef.current = stream;
+      voiceStartAtRef.current = Date.now();
+      recorder.start();
+      setIsRecordingVoice(true);
+      toast.message('Recording voice note... tap Stop to send.');
+    } catch {
+      toast.error('Microphone permission denied or unavailable.');
+    }
+  };
+
+  const stopVoiceRecording = () => {
+    const recorder = voiceRecorderRef.current;
+    if (!recorder) return;
+    recorder.stop();
   };
 
   const reportConversation = async () => {
@@ -1683,10 +1920,102 @@ export function Community() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
+                <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-800">
+                  <span>{ENCRYPTION_LABEL}</span>
+                  {activeConnection ? (
+                    <div className="flex items-center gap-2">
+                      {activeConnection.blockedByOther ? <Badge variant="outline">Blocked by user</Badge> : null}
+                      {activeConnection.blockedByMe ? <Badge variant="outline">You blocked this user</Badge> : null}
+                    </div>
+                  ) : null}
+                </div>
+
+                {activeConnection ? (
+                  <div className="flex flex-wrap gap-2">
+                    <Button type="button" size="sm" variant="outline" onClick={() => void sendCallInvite('audio')} disabled={activeConnection.canMessage === false || isSendingMessage}>Audio Call</Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => void sendCallInvite('video')} disabled={activeConnection.canMessage === false || isSendingMessage}>Video Call</Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => messageFileInputRef.current?.click()} disabled={activeConnection.canMessage === false || isSendingMessage}>Attach File</Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        if (isRecordingVoice) {
+                          stopVoiceRecording();
+                        } else {
+                          void startVoiceRecording();
+                        }
+                      }}
+                      disabled={activeConnection.canMessage === false || isSendingMessage}
+                    >
+                      {isRecordingVoice ? 'Stop Voice' : 'Voice Note'}
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => void toggleBlockConnection()} disabled={isBlockingConnection || isSendingMessage}>
+                      {isBlockingConnection ? 'Updating...' : activeConnection.blockedByMe ? 'Unblock' : 'Block'}
+                    </Button>
+                    <Button type="button" size="sm" variant="outline" onClick={() => void unfriendConnection()} disabled={isUnfriendingConnection || isSendingMessage}>
+                      {isUnfriendingConnection ? 'Removing...' : 'Unfriend'}
+                    </Button>
+                    <input
+                      ref={messageFileInputRef}
+                      type="file"
+                      accept={CHAT_ATTACHMENT_ACCEPT}
+                      className="hidden"
+                      onChange={(e) => void onMessageFileSelected(e)}
+                    />
+                  </div>
+                ) : null}
+
+                {messageAttachment ? (
+                  <div className="rounded-md border bg-slate-50 px-3 py-2 text-xs">
+                    <p className="font-medium">Ready to send: {messageAttachment.name}</p>
+                    <p className="text-muted-foreground">{Math.max(1, Math.round(messageAttachment.size / 1024))} KB</p>
+                    <div className="mt-2 flex gap-2">
+                      <Button type="button" size="sm" onClick={() => void sendFileMessage()} disabled={!activeConnection || activeConnection.canMessage === false || isSendingMessage}>Send File</Button>
+                      <Button type="button" size="sm" variant="outline" onClick={() => setMessageAttachment(null)}>Remove</Button>
+                    </div>
+                  </div>
+                ) : null}
+
                 <div className="max-h-[330px] overflow-auto rounded-lg border p-3 space-y-2">
                   {messages.map((item) => (
                     <div key={item.id} className={`max-w-[85%] rounded-md p-2 text-sm ${item.senderUserId === user.id ? 'ml-auto bg-indigo-100 text-indigo-900' : 'bg-slate-100'}`}>
-                      <p>{item.text}</p>
+                      {item.messageType === 'call-invite' && item.callInvite?.roomUrl ? (
+                        <div className="space-y-1">
+                          <p>{item.text || `${item.callInvite.mode === 'video' ? 'Video' : 'Audio'} call invite`}</p>
+                          <a href={item.callInvite.roomUrl} target="_blank" rel="noreferrer" className="text-xs underline underline-offset-2">
+                            Join {item.callInvite.mode === 'video' ? 'Video' : 'Audio'} Call
+                          </a>
+                        </div>
+                      ) : null}
+                      {item.messageType === 'file' && item.attachment ? (
+                        <div className="space-y-1">
+                          <p>{item.text || 'Shared a file'}</p>
+                          <a href={item.attachment.dataUrl} download={item.attachment.name} className="text-xs underline underline-offset-2">{item.attachment.name}</a>
+                        </div>
+                      ) : null}
+                      {item.messageType === 'voice' && item.attachment ? (
+                        <div className="space-y-1">
+                          <p>{item.text || `Voice note (${item.voiceMeta?.durationSeconds || 0}s)`}</p>
+                          <audio controls src={item.attachment.dataUrl} className="w-full" />
+                        </div>
+                      ) : null}
+                      {(!item.messageType || item.messageType === 'text') && item.text ? <p>{item.text}</p> : null}
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {QUICK_CHAT_EMOJIS.map((emoji) => (
+                          <button
+                            key={`${item.id}-${emoji}`}
+                            type="button"
+                            className="rounded border bg-white/70 px-1.5 py-0.5 text-[11px]"
+                            onClick={() => void toggleMessageReaction(item.id, emoji)}
+                          >
+                            {emoji}
+                          </button>
+                        ))}
+                      </div>
+                      {Array.isArray(item.reactions) && item.reactions.length ? (
+                        <p className="mt-1 text-[11px] text-muted-foreground">{item.reactions.map((reaction) => reaction.emoji).join(' ')}</p>
+                      ) : null}
                       <p className="mt-1 text-[11px] text-muted-foreground">{item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}</p>
                     </div>
                   ))}
@@ -1703,9 +2032,9 @@ export function Community() {
                     value={messageInput}
                     onChange={(e) => setMessageInput(e.target.value)}
                     placeholder={activeConnection ? 'Type a respectful message...' : 'Select connection first'}
-                    disabled={!activeConnection || isSendingMessage}
+                    disabled={!activeConnection || isSendingMessage || activeConnection.canMessage === false}
                   />
-                  <Button type="submit" disabled={!activeConnection || isSendingMessage || !messageInput.trim()}>
+                  <Button type="submit" disabled={!activeConnection || isSendingMessage || !messageInput.trim() || activeConnection.canMessage === false}>
                     {isSendingMessage ? 'Sending...' : 'Send'}
                   </Button>
                 </form>

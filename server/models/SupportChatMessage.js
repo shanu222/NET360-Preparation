@@ -5,7 +5,30 @@ const supportChatMessageSchema = new mongoose.Schema(
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     senderRole: { type: String, enum: ['user', 'admin'], required: true, index: true },
     senderUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
-    text: { type: String, required: true, trim: true },
+    messageType: {
+      type: String,
+      enum: ['text', 'file'],
+      default: 'text',
+      index: true,
+    },
+    text: { type: String, default: '', trim: true },
+    attachment: {
+      name: { type: String, default: '' },
+      mimeType: { type: String, default: '' },
+      size: { type: Number, default: 0 },
+      dataUrl: { type: String, default: '' },
+    },
+    reactions: {
+      type: [
+        {
+          senderRole: { type: String, enum: ['user', 'admin'], required: true },
+          senderUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+          emoji: { type: String, required: true, trim: true },
+          reactedAt: { type: Date, default: Date.now },
+        },
+      ],
+      default: [],
+    },
     readByUser: { type: Boolean, default: false },
     readByAdmin: { type: Boolean, default: false },
   },

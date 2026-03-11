@@ -82,6 +82,10 @@ const userSchema = new mongoose.Schema(
     refreshTokens: { type: [refreshTokenSchema], default: [] },
     resetPasswordTokenHash: { type: String, default: null },
     resetPasswordExpiresAt: { type: Date, default: null },
+    securityQuestion: { type: String, default: '' },
+    securityAnswerHash: { type: String, default: '' },
+    securityChallengeTokenHash: { type: String, default: null },
+    securityChallengeExpiresAt: { type: Date, default: null },
   },
   { timestamps: true },
 );

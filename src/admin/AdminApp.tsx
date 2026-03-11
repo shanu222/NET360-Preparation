@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { apiRequest, buildApiUrl } from '../app/lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
@@ -32,6 +32,9 @@ import {
 
 const FLAT_TOPIC_SUBJECTS = new Set(['quantitative-mathematics', 'design-aptitude']);
 const ADMIN_SUPPORT_DESKTOP_ALERTS_KEY = 'net360-support-desktop-alerts-admin';
+const ADMIN_SUPPORT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
+const ADMIN_SUPPORT_ATTACHMENT_ACCEPT = '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp,.svg';
+const ADMIN_SUPPORT_REACTIONS = ['😀', '🙏', '👍', '❤️', '✅'];
 
 type SelectedHierarchy =
   | {
@@ -329,7 +332,15 @@ interface AdminSupportMessage {
   id: string;
   userId: string;
   senderRole: 'user' | 'admin';
+  messageType?: 'text' | 'file' | string;
   text: string;
+  attachment?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
+  reactions?: Array<{ emoji: string }>;
   createdAt: string | null;
 }
 
@@ -758,6 +769,7 @@ export default function AdminApp() {
   const [activeSupportUser, setActiveSupportUser] = useState<AdminSupportThreadPayload['user'] | null>(null);
   const [supportMessages, setSupportMessages] = useState<AdminSupportMessage[]>([]);
   const [supportReplyText, setSupportReplyText] = useState('');
+  const [supportReplyAttachment, setSupportReplyAttachment] = useState<AdminSupportMessage['attachment']>(null);
   const [supportConversationQuery, setSupportConversationQuery] = useState('');
   const [adminDesktopAlertsEnabled, setAdminDesktopAlertsEnabled] = useState<boolean>(() => {
     try {
@@ -768,6 +780,7 @@ export default function AdminApp() {
   });
   const [isSupportThreadLoading, setIsSupportThreadLoading] = useState(false);
   const [isSendingSupportReply, setIsSendingSupportReply] = useState(false);
+  const supportReplyFileInputRef = useRef<HTMLInputElement | null>(null);
   const didHydrateSupportRef = useRef(false);
   const lastUnreadTotalRef = useRef(0);
   const lastUserMessageInThreadRef = useRef('');
@@ -1756,14 +1769,22 @@ export default function AdminApp() {
   };
 
   const sendSupportReply = async () => {
-    if (!authToken || !selectedSupportUserId || !supportReplyText.trim()) return;
+    if (!authToken || !selectedSupportUserId) return;
+    const text = supportReplyText.trim();
+    const messageType = supportReplyAttachment ? 'file' : 'text';
+    if (messageType === 'text' && !text) return;
     try {
       setIsSendingSupportReply(true);
       await apiRequest(`/api/admin/support-chat/messages/${selectedSupportUserId}`, {
         method: 'POST',
-        body: JSON.stringify({ text: supportReplyText.trim() }),
+        body: JSON.stringify({
+          messageType,
+          text,
+          attachment: supportReplyAttachment,
+        }),
       }, authToken);
       setSupportReplyText('');
+      setSupportReplyAttachment(null);
       await Promise.all([
         loadSupportThread(selectedSupportUserId),
         apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations', {}, authToken)
@@ -1774,6 +1795,45 @@ export default function AdminApp() {
       toast.error(error instanceof Error ? error.message : 'Could not send support reply.');
     } finally {
       setIsSendingSupportReply(false);
+    }
+  };
+
+  const onSupportReplyFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const selected = event.target.files?.[0] || null;
+    if (!selected) return;
+
+    if (selected.size > ADMIN_SUPPORT_ATTACHMENT_MAX_BYTES) {
+      toast.error('File exceeds 8MB size limit.');
+      event.target.value = '';
+      return;
+    }
+
+    try {
+      const dataUrl = await fileToDataUrl(selected);
+      setSupportReplyAttachment({
+        name: selected.name,
+        mimeType: String(selected.type || 'application/octet-stream').toLowerCase(),
+        size: selected.size,
+        dataUrl,
+      });
+      toast.success('File attached to admin reply.');
+    } catch {
+      toast.error('Could not read selected file.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const reactToSupportMessage = async (messageId: string, emoji: string) => {
+    if (!authToken || !selectedSupportUserId) return;
+    try {
+      await apiRequest(`/api/admin/support-chat/messages/${selectedSupportUserId}/${messageId}/reactions`, {
+        method: 'POST',
+        body: JSON.stringify({ emoji }),
+      }, authToken);
+      await loadSupportThread(selectedSupportUserId, authToken);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update reaction.');
     }
   };
 
@@ -3084,6 +3144,10 @@ export default function AdminApp() {
                     </p>
                   </div>
 
+                  <div className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-[11px] text-emerald-800">
+                    Secure chat channel active. Messages and files are protected in transit.
+                  </div>
+
                   <div className="max-h-[420px] space-y-2 overflow-auto rounded-lg border bg-slate-50 p-3">
                     {isSupportThreadLoading ? <p className="text-xs text-muted-foreground">Loading thread...</p> : null}
                     {!supportMessages.length ? <p className="text-xs text-muted-foreground">No messages in this thread.</p> : null}
@@ -3096,7 +3160,33 @@ export default function AdminApp() {
                             : 'mr-auto border bg-white text-slate-700'
                         }`}
                       >
-                        <p>{item.text}</p>
+                        {item.messageType === 'file' && item.attachment ? (
+                          <div className="space-y-1">
+                            <p>{item.text || 'Shared a file'}</p>
+                            <a href={item.attachment.dataUrl} download={item.attachment.name} className="text-xs underline underline-offset-2">
+                              {item.attachment.name}
+                            </a>
+                          </div>
+                        ) : (
+                          <p>{item.text}</p>
+                        )}
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {ADMIN_SUPPORT_REACTIONS.map((emoji) => (
+                            <button
+                              key={`${item.id}-${emoji}`}
+                              type="button"
+                              className="rounded border bg-white/80 px-1.5 py-0.5 text-[11px] text-slate-800"
+                              onClick={() => void reactToSupportMessage(item.id, emoji)}
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                        {Array.isArray(item.reactions) && item.reactions.length ? (
+                          <p className={`mt-1 text-[10px] ${item.senderRole === 'admin' ? 'text-indigo-100' : 'text-slate-500'}`}>
+                            {item.reactions.map((reaction) => reaction.emoji).join(' ')}
+                          </p>
+                        ) : null}
                         <p className={`mt-1 text-[10px] ${item.senderRole === 'admin' ? 'text-indigo-100' : 'text-slate-400'}`}>
                           {item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}
                         </p>
@@ -3118,14 +3208,34 @@ export default function AdminApp() {
                         }
                       }}
                     />
-                    <Button
-                      className="h-10"
-                      onClick={() => void sendSupportReply()}
-                      disabled={isSendingSupportReply || !selectedSupportUserId || !supportReplyText.trim()}
-                    >
-                      {isSendingSupportReply ? 'Sending...' : 'Send'}
-                    </Button>
+                    <div className="flex flex-col gap-2">
+                      <Button type="button" variant="outline" className="h-10" onClick={() => supportReplyFileInputRef.current?.click()} disabled={!selectedSupportUserId || isSendingSupportReply}>
+                        File
+                      </Button>
+                      <input
+                        ref={supportReplyFileInputRef}
+                        type="file"
+                        accept={ADMIN_SUPPORT_ATTACHMENT_ACCEPT}
+                        className="hidden"
+                        onChange={(e) => void onSupportReplyFileSelected(e)}
+                      />
+                      <Button
+                        className="h-10"
+                        onClick={() => void sendSupportReply()}
+                        disabled={isSendingSupportReply || !selectedSupportUserId || (!supportReplyText.trim() && !supportReplyAttachment)}
+                      >
+                        {isSendingSupportReply ? 'Sending...' : 'Send'}
+                      </Button>
+                    </div>
                   </div>
+                  {supportReplyAttachment ? (
+                    <div className="rounded-md border bg-slate-50 px-3 py-2 text-xs">
+                      <p className="font-medium">Attached: {supportReplyAttachment.name}</p>
+                      <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => setSupportReplyAttachment(null)}>
+                        Remove File
+                      </Button>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </CardContent>

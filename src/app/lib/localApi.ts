@@ -62,6 +62,10 @@ interface LocalUser {
   refreshTokens: string[];
   resetPasswordToken: string | null;
   resetPasswordExpiresAt: string | null;
+  securityQuestion: string;
+  securityAnswerHash: string;
+  securityChallengeToken: string | null;
+  securityChallengeExpiresAt: string | null;
 }
 
 interface LocalSubscription {
@@ -336,14 +340,27 @@ interface LocalCommunityConnection {
   participantA: string;
   participantB: string;
   participantKey: string;
+  blockedByUserIds: string[];
   createdAt: string;
+}
+
+interface LocalMessageAttachment {
+  name: string;
+  mimeType: string;
+  size: number;
+  dataUrl: string;
 }
 
 interface LocalCommunityMessage {
   id: string;
   connectionId: string;
   senderUserId: string;
+  messageType: 'text' | 'file' | 'voice' | 'call-invite';
   text: string;
+  attachment: LocalMessageAttachment | null;
+  voiceMeta: { durationSeconds: number } | null;
+  callInvite: { mode: 'audio' | 'video'; roomUrl: string; roomCode: string } | null;
+  reactions: Array<{ userId: string; emoji: string; reactedAt: string }>;
   readByUserIds: string[];
   createdAt: string;
 }
@@ -381,7 +398,10 @@ interface LocalSupportChatMessage {
   userId: string;
   senderRole: 'user' | 'admin';
   senderUserId: string;
+  messageType: 'text' | 'file';
   text: string;
+  attachment: LocalMessageAttachment | null;
+  reactions: Array<{ senderRole: 'user' | 'admin'; senderUserId: string; emoji: string; reactedAt: string }>;
   readByUser: boolean;
   readByAdmin: boolean;
   createdAt: string;
@@ -549,6 +569,24 @@ function normalizeContactMethod(value: unknown): 'whatsapp' | '' {
 
 function normalizeEmail(value: unknown) {
   return String(value || '').trim().toLowerCase();
+}
+
+function normalizeSecurityAnswer(value: unknown) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .slice(0, 180);
+}
+
+function hashLocalSecurityAnswer(value: unknown) {
+  const normalized = normalizeSecurityAnswer(value);
+  let hash = 5381;
+  for (let i = 0; i < normalized.length; i += 1) {
+    hash = ((hash << 5) + hash) + normalized.charCodeAt(i);
+    hash |= 0;
+  }
+  return `sec-${Math.abs(hash)}`;
 }
 
 function isValidEmail(value: string) {
@@ -1013,6 +1051,10 @@ function readDb(): LocalDb {
     return {
       users: (parsed.users || []).map((item) => ({
         ...item,
+        securityQuestion: String((item as any).securityQuestion || ''),
+        securityAnswerHash: String((item as any).securityAnswerHash || ''),
+        securityChallengeToken: String((item as any).securityChallengeToken || '') || null,
+        securityChallengeExpiresAt: String((item as any).securityChallengeExpiresAt || '') || null,
         subscription: {
           ...defaultSubscription(),
           ...(item.subscription || {}),
@@ -1907,6 +1949,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const tokenCode = String(body.tokenCode || '').trim().toUpperCase();
     const firstName = String(body.firstName || '').trim();
     const lastName = String(body.lastName || '').trim();
+    const securityQuestion = String(body.securityQuestion || '').trim();
+    const securityAnswer = normalizeSecurityAnswer(body.securityAnswer || '');
 
     if (!email || !password || !tokenCode) {
       throw new Error('Email, password, and token code are required.');
@@ -1916,6 +1960,12 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     }
     if (password.length < 8) {
       throw new Error('Password must be at least 8 characters.');
+    }
+    if (!securityQuestion || securityQuestion.length < 10) {
+      throw new Error('Security question is required and should be clear.');
+    }
+    if (!securityAnswer || securityAnswer.length < 3) {
+      throw new Error('Security answer is required.');
     }
     if (db.users.some((item) => item.email === email)) {
       throw new Error('Email is already registered.');
@@ -1964,6 +2014,10 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       refreshTokens: [],
       resetPasswordToken: null,
       resetPasswordExpiresAt: null,
+      securityQuestion,
+      securityAnswerHash: hashLocalSecurityAnswer(securityAnswer),
+      securityChallengeToken: null,
+      securityChallengeExpiresAt: null,
     };
 
     const now = new Date().toISOString();
@@ -2059,21 +2113,34 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
   if (url.pathname === '/api/auth/forgot-password' && method === 'POST') {
     const email = normalizeEmail(body.email || '');
     const mobileNumber = normalizeMobileNumber(body.mobileNumber || '');
-    if (!email || !mobileNumber) throw new Error('Registered email and mobile number are required.');
-    if (!isValidEmail(email)) throw new Error('Enter a valid email address.');
-    if (!isValidMobileNumber(mobileNumber)) throw new Error('Enter a valid mobile number.');
+    if (!email && !mobileNumber) throw new Error('Registered email or mobile number is required.');
+    if (email && !isValidEmail(email)) throw new Error('Enter a valid email address.');
+    if (mobileNumber && !isValidMobileNumber(mobileNumber)) throw new Error('Enter a valid mobile number.');
 
     const db = readDb();
-    const user = db.users.find((item) => normalizeEmail(item.email) === email);
-    const matchedBy: LocalPasswordRecoveryRequest['matchedBy'] = user && compactMobile(user.phone) === compactMobile(mobileNumber)
-      ? 'email'
-      : 'none';
+    let user = email
+      ? db.users.find((item) => normalizeEmail(item.email) === email)
+      : undefined;
+    let matchedBy: LocalPasswordRecoveryRequest['matchedBy'] = user ? 'email' : 'none';
 
-    if (!user || compactMobile(user.phone) !== compactMobile(mobileNumber)) {
+    if (!user && mobileNumber) {
+      user = db.users.find((item) => compactMobile(item.phone) === compactMobile(mobileNumber));
+      matchedBy = user ? 'mobile' : 'none';
+    }
+
+    if (user && email && mobileNumber && compactMobile(user.phone) !== compactMobile(mobileNumber)) {
+      user = undefined;
+      matchedBy = 'none';
+    }
+
+    const identifier = email || mobileNumber;
+    const normalizedIdentifier = email || compactMobile(mobileNumber);
+
+    if (!user || !user.securityQuestion || !user.securityAnswerHash) {
       const request: LocalPasswordRecoveryRequest = {
         id: `recovery-${Date.now()}-${Math.round(Math.random() * 10000)}`,
-        identifier: `${email} | ${mobileNumber}`,
-        normalizedIdentifier: `${email} | ${compactMobile(mobileNumber)}`,
+        identifier,
+        normalizedIdentifier,
         matchedBy: 'none',
         userId: null,
         userName: '',
@@ -2086,24 +2153,24 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       };
       db.passwordRecoveryRequests.unshift(request);
       writeDb(db);
-      return { message: 'No active account matched this email and mobile number.', request: serializePasswordRecoveryRequest(request) } as T;
+      return { message: 'No active account matched this identifier.', request: serializePasswordRecoveryRequest(request) } as T;
     }
 
-    user.resetPasswordToken = `local-reset-${Date.now()}`;
-    user.resetPasswordExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    user.securityChallengeToken = `local-challenge-${Date.now()}-${Math.round(Math.random() * 10000)}`;
+    user.securityChallengeExpiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
     const request: LocalPasswordRecoveryRequest = {
       id: `recovery-${Date.now()}-${Math.round(Math.random() * 10000)}`,
-      identifier: `${email} | ${mobileNumber}`,
-      normalizedIdentifier: `${email} | ${compactMobile(mobileNumber)}`,
+      identifier,
+      normalizedIdentifier,
       matchedBy,
       userId: user.id,
       userName: `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim(),
-      email,
+      email: normalizeEmail(user.email || ''),
       mobileNumber: normalizeMobileNumber(user.phone || ''),
-      recoveryStatus: 'sent',
+      recoveryStatus: 'partial',
       dispatches: [],
-      tokenExpiresAt: user.resetPasswordExpiresAt,
+      tokenExpiresAt: user.securityChallengeExpiresAt,
       createdAt: new Date().toISOString(),
     };
 
@@ -2111,9 +2178,45 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     writeDb(db);
 
     return {
-      message: 'Verification successful. Use the generated reset token to set a new password.',
-      resetToken: user.resetPasswordToken,
+      message: 'Security question loaded. Answer it to continue.',
+      securityQuestion: user.securityQuestion,
+      challengeToken: user.securityChallengeToken,
       request: serializePasswordRecoveryRequest(request),
+    } as T;
+  }
+
+  if (url.pathname === '/api/auth/forgot-password/verify-security-answer' && method === 'POST') {
+    const challengeToken = String(body.challengeToken || '').trim();
+    const securityAnswer = normalizeSecurityAnswer(body.securityAnswer || '');
+
+    if (!challengeToken || !securityAnswer) {
+      throw new Error('Challenge token and security answer are required.');
+    }
+
+    const db = readDb();
+    const user = db.users.find((item) => (
+      item.securityChallengeToken === challengeToken
+      && item.securityChallengeExpiresAt
+      && new Date(item.securityChallengeExpiresAt).getTime() > Date.now()
+    ));
+
+    if (!user) {
+      throw new Error('Invalid or expired recovery verification session.');
+    }
+
+    if (hashLocalSecurityAnswer(securityAnswer) !== String(user.securityAnswerHash || '')) {
+      throw new Error('Security answer is incorrect.');
+    }
+
+    user.resetPasswordToken = `local-reset-${Date.now()}-${Math.round(Math.random() * 10000)}`;
+    user.resetPasswordExpiresAt = new Date(Date.now() + 30 * 60 * 1000).toISOString();
+    user.securityChallengeToken = null;
+    user.securityChallengeExpiresAt = null;
+    writeDb(db);
+
+    return {
+      message: 'Security verification successful. Use the generated reset token to set a new password.',
+      resetToken: user.resetPasswordToken,
     } as T;
   }
 
@@ -2143,6 +2246,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     user.password = newPassword;
     user.resetPasswordToken = null;
     user.resetPasswordExpiresAt = null;
+    user.securityChallengeToken = null;
+    user.securityChallengeExpiresAt = null;
     user.refreshTokens = [];
     writeDb(db);
     return { message: 'Password reset successful.' } as T;
@@ -2846,6 +2951,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
           participantA: a,
           participantB: b,
           participantKey: key,
+          blockedByUserIds: [],
           createdAt: new Date().toISOString(),
         });
       }
@@ -2870,12 +2976,18 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         const unreadCount = db.communityMessages.filter((msg) => (
           msg.connectionId === item.id && msg.senderUserId !== user.id && !msg.readByUserIds.includes(user.id)
         )).length;
+        const blockedByUserIds = Array.isArray(item.blockedByUserIds) ? item.blockedByUserIds : [];
+        const blockedByMe = blockedByUserIds.includes(user.id);
+        const blockedByOther = blockedByUserIds.includes(otherUserId);
 
         return {
           connectionId: item.id,
           connectedAt: item.createdAt,
           user: serializeLocalCommunityUser(otherUser, profile),
           unreadCount,
+          blockedByMe,
+          blockedByOther,
+          canMessage: !(blockedByMe || blockedByOther),
         };
       })
       .filter(Boolean);
@@ -2904,7 +3016,12 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         id: item.id,
         connectionId: item.connectionId,
         senderUserId: item.senderUserId,
+        messageType: item.messageType || 'text',
         text: item.text,
+        attachment: item.attachment || null,
+        voiceMeta: item.voiceMeta || null,
+        callInvite: item.callInvite || null,
+        reactions: item.reactions || [],
         createdAt: item.createdAt,
       }));
 
@@ -2916,17 +3033,47 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const { db, user } = requireAuth(token);
     const connectionId = url.pathname.split('/')[4];
     const text = String(body.text || '').trim();
-    if (!text) throw new Error('Message text is required.');
+    const messageType = String(body.messageType || 'text').trim().toLowerCase() as LocalCommunityMessage['messageType'];
+    if (!['text', 'file', 'voice', 'call-invite'].includes(messageType)) throw new Error('Unsupported message type.');
 
     const connection = db.communityConnections.find((item) => item.id === connectionId);
     if (!connection) throw new Error('Connection not found.');
     if (![connection.participantA, connection.participantB].includes(user.id)) throw new Error('Access denied for this chat.');
 
+    const otherUserId = connection.participantA === user.id ? connection.participantB : connection.participantA;
+    const blockedByUserIds = Array.isArray(connection.blockedByUserIds) ? connection.blockedByUserIds : [];
+    if (blockedByUserIds.includes(user.id) || blockedByUserIds.includes(otherUserId)) {
+      throw new Error('Messaging is blocked for this connection until unblocked.');
+    }
+
+    const attachment = body.attachment ? {
+      name: String(body.attachment.name || '').trim(),
+      mimeType: String(body.attachment.mimeType || '').trim().toLowerCase(),
+      size: Number(body.attachment.size || 0),
+      dataUrl: String(body.attachment.dataUrl || '').trim(),
+    } : null;
+
+    if (messageType === 'text' && !text) throw new Error('Message text is required.');
+    if (messageType === 'file' && !attachment) throw new Error('Attachment is required for file message.');
+    if (messageType === 'voice' && (!attachment || !attachment.mimeType.startsWith('audio/'))) throw new Error('Voice note must be an audio file.');
+    if (messageType === 'call-invite' && !String(body.callInvite?.roomUrl || '').trim()) throw new Error('Call invite payload is required.');
+
     const created: LocalCommunityMessage = {
       id: `message-${Date.now()}-${Math.round(Math.random() * 10000)}`,
       connectionId,
       senderUserId: user.id,
+      messageType,
       text,
+      attachment,
+      voiceMeta: messageType === 'voice' ? { durationSeconds: Math.max(0, Number(body.voiceMeta?.durationSeconds || 0)) } : null,
+      callInvite: messageType === 'call-invite'
+        ? {
+          mode: String(body.callInvite?.mode || 'audio').toLowerCase() === 'video' ? 'video' : 'audio',
+          roomUrl: String(body.callInvite?.roomUrl || '').trim(),
+          roomCode: String(body.callInvite?.roomCode || '').trim(),
+        }
+        : null,
+      reactions: [],
       readByUserIds: [user.id],
       createdAt: new Date().toISOString(),
     };
@@ -2937,10 +3084,74 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         id: created.id,
         connectionId: created.connectionId,
         senderUserId: created.senderUserId,
+        messageType: created.messageType,
         text: created.text,
+        attachment: created.attachment,
+        voiceMeta: created.voiceMeta,
+        callInvite: created.callInvite,
+        reactions: created.reactions,
         createdAt: created.createdAt,
       },
     } as T;
+  }
+
+  if (/^\/api\/community\/messages\/[^/]+\/reactions$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const messageId = url.pathname.split('/')[4];
+    const emoji = String(body.emoji || '').trim();
+    if (!emoji) throw new Error('Emoji is required.');
+
+    const message = db.communityMessages.find((item) => item.id === messageId);
+    if (!message) throw new Error('Message not found.');
+    const connection = db.communityConnections.find((item) => item.id === message.connectionId);
+    if (!connection || ![connection.participantA, connection.participantB].includes(user.id)) {
+      throw new Error('Access denied for this chat.');
+    }
+
+    const reactions = Array.isArray(message.reactions) ? message.reactions : [];
+    const idx = reactions.findIndex((item) => item.userId === user.id);
+    if (idx >= 0 && reactions[idx].emoji === emoji) {
+      reactions.splice(idx, 1);
+    } else if (idx >= 0) {
+      reactions[idx].emoji = emoji;
+      reactions[idx].reactedAt = new Date().toISOString();
+    } else {
+      reactions.push({ userId: user.id, emoji, reactedAt: new Date().toISOString() });
+    }
+    message.reactions = reactions;
+    writeDb(db);
+    return { message } as T;
+  }
+
+  if (/^\/api\/community\/connections\/[^/]+\/block$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const connectionId = url.pathname.split('/')[4];
+    const blocked = Boolean(body.blocked);
+    const connection = db.communityConnections.find((item) => item.id === connectionId);
+    if (!connection) throw new Error('Connection not found.');
+    if (![connection.participantA, connection.participantB].includes(user.id)) throw new Error('Access denied for this connection.');
+
+    connection.blockedByUserIds = Array.isArray(connection.blockedByUserIds) ? connection.blockedByUserIds : [];
+    if (blocked) {
+      if (!connection.blockedByUserIds.includes(user.id)) connection.blockedByUserIds.push(user.id);
+    } else {
+      connection.blockedByUserIds = connection.blockedByUserIds.filter((id) => id !== user.id);
+    }
+    writeDb(db);
+    return { ok: true, blocked } as T;
+  }
+
+  if (/^\/api\/community\/connections\/[^/]+\/unfriend$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const connectionId = url.pathname.split('/')[4];
+    const connection = db.communityConnections.find((item) => item.id === connectionId);
+    if (!connection) throw new Error('Connection not found.');
+    if (![connection.participantA, connection.participantB].includes(user.id)) throw new Error('Access denied for this connection.');
+
+    db.communityMessages = db.communityMessages.filter((item) => item.connectionId !== connectionId);
+    db.communityConnections = db.communityConnections.filter((item) => item.id !== connectionId);
+    writeDb(db);
+    return { ok: true } as T;
   }
 
   if (url.pathname === '/api/community/report' && method === 'POST') {
@@ -3082,7 +3293,10 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         id: item.id,
         userId: item.userId,
         senderRole: item.senderRole,
+        messageType: item.messageType || 'text',
         text: item.text,
+        attachment: item.attachment || null,
+        reactions: item.reactions || [],
         createdAt: item.createdAt,
       }));
 
@@ -3093,15 +3307,28 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
   if (url.pathname === '/api/support-chat/messages' && method === 'POST') {
     const { db, user } = requireAuth(token);
     const text = String(body.text || '').trim();
-    if (!text) throw new Error('Message text is required.');
+    const messageType = String(body.messageType || 'text').trim().toLowerCase() as LocalSupportChatMessage['messageType'];
+    if (!['text', 'file'].includes(messageType)) throw new Error('Support chat only allows text and file messages.');
+    if (messageType === 'text' && !text) throw new Error('Message text is required.');
     if (text.length > 1500) throw new Error('Message is too long.');
+
+    const attachment = body.attachment ? {
+      name: String(body.attachment.name || '').trim(),
+      mimeType: String(body.attachment.mimeType || '').trim().toLowerCase(),
+      size: Number(body.attachment.size || 0),
+      dataUrl: String(body.attachment.dataUrl || '').trim(),
+    } : null;
+    if (messageType === 'file' && !attachment) throw new Error('Attachment is required for file message.');
 
     const created: LocalSupportChatMessage = {
       id: `support-msg-${Date.now()}-${Math.round(Math.random() * 10000)}`,
       userId: user.id,
       senderRole: 'user',
       senderUserId: user.id,
+      messageType,
       text,
+      attachment,
+      reactions: [],
       readByUser: true,
       readByAdmin: false,
       createdAt: new Date().toISOString(),
@@ -3114,10 +3341,37 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         id: created.id,
         userId: created.userId,
         senderRole: created.senderRole,
+        messageType: created.messageType,
         text: created.text,
+        attachment: created.attachment,
+        reactions: created.reactions,
         createdAt: created.createdAt,
       },
     } as T;
+  }
+
+  if (/^\/api\/support-chat\/messages\/[^/]+\/reactions$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAuth(token);
+    const messageId = url.pathname.split('/')[4];
+    const emoji = String(body.emoji || '').trim();
+    if (!emoji) throw new Error('Emoji is required.');
+
+    const message = db.supportChatMessages.find((item) => item.id === messageId && item.userId === user.id);
+    if (!message) throw new Error('Message not found.');
+
+    const reactions = Array.isArray(message.reactions) ? message.reactions : [];
+    const idx = reactions.findIndex((item) => item.senderRole === 'user' && item.senderUserId === user.id);
+    if (idx >= 0 && reactions[idx].emoji === emoji) {
+      reactions.splice(idx, 1);
+    } else if (idx >= 0) {
+      reactions[idx].emoji = emoji;
+      reactions[idx].reactedAt = new Date().toISOString();
+    } else {
+      reactions.push({ senderRole: 'user', senderUserId: user.id, emoji, reactedAt: new Date().toISOString() });
+    }
+    message.reactions = reactions;
+    writeDb(db);
+    return { message } as T;
   }
 
   if (url.pathname === '/api/admin/support-chat/conversations' && method === 'GET') {
@@ -3181,7 +3435,10 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         id: item.id,
         userId: item.userId,
         senderRole: item.senderRole,
+        messageType: item.messageType || 'text',
         text: item.text,
+        attachment: item.attachment || null,
+        reactions: item.reactions || [],
         createdAt: item.createdAt,
       }));
 
@@ -3201,16 +3458,29 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const { db, user } = requireAdmin(token);
     const userId = url.pathname.split('/')[5];
     const text = String(body.text || '').trim();
+    const messageType = String(body.messageType || 'text').trim().toLowerCase() as LocalSupportChatMessage['messageType'];
     if (!db.users.some((item) => item.id === userId)) throw new Error('User not found.');
-    if (!text) throw new Error('Message text is required.');
+    if (!['text', 'file'].includes(messageType)) throw new Error('Support chat only allows text and file messages.');
+    if (messageType === 'text' && !text) throw new Error('Message text is required.');
     if (text.length > 1500) throw new Error('Message is too long.');
+
+    const attachment = body.attachment ? {
+      name: String(body.attachment.name || '').trim(),
+      mimeType: String(body.attachment.mimeType || '').trim().toLowerCase(),
+      size: Number(body.attachment.size || 0),
+      dataUrl: String(body.attachment.dataUrl || '').trim(),
+    } : null;
+    if (messageType === 'file' && !attachment) throw new Error('Attachment is required for file message.');
 
     const created: LocalSupportChatMessage = {
       id: `support-msg-${Date.now()}-${Math.round(Math.random() * 10000)}`,
       userId,
       senderRole: 'admin',
       senderUserId: user.id,
+      messageType,
       text,
+      attachment,
+      reactions: [],
       readByUser: false,
       readByAdmin: true,
       createdAt: new Date().toISOString(),
@@ -3223,10 +3493,38 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         id: created.id,
         userId: created.userId,
         senderRole: created.senderRole,
+        messageType: created.messageType,
         text: created.text,
+        attachment: created.attachment,
+        reactions: created.reactions,
         createdAt: created.createdAt,
       },
     } as T;
+  }
+
+  if (/^\/api\/admin\/support-chat\/messages\/[^/]+\/[^/]+\/reactions$/.test(url.pathname) && method === 'POST') {
+    const { db, user } = requireAdmin(token);
+    const userId = url.pathname.split('/')[5];
+    const messageId = url.pathname.split('/')[6];
+    const emoji = String(body.emoji || '').trim();
+    if (!emoji) throw new Error('Emoji is required.');
+
+    const message = db.supportChatMessages.find((item) => item.id === messageId && item.userId === userId);
+    if (!message) throw new Error('Message not found.');
+
+    const reactions = Array.isArray(message.reactions) ? message.reactions : [];
+    const idx = reactions.findIndex((item) => item.senderRole === 'admin' && item.senderUserId === user.id);
+    if (idx >= 0 && reactions[idx].emoji === emoji) {
+      reactions.splice(idx, 1);
+    } else if (idx >= 0) {
+      reactions[idx].emoji = emoji;
+      reactions[idx].reactedAt = new Date().toISOString();
+    } else {
+      reactions.push({ senderRole: 'admin', senderUserId: user.id, emoji, reactedAt: new Date().toISOString() });
+    }
+    message.reactions = reactions;
+    writeDb(db);
+    return { message } as T;
   }
 
   if (url.pathname === '/api/admin/community/reports' && method === 'GET') {

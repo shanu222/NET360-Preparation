@@ -44,6 +44,8 @@ interface AuthContextValue {
     tokenCode: string;
     firstName?: string;
     lastName?: string;
+    securityQuestion: string;
+    securityAnswer: string;
   }) => Promise<void>;
   logout: () => void;
 }
@@ -193,12 +195,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tokenCode,
     firstName = '',
     lastName = '',
+    securityQuestion,
+    securityAnswer,
   }) => {
     const payload = await apiRequest<{ token: string; refreshToken: string; user: AuthUser }>(
       '/api/auth/register-with-token',
       {
         method: 'POST',
-        body: JSON.stringify({ email, password, tokenCode, firstName, lastName, deviceId }),
+        body: JSON.stringify({ email, password, tokenCode, firstName, lastName, securityQuestion, securityAnswer, deviceId }),
       },
     );
 

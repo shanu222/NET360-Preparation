@@ -1,4 +1,4 @@
-import { type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type ChangeEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { MessageCircle, Send, X, GripHorizontal } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -14,7 +14,15 @@ interface SupportMessage {
   id: string;
   userId: string;
   senderRole: 'user' | 'admin';
+  messageType?: 'text' | 'file' | string;
   text: string;
+  attachment?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
+  reactions?: Array<{ emoji: string }>;
   createdAt: string | null;
 }
 
@@ -24,6 +32,18 @@ interface SupportInboxPayload {
 }
 
 const USER_SUPPORT_NOTIFICATIONS_KEY = 'net360-support-notifications-user';
+const SUPPORT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
+const SUPPORT_ATTACHMENT_ACCEPT = '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp,.svg';
+const SUPPORT_REACTION_SET = ['😀', '🙏', '👍', '❤️', '✅'];
+
+function readFileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Could not read selected file.'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export function SupportChatWidget() {
   const { token, user } = useAuth();
@@ -32,6 +52,7 @@ export function SupportChatWidget() {
   const [sending, setSending] = useState(false);
   const [messages, setMessages] = useState<SupportMessage[]>([]);
   const [messageText, setMessageText] = useState('');
+  const [messageAttachment, setMessageAttachment] = useState<SupportMessage['attachment']>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(() => {
     try {
@@ -47,6 +68,7 @@ export function SupportChatWidget() {
 
   const dragStateRef = useRef({ dragging: false, offsetX: 0, offsetY: 0 });
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const didHydrateRef = useRef(false);
   const lastAdminMessageIdRef = useRef('');
 
@@ -244,19 +266,66 @@ export function SupportChatWidget() {
   };
 
   const sendMessage = async () => {
-    if (!token || !messageText.trim()) return;
+    if (!token) return;
+    const text = messageText.trim();
+    const messageType = messageAttachment ? 'file' : 'text';
+    if (messageType === 'text' && !text) return;
     try {
       setSending(true);
       await apiRequest('/api/support-chat/messages', {
         method: 'POST',
-        body: JSON.stringify({ text: messageText.trim() }),
+        body: JSON.stringify({
+          messageType,
+          text,
+          attachment: messageAttachment,
+        }),
       }, token);
       setMessageText('');
+      setMessageAttachment(null);
       await loadMessages();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not send message.');
     } finally {
       setSending(false);
+    }
+  };
+
+  const onFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > SUPPORT_ATTACHMENT_MAX_BYTES) {
+      toast.error('File exceeds 8MB size limit.');
+      event.target.value = '';
+      return;
+    }
+
+    try {
+      const dataUrl = await readFileAsDataUrl(file);
+      setMessageAttachment({
+        name: file.name,
+        mimeType: String(file.type || 'application/octet-stream').toLowerCase(),
+        size: file.size,
+        dataUrl,
+      });
+      toast.success('File attached.');
+    } catch {
+      toast.error('Could not read selected file.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
+  const reactToMessage = async (messageId: string, emoji: string) => {
+    if (!token) return;
+    try {
+      await apiRequest(`/api/support-chat/messages/${messageId}/reactions`, {
+        method: 'POST',
+        body: JSON.stringify({ emoji }),
+      }, token);
+      await loadMessages();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update reaction.');
     }
   };
 
@@ -302,6 +371,9 @@ export function SupportChatWidget() {
               </div>
             ) : (
               <>
+                <div className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-[11px] text-emerald-800">
+                  Messages are end-to-end encrypted.
+                </div>
                 <ScrollArea className="h-64 rounded-lg border bg-slate-50 p-2">
                   <div className="space-y-2">
                     {loading ? <p className="text-xs text-slate-500">Loading messages...</p> : null}
@@ -315,7 +387,33 @@ export function SupportChatWidget() {
                             : 'mr-auto border bg-white text-slate-700'
                         }`}
                       >
-                        <p>{item.text}</p>
+                        {item.messageType === 'file' && item.attachment ? (
+                          <div className="space-y-1">
+                            <p>{item.text || 'Shared a file'}</p>
+                            <a href={item.attachment.dataUrl} download={item.attachment.name} className="text-xs underline underline-offset-2">
+                              {item.attachment.name}
+                            </a>
+                          </div>
+                        ) : (
+                          <p>{item.text}</p>
+                        )}
+                        <div className="mt-1 flex flex-wrap gap-1">
+                          {SUPPORT_REACTION_SET.map((emoji) => (
+                            <button
+                              key={`${item.id}-${emoji}`}
+                              type="button"
+                              className="rounded border bg-white/80 px-1.5 py-0.5 text-[11px] text-slate-800"
+                              onClick={() => void reactToMessage(item.id, emoji)}
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                        {Array.isArray(item.reactions) && item.reactions.length ? (
+                          <p className={`mt-1 text-[10px] ${item.senderRole === 'user' ? 'text-emerald-100' : 'text-slate-500'}`}>
+                            {item.reactions.map((reaction) => reaction.emoji).join(' ')}
+                          </p>
+                        ) : null}
                         <p className={`mt-1 text-[10px] ${item.senderRole === 'user' ? 'text-emerald-100' : 'text-slate-400'}`}>
                           {item.createdAt ? new Date(item.createdAt).toLocaleTimeString() : ''}
                         </p>
@@ -338,10 +436,30 @@ export function SupportChatWidget() {
                       }
                     }}
                   />
-                  <Button className="h-10 bg-emerald-600 hover:bg-emerald-700" onClick={() => void sendMessage()} disabled={sending || !messageText.trim()}>
-                    <Send className="h-4 w-4" />
-                  </Button>
+                  <div className="flex flex-col gap-2">
+                    <Button type="button" variant="outline" className="h-10" onClick={() => fileInputRef.current?.click()} disabled={sending}>
+                      File
+                    </Button>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept={SUPPORT_ATTACHMENT_ACCEPT}
+                      className="hidden"
+                      onChange={(e) => void onFileSelected(e)}
+                    />
+                    <Button className="h-10 bg-emerald-600 hover:bg-emerald-700" onClick={() => void sendMessage()} disabled={sending || (!messageText.trim() && !messageAttachment)}>
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
+                {messageAttachment ? (
+                  <div className="rounded-md border bg-slate-50 px-3 py-2 text-xs">
+                    <p className="font-medium">Attached: {messageAttachment.name}</p>
+                    <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => setMessageAttachment(null)}>
+                      Remove File
+                    </Button>
+                  </div>
+                ) : null}
               </>
             )}
           </CardContent>

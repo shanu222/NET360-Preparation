@@ -44,12 +44,17 @@ export function Profile({ onNavigate }: ProfileProps) {
       size: number;
       dataUrl: string;
     },
+    securityQuestion: '',
+    securityAnswer: '',
     tokenCode: '',
   });
-  const [forgotEmail, setForgotEmail] = useState('');
-  const [forgotMobileNumber, setForgotMobileNumber] = useState('');
+  const [forgotIdentifier, setForgotIdentifier] = useState('');
+  const [forgotSecurityQuestion, setForgotSecurityQuestion] = useState('');
+  const [forgotSecurityAnswer, setForgotSecurityAnswer] = useState('');
+  const [forgotChallengeToken, setForgotChallengeToken] = useState('');
   const [forgotToken, setForgotToken] = useState('');
   const [newPassword, setNewPassword] = useState('');
+  const [recoveryHelpMessage, setRecoveryHelpMessage] = useState('');
   const [forgotCooldownSeconds, setForgotCooldownSeconds] = useState(0);
   const [paymentProofReadProgress, setPaymentProofReadProgress] = useState(0);
   const [isReadingPaymentProof, setIsReadingPaymentProof] = useState(false);
@@ -170,6 +175,16 @@ export function Profile({ onNavigate }: ProfileProps) {
       }
 
       if (isRegisterMode) {
+        if (!authForm.securityQuestion.trim()) {
+          toast.error('Security question is required for account recovery.');
+          return;
+        }
+
+        if (!authForm.securityAnswer.trim()) {
+          toast.error('Security answer is required for account recovery.');
+          return;
+        }
+
         if (authForm.tokenCode && authForm.password) {
           await registerWithToken({
             email: authForm.email,
@@ -177,6 +192,8 @@ export function Profile({ onNavigate }: ProfileProps) {
             tokenCode: authForm.tokenCode,
             firstName: authForm.firstName,
             lastName: authForm.lastName,
+            securityQuestion: authForm.securityQuestion,
+            securityAnswer: authForm.securityAnswer,
           });
           toast.success('Signup completed successfully.');
         } else {
@@ -249,25 +266,31 @@ export function Profile({ onNavigate }: ProfileProps) {
       return;
     }
 
-    const email = forgotEmail.trim() || authForm.email.trim();
-    const mobileNumber = forgotMobileNumber.trim() || authForm.mobileNumber.trim();
+    const identifier = forgotIdentifier.trim() || authForm.email.trim() || authForm.mobileNumber.trim();
 
-    if (!email || !mobileNumber) {
-      toast.error('Enter your registered email and mobile number.');
+    if (!identifier) {
+      toast.error('Enter your registered email or mobile number.');
       return;
     }
 
     try {
-      const payload = await apiRequest<{ message: string; resetToken?: string }>('/api/auth/forgot-password', {
+      const isEmail = identifier.includes('@');
+      const payload = await apiRequest<{ message: string; securityQuestion?: string; challengeToken?: string }>('/api/auth/forgot-password', {
         method: 'POST',
-        body: JSON.stringify({ email, mobileNumber }),
+        body: JSON.stringify(isEmail ? { email: identifier } : { mobileNumber: identifier }),
       });
 
-      if (payload.resetToken) {
-        setForgotToken(payload.resetToken);
+      if (payload.securityQuestion && payload.challengeToken) {
+        setForgotSecurityQuestion(payload.securityQuestion);
+        setForgotChallengeToken(payload.challengeToken);
+        setForgotSecurityAnswer('');
+        setForgotToken('');
+        setRecoveryHelpMessage('');
+        toast.success('Security question loaded. Answer it to continue.');
+      } else {
+        toast.error(payload.message || 'No recovery question found for this identifier.');
       }
-      setForgotCooldownSeconds(60);
-      toast.success(payload.message || 'Recovery token generated successfully.');
+      setForgotCooldownSeconds(30);
     } catch (error) {
       const detailed = error as Error & { status?: number; retryAfterSeconds?: number };
       if (detailed.status === 429) {
@@ -277,6 +300,32 @@ export function Profile({ onNavigate }: ProfileProps) {
         return;
       }
       toast.error(error instanceof Error ? error.message : 'Could not request password reset.');
+    }
+  };
+
+  const handleVerifySecurityAnswer = async () => {
+    if (!forgotChallengeToken || !forgotSecurityAnswer.trim()) {
+      toast.error('Enter the security answer to continue.');
+      return;
+    }
+
+    try {
+      const payload = await apiRequest<{ message: string; resetToken?: string }>('/api/auth/forgot-password/verify-security-answer', {
+        method: 'POST',
+        body: JSON.stringify({ challengeToken: forgotChallengeToken, securityAnswer: forgotSecurityAnswer }),
+      });
+
+      if (!payload.resetToken) {
+        toast.error('Could not generate reset token from security verification.');
+        return;
+      }
+
+      setForgotToken(payload.resetToken);
+      setForgotSecurityAnswer('');
+      setRecoveryHelpMessage('');
+      toast.success(payload.message || 'Security verification successful.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Security verification failed.');
     }
   };
 
@@ -464,7 +513,7 @@ export function Profile({ onNavigate }: ProfileProps) {
               </CardTitle>
               <CardDescription className="text-slate-600">
                 {isRecoveryMode
-                  ? 'Enter your registered email and mobile number to generate a reset token instantly in-app.'
+                  ? 'Enter your registered email or mobile number, answer your security question, then reset your password.'
                   : isRegisterMode
                   ? 'Pay via Easypaisa/JazzCash/Bank Transfer, upload proof, then complete signup after admin approval and in-app code delivery.'
                   : 'Users can only stay logged in on one device at a time.'}
@@ -474,23 +523,12 @@ export function Profile({ onNavigate }: ProfileProps) {
               {isRecoveryMode ? (
                 <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
                   <div className="space-y-1">
-                    <Label htmlFor="forgot-email">Registered Email Address</Label>
+                    <Label htmlFor="forgot-identifier">Registered Email or Mobile Number</Label>
                     <Input
-                      id="forgot-email"
-                      type="email"
-                      value={forgotEmail}
-                      onChange={(e) => setForgotEmail(e.target.value)}
-                      placeholder="student@example.com"
-                      className="h-10 border-indigo-100"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="forgot-mobile">Registered Mobile Number</Label>
-                    <Input
-                      id="forgot-mobile"
-                      value={forgotMobileNumber}
-                      onChange={(e) => setForgotMobileNumber(e.target.value)}
-                      placeholder="+923001234567"
+                      id="forgot-identifier"
+                      value={forgotIdentifier}
+                      onChange={(e) => setForgotIdentifier(e.target.value)}
+                      placeholder="student@example.com or +923001234567"
                       className="h-10 border-indigo-100"
                     />
                   </div>
@@ -501,32 +539,65 @@ export function Profile({ onNavigate }: ProfileProps) {
                     disabled={forgotCooldownSeconds > 0}
                     onClick={() => void handleForgotPasswordRequest()}
                   >
-                    {forgotCooldownSeconds > 0 ? `Retry in ${forgotCooldownSeconds}s` : 'Generate Recovery Token'}
+                    {forgotCooldownSeconds > 0 ? `Retry in ${forgotCooldownSeconds}s` : 'Find Security Question'}
                   </Button>
-                  <div className="space-y-1">
-                    <Label htmlFor="reset-token">Reset Token</Label>
-                    <Input
-                      id="reset-token"
-                      value={forgotToken}
-                      onChange={(e) => setForgotToken(e.target.value)}
-                      placeholder="Paste reset token"
-                      className="h-10 border-indigo-100"
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="new-password">New Password</Label>
-                    <Input
-                      id="new-password"
-                      type="password"
-                      value={newPassword}
-                      onChange={(e) => setNewPassword(e.target.value)}
-                      placeholder="Minimum 8 characters"
-                      className="h-10 border-indigo-100"
-                    />
-                  </div>
-                  <Button className="h-10 w-full rounded-lg bg-indigo-600 !text-white hover:bg-indigo-700" onClick={() => void handleResetPassword()}>
-                    Set New Password
-                  </Button>
+
+                  {forgotSecurityQuestion ? (
+                    <div className="space-y-2 rounded-lg border border-indigo-200 bg-white p-3">
+                      <p className="text-xs font-semibold text-indigo-800">Security Question</p>
+                      <p className="text-sm text-slate-700">{forgotSecurityQuestion}</p>
+                      <div className="space-y-1">
+                        <Label htmlFor="security-answer">Security Answer</Label>
+                        <Input
+                          id="security-answer"
+                          value={forgotSecurityAnswer}
+                          onChange={(e) => setForgotSecurityAnswer(e.target.value)}
+                          placeholder="Enter your answer"
+                          className="h-10 border-indigo-100"
+                        />
+                      </div>
+                      <Button type="button" className="h-10 w-full rounded-lg bg-indigo-600 !text-white hover:bg-indigo-700" onClick={() => void handleVerifySecurityAnswer()}>
+                        Verify Security Answer
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        className="h-9 w-full text-indigo-700 hover:bg-indigo-50"
+                        onClick={() => setRecoveryHelpMessage('Please contact the admin for password recovery.')}
+                      >
+                        I don't remember the security question or answer
+                      </Button>
+                      {recoveryHelpMessage ? (
+                        <p className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-2 text-xs text-amber-900">{recoveryHelpMessage}</p>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  {forgotToken ? (
+                    <div className="space-y-1 rounded-lg border border-emerald-200 bg-emerald-50/60 p-3">
+                      <p className="text-xs text-emerald-800">Security verification passed. Set a new password below.</p>
+                    </div>
+                  ) : null}
+
+                  {forgotToken ? (
+                    <div className="space-y-1">
+                      <Label htmlFor="new-password">New Password</Label>
+                      <Input
+                        id="new-password"
+                        type="password"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Minimum 8 characters"
+                        className="h-10 border-indigo-100"
+                      />
+                    </div>
+                  ) : null}
+
+                  {forgotToken ? (
+                    <Button className="h-10 w-full rounded-lg bg-indigo-600 !text-white hover:bg-indigo-700" onClick={() => void handleResetPassword()}>
+                      Set New Password
+                    </Button>
+                  ) : null}
                 </div>
               ) : (
                 <>
@@ -602,6 +673,31 @@ export function Profile({ onNavigate }: ProfileProps) {
                   className="h-11 border-indigo-100"
                 />
               </div>
+
+              {isRegisterMode ? (
+                <div className="grid gap-2 md:grid-cols-2">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="security-question">Security Question</Label>
+                    <Input
+                      id="security-question"
+                      value={authForm.securityQuestion}
+                      onChange={(e) => setAuthForm((prev) => ({ ...prev, securityQuestion: e.target.value }))}
+                      placeholder="e.g. What is your childhood nickname?"
+                      className="h-11 border-indigo-100"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="security-answer">Security Answer</Label>
+                    <Input
+                      id="security-answer"
+                      value={authForm.securityAnswer}
+                      onChange={(e) => setAuthForm((prev) => ({ ...prev, securityAnswer: e.target.value }))}
+                      placeholder="Your answer"
+                      className="h-11 border-indigo-100"
+                    />
+                  </div>
+                </div>
+              ) : null}
 
               {isRegisterMode ? (
                 <>

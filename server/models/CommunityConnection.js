@@ -5,6 +5,7 @@ const communityConnectionSchema = new mongoose.Schema(
     participantA: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     participantB: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     participantKey: { type: String, required: true, unique: true, index: true },
+    blockedByUserIds: { type: [mongoose.Schema.Types.ObjectId], ref: 'User', default: [] },
   },
   { timestamps: true },
 );

@@ -456,12 +456,28 @@ function containsRegex(value, maxLen = 80) {
 
 const COMMUNITY_PROFILE_SELECT = 'userId username shareProfilePicture profilePictureUrl favoriteSubjects targetNetType subjectsNeedHelp preparationLevel studyTimePreference testScoreRange bio quizStats createdAt';
 const COMMUNITY_USER_SELECT = 'firstName lastName targetProgram city progress.averageScore progress.weakTopics role';
-const COMMUNITY_CONNECTION_SELECT = 'participantA participantB createdAt';
+const COMMUNITY_CONNECTION_SELECT = 'participantA participantB createdAt blockedByUserIds';
 const COMMUNITY_REQUEST_SELECT = 'fromUserId toUserId status createdAt';
-const COMMUNITY_MESSAGE_SELECT = 'connectionId senderUserId text createdAt readByUserIds';
+const COMMUNITY_MESSAGE_SELECT = 'connectionId senderUserId messageType text attachment voiceMeta callInvite reactions createdAt readByUserIds';
 const COMMUNITY_ROOM_POST_SELECT = 'roomId authorUserId type title text subject upvotes answers flagged createdAt';
 const MCQ_SELECT = 'subject part chapter section topic question questionImageUrl options answer tip difficulty source createdAt';
 const PRACTICE_BOARD_SELECT = 'subject difficulty questionText questionFile questionImageUrl solutionText solutionFile solutionImageUrl source createdAt';
+
+const CHAT_ATTACHMENT_MAX_FILE_BYTES = 8 * 1024 * 1024;
+const CHAT_ATTACHMENT_ALLOWED_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-powerpoint',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  'audio/webm',
+  'audio/mp4',
+  'audio/mpeg',
+  'audio/wav',
+]);
 
 const PRACTICE_BOARD_ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
@@ -700,6 +716,114 @@ function normalizeCommunityProfilePicture(dataUrlRaw) {
   }
 
   return dataUrl;
+}
+
+function isAllowedChatAttachmentMime(mimeTypeRaw) {
+  const mimeType = String(mimeTypeRaw || '').trim().toLowerCase();
+  if (!mimeType) return false;
+  if (mimeType.startsWith('image/')) return true;
+  return CHAT_ATTACHMENT_ALLOWED_MIME_TYPES.has(mimeType);
+}
+
+function normalizeChatAttachment(input, { allowAudio = false } = {}) {
+  if (input == null) return null;
+  if (typeof input !== 'object') return null;
+
+  const name = String(input.name || '').trim();
+  const dataUrl = String(input.dataUrl || '').trim();
+  if (!name && !dataUrl) return null;
+  if (!name || !dataUrl) {
+    throw new Error('Attachment must include both name and dataUrl.');
+  }
+
+  const parsed = parseDataUrl(dataUrl);
+  if (!parsed?.buffer) {
+    throw new Error(`Invalid file data for ${name}.`);
+  }
+
+  const mimeType = String(input.mimeType || parsed.mimeType || 'application/octet-stream').trim().toLowerCase();
+  if (!isAllowedChatAttachmentMime(mimeType)) {
+    throw new Error(`Unsupported attachment type for ${name}.`);
+  }
+  if (!allowAudio && mimeType.startsWith('audio/')) {
+    throw new Error('Audio attachments are only allowed for voice notes.');
+  }
+
+  const size = Number(input.size || parsed.buffer.length || 0);
+  if (!size || size > CHAT_ATTACHMENT_MAX_FILE_BYTES) {
+    throw new Error(`File ${name} exceeds the ${Math.floor(CHAT_ATTACHMENT_MAX_FILE_BYTES / (1024 * 1024))}MB limit.`);
+  }
+
+  return {
+    name,
+    mimeType,
+    size,
+    dataUrl,
+  };
+}
+
+function serializeMessageReactions(reactions) {
+  return Array.isArray(reactions)
+    ? reactions.map((item) => ({
+      userId: item?.userId ? String(item.userId) : '',
+      senderRole: String(item?.senderRole || ''),
+      senderUserId: item?.senderUserId ? String(item.senderUserId) : '',
+      emoji: String(item?.emoji || ''),
+      reactedAt: item?.reactedAt ? new Date(item.reactedAt).toISOString() : null,
+    }))
+    : [];
+}
+
+function serializeCommunityMessage(item) {
+  return {
+    id: String(item._id),
+    connectionId: String(item.connectionId),
+    senderUserId: String(item.senderUserId),
+    messageType: String(item.messageType || 'text'),
+    text: String(item.text || ''),
+    attachment: item.attachment
+      ? {
+        name: String(item.attachment.name || ''),
+        mimeType: String(item.attachment.mimeType || ''),
+        size: Number(item.attachment.size || 0),
+        dataUrl: String(item.attachment.dataUrl || ''),
+      }
+      : null,
+    voiceMeta: item.voiceMeta
+      ? {
+        durationSeconds: Number(item.voiceMeta.durationSeconds || 0),
+      }
+      : null,
+    callInvite: item.callInvite
+      ? {
+        mode: String(item.callInvite.mode || ''),
+        roomUrl: String(item.callInvite.roomUrl || ''),
+        roomCode: String(item.callInvite.roomCode || ''),
+      }
+      : null,
+    reactions: serializeMessageReactions(item.reactions),
+    createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+  };
+}
+
+function serializeSupportMessage(item) {
+  return {
+    id: String(item._id),
+    userId: String(item.userId),
+    senderRole: String(item.senderRole || 'user'),
+    messageType: String(item.messageType || 'text'),
+    text: String(item.text || ''),
+    attachment: item.attachment
+      ? {
+        name: String(item.attachment.name || ''),
+        mimeType: String(item.attachment.mimeType || ''),
+        size: Number(item.attachment.size || 0),
+        dataUrl: String(item.attachment.dataUrl || ''),
+      }
+      : null,
+    reactions: serializeMessageReactions(item.reactions),
+    createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+  };
 }
 
 function normalizePlainText(value) {
@@ -1215,6 +1339,18 @@ function sanitizePlainText(value, maxLen = 240) {
     .slice(0, maxLen);
 }
 
+function normalizeSecurityQuestion(value) {
+  return sanitizePlainText(value, 180);
+}
+
+function normalizeSecurityAnswer(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase()
+    .slice(0, 180);
+}
+
 function getClientIp(req) {
   return String(req.ip || req.socket?.remoteAddress || '').trim().slice(0, 120);
 }
@@ -1283,6 +1419,19 @@ async function findUserByMobileNumber(mobileNumber) {
     .select('email phone subscription')
     .lean();
 
+  return candidates.find((item) => compactMobile(item.phone) === targetCompact) || null;
+}
+
+async function findUserDocumentByMobileNumber(mobileNumber) {
+  const targetCompact = compactMobile(mobileNumber);
+  if (!targetCompact) return null;
+
+  const exact = await UserModel.findOne({ phone: mobileNumber });
+  if (exact && compactMobile(exact.phone) === targetCompact) {
+    return exact;
+  }
+
+  const candidates = await UserModel.find({ phone: { $exists: true, $ne: '' } });
   return candidates.find((item) => compactMobile(item.phone) === targetCompact) || null;
 }
 
@@ -4058,6 +4207,8 @@ app.post('/api/auth/register-with-token', async (req, res) => {
     const tokenCode = String(req.body?.tokenCode || '').trim().toUpperCase();
     const firstName = sanitizeHumanName(req.body?.firstName || '');
     const lastName = sanitizeHumanName(req.body?.lastName || '');
+    const securityQuestion = normalizeSecurityQuestion(req.body?.securityQuestion || '');
+    const securityAnswer = normalizeSecurityAnswer(req.body?.securityAnswer || '');
     const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
 
     if (!email || !password || !tokenCode) {
@@ -4072,6 +4223,16 @@ app.post('/api/auth/register-with-token', async (req, res) => {
 
     if (password.length < 8) {
       res.status(400).json({ error: 'Password must be at least 8 characters.' });
+      return;
+    }
+
+    if (!securityQuestion || securityQuestion.length < 10) {
+      res.status(400).json({ error: 'Security question is required and should be clear.' });
+      return;
+    }
+
+    if (!securityAnswer || securityAnswer.length < 3) {
+      res.status(400).json({ error: 'Security answer is required.' });
       return;
     }
 
@@ -4132,6 +4293,7 @@ app.post('/api/auth/register-with-token', async (req, res) => {
     }
 
     const passwordHash = await bcrypt.hash(password, 12);
+    const securityAnswerHash = await bcrypt.hash(securityAnswer, 12);
     const activeSession = {
       sessionId: crypto.randomUUID(),
       deviceId,
@@ -4146,6 +4308,8 @@ app.post('/api/auth/register-with-token', async (req, res) => {
       lastName,
       phone: mobileNumber,
       role: ADMIN_EMAILS.includes(email) ? 'admin' : 'student',
+      securityQuestion,
+      securityAnswerHash,
       activeSession,
       preferences: defaultPreferences(),
       progress: defaultProgress(),
@@ -4463,28 +4627,49 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   const email = normalizeEmail(req.body?.email || '');
   const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber || '');
 
-  if (!email || !mobileNumber) {
-    res.status(400).json({ error: 'Registered email and mobile number are required.' });
+  if (!email && !mobileNumber) {
+    res.status(400).json({ error: 'Registered email or mobile number is required.' });
     return;
   }
 
-  if (!isValidEmail(email)) {
+  if (email && !isValidEmail(email)) {
     res.status(400).json({ error: 'Enter a valid email address.' });
     return;
   }
 
-  if (!isValidMobileNumber(mobileNumber)) {
+  if (mobileNumber && !isValidMobileNumber(mobileNumber)) {
     res.status(400).json({ error: 'Enter a valid mobile number.' });
     return;
   }
 
-  const user = await UserModel.findOne({ email });
-  const matchedBy = user && compactMobile(user.phone) === compactMobile(mobileNumber) ? 'email' : 'none';
+  let user = null;
+  let matchedBy = 'none';
 
-  if (!user || compactMobile(user.phone) !== compactMobile(mobileNumber)) {
+  if (email) {
+    user = await UserModel.findOne({ email });
+    if (user) matchedBy = 'email';
+  }
+
+  if (!user && mobileNumber) {
+    user = await findUserDocumentByMobileNumber(mobileNumber);
+    if (user) matchedBy = 'mobile';
+  }
+
+  if (user && email && mobileNumber) {
+    const matchesMobile = compactMobile(user.phone) === compactMobile(mobileNumber);
+    if (!matchesMobile) {
+      user = null;
+      matchedBy = 'none';
+    }
+  }
+
+  const identifier = email || mobileNumber;
+  const normalizedIdentifier = email || compactMobile(mobileNumber);
+
+  if (!user || !String(user.securityQuestion || '').trim() || !String(user.securityAnswerHash || '').trim()) {
     await PasswordRecoveryRequestModel.create({
-      identifier: `${email} | ${mobileNumber}`,
-      normalizedIdentifier: `${email} | ${compactMobile(mobileNumber)}`,
+      identifier,
+      normalizedIdentifier,
       matchedBy: 'none',
       recoveryStatus: 'not_found',
       dispatches: [],
@@ -4492,7 +4677,74 @@ app.post('/api/auth/forgot-password', async (req, res) => {
       requestedUserAgent: getUserAgent(req),
     });
 
-    res.json({ message: 'No active account matched this email and mobile number.' });
+    res.json({ message: 'No active account matched this identifier.' });
+    return;
+  }
+
+  const challengeToken = crypto.randomBytes(24).toString('hex');
+  const challengeExpiresAt = new Date(Date.now() + 15 * 60 * 1000);
+  user.securityChallengeTokenHash = hashToken(challengeToken);
+  user.securityChallengeExpiresAt = challengeExpiresAt;
+  await user.save();
+
+  await PasswordRecoveryRequestModel.create({
+    identifier,
+    normalizedIdentifier,
+    matchedBy,
+    userId: user._id,
+    userName: `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim(),
+    email: normalizeEmail(user.email || ''),
+    mobileNumber: normalizeMobileNumber(user.phone || ''),
+    recoveryStatus: 'partial',
+    dispatches: [],
+    tokenExpiresAt: challengeExpiresAt,
+    requestedIp: getClientIp(req),
+    requestedUserAgent: getUserAgent(req),
+  });
+
+  res.json({
+    message: 'Security question loaded. Answer it to continue.',
+    securityQuestion: String(user.securityQuestion || ''),
+    challengeToken,
+    challengeExpiresAt: challengeExpiresAt.toISOString(),
+  });
+});
+
+app.post('/api/auth/forgot-password/verify-security-answer', async (req, res) => {
+  const challengeToken = String(req.body?.challengeToken || '').trim();
+  const securityAnswer = normalizeSecurityAnswer(req.body?.securityAnswer || '');
+
+  if (!challengeToken || !securityAnswer) {
+    res.status(400).json({ error: 'Challenge token and security answer are required.' });
+    return;
+  }
+
+  const user = await UserModel.findOne({
+    securityChallengeTokenHash: hashToken(challengeToken),
+    securityChallengeExpiresAt: { $gt: new Date() },
+  });
+
+  if (!user) {
+    res.status(400).json({ error: 'Invalid or expired recovery verification session.' });
+    return;
+  }
+
+  const answerMatches = await bcrypt.compare(securityAnswer, String(user.securityAnswerHash || ''));
+  if (!answerMatches) {
+    await PasswordRecoveryRequestModel.create({
+      identifier: normalizeEmail(user.email || ''),
+      normalizedIdentifier: normalizeEmail(user.email || ''),
+      matchedBy: 'email',
+      userId: user._id,
+      userName: `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim(),
+      email: normalizeEmail(user.email || ''),
+      mobileNumber: normalizeMobileNumber(user.phone || ''),
+      recoveryStatus: 'failed',
+      dispatches: [],
+      requestedIp: getClientIp(req),
+      requestedUserAgent: getUserAgent(req),
+    });
+    res.status(401).json({ error: 'Security answer is incorrect.' });
     return;
   }
 
@@ -4500,15 +4752,17 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   const tokenExpiresAt = new Date(Date.now() + 30 * 60 * 1000);
   user.resetPasswordTokenHash = hashToken(resetToken);
   user.resetPasswordExpiresAt = tokenExpiresAt;
+  user.securityChallengeTokenHash = null;
+  user.securityChallengeExpiresAt = null;
   await user.save();
 
   const request = await PasswordRecoveryRequestModel.create({
-    identifier: `${email} | ${mobileNumber}`,
-    normalizedIdentifier: `${email} | ${compactMobile(mobileNumber)}`,
-    matchedBy,
+    identifier: normalizeEmail(user.email || ''),
+    normalizedIdentifier: normalizeEmail(user.email || ''),
+    matchedBy: 'email',
     userId: user._id,
     userName: `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim(),
-    email,
+    email: normalizeEmail(user.email || ''),
     mobileNumber: normalizeMobileNumber(user.phone || ''),
     recoveryStatus: 'sent',
     dispatches: [],
@@ -4518,7 +4772,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   });
 
   res.json({
-    message: 'Verification successful. Use the generated reset token to set a new password.',
+    message: 'Security verification successful. Use the generated reset token to set a new password.',
     resetToken,
     request: serializePasswordRecoveryRequest(request),
   });
@@ -4552,6 +4806,8 @@ app.post('/api/auth/reset-password', async (req, res) => {
   user.passwordHash = await bcrypt.hash(newPassword, 12);
   user.resetPasswordTokenHash = null;
   user.resetPasswordExpiresAt = null;
+  user.securityChallengeTokenHash = null;
+  user.securityChallengeExpiresAt = null;
   user.refreshTokens = [];
   await user.save();
 
@@ -5047,16 +5303,109 @@ app.get('/api/community/connections', authMiddleware, async (req, res) => {
     const user = usersById.get(otherUserId);
     if (!user) continue;
     const profile = profilesById.get(otherUserId);
+    const blockedByUserIds = Array.isArray(connection.blockedByUserIds)
+      ? connection.blockedByUserIds.map((entry) => String(entry))
+      : [];
+    const blockedByMe = blockedByUserIds.includes(myId);
+    const blockedByOther = blockedByUserIds.includes(otherUserId);
 
     rows.push({
       connectionId: String(connection._id),
       connectedAt: connection.createdAt ? new Date(connection.createdAt).toISOString() : null,
       user: serializeCommunityUser({ user, profile }),
       unreadCount: unreadByConnection.get(String(connection._id)) || 0,
+      blockedByMe,
+      blockedByOther,
+      canMessage: !(blockedByMe || blockedByOther),
     });
   }
 
   res.json({ page, limit, connections: rows });
+});
+
+app.post('/api/community/connections/:connectionId/unfriend', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
+
+  const connectionId = String(req.params.connectionId || '').trim();
+  if (!isValidObjectId(connectionId)) {
+    res.status(400).json({ error: 'Valid connection id is required.' });
+    return;
+  }
+
+  const connection = await CommunityConnectionModel.findById(connectionId);
+  if (!connection) {
+    res.status(404).json({ error: 'Connection not found.' });
+    return;
+  }
+
+  const myId = String(req.user._id);
+  const participants = [String(connection.participantA), String(connection.participantB)];
+  if (!participants.includes(myId)) {
+    res.status(403).json({ error: 'Access denied for this connection.' });
+    return;
+  }
+
+  await CommunityMessageModel.deleteMany({ connectionId: connection._id });
+  await CommunityConnectionModel.deleteOne({ _id: connection._id });
+
+  broadcastSyncEvent({
+    role: 'all',
+    event: 'sync',
+    data: {
+      type: 'community.connection.unfriended',
+      connectionId,
+      actorUserId: myId,
+      participantA: participants[0],
+      participantB: participants[1],
+    },
+  });
+
+  res.json({ ok: true });
+});
+
+app.post('/api/community/connections/:connectionId/block', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
+
+  const connectionId = String(req.params.connectionId || '').trim();
+  const blocked = Boolean(req.body?.blocked);
+  if (!isValidObjectId(connectionId)) {
+    res.status(400).json({ error: 'Valid connection id is required.' });
+    return;
+  }
+
+  const connection = await CommunityConnectionModel.findById(connectionId);
+  if (!connection) {
+    res.status(404).json({ error: 'Connection not found.' });
+    return;
+  }
+
+  const myId = String(req.user._id);
+  const participants = [String(connection.participantA), String(connection.participantB)];
+  if (!participants.includes(myId)) {
+    res.status(403).json({ error: 'Access denied for this connection.' });
+    return;
+  }
+
+  const update = blocked
+    ? { $addToSet: { blockedByUserIds: req.user._id } }
+    : { $pull: { blockedByUserIds: req.user._id } };
+  await CommunityConnectionModel.updateOne({ _id: connection._id }, update);
+
+  broadcastSyncEvent({
+    role: 'all',
+    event: 'sync',
+    data: {
+      type: blocked ? 'community.connection.blocked' : 'community.connection.unblocked',
+      connectionId,
+      actorUserId: myId,
+      participantA: participants[0],
+      participantB: participants[1],
+    },
+  });
+
+  res.json({ ok: true, blocked });
 });
 
 app.get('/api/community/messages/:connectionId', authMiddleware, async (req, res) => {
@@ -5098,13 +5447,7 @@ app.get('/api/community/messages/:connectionId', authMiddleware, async (req, res
   res.json({
     page,
     limit,
-    messages: messages.map((item) => ({
-      id: String(item._id),
-      connectionId: String(item.connectionId),
-      senderUserId: String(item.senderUserId),
-      text: String(item.text || ''),
-      createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
-    })),
+    messages: messages.map((item) => serializeCommunityMessage(item)),
   });
 });
 
@@ -5117,12 +5460,10 @@ app.post('/api/community/messages/:connectionId', authMiddleware, async (req, re
     res.status(400).json({ error: 'Valid connection id is required.' });
     return;
   }
-  if (!text) {
-    res.status(400).json({ error: 'Message text is required.' });
-    return;
-  }
-  if (text.length > 1200) {
-    res.status(400).json({ error: 'Message is too long.' });
+  const messageType = String(req.body?.messageType || 'text').trim().toLowerCase();
+  const supportedTypes = new Set(['text', 'file', 'voice', 'call-invite']);
+  if (!supportedTypes.has(messageType)) {
+    res.status(400).json({ error: 'Unsupported message type.' });
     return;
   }
 
@@ -5137,10 +5478,72 @@ app.post('/api/community/messages/:connectionId', authMiddleware, async (req, re
     return;
   }
 
+  const otherUserId = String(connection.participantA) === myId ? String(connection.participantB) : String(connection.participantA);
+  const blockedByUserIds = Array.isArray(connection.blockedByUserIds)
+    ? connection.blockedByUserIds.map((entry) => String(entry))
+    : [];
+  if (blockedByUserIds.includes(myId) || blockedByUserIds.includes(otherUserId)) {
+    res.status(403).json({ error: 'Messaging is blocked for this connection until unblocked.' });
+    return;
+  }
+
+  if (text.length > 2000) {
+    res.status(400).json({ error: 'Message is too long.' });
+    return;
+  }
+
+  let attachment = null;
+  let voiceMeta = null;
+  let callInvite = null;
+
+  try {
+    if (messageType === 'file') {
+      attachment = normalizeChatAttachment(req.body?.attachment, { allowAudio: false });
+      if (!attachment) {
+        res.status(400).json({ error: 'Attachment is required for file message.' });
+        return;
+      }
+    }
+
+    if (messageType === 'voice') {
+      attachment = normalizeChatAttachment(req.body?.attachment, { allowAudio: true });
+      if (!attachment || !String(attachment.mimeType || '').startsWith('audio/')) {
+        res.status(400).json({ error: 'Voice note must be an audio file.' });
+        return;
+      }
+      voiceMeta = {
+        durationSeconds: clamp(Number(req.body?.voiceMeta?.durationSeconds || 0), 0, 7200),
+      };
+    }
+
+    if (messageType === 'call-invite') {
+      const mode = String(req.body?.callInvite?.mode || '').trim().toLowerCase();
+      const roomUrl = String(req.body?.callInvite?.roomUrl || '').trim();
+      const roomCode = String(req.body?.callInvite?.roomCode || '').trim();
+      if (!['audio', 'video'].includes(mode) || !roomUrl) {
+        res.status(400).json({ error: 'Valid call invite payload is required.' });
+        return;
+      }
+      callInvite = { mode, roomUrl, roomCode };
+    }
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid message payload.' });
+    return;
+  }
+
+  if (messageType === 'text' && !text) {
+    res.status(400).json({ error: 'Message text is required.' });
+    return;
+  }
+
   const created = await CommunityMessageModel.create({
     connectionId,
     senderUserId: req.user._id,
+    messageType,
     text,
+    attachment,
+    voiceMeta,
+    callInvite,
     readByUserIds: [req.user._id],
   });
 
@@ -5151,19 +5554,79 @@ app.post('/api/community/messages/:connectionId', authMiddleware, async (req, re
       type: 'community.message.sent',
       connectionId,
       senderUserId: String(req.user._id),
-      recipientUserId: String(connection.participantA) === myId ? String(connection.participantB) : String(connection.participantA),
+      recipientUserId: otherUserId,
     },
   });
 
   res.status(201).json({
-    message: {
-      id: String(created._id),
-      connectionId,
-      senderUserId: String(created.senderUserId),
-      text: String(created.text || ''),
-      createdAt: created.createdAt ? new Date(created.createdAt).toISOString() : null,
+    message: serializeCommunityMessage(created),
+  });
+});
+
+app.post('/api/community/messages/:messageId/reactions', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
+
+  const messageId = String(req.params.messageId || '').trim();
+  const emoji = String(req.body?.emoji || '').trim();
+  if (!isValidObjectId(messageId)) {
+    res.status(400).json({ error: 'Valid message id is required.' });
+    return;
+  }
+  if (!emoji) {
+    res.status(400).json({ error: 'Emoji is required.' });
+    return;
+  }
+
+  const message = await CommunityMessageModel.findById(messageId);
+  if (!message) {
+    res.status(404).json({ error: 'Message not found.' });
+    return;
+  }
+
+  const connection = await CommunityConnectionModel.findById(message.connectionId).lean();
+  if (!connection) {
+    res.status(404).json({ error: 'Connection not found.' });
+    return;
+  }
+
+  const myId = String(req.user._id);
+  const participants = [String(connection.participantA), String(connection.participantB)];
+  if (!participants.includes(myId)) {
+    res.status(403).json({ error: 'Access denied for this chat.' });
+    return;
+  }
+
+  const existingReactions = Array.isArray(message.reactions) ? message.reactions : [];
+  const existingIndex = existingReactions.findIndex((item) => String(item?.userId || '') === myId);
+
+  if (existingIndex >= 0 && String(existingReactions[existingIndex]?.emoji || '') === emoji) {
+    existingReactions.splice(existingIndex, 1);
+  } else if (existingIndex >= 0) {
+    existingReactions[existingIndex].emoji = emoji;
+    existingReactions[existingIndex].reactedAt = new Date();
+  } else {
+    existingReactions.push({
+      userId: req.user._id,
+      emoji,
+      reactedAt: new Date(),
+    });
+  }
+
+  message.reactions = existingReactions;
+  await message.save();
+
+  broadcastSyncEvent({
+    role: 'all',
+    event: 'sync',
+    data: {
+      type: 'community.message.reacted',
+      connectionId: String(message.connectionId),
+      messageId,
     },
   });
+
+  res.json({ message: serializeCommunityMessage(message) });
 });
 
 app.post('/api/community/report', authMiddleware, async (req, res) => {
@@ -6418,20 +6881,15 @@ app.get('/api/support-chat/messages', authMiddleware, async (req, res) => {
 
   res.json({
     unreadFromAdmin,
-    messages: messages.map((item) => ({
-      id: String(item._id),
-      userId: String(item.userId),
-      senderRole: String(item.senderRole || 'user'),
-      text: String(item.text || ''),
-      createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
-    })),
+    messages: messages.map((item) => serializeSupportMessage(item)),
   });
 });
 
 app.post('/api/support-chat/messages', authMiddleware, async (req, res) => {
   const text = String(req.body?.text || '').trim();
-  if (!text) {
-    res.status(400).json({ error: 'Message text is required.' });
+  const messageType = String(req.body?.messageType || 'text').trim().toLowerCase();
+  if (!['text', 'file'].includes(messageType)) {
+    res.status(400).json({ error: 'Support chat only allows text and file messages.' });
     return;
   }
   if (text.length > 1500) {
@@ -6439,24 +6897,84 @@ app.post('/api/support-chat/messages', authMiddleware, async (req, res) => {
     return;
   }
 
+  let attachment = null;
+  try {
+    if (messageType === 'file') {
+      attachment = normalizeChatAttachment(req.body?.attachment, { allowAudio: false });
+      if (!attachment) {
+        res.status(400).json({ error: 'Attachment is required for file message.' });
+        return;
+      }
+    }
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid attachment payload.' });
+    return;
+  }
+
+  if (messageType === 'text' && !text) {
+    res.status(400).json({ error: 'Message text is required.' });
+    return;
+  }
+
   const created = await SupportChatMessageModel.create({
     userId: req.user._id,
     senderRole: 'user',
     senderUserId: req.user._id,
+    messageType,
     text,
+    attachment,
     readByUser: true,
     readByAdmin: false,
   });
 
   res.status(201).json({
-    message: {
-      id: String(created._id),
-      userId: String(created.userId),
-      senderRole: String(created.senderRole || 'user'),
-      text: String(created.text || ''),
-      createdAt: created.createdAt ? new Date(created.createdAt).toISOString() : null,
-    },
+    message: serializeSupportMessage(created),
   });
+});
+
+app.post('/api/support-chat/messages/:messageId/reactions', authMiddleware, async (req, res) => {
+  const messageId = String(req.params.messageId || '').trim();
+  const emoji = String(req.body?.emoji || '').trim();
+  if (!isValidObjectId(messageId)) {
+    res.status(400).json({ error: 'Valid message id is required.' });
+    return;
+  }
+  if (!emoji) {
+    res.status(400).json({ error: 'Emoji is required.' });
+    return;
+  }
+
+  const message = await SupportChatMessageModel.findById(messageId);
+  if (!message || String(message.userId) !== String(req.user._id)) {
+    res.status(404).json({ error: 'Message not found.' });
+    return;
+  }
+
+  const senderRole = req.user.role === 'admin' ? 'admin' : 'user';
+  const existingReactions = Array.isArray(message.reactions) ? message.reactions : [];
+  const existingIndex = existingReactions.findIndex((item) => (
+    String(item?.senderRole || '') === senderRole
+    && String(item?.senderUserId || '') === String(req.user._id)
+  ));
+
+  if (existingIndex >= 0 && String(existingReactions[existingIndex]?.emoji || '') === emoji) {
+    existingReactions.splice(existingIndex, 1);
+  } else if (existingIndex >= 0) {
+    existingReactions[existingIndex].emoji = emoji;
+    existingReactions[existingIndex].reactedAt = new Date();
+  } else {
+    existingReactions.push({
+      senderRole,
+      senderUserId: req.user._id,
+      emoji,
+      reactedAt: new Date(),
+    });
+  }
+
+  message.reactions = existingReactions;
+  await message.save();
+
+  res.json({ message: serializeSupportMessage(message) });
 });
 
 app.get('/api/admin/community/reports', authMiddleware, requireAdmin, async (_req, res) => {
@@ -6564,26 +7082,21 @@ app.get('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmin
       email: targetUser.email || '',
       mobileNumber: targetUser.phone || '',
     },
-    messages: messages.map((item) => ({
-      id: String(item._id),
-      userId: String(item.userId),
-      senderRole: String(item.senderRole || 'user'),
-      text: String(item.text || ''),
-      createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
-    })),
+    messages: messages.map((item) => serializeSupportMessage(item)),
   });
 });
 
 app.post('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmin, async (req, res) => {
   const userId = String(req.params.userId || '').trim();
   const text = String(req.body?.text || '').trim();
+  const messageType = String(req.body?.messageType || 'text').trim().toLowerCase();
 
   if (!isValidObjectId(userId)) {
     res.status(400).json({ error: 'Valid user id is required.' });
     return;
   }
-  if (!text) {
-    res.status(400).json({ error: 'Message text is required.' });
+  if (!['text', 'file'].includes(messageType)) {
+    res.status(400).json({ error: 'Support chat only allows text and file messages.' });
     return;
   }
   if (text.length > 1500) {
@@ -6597,24 +7110,85 @@ app.post('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmi
     return;
   }
 
+  let attachment = null;
+  try {
+    if (messageType === 'file') {
+      attachment = normalizeChatAttachment(req.body?.attachment, { allowAudio: false });
+      if (!attachment) {
+        res.status(400).json({ error: 'Attachment is required for file message.' });
+        return;
+      }
+    }
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid attachment payload.' });
+    return;
+  }
+
+  if (messageType === 'text' && !text) {
+    res.status(400).json({ error: 'Message text is required.' });
+    return;
+  }
+
   const created = await SupportChatMessageModel.create({
     userId,
     senderRole: 'admin',
     senderUserId: req.user._id,
+    messageType,
     text,
+    attachment,
     readByUser: false,
     readByAdmin: true,
   });
 
   res.status(201).json({
-    message: {
-      id: String(created._id),
-      userId: String(created.userId),
-      senderRole: String(created.senderRole || 'admin'),
-      text: String(created.text || ''),
-      createdAt: created.createdAt ? new Date(created.createdAt).toISOString() : null,
-    },
+    message: serializeSupportMessage(created),
   });
+});
+
+app.post('/api/admin/support-chat/messages/:userId/:messageId/reactions', authMiddleware, requireAdmin, async (req, res) => {
+  const userId = String(req.params.userId || '').trim();
+  const messageId = String(req.params.messageId || '').trim();
+  const emoji = String(req.body?.emoji || '').trim();
+
+  if (!isValidObjectId(userId) || !isValidObjectId(messageId)) {
+    res.status(400).json({ error: 'Valid user id and message id are required.' });
+    return;
+  }
+  if (!emoji) {
+    res.status(400).json({ error: 'Emoji is required.' });
+    return;
+  }
+
+  const message = await SupportChatMessageModel.findById(messageId);
+  if (!message || String(message.userId) !== userId) {
+    res.status(404).json({ error: 'Message not found.' });
+    return;
+  }
+
+  const existingReactions = Array.isArray(message.reactions) ? message.reactions : [];
+  const existingIndex = existingReactions.findIndex((item) => (
+    String(item?.senderRole || '') === 'admin'
+    && String(item?.senderUserId || '') === String(req.user._id)
+  ));
+
+  if (existingIndex >= 0 && String(existingReactions[existingIndex]?.emoji || '') === emoji) {
+    existingReactions.splice(existingIndex, 1);
+  } else if (existingIndex >= 0) {
+    existingReactions[existingIndex].emoji = emoji;
+    existingReactions[existingIndex].reactedAt = new Date();
+  } else {
+    existingReactions.push({
+      senderRole: 'admin',
+      senderUserId: req.user._id,
+      emoji,
+      reactedAt: new Date(),
+    });
+  }
+
+  message.reactions = existingReactions;
+  await message.save();
+
+  res.json({ message: serializeSupportMessage(message) });
 });
 
 app.post('/api/admin/community/reports/:reportId/review', authMiddleware, requireAdmin, async (req, res) => {
