@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Bookmark, CircleHelp, FastForward, Rewind, Save, Send, SkipBack, SkipForward } from 'lucide-react';
+import { App as CapacitorApp } from '@capacitor/app';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
@@ -23,6 +24,44 @@ interface TestSession {
   durationMinutes: number;
   startedAt: string;
   questions: SessionQuestion[];
+}
+
+interface ChallengeAnswerRow {
+  questionId: string;
+  selectedOption: string;
+}
+
+interface ChallengeResultPayload {
+  submitted: boolean;
+  completedAt: string | null;
+  elapsedSeconds: number;
+  answers?: ChallengeAnswerRow[];
+  correctCount: number;
+  wrongCount: number;
+  unansweredCount: number;
+  accuracyScore: number;
+  speedScore: number;
+  totalScore: number;
+}
+
+interface ChallengePayload {
+  id: string;
+  challengeType: 'async' | 'live' | string;
+  subject: string;
+  topic: string;
+  questionCount: number;
+  durationSeconds: number;
+  status: string;
+  startedAt: string | null;
+  myResult: ChallengeResultPayload;
+  questions: Array<{
+    questionId: string;
+    subject: string;
+    topic: string;
+    question: string;
+    options: string[];
+    difficulty: Difficulty;
+  }>;
 }
 
 interface ResultState {
@@ -58,7 +97,16 @@ export function TestInterfacePage() {
 
   const [resolvedToken, setResolvedToken] = useState<string | null>(null);
   const [resolvedSessionId, setResolvedSessionId] = useState<string | null>(null);
+  const [resolvedChallengeId, setResolvedChallengeId] = useState<string | null>(null);
+  const [isChallengeMode, setIsChallengeMode] = useState(false);
+  const [challengeType, setChallengeType] = useState<'async' | 'live' | string>('async');
+  const [challengeStartedAtMs, setChallengeStartedAtMs] = useState<number | null>(null);
+  const [challengeLockedAnswers, setChallengeLockedAnswers] = useState<Record<string, string>>({});
   const [launchResolved, setLaunchResolved] = useState(false);
+
+  const violationCountRef = useRef(0);
+  const violationDebounceAtRef = useRef(0);
+  const hasForfeitedRef = useRef(false);
 
   const getLaunchFallback = () => {
     try {
@@ -66,10 +114,11 @@ export function TestInterfacePage() {
       if (!raw) return null;
       const parsed = JSON.parse(raw) as {
         sessionId?: string;
+        challengeId?: string;
+        testType?: string;
         authToken?: string;
         launchedAt?: number;
       };
-      if (!parsed?.sessionId) return null;
       // Keep launch fallback short-lived.
       if (parsed.launchedAt && Date.now() - parsed.launchedAt > 15 * 60 * 1000) return null;
       return parsed;
@@ -87,16 +136,44 @@ export function TestInterfacePage() {
     const fromStorage = localStorage.getItem('net360-auth-token');
     const token = fromQuery || fromLaunchPayload || fromStorage;
 
+    const queryTestType = String(params.get('testType') || '').trim().toLowerCase();
+    const queryChallengeId = String(params.get('challengeId') || '').trim();
+    const fallbackChallengeId = String(launchFallback?.challengeId || '').trim();
+    const challengeId = queryChallengeId || fallbackChallengeId || null;
+
     const querySessionId = params.get('sessionId');
     const fallbackSessionId = launchFallback?.sessionId || null;
     const sessionId = querySessionId || fallbackSessionId || null;
-    setResolvedSessionId(sessionId);
 
-    if (!token || !sessionId) {
-      setError(!token ? 'Missing authentication token. Redirecting to login page...' : 'Missing session id. Redirecting to tests page...');
+    const challengeLaunch = queryTestType === 'challenge' || String(launchFallback?.testType || '') === 'challenge' || Boolean(challengeId);
+
+    setIsChallengeMode(challengeLaunch);
+    setResolvedSessionId(sessionId);
+    setResolvedChallengeId(challengeId);
+
+    if (!token) {
+      setError('Missing authentication token. Redirecting to login page...');
       setLoading(false);
       window.setTimeout(() => {
-        window.location.href = !token ? '/?tab=profile' : '/?tab=tests';
+        window.location.href = '/?tab=profile';
+      }, 900);
+      return;
+    }
+
+    if (challengeLaunch && !challengeId) {
+      setError('Missing challenge id. Redirecting to community page...');
+      setLoading(false);
+      window.setTimeout(() => {
+        window.location.href = '/?tab=community';
+      }, 900);
+      return;
+    }
+
+    if (!challengeLaunch && !sessionId) {
+      setError('Missing session id. Redirecting to tests page...');
+      setLoading(false);
+      window.setTimeout(() => {
+        window.location.href = '/?tab=tests';
       }, 900);
       return;
     }
@@ -110,6 +187,45 @@ export function TestInterfacePage() {
     setLaunchResolved(true);
   }, []);
 
+  const getChallengeAttemptStorageKey = (challengeId: string) => `net360-challenge-attempt-${challengeId}`;
+
+  const forfeitChallenge = async (reason: string) => {
+    if (!isChallengeMode || !resolvedChallengeId || !resolvedToken || hasForfeitedRef.current) return;
+
+    hasForfeitedRef.current = true;
+    try {
+      await apiRequest(`/api/community/quiz-challenges/${resolvedChallengeId}/forfeit`, {
+        method: 'POST',
+        body: JSON.stringify({
+          reason,
+          elapsedSeconds: challengeStartedAtMs ? Math.max(0, Math.floor((Date.now() - challengeStartedAtMs) / 1000)) : 0,
+        }),
+      }, resolvedToken);
+    } catch {
+      // Best effort: redirect even if network request fails.
+    } finally {
+      toast.error('Challenge cancelled. You lost this challenge because you left the test environment.');
+      window.setTimeout(() => {
+        window.location.href = '/?tab=community';
+      }, 700);
+    }
+  };
+
+  const handleChallengeEnvironmentViolation = (trigger: string) => {
+    if (!isChallengeMode || !resolvedChallengeId || result || hasForfeitedRef.current || isSubmitting) return;
+
+    const now = Date.now();
+    if (now - violationDebounceAtRef.current < 600) return;
+    violationDebounceAtRef.current = now;
+
+    violationCountRef.current += 1;
+    toast.warning('Warning: Leaving the test will cancel the challenge and you will lose.');
+
+    if (violationCountRef.current >= 2) {
+      void forfeitChallenge(trigger);
+    }
+  };
+
   const startedAtLabel = useMemo(() => {
     if (!session?.startedAt) return '--:--';
     return new Date(session.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -118,29 +234,104 @@ export function TestInterfacePage() {
   useEffect(() => {
     async function loadSession() {
       try {
-        if (!launchResolved || !resolvedToken || !resolvedSessionId) return;
+        if (!launchResolved || !resolvedToken) return;
+
+        if (isChallengeMode) {
+          if (!resolvedChallengeId) return;
+          const response = await apiRequest<{ challenge: ChallengePayload }>(`/api/community/quiz-challenges/${resolvedChallengeId}`, {}, resolvedToken);
+          const challenge = response.challenge;
+
+          setChallengeType(String(challenge.challengeType || 'async'));
+
+          const mappedSession: TestSession = {
+            id: String(challenge.id || resolvedChallengeId),
+            topic: challenge.topic || `${challenge.subject || 'Mixed'} Challenge`,
+            questionCount: Number(challenge.questionCount || challenge.questions.length || 0),
+            durationMinutes: Math.max(1, Math.ceil(Number(challenge.durationSeconds || 0) / 60)),
+            startedAt: challenge.startedAt || new Date().toISOString(),
+            questions: (challenge.questions || []).map((row) => ({
+              id: String(row.questionId || ''),
+              subject: (String(row.subject || 'mathematics').toLowerCase() as SubjectKey),
+              topic: String(row.topic || challenge.topic || '').trim(),
+              question: String(row.question || '').trim(),
+              options: Array.isArray(row.options) ? row.options.map((item) => String(item || '').trim()) : [],
+              difficulty: (String(row.difficulty || 'Medium') as Difficulty),
+            })),
+          };
+
+          const seededAnswers = (challenge.myResult?.answers || []).reduce((acc, row) => {
+            acc[String(row.questionId || '')] = String(row.selectedOption || '');
+            return acc;
+          }, {} as Record<string, string | null>);
+          setAnswers(seededAnswers);
+
+          if (String(challenge.challengeType || '') === 'live') {
+            const lockMap = (challenge.myResult?.answers || []).reduce((acc, row) => {
+              acc[String(row.questionId || '')] = String(row.selectedOption || '');
+              return acc;
+            }, {} as Record<string, string>);
+            setChallengeLockedAnswers(lockMap);
+          } else {
+            setChallengeLockedAnswers({});
+          }
+
+          setSession(mappedSession);
+
+          const totalDurationSeconds = Math.max(1, Number(challenge.durationSeconds || mappedSession.durationMinutes * 60));
+          if (String(challenge.challengeType || '') === 'live') {
+            const startedAtMs = challenge.startedAt ? new Date(challenge.startedAt).getTime() : Date.now();
+            setChallengeStartedAtMs(startedAtMs);
+            const elapsed = Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000));
+            setRemainingSeconds(Math.max(0, totalDurationSeconds - elapsed));
+          } else {
+            const attemptKey = getChallengeAttemptStorageKey(String(challenge.id || resolvedChallengeId));
+            let attemptStartedAtMs = Number(localStorage.getItem(attemptKey) || 0);
+            if (!attemptStartedAtMs) {
+              attemptStartedAtMs = Date.now();
+              localStorage.setItem(attemptKey, String(attemptStartedAtMs));
+            }
+            setChallengeStartedAtMs(attemptStartedAtMs);
+            const elapsed = Math.max(0, Math.floor((Date.now() - attemptStartedAtMs) / 1000));
+            setRemainingSeconds(Math.max(0, totalDurationSeconds - elapsed));
+          }
+          return;
+        }
+
+        if (!resolvedSessionId) return;
 
         const response = await apiRequest<{ session: TestSession }>(`/api/tests/${resolvedSessionId}`, {}, resolvedToken);
         const payload = response.session;
         setSession(payload as unknown as TestSession);
         setRemainingSeconds(Math.max(1, payload.durationMinutes * 60));
+        setChallengeStartedAtMs(null);
+        setChallengeLockedAnswers({});
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load test session.');
       } finally {
-        if (launchResolved && resolvedToken && resolvedSessionId) {
+        if (launchResolved && resolvedToken) {
           setLoading(false);
         }
       }
     }
 
     void loadSession();
-  }, [launchResolved, resolvedToken, resolvedSessionId]);
+  }, [isChallengeMode, launchResolved, resolvedChallengeId, resolvedSessionId, resolvedToken]);
 
   useEffect(() => {
     if (!session || result || remainingSeconds <= 0) return;
 
     const timer = window.setInterval(() => {
       setRemainingSeconds((prev) => {
+        if (isChallengeMode && challengeStartedAtMs) {
+          const totalSeconds = Math.max(1, session.durationMinutes * 60);
+          const elapsed = Math.max(0, Math.floor((Date.now() - challengeStartedAtMs) / 1000));
+          const nextValue = Math.max(0, totalSeconds - elapsed);
+          if (nextValue <= 0) {
+            window.clearInterval(timer);
+          }
+          return nextValue;
+        }
+
         if (prev <= 1) {
           window.clearInterval(timer);
           return 0;
@@ -150,7 +341,7 @@ export function TestInterfacePage() {
     }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [session, remainingSeconds, result]);
+  }, [challengeStartedAtMs, isChallengeMode, session, remainingSeconds, result]);
 
   useEffect(() => {
     if (!session || result || isSubmitting || remainingSeconds !== 0) return;
@@ -205,6 +396,40 @@ export function TestInterfacePage() {
         selectedOption: answers[item.id] ?? null,
       }));
 
+      if (isChallengeMode) {
+        if (!resolvedChallengeId) throw new Error('Missing challenge id for challenge submission.');
+
+        const elapsed = challengeStartedAtMs
+          ? Math.max(0, Math.floor((Date.now() - challengeStartedAtMs) / 1000))
+          : Math.max(1, session.durationMinutes * 60 - remainingSeconds);
+
+        const response = await apiRequest<{ challenge: ChallengePayload }>(
+          `/api/community/quiz-challenges/${resolvedChallengeId}/submit`,
+          {
+            method: 'POST',
+            body: JSON.stringify({ answers: payload, elapsedSeconds: elapsed }),
+          },
+          resolvedToken,
+        );
+
+        const myResult = response.challenge?.myResult;
+        setResult({
+          score: Number(myResult?.totalScore || 0),
+          correctAnswers: Number(myResult?.correctCount || 0),
+          wrongAnswers: Number(myResult?.wrongCount || 0),
+          unanswered: Number(myResult?.unansweredCount || 0),
+        });
+
+        localStorage.removeItem(getChallengeAttemptStorageKey(resolvedChallengeId));
+
+        if (auto) {
+          toast.message('Time is up. Challenge auto-submitted.');
+        } else {
+          toast.success('Challenge submitted successfully.');
+        }
+        return;
+      }
+
       const response = await apiRequest<{ attempt: { score: number; correctAnswers?: number; wrongAnswers?: number; unanswered?: number } }>(
         `/api/tests/${session.id}/finish`,
         {
@@ -237,6 +462,68 @@ export function TestInterfacePage() {
       setIsSubmitting(false);
     }
   };
+
+  useEffect(() => {
+    if (!isChallengeMode || !session || !resolvedChallengeId || !resolvedToken || result) return;
+
+    const onVisibilityChange = () => {
+      if (document.hidden) {
+        handleChallengeEnvironmentViolation('visibilitychange');
+      }
+    };
+
+    const onBlur = () => {
+      handleChallengeEnvironmentViolation('blur');
+    };
+
+    const onPopState = () => {
+      handleChallengeEnvironmentViolation('popstate');
+      window.history.pushState({ challengeGuard: true }, '', window.location.href);
+    };
+
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      handleChallengeEnvironmentViolation('beforeunload');
+      event.preventDefault();
+      event.returnValue = '';
+    };
+
+    window.history.pushState({ challengeGuard: true }, '', window.location.href);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('blur', onBlur);
+    window.addEventListener('popstate', onPopState);
+    window.addEventListener('beforeunload', onBeforeUnload);
+
+    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+    let appStateListener: { remove: () => void } | null = null;
+    let backButtonListener: { remove: () => void } | null = null;
+
+    const attachNativeListeners = async () => {
+      if (!isNativeRuntime) return;
+      try {
+        appStateListener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+          if (!isActive) {
+            handleChallengeEnvironmentViolation('appStateChange');
+          }
+        });
+        backButtonListener = await CapacitorApp.addListener('backButton', () => {
+          handleChallengeEnvironmentViolation('hardwareBackButton');
+        });
+      } catch {
+        // Non-native runtime or listener attach failure.
+      }
+    };
+
+    void attachNativeListeners();
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('blur', onBlur);
+      window.removeEventListener('popstate', onPopState);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      appStateListener?.remove();
+      backButtonListener?.remove();
+    };
+  }, [isChallengeMode, resolvedChallengeId, resolvedToken, result, session]);
 
   if (loading) {
     return (
@@ -303,13 +590,47 @@ export function TestInterfacePage() {
         <section className="space-y-2 border-b border-[#2b5f9f] bg-[#d6dbe2] p-2">
           {question.options.map((option, idx) => {
             const isSelected = answers[question.id] === option;
+            const isLocked = isChallengeMode && String(challengeType) === 'live' && Boolean(challengeLockedAnswers[question.id]);
             return (
               <label key={`${question.id}-${idx}`} className="grid grid-cols-[24px_1fr] items-start gap-2 sm:grid-cols-[28px_1fr] sm:items-center">
                 <input
                   type="radio"
                   name={`question-${question.id}`}
                   checked={isSelected}
-                  onChange={() => setAnswers((prev) => ({ ...prev, [question.id]: option }))}
+                  disabled={isLocked && !isSelected}
+                  onChange={() => {
+                    if (!isChallengeMode || String(challengeType) !== 'live') {
+                      setAnswers((prev) => ({ ...prev, [question.id]: option }));
+                      return;
+                    }
+
+                    if (challengeLockedAnswers[question.id]) {
+                      toast.message('Live challenge answers are locked after first selection.');
+                      return;
+                    }
+
+                    if (!resolvedChallengeId || !resolvedToken) {
+                      toast.error('Challenge context is missing. Reload and try again.');
+                      return;
+                    }
+
+                    const elapsedSeconds = challengeStartedAtMs ? Math.max(0, Math.floor((Date.now() - challengeStartedAtMs) / 1000)) : 0;
+                    void apiRequest<{ challenge: ChallengePayload }>(
+                      `/api/community/quiz-challenges/${resolvedChallengeId}/progress`,
+                      {
+                        method: 'POST',
+                        body: JSON.stringify({ questionId: question.id, selectedOption: option, elapsedSeconds }),
+                      },
+                      resolvedToken,
+                    )
+                      .then(() => {
+                        setChallengeLockedAnswers((prev) => ({ ...prev, [question.id]: option }));
+                        setAnswers((prev) => ({ ...prev, [question.id]: option }));
+                      })
+                      .catch((error) => {
+                        toast.error(error instanceof Error ? error.message : 'Could not lock answer for live challenge.');
+                      });
+                  }}
                 />
                 <div className="rounded border border-[#1e3f6e] bg-white px-2 py-2 text-sm text-black sm:text-base">{option}</div>
               </label>
@@ -383,10 +704,17 @@ export function TestInterfacePage() {
       {result ? (
         <div className="fixed inset-0 grid place-items-center bg-black/35 p-3">
           <div className="w-full max-w-md rounded border-2 border-[#2b5f9f] bg-white p-4">
-            <h2 className="text-xl text-[#0d2c5a]">Test Submitted</h2>
-            <p className="mt-1 text-sm text-slate-600">Your attempt has been saved successfully.</p>
+            <h2 className="text-xl text-[#0d2c5a]">{isChallengeMode ? 'Challenge Submitted' : 'Test Submitted'}</h2>
+            <p className="mt-1 text-sm text-slate-600">
+              {isChallengeMode ? 'Your challenge attempt has been recorded.' : 'Your attempt has been saved successfully.'}
+            </p>
             <div className="mt-3 space-y-1 text-sm text-slate-700">
-              <p>Score: <span className="font-semibold text-emerald-700">{result.score}%</span></p>
+              <p>
+                Score:{' '}
+                <span className="font-semibold text-emerald-700">
+                  {isChallengeMode ? result.score.toFixed(2) : `${result.score}%`}
+                </span>
+              </p>
               <p>Correct: {result.correctAnswers ?? '-'}</p>
               <p>Wrong: {result.wrongAnswers ?? '-'}</p>
               <p>Unanswered: {result.unanswered ?? '-'}</p>
@@ -395,9 +723,15 @@ export function TestInterfacePage() {
               <button
                 type="button"
                 className="rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-1 text-blue-700"
-                onClick={() => window.close()}
+                onClick={() => {
+                  if (isChallengeMode) {
+                    window.location.href = '/?tab=community';
+                    return;
+                  }
+                  window.close();
+                }}
               >
-                Close Window
+                {isChallengeMode ? 'Back to Community' : 'Close Window'}
               </button>
               <button
                 type="button"

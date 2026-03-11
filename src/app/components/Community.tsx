@@ -114,6 +114,7 @@ interface QuizChallengeResult {
   submitted: boolean;
   completedAt: string | null;
   elapsedSeconds: number;
+  answers?: Array<{ questionId: string; selectedOption: string }>;
   correctCount: number;
   wrongCount: number;
   unansweredCount: number;
@@ -877,9 +878,8 @@ export function Community() {
         method: 'POST',
         body: JSON.stringify({ action }),
       }, token);
-      if (action === 'accept' && payload.challenge?.challengeType === 'live') {
-        setQuizStartedAtMs(Date.now());
-        setQuizAnswers({});
+      if (action === 'accept') {
+        openChallengeExamWindow(challengeId);
       }
       toast.success(action === 'accept' ? 'Challenge accepted.' : 'Challenge declined.');
       await loadQuizData();
@@ -888,10 +888,39 @@ export function Community() {
     }
   };
 
+  const openChallengeExamWindow = (challengeId: string) => {
+    if (!token) {
+      toast.error('Please login first to launch a challenge test.');
+      return;
+    }
+
+    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+    const examWindow = isNativeRuntime ? null : window.open('/exam-interface', '_blank', 'width=1400,height=900');
+
+    if (!isNativeRuntime && !examWindow) {
+      toast.error('Popup blocked. Please allow popups and try again.');
+      return;
+    }
+
+    localStorage.setItem('net360-exam-launch', JSON.stringify({
+      testType: 'challenge',
+      challengeId,
+      authToken: token,
+      launchedAt: Date.now(),
+    }));
+
+    const url = `/exam-interface?testType=challenge&challengeId=${encodeURIComponent(challengeId)}&authToken=${encodeURIComponent(token)}`;
+    if (isNativeRuntime) {
+      window.location.href = url;
+      return;
+    }
+
+    examWindow.location.href = url;
+  };
+
   const startChallengeAttempt = (challengeId: string) => {
     setSelectedQuizChallengeId(challengeId);
-    setQuizAnswers({});
-    setQuizStartedAtMs(Date.now());
+    openChallengeExamWindow(challengeId);
   };
 
   const submitQuizChallenge = async () => {
@@ -1500,39 +1529,14 @@ export function Community() {
                     <>
                       {(selectedQuizChallenge.status === 'in_progress' || selectedQuizChallenge.status === 'accepted') && !selectedQuizChallenge.myResult.submitted ? (
                         <>
-                          <p className="text-xs text-muted-foreground">Time left: {challengeRemainingSeconds}s</p>
+                          <p className="text-xs text-muted-foreground">Challenge is active. Launching opens the secured exam interface.</p>
                           {selectedQuizChallenge.challengeType === 'live' ? (
                             <div className="rounded-md border bg-slate-50 p-2 text-xs text-muted-foreground">
                               <p>Your progress: {selectedQuizChallenge.myLiveProgress?.answeredCount || 0}/{selectedQuizChallenge.questionCount}</p>
                               <p>Opponent progress: {selectedQuizChallenge.opponentLiveProgress?.answeredCount || 0}/{selectedQuizChallenge.questionCount}</p>
                             </div>
                           ) : null}
-                          <div className="space-y-3 max-h-[360px] overflow-auto">
-                            {selectedQuizChallenge.questions.map((question, index) => (
-                              <div key={question.questionId} className="rounded-md border p-3">
-                                <p className="text-sm font-medium">Q{index + 1}. {question.question}</p>
-                                <div className="mt-2 grid gap-2">
-                                  {question.options.map((option) => {
-                                    const selected = quizAnswers[question.questionId] === option;
-                                    return (
-                                      <button
-                                        key={option}
-                                        type="button"
-                                        onClick={() => {
-                                          setQuizAnswers((prev) => ({ ...prev, [question.questionId]: option }));
-                                          void syncLiveAnswerLock(question.questionId, option);
-                                        }}
-                                        className={`rounded border px-2 py-1 text-left text-sm ${selected ? 'border-indigo-500 bg-indigo-50' : 'hover:bg-slate-50'}`}
-                                      >
-                                        {option}
-                                      </button>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                          <Button onClick={() => void submitQuizChallenge()}>Submit Challenge</Button>
+                          <Button onClick={() => startChallengeAttempt(selectedQuizChallenge.id)}>Open Challenge Test Interface</Button>
                         </>
                       ) : (
                         <div className="space-y-2 rounded-md border p-3 text-sm">

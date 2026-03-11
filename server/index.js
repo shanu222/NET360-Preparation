@@ -2721,6 +2721,12 @@ function serializeQuizChallenge(challenge, currentUserId) {
       submitted: Boolean(myResult?.submitted),
       completedAt: myResult?.completedAt ? new Date(myResult.completedAt).toISOString() : null,
       elapsedSeconds: Number(myResult?.elapsedSeconds || 0),
+      answers: Array.isArray(myResult?.answers)
+        ? myResult.answers.map((row) => ({
+          questionId: String(row?.questionId || ''),
+          selectedOption: String(row?.selectedOption || ''),
+        }))
+        : [],
       correctCount: Number(myResult?.correctCount || 0),
       wrongCount: Number(myResult?.wrongCount || 0),
       unansweredCount: Number(myResult?.unansweredCount || 0),
@@ -5831,6 +5837,86 @@ app.post('/api/community/quiz-challenges/:id/progress', authMiddleware, async (r
   } catch (error) {
     console.error('community quiz challenge progress error', error);
     res.status(500).json({ error: 'Failed to update challenge progress.' });
+  }
+});
+
+app.post('/api/community/quiz-challenges/:id/forfeit', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
+
+  try {
+    const challengeId = String(req.params.id || '').trim();
+    if (!isValidObjectId(challengeId)) {
+      res.status(400).json({ error: 'Valid challenge id is required.' });
+      return;
+    }
+
+    const challenge = await CommunityQuizChallengeModel.findById(challengeId);
+    if (!challenge) {
+      res.status(404).json({ error: 'Challenge not found.' });
+      return;
+    }
+
+    const me = String(req.user._id);
+    const challengerId = String(challenge.challengerUserId);
+    const opponentId = String(challenge.opponentUserId);
+    if (me !== challengerId && me !== opponentId) {
+      res.status(403).json({ error: 'You cannot forfeit this challenge.' });
+      return;
+    }
+
+    if (['completed', 'cancelled', 'declined', 'expired'].includes(String(challenge.status || ''))) {
+      const loadedFinal = await CommunityQuizChallengeModel.findById(challenge._id).lean();
+      res.json({ challenge: serializeQuizChallenge(loadedFinal, req.user._id) });
+      return;
+    }
+
+    const winnerId = me === challengerId ? challenge.opponentUserId : challenge.challengerUserId;
+    const loserResultKey = me === challengerId ? 'challengerResult' : 'opponentResult';
+    const winnerResultKey = me === challengerId ? 'opponentResult' : 'challengerResult';
+
+    const loserResult = challenge[loserResultKey]?.toObject ? challenge[loserResultKey].toObject() : (challenge[loserResultKey] || {});
+    const winnerResult = challenge[winnerResultKey]?.toObject ? challenge[winnerResultKey].toObject() : (challenge[winnerResultKey] || {});
+
+    challenge[loserResultKey] = {
+      ...loserResult,
+      submitted: true,
+      completedAt: new Date(),
+      totalScore: Number(loserResult.totalScore || 0),
+    };
+
+    challenge[winnerResultKey] = {
+      ...winnerResult,
+      submitted: true,
+      completedAt: winnerResult.completedAt || new Date(),
+      totalScore: Number(winnerResult.totalScore || 0),
+    };
+
+    challenge.winnerUserId = winnerId;
+    challenge.status = 'cancelled';
+    if (!challenge.startedAt) {
+      challenge.startedAt = new Date();
+    }
+    challenge.endedAt = new Date();
+    await challenge.save();
+    await applyQuizStatsToProfiles(challenge);
+
+    broadcastSyncEvent({
+      role: 'all',
+      event: 'sync',
+      data: {
+        type: 'community.quiz.challenge.cancelled',
+        challengeId: String(challenge._id),
+        loserUserId: me,
+        winnerUserId: String(winnerId),
+      },
+    });
+
+    const loaded = await CommunityQuizChallengeModel.findById(challenge._id).lean();
+    res.json({ challenge: serializeQuizChallenge(loaded, req.user._id) });
+  } catch (error) {
+    console.error('community quiz challenge forfeit error', error);
+    res.status(500).json({ error: 'Failed to forfeit challenge.' });
   }
 });
 
