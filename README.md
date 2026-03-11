@@ -24,6 +24,8 @@ This repository includes a native Android shell that runs the same frontend and 
 1. Build and sync Android project:
 `npm run mobile:build`
 
+This command builds using Vite Android mode (`--mode android`) and reads Android-specific env values from `.env.android` / `.env.android.local`.
+
 2. Open Android Studio:
 `npm run android:open`
 
@@ -68,7 +70,7 @@ Frontend environment variable:
 - `VITE_MOBILE_API_BASE_URL` = optional native override for Android/iOS builds
 - `VITE_DISABLE_LOCAL_API_FALLBACK` = set `true` for production mobile builds to require live backend
 
-For Android packaging, use `.env.android.example` as a baseline.
+For Android packaging, create `.env.android` from `.env.android.example`.
 
 ## Render Deployment (Recommended Split)
 

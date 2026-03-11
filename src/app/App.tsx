@@ -1,11 +1,8 @@
-import { useState } from 'react';
-import { Tabs, TabsContent } from './components/ui/tabs';
+import { Component, Suspense, lazy, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react';
 import { ScrollArea } from './components/ui/scroll-area';
 import { Dashboard } from './components/Dashboard';
 import { NUSTGuide } from './components/NUSTGuide';
-import { ProgramExplorer } from './components/ProgramExplorer';
 import { NUSTSchoolsCampuses } from './components/NUSTSchoolsCampuses';
-import { NETTypes } from './components/NETTypes';
 import { PracticeBoard } from './components/PracticeBoard';
 import { QuestionContribution } from './components/QuestionContribution';
 import { Preparation } from './components/Preparation';
@@ -41,37 +38,176 @@ import { Sheet, SheetContent, SheetTrigger } from './components/ui/sheet';
 import { AppDataProvider } from './context/AppDataContext';
 import { AuthProvider } from './context/AuthContext';
 import { Toaster, toast } from 'sonner';
+import { App as CapacitorApp } from '@capacitor/app';
+import { useLocation, useNavigate } from 'react-router-dom';
+
+const ProgramExplorer = lazy(async () => {
+  try {
+    const module = await import('./components/ProgramExplorer');
+    return { default: module.ProgramExplorer };
+  } catch (error) {
+    console.error('Failed to load Programs section bundle:', error);
+    return {
+      default: () => (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          Could not load Programs right now. Please try again.
+        </div>
+      ),
+    };
+  }
+});
+
+const NETTypes = lazy(async () => {
+  try {
+    const module = await import('./components/NETTypes');
+    return { default: module.NETTypes };
+  } catch (error) {
+    console.error('Failed to load NET Types section bundle:', error);
+    return {
+      default: () => (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          Could not load NET Types right now. Please try again.
+        </div>
+      ),
+    };
+  }
+});
+
+type SectionId =
+  | 'home'
+  | 'guide'
+  | 'programs'
+  | 'schools-campuses'
+  | 'net-types'
+  | 'practice-board'
+  | 'question-contribution'
+  | 'smart-mentor'
+  | 'preparation'
+  | 'tests'
+  | 'analytics'
+  | 'merit-calculator'
+  | 'community'
+  | 'profile';
+
+const PATH_BY_SECTION: Record<SectionId, string> = {
+  home: '/',
+  guide: '/guide',
+  programs: '/programs',
+  'schools-campuses': '/schools-campuses',
+  'net-types': '/net-types',
+  'practice-board': '/practice-board',
+  'question-contribution': '/question-contribution',
+  'smart-mentor': '/smart-mentor',
+  preparation: '/preparation',
+  tests: '/tests',
+  analytics: '/analytics',
+  'merit-calculator': '/merit-calculator',
+  community: '/community',
+  profile: '/profile',
+};
+
+function resolveSectionFromPath(pathname: string): SectionId | null {
+  const normalized = pathname === '/' ? '/' : pathname.replace(/\/+$/, '');
+  const entry = (Object.entries(PATH_BY_SECTION) as Array<[SectionId, string]>).find(([, path]) => path === normalized);
+  return entry?.[0] || null;
+}
+
+function resolveSectionFromLocation(pathname: string, hash: string): SectionId {
+  const fromPath = resolveSectionFromPath(pathname);
+  if (fromPath) return fromPath;
+
+  const hashPath = String(hash || '')
+    .replace(/^#/, '')
+    .split('?')[0]
+    .split('&')[0]
+    .trim();
+  if (hashPath.startsWith('/')) {
+    const fromHashPath = resolveSectionFromPath(hashPath);
+    if (fromHashPath) return fromHashPath;
+  }
+
+  return 'home';
+}
+
+class SectionErrorBoundary extends Component<{ children: ReactNode; sectionName: string; resetKey: string }, { hasError: boolean }> {
+  constructor(props: { children: ReactNode; sectionName: string }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  componentDidUpdate(prevProps: { resetKey: string }) {
+    if (this.state.hasError && prevProps.resetKey !== this.props.resetKey) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error(`Section render failed (${this.props.sectionName}):`, error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          Could not load {this.props.sectionName}. Please go back and try again.
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+function SectionLoadingFallback({ sectionName }: { sectionName: string }) {
+  return (
+    <div className="rounded-xl border border-indigo-100 bg-white/80 p-4 text-sm text-slate-600">
+      Loading {sectionName}...
+    </div>
+  );
+}
 
 export default function App() {
   const smartMentorTabId = 'smart-mentor';
   const [setupCompleted, setSetupCompleted] = useState(() => isTermsAccepted());
-  const [activeTab, setActiveTab] = useState(() => {
-    const tab = new URLSearchParams(window.location.search).get('tab');
-    const allowed = new Set([
-      'home',
-      'guide',
-      'programs',
-      'schools-campuses',
-      'net-types',
-      'practice-board',
-      'question-contribution',
-      'smart-mentor',
-      'preparation',
-      'tests',
-      'analytics',
-      'merit-calculator',
-      'community',
-      'profile',
-    ]);
-    return tab && allowed.has(tab) ? tab : 'home';
-  });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const activeTab = useMemo(() => resolveSectionFromLocation(location.pathname, location.hash), [location.hash, location.pathname]);
+
+  useEffect(() => {
+    const tab = new URLSearchParams(window.location.search).get('tab') as SectionId | null;
+    if (!tab || !(tab in PATH_BY_SECTION)) return;
+    navigate(PATH_BY_SECTION[tab], { replace: true });
+  }, [navigate]);
+
+  useEffect(() => {
+    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+    if (!isNativeRuntime) return;
+
+    const listenerPromise = CapacitorApp.addListener('backButton', () => {
+      if (activeTab !== 'home') {
+        navigate(-1);
+        return;
+      }
+
+      // Stay in app on root instead of closing process abruptly.
+      toast.message('You are already on Home');
+    });
+
+    return () => {
+      void listenerPromise.then((listener) => listener.remove());
+    };
+  }, [activeTab, navigate]);
 
   if (!setupCompleted) {
     return <FirstTimeSetup onComplete={() => setSetupCompleted(true)} />;
   }
 
-  const navigationItems = [
+  const navigationItems: Array<{ id: SectionId; label: string; icon: typeof Home }> = [
     { id: 'home', label: 'Dashboard', icon: Home },
     { id: 'guide', label: 'NUST Guide', icon: BookOpen },
     { id: 'programs', label: 'Programs', icon: GraduationCap },
@@ -107,7 +243,7 @@ export default function App() {
                 handleSmartMentorComingSoon();
                 return;
               }
-              setActiveTab(item.id);
+              navigate(PATH_BY_SECTION[item.id]);
               setMobileMenuOpen(false);
             }}
             aria-disabled={item.id === smartMentorTabId}
@@ -190,7 +326,7 @@ export default function App() {
                 </Button>
                 <button
                   type="button"
-                  onClick={() => setActiveTab('profile')}
+                  onClick={() => navigate(PATH_BY_SECTION.profile)}
                   className="ml-1 inline-flex items-center gap-2 rounded-xl px-2 py-1.5 text-slate-700 transition hover:bg-indigo-50"
                 >
                   <div className="h-8 w-8 rounded-full bg-gradient-to-br from-amber-300 to-orange-500" />
@@ -201,67 +337,44 @@ export default function App() {
             </header>
 
             {/* Main Content */}
-            <main className="min-w-0 overflow-x-clip px-2.5 py-3 sm:px-5 sm:py-5">
-              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-0">
-                <TabsContent value="home" className="mt-0">
-                  <Dashboard onNavigate={setActiveTab} />
-                </TabsContent>
-
-                <TabsContent value="guide" className="mt-0 net360-page">
-                  <NUSTGuide />
-                </TabsContent>
-
-                <TabsContent value="programs" className="mt-0 net360-page">
-                  <ProgramExplorer />
-                </TabsContent>
-
-                <TabsContent value="schools-campuses" className="mt-0 net360-page">
-                  <NUSTSchoolsCampuses />
-                </TabsContent>
-
-                <TabsContent value="net-types" className="mt-0 net360-page">
-                  <NETTypes />
-                </TabsContent>
-
-                <TabsContent value="practice-board" className="mt-0 net360-page">
-                  <PracticeBoard />
-                </TabsContent>
-
-                <TabsContent value="question-contribution" className="mt-0 net360-page">
-                  <QuestionContribution />
-                </TabsContent>
-
-                <TabsContent value="smart-mentor" className="mt-0 net360-page">
+            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip px-2.5 py-3 sm:px-5 sm:py-5">
+              {activeTab === 'home' ? <Dashboard onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} /> : null}
+              {activeTab === 'guide' ? <div className="mt-0 net360-page"><NUSTGuide /></div> : null}
+              {activeTab === 'programs' ? (
+                <div className="mt-0 net360-page">
+                  <SectionErrorBoundary sectionName="Programs" resetKey={activeTab}>
+                    <Suspense fallback={<SectionLoadingFallback sectionName="Programs" />}>
+                      <ProgramExplorer />
+                    </Suspense>
+                  </SectionErrorBoundary>
+                </div>
+              ) : null}
+              {activeTab === 'schools-campuses' ? <div className="mt-0 net360-page"><NUSTSchoolsCampuses /></div> : null}
+              {activeTab === 'net-types' ? (
+                <div className="mt-0 net360-page">
+                  <SectionErrorBoundary sectionName="NET Types" resetKey={activeTab}>
+                    <Suspense fallback={<SectionLoadingFallback sectionName="NET Types" />}>
+                      <NETTypes />
+                    </Suspense>
+                  </SectionErrorBoundary>
+                </div>
+              ) : null}
+              {activeTab === 'practice-board' ? <div className="mt-0 net360-page"><PracticeBoard /></div> : null}
+              {activeTab === 'question-contribution' ? <div className="mt-0 net360-page"><QuestionContribution /></div> : null}
+              {activeTab === 'smart-mentor' ? (
+                <div className="mt-0 net360-page">
                   <div className="rounded-2xl border border-indigo-100 bg-white/90 p-8 text-center shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
                     <p className="text-xl font-semibold text-indigo-950">Coming Soon for Smart Study Mentor</p>
                     <p className="mt-2 text-sm text-slate-600">This feature is currently unavailable.</p>
                   </div>
-                </TabsContent>
-
-                <TabsContent value="preparation" className="mt-0 net360-page">
-                  <Preparation />
-                </TabsContent>
-
-                <TabsContent value="tests" className="mt-0 net360-page">
-                  <Tests onNavigate={setActiveTab} />
-                </TabsContent>
-
-                <TabsContent value="analytics" className="mt-0 net360-page">
-                  <Analytics />
-                </TabsContent>
-
-                <TabsContent value="merit-calculator" className="mt-0 net360-page">
-                  <MeritCalculator />
-                </TabsContent>
-
-                <TabsContent value="profile" className="mt-0 net360-page">
-                  <Profile onNavigate={setActiveTab} />
-                </TabsContent>
-
-                <TabsContent value="community" className="mt-0 net360-page">
-                  <Community />
-                </TabsContent>
-              </Tabs>
+                </div>
+              ) : null}
+              {activeTab === 'preparation' ? <div className="mt-0 net360-page"><Preparation /></div> : null}
+              {activeTab === 'tests' ? <div className="mt-0 net360-page"><Tests onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} /></div> : null}
+              {activeTab === 'analytics' ? <div className="mt-0 net360-page"><Analytics /></div> : null}
+              {activeTab === 'merit-calculator' ? <div className="mt-0 net360-page"><MeritCalculator /></div> : null}
+              {activeTab === 'profile' ? <div className="mt-0 net360-page"><Profile onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} /></div> : null}
+              {activeTab === 'community' ? <div className="mt-0 net360-page"><Community /></div> : null}
             </main>
           </section>
         </div>

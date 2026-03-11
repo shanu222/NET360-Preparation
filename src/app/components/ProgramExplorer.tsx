@@ -200,7 +200,7 @@ export function ProgramExplorer() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Building2 className="w-5 h-5 text-blue-500" />
+                <Building2 className="h-5 w-5 text-blue-500" />
                 {programs.engineering.label}
               </CardTitle>
               <CardDescription>
@@ -210,15 +210,15 @@ export function ProgramExplorer() {
             <CardContent>
               <div className="grid gap-3 lg:grid-cols-2">
                 {programs.engineering.programs.map((program) => (
-                  <ProgramCard key={program.name} program={program} tag={programs.engineering.tag} />
+                  <ProgramCard key={`${program.institution}-${program.name}-${program.location}`} program={program} tag={programs.engineering.tag} />
                 ))}
               </div>
 
-              <div className="mt-4 pt-4 border-t">
+              <div className="mt-4 border-t pt-4">
                 <h4 className="mb-2 text-slate-700">Institutions</h4>
                 <div className="flex flex-wrap gap-2">
-                  {programs.engineering.institutions.map((inst) => (
-                    <Badge key={inst} variant="secondary" className="bg-white border border-indigo-100 text-slate-700">{inst}</Badge>
+                  {(programs.engineering.institutions || []).map((inst) => (
+                    <Badge key={inst} variant="secondary" className="border border-indigo-100 bg-white text-slate-700">{inst}</Badge>
                   ))}
                 </div>
               </div>
@@ -275,7 +275,7 @@ function ProgramPanel({ value, category }: { value: string; category: ProgramCat
         <CardContent>
           <div className="grid gap-3 lg:grid-cols-2">
             {category.programs.map((program) => (
-              <ProgramCard key={program.name} program={program} tag={category.tag} />
+              <ProgramCard key={`${program.institution}-${program.name}-${program.location}`} program={program} tag={category.tag} />
             ))}
           </div>
 
@@ -309,12 +309,12 @@ function ProgramCard({
   return (
     <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-white to-[#f8f5ff] p-4 shadow-sm">
       <div className="mb-4 flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
+        <div className="min-w-0 flex items-start gap-3">
           <span className="mt-0.5 inline-flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-100 text-indigo-600">
             <Icon className="h-5 w-5" />
           </span>
-          <div>
-            <h4 className="text-lg text-indigo-950 sm:text-xl">{program.name}</h4>
+          <div className="min-w-0">
+            <h4 className="text-lg text-indigo-950 sm:text-xl break-words">{program.name}</h4>
             <p className="text-sm text-slate-500">{program.institution}</p>
             <p className="inline-flex flex-wrap items-center gap-1 text-xs text-slate-400">
               <MapPin className="h-3 w-3" />
@@ -322,7 +322,7 @@ function ProgramCard({
             </p>
           </div>
         </div>
-        <Badge className="bg-gradient-to-r from-indigo-500 to-violet-500 text-white">{tag}</Badge>
+        <Badge className="shrink-0 bg-gradient-to-r from-indigo-500 to-violet-500 text-white">{tag}</Badge>
       </div>
 
       <div className="flex items-center justify-between border-t border-indigo-100 pt-3">

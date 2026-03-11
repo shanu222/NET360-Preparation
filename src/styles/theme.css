@@ -256,7 +256,8 @@
   .net360-page label,
   .net360-page button,
   .net360-page a {
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
+    word-break: normal;
   }
 
   .net360-page .overflow-x-auto,

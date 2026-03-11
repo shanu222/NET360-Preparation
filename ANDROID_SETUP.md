@@ -32,7 +32,7 @@ Install on your machine:
 
 ## 2) Configure environment variables
 
-Use `.env.android.example` as reference and create your own `.env.production` (or CI env vars):
+Use `.env.android.example` as reference and create your own `.env.android` (or CI env vars with Android mode):
 
 - `VITE_API_BASE_URL=https://your-api-domain.com`
 - optional `VITE_MOBILE_API_BASE_URL=https://your-api-domain.com`
@@ -122,6 +122,8 @@ Do this only if you want app push notifications:
 ```bash
 npm run mobile:build
 ```
+
+`mobile:build` runs `vite build --mode android`, so values should live in `.env.android` (or injected as Android-mode build env in CI).
 
 8. Open Android Studio and rebuild app.
 

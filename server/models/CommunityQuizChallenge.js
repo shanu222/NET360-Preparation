@@ -38,15 +38,31 @@ const quizPlayerResultSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const liveProgressSchema = new mongoose.Schema(
+  {
+    answeredCount: { type: Number, default: 0 },
+    correctCount: { type: Number, default: 0 },
+    elapsedSeconds: { type: Number, default: 0 },
+    updatedAt: { type: Date, default: null },
+  },
+  { _id: false },
+);
+
 const communityQuizChallengeSchema = new mongoose.Schema(
   {
-    connectionId: { type: mongoose.Schema.Types.ObjectId, ref: 'CommunityConnection', required: true, index: true },
+    connectionId: { type: mongoose.Schema.Types.ObjectId, ref: 'CommunityConnection', default: null, index: true },
     challengerUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     opponentUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     mode: {
       type: String,
       enum: ['subject-wise', 'mock', 'adaptive', 'custom'],
       required: true,
+      index: true,
+    },
+    challengeType: {
+      type: String,
+      enum: ['async', 'live'],
+      default: 'async',
       index: true,
     },
     subject: { type: String, default: '' },
@@ -62,10 +78,13 @@ const communityQuizChallengeSchema = new mongoose.Schema(
     },
     invitedAt: { type: Date, default: Date.now },
     acceptedAt: { type: Date, default: null },
+    acceptedDeadlineAt: { type: Date, default: null },
     startedAt: { type: Date, default: null },
     endedAt: { type: Date, default: null },
     winnerUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null, index: true },
     questions: { type: [quizQuestionSchema], default: [] },
+    challengerLiveProgress: { type: liveProgressSchema, default: () => ({}) },
+    opponentLiveProgress: { type: liveProgressSchema, default: () => ({}) },
     challengerResult: { type: quizPlayerResultSchema, required: true },
     opponentResult: { type: quizPlayerResultSchema, required: true },
   },

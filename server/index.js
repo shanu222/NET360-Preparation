@@ -2562,6 +2562,11 @@ function normalizeChallengeMode(value) {
   return '';
 }
 
+function normalizeChallengeType(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  return raw === 'live' ? 'live' : 'async';
+}
+
 function normalizeChallengeDifficulty(value) {
   const raw = String(value || '').trim().toLowerCase();
   if (raw === 'easy') return 'Easy';
@@ -2686,15 +2691,18 @@ function serializeQuizChallenge(challenge, currentUserId) {
   const isChallenger = String(challenge.challengerUserId) === meId;
   const myResult = isChallenger ? challenge.challengerResult : challenge.opponentResult;
   const opponentResult = isChallenger ? challenge.opponentResult : challenge.challengerResult;
+  const myLiveProgress = isChallenger ? challenge.challengerLiveProgress : challenge.opponentLiveProgress;
+  const opponentLiveProgress = isChallenger ? challenge.opponentLiveProgress : challenge.challengerLiveProgress;
   const revealAnswers = String(challenge.status) === 'completed';
   const questionSetHash = hashToken((challenge.questions || []).map((item) => String(item.questionId || '')).join('|'));
 
   return {
     id: String(challenge._id),
-    connectionId: String(challenge.connectionId),
+    connectionId: challenge.connectionId ? String(challenge.connectionId) : '',
     challengerUserId: String(challenge.challengerUserId),
     opponentUserId: String(challenge.opponentUserId),
     mode: String(challenge.mode || ''),
+    challengeType: String(challenge.challengeType || 'async'),
     subject: String(challenge.subject || ''),
     topic: String(challenge.topic || ''),
     difficulty: String(challenge.difficulty || 'Medium'),
@@ -2704,6 +2712,7 @@ function serializeQuizChallenge(challenge, currentUserId) {
     status: String(challenge.status || 'pending'),
     invitedAt: challenge.invitedAt ? new Date(challenge.invitedAt).toISOString() : null,
     acceptedAt: challenge.acceptedAt ? new Date(challenge.acceptedAt).toISOString() : null,
+    acceptedDeadlineAt: challenge.acceptedDeadlineAt ? new Date(challenge.acceptedDeadlineAt).toISOString() : null,
     startedAt: challenge.startedAt ? new Date(challenge.startedAt).toISOString() : null,
     endedAt: challenge.endedAt ? new Date(challenge.endedAt).toISOString() : null,
     winnerUserId: challenge.winnerUserId ? String(challenge.winnerUserId) : '',
@@ -2729,6 +2738,18 @@ function serializeQuizChallenge(challenge, currentUserId) {
       accuracyScore: Number(opponentResult?.accuracyScore || 0),
       speedScore: Number(opponentResult?.speedScore || 0),
       totalScore: Number(opponentResult?.totalScore || 0),
+    },
+    myLiveProgress: {
+      answeredCount: Number(myLiveProgress?.answeredCount || 0),
+      correctCount: Number(myLiveProgress?.correctCount || 0),
+      elapsedSeconds: Number(myLiveProgress?.elapsedSeconds || 0),
+      updatedAt: myLiveProgress?.updatedAt ? new Date(myLiveProgress.updatedAt).toISOString() : null,
+    },
+    opponentLiveProgress: {
+      answeredCount: Number(opponentLiveProgress?.answeredCount || 0),
+      correctCount: Number(opponentLiveProgress?.correctCount || 0),
+      elapsedSeconds: Number(opponentLiveProgress?.elapsedSeconds || 0),
+      updatedAt: opponentLiveProgress?.updatedAt ? new Date(opponentLiveProgress.updatedAt).toISOString() : null,
     },
     questions: Array.isArray(challenge.questions)
       ? challenge.questions.map((item) => ({
@@ -2790,6 +2811,33 @@ function scoreQuizChallengeSubmission(challenge, answers, elapsedSeconds) {
     speedScore,
     totalScore,
     answerRows: Array.from(answerMap.entries()).map(([questionId, selectedOption]) => ({ questionId, selectedOption })),
+  };
+}
+
+function computeLockedLiveProgress(challenge, answers, elapsedSeconds) {
+  const questionMap = new Map(
+    (challenge.questions || []).map((item) => [String(item.questionId || ''), String(item.correctAnswer || '').trim().toLowerCase()]),
+  );
+
+  const answerMap = new Map();
+  (Array.isArray(answers) ? answers : []).forEach((row) => {
+    const qid = String(row?.questionId || '').trim();
+    if (!qid || !questionMap.has(qid)) return;
+    answerMap.set(qid, String(row?.selectedOption || '').trim());
+  });
+
+  let correctCount = 0;
+  answerMap.forEach((selected, qid) => {
+    const correctAnswer = questionMap.get(qid) || '';
+    if (String(selected || '').trim().toLowerCase() === correctAnswer) {
+      correctCount += 1;
+    }
+  });
+
+  return {
+    answeredCount: answerMap.size,
+    correctCount,
+    elapsedSeconds: clamp(Number(elapsedSeconds) || 0, 0, Number(challenge.durationSeconds || 0)),
   };
 }
 
@@ -4676,20 +4724,49 @@ app.get('/api/community/users/search', authMiddleware, async (req, res) => {
   const q = String(req.query.q || '').trim().toLowerCase();
   const me = String(req.user._id);
 
-  const profiles = await CommunityProfileModel.find(q ? { username: containsRegex(q, 50) } : {})
-    .select(COMMUNITY_PROFILE_SELECT)
-    .limit(30)
-    .lean();
+  const queryRegex = q ? containsRegex(q, 50) : null;
+  const profileMatches = queryRegex
+    ? await CommunityProfileModel.find({ username: queryRegex })
+      .select(COMMUNITY_PROFILE_SELECT)
+      .limit(80)
+      .lean()
+    : await CommunityProfileModel.find({})
+      .select(COMMUNITY_PROFILE_SELECT)
+      .limit(80)
+      .lean();
 
-  const userIds = profiles.map((item) => String(item.userId));
-  const users = await UserModel.find({ _id: { $in: userIds }, role: 'student' })
-    .select(COMMUNITY_USER_SELECT)
-    .lean();
+  const nameMatches = queryRegex
+    ? await UserModel.find({
+      role: 'student',
+      $or: [
+        { firstName: queryRegex },
+        { lastName: queryRegex },
+      ],
+    })
+      .select(COMMUNITY_USER_SELECT)
+      .limit(80)
+      .lean()
+    : [];
+
+  const profileUserIds = profileMatches.map((item) => String(item.userId));
+  const nameUserIds = nameMatches.map((item) => String(item._id));
+  const candidateSeedIds = Array.from(new Set([...profileUserIds, ...nameUserIds]))
+    .filter((id) => id !== me)
+    .slice(0, 120);
+
+  const [profiles, users] = await Promise.all([
+    CommunityProfileModel.find({ userId: { $in: candidateSeedIds } })
+      .select(COMMUNITY_PROFILE_SELECT)
+      .lean(),
+    UserModel.find({ _id: { $in: candidateSeedIds }, role: 'student' })
+      .select(COMMUNITY_USER_SELECT)
+      .lean(),
+  ]);
+
   const usersById = new Map(users.map((item) => [String(item._id), item]));
-
   const candidateIds = profiles
     .map((item) => String(item.userId))
-    .filter((id) => id !== me && usersById.has(id));
+    .filter((id) => usersById.has(id));
 
   const participantKeys = candidateIds.map((userId) => connectionKey(req.user._id, userId));
   const [connections, pendingToRows, pendingFromRows] = await Promise.all([
@@ -4731,7 +4808,26 @@ app.get('/api/community/users/search', authMiddleware, async (req, res) => {
     });
   }
 
-  res.json({ users: rows.slice(0, 20) });
+  const normalizedQuery = q.toLowerCase();
+  const ranked = rows
+    .map((item) => {
+      const username = String(item.username || '').toLowerCase();
+      const fullName = `${String(item.firstName || '')} ${String(item.lastName || '')}`.trim().toLowerCase();
+      let score = 0;
+      if (!normalizedQuery) score += 1;
+      if (username === normalizedQuery) score += 100;
+      else if (username.startsWith(normalizedQuery)) score += 70;
+      else if (username.includes(normalizedQuery)) score += 45;
+      if (fullName === normalizedQuery) score += 95;
+      else if (fullName.startsWith(normalizedQuery)) score += 60;
+      else if (fullName.includes(normalizedQuery)) score += 35;
+      return { item, score };
+    })
+    .sort((a, b) => b.score - a.score)
+    .map((entry) => entry.item)
+    .slice(0, 30);
+
+  res.json({ users: ranked });
 });
 
 app.post('/api/community/connections/request', authMiddleware, async (req, res) => {
@@ -4781,6 +4877,12 @@ app.post('/api/community/connections/request', authMiddleware, async (req, res) 
     fromUserId: req.user._id,
     toUserId,
     status: 'pending',
+  });
+
+  broadcastSyncEvent({
+    role: 'all',
+    event: 'sync',
+    data: { type: 'community.connection.requested', fromUserId: String(req.user._id), toUserId },
   });
 
   res.status(201).json({ requestId: String(created._id) });
@@ -4882,6 +4984,17 @@ app.post('/api/community/connections/requests/:requestId/respond', authMiddlewar
   }
 
   await request.save();
+  broadcastSyncEvent({
+    role: 'all',
+    event: 'sync',
+    data: {
+      type: 'community.connection.responded',
+      requestId: String(request._id),
+      status: String(request.status || ''),
+      fromUserId: String(request.fromUserId),
+      toUserId: String(request.toUserId),
+    },
+  });
   res.json({ ok: true, status: request.status });
 });
 
@@ -5020,6 +5133,17 @@ app.post('/api/community/messages/:connectionId', authMiddleware, async (req, re
     senderUserId: req.user._id,
     text,
     readByUserIds: [req.user._id],
+  });
+
+  broadcastSyncEvent({
+    role: 'all',
+    event: 'sync',
+    data: {
+      type: 'community.message.sent',
+      connectionId,
+      senderUserId: String(req.user._id),
+      recipientUserId: String(connection.participantA) === myId ? String(connection.participantB) : String(connection.participantA),
+    },
   });
 
   res.status(201).json({
@@ -5196,6 +5320,7 @@ app.post('/api/community/quiz-challenges', authMiddleware, async (req, res) => {
     const {
       opponentUserId,
       mode,
+      challengeType,
       subject = '',
       topic = '',
       difficulty = 'Medium',
@@ -5208,6 +5333,7 @@ app.post('/api/community/quiz-challenges', authMiddleware, async (req, res) => {
       res.status(400).json({ error: 'Invalid challenge mode.' });
       return;
     }
+    const normalizedChallengeType = normalizeChallengeType(challengeType);
 
     const opponentId = String(opponentUserId || '').trim();
     if (!isValidObjectId(opponentId)) {
@@ -5229,13 +5355,8 @@ app.post('/api/community/quiz-challenges', authMiddleware, async (req, res) => {
     const connected = await CommunityConnectionModel.findOne({
       participantKey: connectionKey(currentUser._id, opponentUser._id),
     }).lean();
-    if (!connected) {
-      res.status(403).json({ error: 'You can only challenge connected users.' });
-      return;
-    }
 
     const inFlight = await CommunityQuizChallengeModel.findOne({
-      connectionId: connected._id,
       status: { $in: ['pending', 'accepted', 'in_progress'] },
       $or: [
         { challengerUserId: currentUser._id, opponentUserId: opponentUser._id },
@@ -5267,10 +5388,11 @@ app.post('/api/community/quiz-challenges', authMiddleware, async (req, res) => {
     });
 
     const challenge = await CommunityQuizChallengeModel.create({
-      connectionId: connected._id,
+      connectionId: connected?._id || null,
       challengerUserId: currentUser._id,
       opponentUserId: opponentUser._id,
       mode: normalizedMode,
+      challengeType: normalizedChallengeType,
       subject: normalizedSubject,
       topic: String(topic || '').trim(),
       difficulty: normalizeChallengeDifficulty(difficulty),
@@ -5278,7 +5400,10 @@ app.post('/api/community/quiz-challenges', authMiddleware, async (req, res) => {
       durationSeconds: finalDuration,
       status: 'pending',
       invitedAt: new Date(),
+      acceptedDeadlineAt: new Date(Date.now() + (48 * 60 * 60 * 1000)),
       questions,
+      challengerLiveProgress: {},
+      opponentLiveProgress: {},
       challengerResult: {
         userId: currentUser._id,
         submitted: false,
@@ -5294,6 +5419,18 @@ app.post('/api/community/quiz-challenges', authMiddleware, async (req, res) => {
     challengerStats.totalChallengesSent += 1;
     challengerProfile.quizStats = challengerStats;
     await challengerProfile.save();
+
+    broadcastSyncEvent({
+      role: 'all',
+      event: 'sync',
+      data: {
+        type: 'community.quiz.challenge.created',
+        challengeId: String(challenge._id),
+        challengerUserId: String(currentUser._id),
+        opponentUserId: String(opponentUser._id),
+        challengeType: normalizedChallengeType,
+      },
+    });
 
     const loaded = await CommunityQuizChallengeModel.findById(challenge._id).lean();
     res.status(201).json({ challenge: serializeQuizChallenge(loaded, req.user._id) });
@@ -5339,13 +5476,25 @@ app.post('/api/community/quiz-challenges/:id/respond', authMiddleware, async (re
       challenge.status = 'declined';
       challenge.endedAt = new Date();
       await challenge.save();
+      broadcastSyncEvent({
+        role: 'all',
+        event: 'sync',
+        data: {
+          type: 'community.quiz.challenge.responded',
+          challengeId: String(challenge._id),
+          action,
+          status: String(challenge.status || ''),
+        },
+      });
       res.json({ challenge: serializeQuizChallenge(challenge.toObject(), req.user._id) });
       return;
     }
 
-    challenge.status = 'in_progress';
+    challenge.status = normalizeChallengeType(challenge.challengeType) === 'live' ? 'in_progress' : 'accepted';
     challenge.acceptedAt = new Date();
-    challenge.startedAt = new Date();
+    if (normalizeChallengeType(challenge.challengeType) === 'live') {
+      challenge.startedAt = new Date();
+    }
     await challenge.save();
 
     const user = await UserModel.findById(req.user._id).lean();
@@ -5356,6 +5505,17 @@ app.post('/api/community/quiz-challenges/:id/respond', authMiddleware, async (re
       profile.quizStats = stats;
       await profile.save();
     }
+
+    broadcastSyncEvent({
+      role: 'all',
+      event: 'sync',
+      data: {
+        type: 'community.quiz.challenge.responded',
+        challengeId: String(challenge._id),
+        action,
+        status: String(challenge.status || ''),
+      },
+    });
 
     res.json({ challenge: serializeQuizChallenge(challenge.toObject(), req.user._id) });
   } catch (error) {
@@ -5446,19 +5606,38 @@ app.post('/api/community/quiz-challenges/:id/submit', authMiddleware, async (req
       return;
     }
 
-    const startedAtMs = challenge.startedAt ? new Date(challenge.startedAt).getTime() : Date.now();
-    const expiryMs = startedAtMs + (Number(challenge.durationSeconds || 0) * 1000);
-    if (Date.now() > expiryMs) {
+    const challengeType = normalizeChallengeType(challenge.challengeType);
+    if (challengeType === 'live') {
+      const startedAtMs = challenge.startedAt ? new Date(challenge.startedAt).getTime() : Date.now();
+      const expiryMs = startedAtMs + (Number(challenge.durationSeconds || 0) * 1000);
+      if (Date.now() > expiryMs) {
+        challenge.status = 'expired';
+        challenge.endedAt = new Date();
+        await challenge.save();
+        res.status(410).json({ error: 'Challenge time has expired.' });
+        return;
+      }
+    }
+
+    if (challengeType === 'async' && challenge.acceptedDeadlineAt && Date.now() > new Date(challenge.acceptedDeadlineAt).getTime()) {
       challenge.status = 'expired';
       challenge.endedAt = new Date();
       await challenge.save();
-      res.status(410).json({ error: 'Challenge time has expired.' });
+      res.status(410).json({ error: 'Async challenge expired before completion.' });
       return;
     }
 
     const answers = Array.isArray(req.body?.answers) ? req.body.answers : [];
     const elapsedSeconds = Number(req.body?.elapsedSeconds || 0);
-    const scored = scoreQuizChallengeSubmission(challenge, answers, elapsedSeconds);
+    const currentResult = isChallenger ? challenge.challengerResult : challenge.opponentResult;
+    const effectiveAnswers = challengeType === 'live'
+      ? (Array.isArray(currentResult?.answers) ? currentResult.answers : [])
+      : answers;
+    const scored = scoreQuizChallengeSubmission(challenge, effectiveAnswers, elapsedSeconds);
+
+    if (challengeType === 'async' && !challenge.startedAt) {
+      challenge.startedAt = new Date();
+    }
 
     const baseResult = {
       submitted: true,
@@ -5516,11 +5695,142 @@ app.post('/api/community/quiz-challenges/:id/submit', authMiddleware, async (req
       await applyQuizStatsToProfiles(challenge);
     }
 
+    broadcastSyncEvent({
+      role: 'all',
+      event: 'sync',
+      data: {
+        type: 'community.quiz.challenge.submitted',
+        challengeId: String(challenge._id),
+        status: String(challenge.status || ''),
+      },
+    });
+
     const loaded = await CommunityQuizChallengeModel.findById(challenge._id).lean();
     res.json({ challenge: serializeQuizChallenge(loaded, req.user._id) });
   } catch (error) {
     console.error('community quiz challenge submit error', error);
     res.status(500).json({ error: 'Failed to submit challenge.' });
+  }
+});
+
+app.post('/api/community/quiz-challenges/:id/progress', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  if (await communityWriteGuard(req, res)) return;
+
+  try {
+    const challengeId = String(req.params.id || '').trim();
+    if (!isValidObjectId(challengeId)) {
+      res.status(400).json({ error: 'Valid challenge id is required.' });
+      return;
+    }
+
+    const challenge = await CommunityQuizChallengeModel.findById(challengeId);
+    if (!challenge) {
+      res.status(404).json({ error: 'Challenge not found.' });
+      return;
+    }
+
+    if (normalizeChallengeType(challenge.challengeType) !== 'live') {
+      res.status(409).json({ error: 'Progress updates are only supported for live challenges.' });
+      return;
+    }
+
+    const me = String(req.user._id);
+    const isChallenger = String(challenge.challengerUserId) === me;
+    const isOpponent = String(challenge.opponentUserId) === me;
+    if (!isChallenger && !isOpponent) {
+      res.status(403).json({ error: 'You cannot update this challenge.' });
+      return;
+    }
+
+    if (String(challenge.status) !== 'in_progress') {
+      res.status(409).json({ error: 'Live challenge is not currently in progress.' });
+      return;
+    }
+
+    const startedAtMs = challenge.startedAt ? new Date(challenge.startedAt).getTime() : Date.now();
+    const expiryMs = startedAtMs + (Number(challenge.durationSeconds || 0) * 1000);
+    if (Date.now() > expiryMs) {
+      challenge.status = 'expired';
+      challenge.endedAt = new Date();
+      await challenge.save();
+      res.status(410).json({ error: 'Challenge time has expired.' });
+      return;
+    }
+
+    const resultKey = isChallenger ? 'challengerResult' : 'opponentResult';
+    const progressKey = isChallenger ? 'challengerLiveProgress' : 'opponentLiveProgress';
+    const currentResult = challenge[resultKey]?.toObject ? challenge[resultKey].toObject() : (challenge[resultKey] || {});
+    if (Boolean(currentResult.submitted)) {
+      res.status(409).json({ error: 'You already submitted this challenge.' });
+      return;
+    }
+
+    const answers = Array.isArray(currentResult.answers)
+      ? currentResult.answers.map((row) => ({
+        questionId: String(row.questionId || ''),
+        selectedOption: String(row.selectedOption || ''),
+      }))
+      : [];
+
+    const questionId = String(req.body?.questionId || '').trim();
+    const selectedOption = String(req.body?.selectedOption || '').trim();
+    const elapsedSeconds = clamp(Number(req.body?.elapsedSeconds || 0), 0, Number(challenge.durationSeconds || 0));
+
+    if (questionId) {
+      const question = (challenge.questions || []).find((item) => String(item.questionId || '') === questionId);
+      if (!question) {
+        res.status(400).json({ error: 'Invalid question id for this challenge.' });
+        return;
+      }
+      if (!selectedOption) {
+        res.status(400).json({ error: 'selectedOption is required when questionId is provided.' });
+        return;
+      }
+      const validOptions = Array.isArray(question.options) ? question.options.map((option) => String(option || '').trim()) : [];
+      if (!validOptions.includes(selectedOption)) {
+        res.status(400).json({ error: 'Selected option does not belong to this question.' });
+        return;
+      }
+      const alreadyLocked = answers.some((row) => String(row.questionId || '') === questionId);
+      if (!alreadyLocked) {
+        answers.push({ questionId, selectedOption });
+      }
+    }
+
+    const lockedProgress = computeLockedLiveProgress(challenge, answers, elapsedSeconds);
+    challenge[resultKey] = {
+      ...currentResult,
+      answers,
+      elapsedSeconds: lockedProgress.elapsedSeconds,
+    };
+    challenge[progressKey] = {
+      ...(challenge[progressKey]?.toObject ? challenge[progressKey].toObject() : challenge[progressKey]),
+      answeredCount: lockedProgress.answeredCount,
+      correctCount: lockedProgress.correctCount,
+      elapsedSeconds: lockedProgress.elapsedSeconds,
+      updatedAt: new Date(),
+    };
+
+    await challenge.save();
+
+    broadcastSyncEvent({
+      role: 'all',
+      event: 'sync',
+      data: {
+        type: 'community.quiz.challenge.progress',
+        challengeId,
+        userId: me,
+        answeredCount: lockedProgress.answeredCount,
+        correctCount: lockedProgress.correctCount,
+      },
+    });
+
+    const loaded = await CommunityQuizChallengeModel.findById(challenge._id).lean();
+    res.json({ challenge: serializeQuizChallenge(loaded, req.user._id) });
+  } catch (error) {
+    console.error('community quiz challenge progress error', error);
+    res.status(500).json({ error: 'Failed to update challenge progress.' });
   }
 });
 
@@ -5700,6 +6010,12 @@ app.post('/api/community/discussion-rooms/:roomId/posts', authMiddleware, async 
     subject,
   });
 
+  broadcastSyncEvent({
+    role: 'all',
+    event: 'sync',
+    data: { type: 'community.discussion.updated', roomId, postId: String(created._id), action: 'post' },
+  });
+
   res.status(201).json({ postId: String(created._id) });
 });
 
@@ -5751,6 +6067,11 @@ app.post('/api/community/discussion-posts/:postId/answers', authMiddleware, asyn
   await post.save();
 
   const answer = post.answers[post.answers.length - 1];
+  broadcastSyncEvent({
+    role: 'all',
+    event: 'sync',
+    data: { type: 'community.discussion.updated', roomId: String(post.roomId || ''), postId, answerId: String(answer._id), action: 'answer' },
+  });
   res.status(201).json({ answerId: String(answer._id) });
 });
 
@@ -5787,6 +6108,11 @@ app.post('/api/community/discussion-posts/:postId/upvote', authMiddleware, async
       answer.upvotes = Number(answer.upvotes || 0) + 1;
     }
     await post.save();
+    broadcastSyncEvent({
+      role: 'all',
+      event: 'sync',
+      data: { type: 'community.discussion.updated', roomId: String(post.roomId || ''), postId, answerId, action: 'upvote-answer' },
+    });
     res.json({ ok: true, targetType: 'answer', upvotes: Number(answer.upvotes || 0) });
     return;
   }
@@ -5800,6 +6126,11 @@ app.post('/api/community/discussion-posts/:postId/upvote', authMiddleware, async
     post.upvotes = Number(post.upvotes || 0) + 1;
   }
   await post.save();
+  broadcastSyncEvent({
+    role: 'all',
+    event: 'sync',
+    data: { type: 'community.discussion.updated', roomId: String(post.roomId || ''), postId, action: 'upvote-post' },
+  });
   res.json({ ok: true, targetType: 'post', upvotes: Number(post.upvotes || 0) });
 });
 
@@ -5885,6 +6216,26 @@ app.get('/api/community/study-partners', authMiddleware, async (req, res) => {
     .limit(80)
     .lean();
 
+  const candidateIds = candidates.map((item) => String(item._id));
+  const participantKeys = candidateIds.map((id) => connectionKey(req.user._id, id));
+  const [connections, pendingSentRows, pendingReceivedRows] = await Promise.all([
+    CommunityConnectionModel.find({ participantKey: { $in: participantKeys } }).select('participantKey').lean(),
+    CommunityConnectionRequestModel.find({
+      fromUserId: req.user._id,
+      toUserId: { $in: candidateIds },
+      status: 'pending',
+    }).select('toUserId').lean(),
+    CommunityConnectionRequestModel.find({
+      fromUserId: { $in: candidateIds },
+      toUserId: req.user._id,
+      status: 'pending',
+    }).select('fromUserId').lean(),
+  ]);
+
+  const connectedKeys = new Set(connections.map((row) => String(row.participantKey)));
+  const pendingSentTo = new Set(pendingSentRows.map((row) => String(row.toUserId)));
+  const pendingReceivedFrom = new Set(pendingReceivedRows.map((row) => String(row.fromUserId)));
+
   const matches = candidates
     .map((item) => {
       const profile = profileMap.get(String(item._id));
@@ -5930,7 +6281,16 @@ app.get('/api/community/study-partners', authMiddleware, async (req, res) => {
 
       return {
         compatibility,
-        user: serializeCommunityUser({ user: item, profile }),
+        user: {
+          ...serializeCommunityUser({ user: item, profile }),
+          connectionStatus: connectedKeys.has(connectionKey(req.user._id, item._id))
+            ? 'connected'
+            : pendingSentTo.has(String(item._id))
+              ? 'pending-sent'
+              : pendingReceivedFrom.has(String(item._id))
+                ? 'pending-received'
+                : 'none',
+        },
         reasons: [
           netTypeMatch ? 'Same NET type' : null,
           levelScore >= 6 ? 'Similar preparation level' : null,

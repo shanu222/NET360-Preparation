@@ -9,13 +9,14 @@
     "start": "vite preview --host 0.0.0.0 --port 4173",
     "dev:server": "node server/index.js",
     "start:server": "node server/index.js",
-    "mobile:build": "npm run build && npx cap sync android",
+    "mobile:build": "vite build --mode android && npx cap sync android",
     "android:sync": "npx cap sync android",
     "android:open": "npx cap open android",
     "android:run": "npx cap run android"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",
+    "@capacitor/app": "^8.0.1",
     "@capacitor/camera": "^8.0.2",
     "@capacitor/core": "^8.2.0",
     "@capacitor/filesystem": "^8.1.2",
@@ -85,6 +86,7 @@
     "react-resizable-panels": "2.1.7",
     "react-responsive-masonry": "2.7.1",
     "react-router": "7.13.0",
+    "react-router-dom": "^7.13.0",
     "react-slick": "0.31.0",
     "recharts": "2.15.2",
     "sonner": "2.0.3",

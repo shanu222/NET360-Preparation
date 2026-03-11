@@ -31,6 +31,11 @@ function canFallbackToLocalMode() {
   if (env.VITE_FORCE_LOCAL_API === 'true') {
     return true;
   }
+  // Keep native builds aligned with backend data by default.
+  // Developers can still opt in via VITE_FORCE_LOCAL_API=true.
+  if (isNativeCapacitorRuntime()) {
+    return false;
+  }
   return env.VITE_DISABLE_LOCAL_API_FALLBACK !== 'true';
 }
 
@@ -114,7 +119,23 @@ function buildHtmlInsteadOfJsonError(path: string) {
   );
 }
 
+function buildMissingNativeApiBaseUrlError(path: string) {
+  return new Error(
+    `API configuration error: ${path} is running in native mode without backend URL. ` +
+    'Set VITE_API_BASE_URL or VITE_MOBILE_API_BASE_URL for Android builds.',
+  );
+}
+
 export async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
+  if (
+    isNativeCapacitorRuntime()
+    && !getEffectiveApiBaseUrl()
+    && path.startsWith('/api/')
+    && env.VITE_FORCE_LOCAL_API !== 'true'
+  ) {
+    throw buildMissingNativeApiBaseUrlError(path);
+  }
+
   if (shouldUseForcedLocalMode() && isPremiumSensitivePath(path)) {
     throw new Error('AI mentor features require live backend mode. Disable VITE_FORCE_LOCAL_API and configure VITE_API_BASE_URL.');
   }

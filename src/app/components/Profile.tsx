@@ -826,12 +826,12 @@ export function Profile({ onNavigate }: ProfileProps) {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
           <h1>Profile & Settings</h1>
           <p className="text-muted-foreground">Manage your account and preferences</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">
           <a href={NET360_ADMIN_WHATSAPP_LINK} target="_blank" rel="noreferrer">
             <Button variant="outline" className="border-emerald-300 text-emerald-700 hover:bg-emerald-50">
               <MessageCircle className="mr-2 h-4 w-4" />

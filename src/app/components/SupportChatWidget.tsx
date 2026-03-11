@@ -8,6 +8,7 @@ import { Badge } from './ui/badge';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
 import { toast } from 'sonner';
+import { PushNotifications } from '@capacitor/push-notifications';
 
 interface SupportMessage {
   id: string;
@@ -22,7 +23,7 @@ interface SupportInboxPayload {
   messages?: SupportMessage[];
 }
 
-const USER_SUPPORT_DESKTOP_ALERTS_KEY = 'net360-support-desktop-alerts-user';
+const USER_SUPPORT_NOTIFICATIONS_KEY = 'net360-support-notifications-user';
 
 export function SupportChatWidget() {
   const { token, user } = useAuth();
@@ -32,9 +33,9 @@ export function SupportChatWidget() {
   const [messages, setMessages] = useState<SupportMessage[]>([]);
   const [messageText, setMessageText] = useState('');
   const [unreadCount, setUnreadCount] = useState(0);
-  const [desktopAlertsEnabled, setDesktopAlertsEnabled] = useState<boolean>(() => {
+  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(() => {
     try {
-      return sessionStorage.getItem(USER_SUPPORT_DESKTOP_ALERTS_KEY) === '1';
+      return sessionStorage.getItem(USER_SUPPORT_NOTIFICATIONS_KEY) === '1';
     } catch {
       return false;
     }
@@ -68,45 +69,62 @@ export function SupportChatWidget() {
     }
   };
 
-  const canUseDesktopNotifications = typeof window !== 'undefined' && 'Notification' in window;
+  const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+  const canUseWebNotifications = typeof window !== 'undefined' && 'Notification' in window;
 
-  const setDesktopAlertsPreference = (enabled: boolean) => {
-    setDesktopAlertsEnabled(enabled);
+  const setNotificationPreference = (enabled: boolean) => {
+    setNotificationsEnabled(enabled);
     try {
-      sessionStorage.setItem(USER_SUPPORT_DESKTOP_ALERTS_KEY, enabled ? '1' : '0');
+      sessionStorage.setItem(USER_SUPPORT_NOTIFICATIONS_KEY, enabled ? '1' : '0');
     } catch {
       // Ignore storage failures.
     }
   };
 
-  const enableDesktopAlerts = async () => {
-    if (!canUseDesktopNotifications) {
-      toast.error('Desktop notifications are not supported in this browser.');
+  const enableNotifications = async () => {
+    if (isNativeRuntime) {
+      try {
+        const permission = await PushNotifications.requestPermissions();
+        if (permission.receive === 'granted') {
+          await PushNotifications.register();
+          setNotificationPreference(true);
+          toast.success('Notifications enabled on this device.');
+        } else {
+          toast.error('Notification permission was not granted on this device.');
+        }
+      } catch {
+        toast.error('Could not enable notifications on this device.');
+      }
+      return;
+    }
+
+    if (!canUseWebNotifications) {
+      toast.error('Notifications are not supported in this browser.');
       return;
     }
 
     if (Notification.permission === 'granted') {
-      setDesktopAlertsPreference(true);
-      toast.success('Desktop alerts enabled for this tab.');
+      setNotificationPreference(true);
+      toast.success('Notifications enabled for this tab.');
       return;
     }
 
     if (Notification.permission === 'denied') {
-      toast.error('Desktop notifications are blocked in browser settings.');
+      toast.error('Notifications are blocked in browser settings.');
       return;
     }
 
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      setDesktopAlertsPreference(true);
-      toast.success('Desktop alerts enabled for this tab.');
+      setNotificationPreference(true);
+      toast.success('Notifications enabled for this tab.');
     } else {
       toast.error('Notification permission was not granted.');
     }
   };
 
   const notifyDesktop = (title: string, body: string) => {
-    if (!desktopAlertsEnabled || !canUseDesktopNotifications) return;
+    if (!notificationsEnabled || isNativeRuntime || !canUseWebNotifications) return;
     if (Notification.permission !== 'granted') return;
     if (!document.hidden) return;
 
@@ -258,13 +276,13 @@ export function SupportChatWidget() {
             </div>
             <p className="text-xs text-slate-500">Reach NET360 admin directly. Replies appear here in real time.</p>
             <div className="mt-1 flex items-center justify-end gap-2">
-              {desktopAlertsEnabled ? (
-                <Button type="button" size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => setDesktopAlertsPreference(false)}>
-                  Desktop Alerts: On
+              {notificationsEnabled ? (
+                <Button type="button" size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => setNotificationPreference(false)}>
+                  Notifications: On
                 </Button>
               ) : (
-                <Button type="button" size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => void enableDesktopAlerts()}>
-                  Enable Desktop Alerts
+                <Button type="button" size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => void enableNotifications()}>
+                  Enable Notifications
                 </Button>
               )}
             </div>

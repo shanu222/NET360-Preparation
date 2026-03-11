@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -9,7 +9,7 @@ import { ScrollArea } from './ui/scroll-area';
 import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { apiRequest } from '../lib/api';
+import { apiRequest, buildApiUrl } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'sonner';
 
@@ -31,6 +31,7 @@ interface CommunityUser {
   studyTimePreference?: 'morning' | 'evening' | 'night' | 'flexible';
   testScoreRange?: { min: number; max: number };
   bio?: string;
+  connectionStatus?: 'none' | 'connected' | 'pending-sent' | 'pending-received' | string;
 }
 
 interface CommunityRequestRow {
@@ -121,11 +122,19 @@ interface QuizChallengeResult {
   totalScore: number;
 }
 
+interface QuizLiveProgress {
+  answeredCount: number;
+  correctCount: number;
+  elapsedSeconds: number;
+  updatedAt: string | null;
+}
+
 interface QuizChallengeRow {
   id: string;
   challengerUserId: string;
   opponentUserId: string;
   mode: 'subject-wise' | 'mock' | 'adaptive' | 'custom' | string;
+  challengeType?: 'async' | 'live' | string;
   subject: string;
   topic: string;
   difficulty: string;
@@ -134,12 +143,15 @@ interface QuizChallengeRow {
   status: 'pending' | 'accepted' | 'in_progress' | 'completed' | 'declined' | 'cancelled' | 'expired' | string;
   invitedAt: string | null;
   acceptedAt: string | null;
+  acceptedDeadlineAt?: string | null;
   startedAt: string | null;
   endedAt: string | null;
   winnerUserId: string;
   isChallenger: boolean;
   myResult: QuizChallengeResult;
   opponentResult: QuizChallengeResult;
+  myLiveProgress?: QuizLiveProgress;
+  opponentLiveProgress?: QuizLiveProgress;
   questions: QuizChallengeQuestion[];
 }
 
@@ -212,6 +224,10 @@ function displayName(user: CommunityUser) {
   return full || user.username || 'Student';
 }
 
+function canSendConnectionRequest(status?: string) {
+  return !status || status === 'none';
+}
+
 export function Community() {
   const { token, user } = useAuth();
 
@@ -260,9 +276,11 @@ export function Community() {
   const [quizSubject, setQuizSubject] = useState('mathematics');
   const [quizTopic, setQuizTopic] = useState('');
   const [quizDifficulty, setQuizDifficulty] = useState('Medium');
+  const [quizChallengeType, setQuizChallengeType] = useState<'async' | 'live'>('async');
   const [quizQuestionCount, setQuizQuestionCount] = useState(15);
   const [quizDurationSeconds, setQuizDurationSeconds] = useState(900);
   const [quizOpponentUserId, setQuizOpponentUserId] = useState('');
+  const [allCommunityUsers, setAllCommunityUsers] = useState<Array<CommunityUser & { connectionStatus?: string }>>([]);
   const [quizAnswers, setQuizAnswers] = useState<Record<string, string>>({});
   const [quizStartedAtMs, setQuizStartedAtMs] = useState<number | null>(null);
 
@@ -270,7 +288,10 @@ export function Community() {
   const [activeConnectionId, setActiveConnectionId] = useState('');
   const [messages, setMessages] = useState<MessageRow[]>([]);
   const [messageInput, setMessageInput] = useState('');
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [reportReason, setReportReason] = useState('');
+  const hasInitializedChallengeNotifications = useRef(false);
+  const previousChallengeState = useRef<Map<string, { status: string }>>(new Map());
 
   const activeConnection = useMemo(
     () => connections.find((item) => item.connectionId === activeConnectionId) || null,
@@ -281,6 +302,15 @@ export function Community() {
     () => quizChallenges.find((item) => item.id === selectedQuizChallengeId) || null,
     [quizChallenges, selectedQuizChallengeId],
   );
+
+  const userNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    allCommunityUsers.forEach((row) => map.set(String(row.id), displayName(row)));
+    connections.forEach((row) => map.set(String(row.user.id), displayName(row.user)));
+    incomingRequests.forEach((row) => map.set(String(row.user.id), displayName(row.user)));
+    outgoingRequests.forEach((row) => map.set(String(row.user.id), displayName(row.user)));
+    return map;
+  }, [allCommunityUsers, connections, incomingRequests, outgoingRequests]);
 
   const hasCommunityProfileData = useMemo(() => {
     return Boolean(
@@ -387,6 +417,13 @@ export function Community() {
 
     await loadLeaderboardAndBadges(leaderboardPeriod);
     await loadQuizData();
+
+    const userSearchPayload = await apiRequest<{ users: Array<CommunityUser & { connectionStatus?: string }> }>(
+      '/api/community/users/search?q=',
+      {},
+      token,
+    );
+    setAllCommunityUsers(userSearchPayload.users || []);
   };
 
   useEffect(() => {
@@ -504,6 +541,94 @@ export function Community() {
     };
   }, [token, activeConnectionId, activeRoomId, activeTab, leaderboardPeriod]);
 
+  useEffect(() => {
+    if (!token) return;
+
+    let closed = false;
+    let reconnectTimer: number | null = null;
+    let source: EventSource | null = null;
+
+    const closeCurrent = () => {
+      if (source) {
+        source.close();
+        source = null;
+      }
+    };
+
+    const connect = () => {
+      if (closed) return;
+      closeCurrent();
+
+      source = new EventSource(`${buildApiUrl('/api/stream')}?token=${encodeURIComponent(token)}`);
+      source.addEventListener('sync', () => {
+        if (document.hidden) return;
+        void refreshCommunity().catch(() => undefined);
+      });
+      source.addEventListener('heartbeat', () => {
+        // Stream heartbeat keeps transport alive.
+      });
+      source.onerror = () => {
+        closeCurrent();
+        if (closed) return;
+        reconnectTimer = window.setTimeout(() => connect(), 3000);
+      };
+    };
+
+    connect();
+    return () => {
+      closed = true;
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      closeCurrent();
+    };
+  }, [token]);
+
+  useEffect(() => {
+    const currentMap = new Map(quizChallenges.map((challenge) => [challenge.id, { status: String(challenge.status || '') }]));
+
+    if (!hasInitializedChallengeNotifications.current) {
+      previousChallengeState.current = currentMap;
+      hasInitializedChallengeNotifications.current = true;
+      return;
+    }
+
+    const previousMap = previousChallengeState.current;
+    for (const challenge of quizChallenges) {
+      const previous = previousMap.get(challenge.id);
+      const opponentUserId = challenge.isChallenger ? challenge.opponentUserId : challenge.challengerUserId;
+      const opponentName = userNameById.get(String(opponentUserId)) || 'Student';
+
+      if (!previous && !challenge.isChallenger && challenge.status === 'pending' && challenge.challengeType === 'async') {
+        toast.info(`New async challenge from ${opponentName}.`);
+      }
+
+      if (
+        challenge.isChallenger
+        && previous?.status === 'pending'
+        && ['accepted', 'in_progress'].includes(String(challenge.status || ''))
+      ) {
+        toast.success(`${opponentName} accepted your challenge.`);
+      }
+    }
+
+    previousChallengeState.current = currentMap;
+  }, [quizChallenges, userNameById]);
+
+  const syncLiveAnswerLock = async (questionId: string, selectedOption: string) => {
+    if (!token || !selectedQuizChallenge || selectedQuizChallenge.challengeType !== 'live') return;
+    if (!['accepted', 'in_progress'].includes(selectedQuizChallenge.status)) return;
+    if (selectedQuizChallenge.myResult?.submitted) return;
+
+    const elapsedSeconds = quizStartedAtMs ? Math.max(0, Math.floor((Date.now() - quizStartedAtMs) / 1000)) : 0;
+    try {
+      await apiRequest(`/api/community/quiz-challenges/${selectedQuizChallenge.id}/progress`, {
+        method: 'POST',
+        body: JSON.stringify({ questionId, selectedOption, elapsedSeconds }),
+      }, token);
+    } catch {
+      // Keep quiz flow smooth even if transient sync fails.
+    }
+  };
+
   const onProfilePictureSelected = async (event: ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0] || null;
     if (!selected) return;
@@ -571,11 +696,11 @@ export function Community() {
     }
   };
 
-  const searchUsers = async () => {
+  const searchUsers = async (query = searchQuery) => {
     if (!token) return;
     try {
       const payload = await apiRequest<{ users: Array<CommunityUser & { connectionStatus?: string }> }>(
-        `/api/community/users/search?q=${encodeURIComponent(searchQuery)}`,
+        `/api/community/users/search?q=${encodeURIComponent(query)}`,
         {},
         token,
       );
@@ -587,6 +712,17 @@ export function Community() {
 
   const sendConnectionRequest = async (toUserId: string) => {
     if (!token) return;
+    const status = [
+      ...searchResults,
+      ...studyPartners.map((item) => item.user),
+      ...allCommunityUsers,
+    ].find((row) => row.id === toUserId)?.connectionStatus;
+
+    if (!canSendConnectionRequest(status)) {
+      toast.info(status === 'connected' ? 'Already connected.' : 'Connection request already exists.');
+      return;
+    }
+
     try {
       await apiRequest('/api/community/connections/request', {
         method: 'POST',
@@ -594,7 +730,7 @@ export function Community() {
       }, token);
       toast.success('Connection request sent.');
       await refreshCommunity();
-      await searchUsers();
+      await searchUsers(searchQuery);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not send request.');
     }
@@ -666,11 +802,12 @@ export function Community() {
   };
 
   const sendMessage = async () => {
-    if (!token || !activeConnectionId) return;
+    if (!token || !activeConnectionId || isSendingMessage) return;
     const text = messageInput.trim();
     if (!text) return;
 
     try {
+      setIsSendingMessage(true);
       await apiRequest(`/api/community/messages/${activeConnectionId}`, {
         method: 'POST',
         body: JSON.stringify({ text }),
@@ -681,6 +818,8 @@ export function Community() {
       await refreshCommunity();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not send message.');
+    } finally {
+      setIsSendingMessage(false);
     }
   };
 
@@ -705,7 +844,7 @@ export function Community() {
   const createQuizChallenge = async () => {
     if (!token) return;
     if (!quizOpponentUserId) {
-      toast.error('Select a connected student to challenge.');
+      toast.error('Select a student to challenge.');
       return;
     }
     try {
@@ -713,6 +852,7 @@ export function Community() {
         method: 'POST',
         body: JSON.stringify({
           opponentUserId: quizOpponentUserId,
+          challengeType: quizChallengeType,
           mode: quizMode,
           subject: quizSubject,
           topic: quizTopic,
@@ -733,11 +873,11 @@ export function Community() {
   const respondQuizChallenge = async (challengeId: string, action: 'accept' | 'decline') => {
     if (!token) return;
     try {
-      await apiRequest(`/api/community/quiz-challenges/${challengeId}/respond`, {
+      const payload = await apiRequest<{ challenge: QuizChallengeRow }>(`/api/community/quiz-challenges/${challengeId}/respond`, {
         method: 'POST',
         body: JSON.stringify({ action }),
       }, token);
-      if (action === 'accept') {
+      if (action === 'accept' && payload.challenge?.challengeType === 'live') {
         setQuizStartedAtMs(Date.now());
         setQuizAnswers({});
       }
@@ -976,7 +1116,17 @@ export function Community() {
                       <div className="mt-2 flex items-center justify-between gap-2">
                         <Badge variant="outline">{result.connectionStatus || 'none'}</Badge>
                         <div className="flex gap-1">
-                          {result.connectionStatus === 'none' ? <Button size="sm" onClick={() => void sendConnectionRequest(result.id)}>Connect</Button> : null}
+                          {canSendConnectionRequest(result.connectionStatus) ? (
+                            <Button size="sm" onClick={() => void sendConnectionRequest(result.id)}>Connect</Button>
+                          ) : (
+                            <Button size="sm" variant="secondary" disabled>
+                              {result.connectionStatus === 'connected'
+                                ? 'Connected'
+                                : result.connectionStatus === 'pending-received'
+                                  ? 'Request Received'
+                                  : 'Request Pending'}
+                            </Button>
+                          )}
                           <Button size="sm" variant="outline" onClick={() => setProfilePreview(result)}>View profile</Button>
                         </div>
                       </div>
@@ -1074,7 +1224,17 @@ export function Community() {
                     <Badge>{Math.round(item.compatibility)}% match</Badge>
                   </div>
                   <div className="mt-2 flex gap-2">
-                    <Button size="sm" onClick={() => void sendConnectionRequest(item.user.id)}>Connect</Button>
+                    {canSendConnectionRequest(item.user.connectionStatus) ? (
+                      <Button size="sm" onClick={() => void sendConnectionRequest(item.user.id)}>Connect</Button>
+                    ) : (
+                      <Button size="sm" variant="secondary" disabled>
+                        {item.user.connectionStatus === 'connected'
+                          ? 'Connected'
+                          : item.user.connectionStatus === 'pending-received'
+                            ? 'Request Received'
+                            : 'Request Pending'}
+                      </Button>
+                    )}
                     <Button size="sm" variant="outline" onClick={() => setProfilePreview(item.user)}>View profile</Button>
                   </div>
                 </div>
@@ -1173,17 +1333,31 @@ export function Community() {
             <Card>
               <CardHeader>
                 <CardTitle>Create Quiz Challenge</CardTitle>
-                <CardDescription>Invite a connected student to a timed MCQ battle.</CardDescription>
+                <CardDescription>Challenge any student in async or live timed MCQ battle mode.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="space-y-1.5">
                   <Label>Challenge Opponent</Label>
                   <Select value={quizOpponentUserId} onValueChange={setQuizOpponentUserId}>
-                    <SelectTrigger><SelectValue placeholder="Select connection" /></SelectTrigger>
+                    <SelectTrigger><SelectValue placeholder="Select student" /></SelectTrigger>
                     <SelectContent>
-                      {connections.map((item) => (
-                        <SelectItem key={item.user.id} value={item.user.id}>{displayName(item.user)}</SelectItem>
+                      {allCommunityUsers.map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {displayName(item)}
+                          {item.connectionStatus === 'connected' ? ' (connected)' : ''}
+                        </SelectItem>
                       ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Challenge Type</Label>
+                  <Select value={quizChallengeType} onValueChange={(value) => setQuizChallengeType(value as 'async' | 'live')}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="async">Async (offline/deferred)</SelectItem>
+                      <SelectItem value="live">Live (simultaneous)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -1257,7 +1431,7 @@ export function Community() {
                   </div>
                 </div>
 
-                <Button onClick={() => void createQuizChallenge()} disabled={!connections.length}>Send Challenge</Button>
+                <Button onClick={() => void createQuizChallenge()} disabled={!allCommunityUsers.length}>Send Challenge</Button>
               </CardContent>
             </Card>
 
@@ -1269,7 +1443,9 @@ export function Community() {
                 </CardHeader>
                 <CardContent className="space-y-2 max-h-[280px] overflow-auto">
                   {quizChallenges.map((challenge) => {
-                    const opponent = connections.find((item) => item.user.id === (challenge.isChallenger ? challenge.opponentUserId : challenge.challengerUserId))?.user;
+                    const opponentUserId = challenge.isChallenger ? challenge.opponentUserId : challenge.challengerUserId;
+                    const opponent = allCommunityUsers.find((row) => row.id === opponentUserId)
+                      || connections.find((item) => item.user.id === opponentUserId)?.user;
                     return (
                       <button
                         key={challenge.id}
@@ -1282,7 +1458,7 @@ export function Community() {
                           <Badge variant="outline">{challenge.status}</Badge>
                         </div>
                         <p className="text-xs text-muted-foreground">
-                          {challenge.isChallenger ? 'vs' : 'from'} {opponent ? displayName(opponent) : 'Student'}  {challenge.questionCount} Q  {Math.round(challenge.durationSeconds / 60)} min
+                          {challenge.isChallenger ? 'vs' : 'from'} {opponent ? displayName(opponent) : 'Student'}  {challenge.questionCount} Q  {Math.round(challenge.durationSeconds / 60)} min  {challenge.challengeType || 'async'}
                         </p>
                         {challenge.status === 'pending' && !challenge.isChallenger ? (
                           <div className="mt-2 flex gap-2">
@@ -1314,7 +1490,9 @@ export function Community() {
                 <CardHeader>
                   <CardTitle>Battle Arena</CardTitle>
                   <CardDescription>
-                    {selectedQuizChallenge ? `${selectedQuizChallenge.questionCount} questions | ${Math.round(selectedQuizChallenge.durationSeconds / 60)} minutes` : 'Select a challenge to play.'}
+                    {selectedQuizChallenge
+                      ? `${selectedQuizChallenge.questionCount} questions | ${Math.round(selectedQuizChallenge.durationSeconds / 60)} minutes | ${selectedQuizChallenge.challengeType || 'async'}`
+                      : 'Select a challenge to play.'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -1323,6 +1501,12 @@ export function Community() {
                       {(selectedQuizChallenge.status === 'in_progress' || selectedQuizChallenge.status === 'accepted') && !selectedQuizChallenge.myResult.submitted ? (
                         <>
                           <p className="text-xs text-muted-foreground">Time left: {challengeRemainingSeconds}s</p>
+                          {selectedQuizChallenge.challengeType === 'live' ? (
+                            <div className="rounded-md border bg-slate-50 p-2 text-xs text-muted-foreground">
+                              <p>Your progress: {selectedQuizChallenge.myLiveProgress?.answeredCount || 0}/{selectedQuizChallenge.questionCount}</p>
+                              <p>Opponent progress: {selectedQuizChallenge.opponentLiveProgress?.answeredCount || 0}/{selectedQuizChallenge.questionCount}</p>
+                            </div>
+                          ) : null}
                           <div className="space-y-3 max-h-[360px] overflow-auto">
                             {selectedQuizChallenge.questions.map((question, index) => (
                               <div key={question.questionId} className="rounded-md border p-3">
@@ -1334,7 +1518,10 @@ export function Community() {
                                       <button
                                         key={option}
                                         type="button"
-                                        onClick={() => setQuizAnswers((prev) => ({ ...prev, [question.questionId]: option }))}
+                                        onClick={() => {
+                                          setQuizAnswers((prev) => ({ ...prev, [question.questionId]: option }));
+                                          void syncLiveAnswerLock(question.questionId, option);
+                                        }}
                                         className={`rounded border px-2 py-1 text-left text-sm ${selected ? 'border-indigo-500 bg-indigo-50' : 'hover:bg-slate-50'}`}
                                       >
                                         {option}
@@ -1501,15 +1688,23 @@ export function Community() {
                   ))}
                   {!messages.length ? <p className="text-xs text-muted-foreground">No messages yet.</p> : null}
                 </div>
-                <div className="flex gap-2">
+                <form
+                  className="flex gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void sendMessage();
+                  }}
+                >
                   <Input
                     value={messageInput}
                     onChange={(e) => setMessageInput(e.target.value)}
                     placeholder={activeConnection ? 'Type a respectful message...' : 'Select connection first'}
-                    disabled={!activeConnection}
+                    disabled={!activeConnection || isSendingMessage}
                   />
-                  <Button onClick={() => void sendMessage()} disabled={!activeConnection}>Send</Button>
-                </div>
+                  <Button type="submit" disabled={!activeConnection || isSendingMessage || !messageInput.trim()}>
+                    {isSendingMessage ? 'Sending...' : 'Send'}
+                  </Button>
+                </form>
                 {activeConnection ? (
                   <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
                     <Label>Report this conversation (safety)</Label>

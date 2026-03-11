@@ -183,11 +183,11 @@ export function NETTypes() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         {netTypes.map((net) => (
-          <article key={net.id} className="overflow-hidden rounded-2xl border border-indigo-100 bg-white/95 shadow-[0_12px_28px_rgba(98,113,202,0.12)]">
+          <article key={net.id} className="min-w-0 overflow-hidden rounded-2xl border border-indigo-100 bg-white/95 shadow-[0_12px_28px_rgba(98,113,202,0.12)]">
             <header className={`flex items-center gap-2 bg-gradient-to-r px-4 py-3 text-white ${net.headerGradient}`}>
               <net.icon className="h-5 w-5" />
-              <div>
-                <h3 className="text-lg text-white">{net.title}</h3>
+              <div className="min-w-0">
+                <h3 className="text-lg text-white break-words">{net.title}</h3>
                 <p className="text-xs text-white/85">{net.subtitle}</p>
               </div>
             </header>
@@ -214,7 +214,7 @@ export function NETTypes() {
                 <p className="mb-2 text-sm font-medium text-slate-700">Admission Programmes Through This NET</p>
                 <div className="flex flex-wrap gap-1.5">
                   {net.admissionProgrammes.map((program) => (
-                    <Badge key={program} className={`${net.tagColor} text-white`}>
+                    <Badge key={program} className={`max-w-full break-words ${net.tagColor} text-white`}>
                       {program}
                     </Badge>
                   ))}
@@ -278,11 +278,11 @@ function TopChip({
   muted?: string;
 }) {
   return (
-    <div className="inline-flex h-auto min-h-11 items-center gap-2 rounded-xl border border-indigo-100 bg-white/85 px-3 py-2 text-slate-700 shadow-sm">
+    <div className="inline-flex h-auto min-h-11 w-full items-center gap-2 rounded-xl border border-indigo-100 bg-white/85 px-3 py-2 text-slate-700 shadow-sm">
       <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
         <Icon className="h-3.5 w-3.5" />
       </span>
-      <span className="text-sm font-medium leading-tight">{text}</span>
+      <span className="min-w-0 text-sm font-medium leading-tight break-words">{text}</span>
       {muted ? <span className="text-xs leading-tight text-slate-400">{muted}</span> : null}
     </div>
   );

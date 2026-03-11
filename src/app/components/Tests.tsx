@@ -254,10 +254,7 @@ export function Tests({ onNavigate }: TestsProps) {
 
   const openExamWindow = (params: { sessionId: string; testType: TestKind; token: string; examWindow: Window | null }) => {
     const { sessionId, testType, token: authToken, examWindow } = params;
-    if (!examWindow) {
-      toast.error('Popup blocked. Please allow popups and try again.');
-      return;
-    }
+    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
 
     // Fallback handoff in case query params are stripped or navigation races in popup.
     localStorage.setItem(
@@ -271,6 +268,18 @@ export function Tests({ onNavigate }: TestsProps) {
     );
 
     const url = `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=${encodeURIComponent(testType)}&authToken=${encodeURIComponent(authToken)}`;
+
+    if (isNativeRuntime) {
+      // Android WebView commonly blocks popup windows, so navigate in the same view.
+      window.location.href = url;
+      return;
+    }
+
+    if (!examWindow) {
+      toast.error('Popup blocked. Please allow popups and try again.');
+      return;
+    }
+
     examWindow.location.href = url;
   };
 
@@ -292,9 +301,11 @@ export function Tests({ onNavigate }: TestsProps) {
       return;
     }
 
-    // Open popup synchronously to avoid browser popup blockers.
-    const examWindow = window.open('/exam-interface', '_blank', 'width=1400,height=900');
-    if (!examWindow) {
+    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+
+    // Open popup synchronously for browsers to avoid popup blockers.
+    const examWindow = isNativeRuntime ? null : window.open('/exam-interface', '_blank', 'width=1400,height=900');
+    if (!isNativeRuntime && !examWindow) {
       toast.error('Popup blocked. Please allow popups and try again.');
       return;
     }
@@ -333,9 +344,9 @@ export function Tests({ onNavigate }: TestsProps) {
       });
 
       openExamWindow({ sessionId: session.id, testType: kind, token: authToken, examWindow });
-      toast.success('Test launched in a new window.');
+      toast.success(isNativeRuntime ? 'Test launched.' : 'Test launched in a new window.');
     } catch (error) {
-      examWindow.close();
+      examWindow?.close();
       toast.error(error instanceof Error ? error.message : 'Could not start test.');
     } finally {
       setLaunchingKind(null);
