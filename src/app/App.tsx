@@ -31,7 +31,6 @@ import {
   MessageSquare,
   Users,
   ChevronDown,
-  Sparkles,
 } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from './components/ui/sheet';
@@ -40,6 +39,8 @@ import { AuthProvider } from './context/AuthContext';
 import { Toaster, toast } from 'sonner';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
+
+const BRAND_LOGO_SRC = '/net360-logo.png';
 
 const ProgramExplorer = lazy(async () => {
   try {
@@ -276,8 +277,8 @@ export default function App() {
             <div className="pointer-events-none absolute bottom-8 right-3 h-36 w-36 rounded-full bg-cyan-300/20 blur-3xl" />
             <div className="mb-5 rounded-2xl border border-white/20 bg-white/12 px-3 py-3 backdrop-blur-sm">
               <div className="flex items-center gap-2">
-                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/20 text-white">
-                  <Sparkles className="w-4 h-4" />
+                <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg bg-white p-1.5 shadow-sm">
+                  <img src={BRAND_LOGO_SRC} alt="NET360 logo" className="h-full w-full object-contain" loading="lazy" />
                 </div>
                 <div>
                   <p className="text-lg font-semibold leading-none tracking-tight text-white">NET360</p>
@@ -303,8 +304,15 @@ export default function App() {
                   <SheetContent side="left" className="h-dvh w-[290px] max-w-[88vw] overflow-hidden border-white/20 bg-gradient-to-b from-[#5f4ee6] via-[#5b40d7] to-[#5e3ae0] p-0">
                     <div className="flex h-full min-h-0 flex-col">
                     <div className="shrink-0 border-b border-white/20 p-5">
-                      <h2 className="text-lg font-semibold text-white">NET360</h2>
-                      <p className="text-xs text-indigo-100">Your Smart NET Preparation</p>
+                      <div className="flex items-center gap-2">
+                        <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg bg-white p-1.5 shadow-sm">
+                          <img src={BRAND_LOGO_SRC} alt="NET360 logo" className="h-full w-full object-contain" loading="lazy" />
+                        </div>
+                        <div>
+                          <h2 className="text-lg font-semibold text-white">NET360</h2>
+                          <p className="text-xs text-indigo-100">Your Smart NET Preparation</p>
+                        </div>
+                      </div>
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-8 [scrollbar-gutter:stable]">
                       <NavigationContent />
@@ -312,9 +320,14 @@ export default function App() {
                     </div>
                   </SheetContent>
                 </Sheet>
-                <div>
+                <div className="flex items-center gap-2">
+                  <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-indigo-100 bg-white p-1.5 shadow-[0_6px_12px_rgba(76,93,172,0.14)]">
+                    <img src={BRAND_LOGO_SRC} alt="NET360 logo" className="h-full w-full object-contain" loading="lazy" />
+                  </div>
+                  <div>
                   <h1 className="text-base text-indigo-950 sm:text-xl">{activeTitle}</h1>
                   <p className="hidden text-xs text-slate-500 sm:block">My page</p>
+                  </div>
                 </div>
               </div>
               <div className="flex items-center gap-1 sm:gap-2">

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -1007,6 +1007,31 @@ export function Community() {
     });
   };
 
+  const showComingSoonToastNearButton = (event: MouseEvent<HTMLButtonElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const toastWidth = 110;
+    const top = Math.max(8, rect.top - 40);
+    const left = Math.max(8, Math.min(window.innerWidth - toastWidth - 8, rect.left + rect.width / 2 - toastWidth / 2));
+
+    toast.custom(() => (
+      <div
+        style={{
+          position: 'fixed',
+          top,
+          left,
+          zIndex: 9999,
+          pointerEvents: 'none',
+        }}
+        className="rounded-md border border-indigo-300 bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-lg"
+      >
+        Coming Soon
+      </div>
+    ), {
+      duration: 1400,
+      dismissible: false,
+    });
+  };
+
   const startVoiceRecording = async () => {
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
       toast.error('Voice notes are not supported on this device/browser.');
@@ -1932,20 +1957,14 @@ export function Community() {
 
                 {activeConnection ? (
                   <div className="flex flex-wrap gap-2">
-                    <Button type="button" size="sm" variant="outline" onClick={() => void sendCallInvite('audio')} disabled={activeConnection.canMessage === false || isSendingMessage}>Audio Call</Button>
-                    <Button type="button" size="sm" variant="outline" onClick={() => void sendCallInvite('video')} disabled={activeConnection.canMessage === false || isSendingMessage}>Video Call</Button>
-                    <Button type="button" size="sm" variant="outline" onClick={() => messageFileInputRef.current?.click()} disabled={activeConnection.canMessage === false || isSendingMessage}>Attach File</Button>
+                    <Button type="button" size="sm" variant="outline" onClick={(event) => showComingSoonToastNearButton(event)} disabled={activeConnection.canMessage === false || isSendingMessage}>Audio Call</Button>
+                    <Button type="button" size="sm" variant="outline" onClick={(event) => showComingSoonToastNearButton(event)} disabled={activeConnection.canMessage === false || isSendingMessage}>Video Call</Button>
+                    <Button type="button" size="sm" variant="outline" onClick={(event) => showComingSoonToastNearButton(event)} disabled={activeConnection.canMessage === false || isSendingMessage}>Attach File</Button>
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
-                      onClick={() => {
-                        if (isRecordingVoice) {
-                          stopVoiceRecording();
-                        } else {
-                          void startVoiceRecording();
-                        }
-                      }}
+                      onClick={(event) => showComingSoonToastNearButton(event)}
                       disabled={activeConnection.canMessage === false || isSendingMessage}
                     >
                       {isRecordingVoice ? 'Stop Voice' : 'Voice Note'}

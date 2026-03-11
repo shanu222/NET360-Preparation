@@ -9,6 +9,7 @@
     "start": "vite preview --host 0.0.0.0 --port 4173",
     "dev:server": "node server/index.js",
     "start:server": "node server/index.js",
+    "brand:assets": "node scripts/generate-brand-assets.mjs",
     "purge:students": "node scripts/purge-student-accounts.mjs",
     "mobile:build": "vite build --mode android && npx cap sync android",
     "android:sync": "npx cap sync android",

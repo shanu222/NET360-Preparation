@@ -15,6 +15,7 @@ import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentPr
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK, PAYMENT_METHODS } from '../lib/paymentMethods';
 
 const ADVERTISEMENT_PREVIEW_SRC = '/advertisement-page.webp';
+const BRAND_LOGO_SRC = '/net360-logo.png';
 
 interface ProfileProps {
   onNavigate?: (section: string) => void;
@@ -500,9 +501,14 @@ export function Profile({ onNavigate }: ProfileProps) {
   if (!user) {
     return (
       <div className="space-y-5">
-        <div>
+        <div className="flex items-center gap-3">
+          <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-indigo-100 bg-white p-2 shadow-sm">
+            <img src={BRAND_LOGO_SRC} alt="NET360 logo" className="h-full w-full object-contain" loading="lazy" />
+          </div>
+          <div>
           <h1>Account Access</h1>
           <p className="text-slate-600">Login or register to enable server-backed sessions, auth, and report export</p>
+          </div>
         </div>
 
         <div className="grid gap-4 lg:grid-cols-[1fr_1.5fr] xl:grid-cols-[1fr_1.65fr]">
