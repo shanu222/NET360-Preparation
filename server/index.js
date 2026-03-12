@@ -3651,6 +3651,26 @@ function sliceNoticeBlock(html) {
   return source.slice(start, end);
 }
 
+const NUST_NOTICE_BLOCKLIST_PATTERNS = [
+  /mathematics\s*course/i,
+  /pre[\s-]*medical/i,
+  /8\s*weeks?\s*(duration\s*)?course/i,
+];
+
+function shouldIgnoreNustNoticeContent(value) {
+  const text = String(value || '').toLowerCase();
+  return NUST_NOTICE_BLOCKLIST_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function filterNustNotices(items) {
+  if (!Array.isArray(items)) return [];
+  return items.filter((item) => {
+    const title = String(item?.title || '');
+    const subtitle = String(item?.subtitle || '');
+    return !shouldIgnoreNustNoticeContent(`${title} ${subtitle}`);
+  });
+}
+
 function parseNustNotices(html) {
   const block = sliceNoticeBlock(html);
   const anchorRegex = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
@@ -3683,6 +3703,10 @@ function parseNustNotices(html) {
     const subtitle = nearbyText.slice(0, 180)
       || 'Important admission notice extracted from latest NUST undergraduate updates.';
 
+    if (shouldIgnoreNustNoticeContent(`${title} ${subtitle}`)) {
+      continue;
+    }
+
     const combined = `${title} ${subtitle}`.toLowerCase();
     let category = 'notice';
     if (combined.includes('result')) category = 'result';
@@ -3706,32 +3730,40 @@ function parseNustNotices(html) {
     const actSatMatch = plain.match(/ACT\s*\/\s*SAT[^.]{0,220}/i);
 
     if (resultMatch) {
-      items.push({
-        key: 'notice-result-fallback',
-        title: sanitizeUpdateText(String(resultMatch[0] || ''), 180),
-        subtitle: 'Result-related update extracted from latest admissions notices.',
-        category: 'result',
-        status: normalizeNustStatus(resultMatch[0], 'completed'),
-      });
+      const title = sanitizeUpdateText(String(resultMatch[0] || ''), 180);
+      const subtitle = 'Result-related update extracted from latest admissions notices.';
+      if (!shouldIgnoreNustNoticeContent(`${title} ${subtitle}`)) {
+        items.push({
+          key: 'notice-result-fallback',
+          title,
+          subtitle,
+          category: 'result',
+          status: normalizeNustStatus(resultMatch[0], 'completed'),
+        });
+      }
     }
 
     if (actSatMatch) {
-      items.push({
-        key: 'notice-actsat-fallback',
-        title: sanitizeUpdateText(String(actSatMatch[0] || ''), 180),
-        subtitle: 'ACT/SAT admission update extracted from latest admissions notices.',
-        category: 'act_sat',
-        status: normalizeNustStatus(actSatMatch[0], 'upcoming'),
-      });
+      const title = sanitizeUpdateText(String(actSatMatch[0] || ''), 180);
+      const subtitle = 'ACT/SAT admission update extracted from latest admissions notices.';
+      if (!shouldIgnoreNustNoticeContent(`${title} ${subtitle}`)) {
+        items.push({
+          key: 'notice-actsat-fallback',
+          title,
+          subtitle,
+          category: 'act_sat',
+          status: normalizeNustStatus(actSatMatch[0], 'upcoming'),
+        });
+      }
     }
   }
 
-  return items;
+  return filterNustNotices(items);
 }
 
 function parseNustAdmissionsFeed(html) {
   const dates = parseNustImportantDates(html);
-  const notices = parseNustNotices(html);
+  const notices = filterNustNotices(parseNustNotices(html));
 
   return {
     dates: dates.length ? dates : DEFAULT_NUST_IMPORTANT_DATES,
@@ -4396,6 +4428,7 @@ app.get('/api/public/nust-admissions-feed', async (_req, res) => {
   const source = nustUpdatesCache.lastError
     ? (hasCache ? 'stale-cache' : 'seed')
     : (hasCache ? 'cache' : 'seed');
+  const safeNotices = filterNustNotices(nustUpdatesCache.notices);
 
   res.json({
     source,
@@ -4404,8 +4437,8 @@ app.get('/api/public/nust-admissions-feed', async (_req, res) => {
     dates: Array.isArray(nustUpdatesCache.dates) && nustUpdatesCache.dates.length
       ? nustUpdatesCache.dates
       : DEFAULT_NUST_IMPORTANT_DATES,
-    notices: Array.isArray(nustUpdatesCache.notices) && nustUpdatesCache.notices.length
-      ? nustUpdatesCache.notices
+    notices: safeNotices.length
+      ? safeNotices
       : DEFAULT_NUST_IMPORTANT_NOTICES,
   });
 });
@@ -4415,12 +4448,13 @@ app.get('/api/public/nust-updates', async (_req, res) => {
   if (nustUpdatesCache.fetchedAt <= 0 || (now - nustUpdatesCache.fetchedAt) >= NUST_UPDATES_CACHE_MS) {
     await refreshNustAdmissionsCache({ force: true });
   }
+  const safeUpdates = filterNustNotices(nustUpdatesCache.updates);
 
   res.json({
     source: nustUpdatesCache.lastError ? 'stale-cache' : 'cache',
     fetchedAt: nustUpdatesCache.fetchedAt ? new Date(nustUpdatesCache.fetchedAt).toISOString() : null,
-    updates: Array.isArray(nustUpdatesCache.updates) && nustUpdatesCache.updates.length
-      ? nustUpdatesCache.updates
+    updates: safeUpdates.length
+      ? safeUpdates
       : DEFAULT_NUST_IMPORTANT_NOTICES.map((item) => ({ title: item.title, subtitle: item.subtitle })),
   });
 });

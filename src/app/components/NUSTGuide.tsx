@@ -80,6 +80,19 @@ const DEFAULT_IMPORTANT_NOTICES: NustImportantNoticeRow[] = [
   },
 ];
 
+const NOTICE_BLOCKLIST_PATTERNS = [
+  /mathematics\s*course/i,
+  /pre[\s-]*medical/i,
+  /8\s*weeks?\s*(duration\s*)?course/i,
+];
+
+function filterBlockedImportantNotices(items: NustImportantNoticeRow[]): NustImportantNoticeRow[] {
+  return items.filter((item) => {
+    const haystack = `${String(item?.title || '')} ${String(item?.subtitle || '')}`;
+    return !NOTICE_BLOCKLIST_PATTERNS.some((pattern) => pattern.test(haystack));
+  });
+}
+
 function statusToCardTone(status: NustImportantDateRow['status']) {
   switch (status) {
     case 'completed':
@@ -133,7 +146,8 @@ export function NUSTGuide() {
           setImportantDates(payload.dates);
         }
         if (Array.isArray(payload.notices) && payload.notices.length) {
-          setImportantNotices(payload.notices);
+          const safeNotices = filterBlockedImportantNotices(payload.notices);
+          setImportantNotices(safeNotices.length ? safeNotices : DEFAULT_IMPORTANT_NOTICES);
         }
       } catch {
         // Keep fallback data when live updates are unavailable.
@@ -491,7 +505,7 @@ export function NUSTGuide() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-4">
-                {importantNotices.map((item) => {
+                {filterBlockedImportantNotices(importantNotices).map((item) => {
                   const badge = statusToBadge(item.status);
                   return (
                     <div key={item.key} className={`p-4 border-l-4 rounded-r-lg ${statusToCardTone(item.status)}`}>
