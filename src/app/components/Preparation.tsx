@@ -73,6 +73,95 @@ const tabWidthPresetByKey: Record<TabKey, string> = {
   'design-aptitude': 'min-w-[176px] max-w-[212px] sm:min-w-[190px] sm:max-w-[224px]',
 };
 
+const syllabusToneBySubject: Record<
+  SubjectKey,
+  {
+    partIdle: string;
+    partHover: string;
+    partActive: string;
+    partShadow: string;
+    chapterIdle: string;
+    chapterHover: string;
+    chapterActive: string;
+    chapterAccent: string;
+    sectionHover: string;
+    sectionActive: string;
+    sectionShadow: string;
+    panelSurface: string;
+  }
+> = {
+  mathematics: {
+    partIdle: 'border-indigo-200/80 bg-indigo-50/45',
+    partHover: 'hover:border-indigo-300 hover:bg-indigo-50/85',
+    partActive: 'from-indigo-600 to-violet-500',
+    partShadow: 'shadow-[0_14px_24px_rgba(79,70,229,0.3)]',
+    chapterIdle: 'border-indigo-100 bg-white',
+    chapterHover: 'hover:border-indigo-200 hover:bg-indigo-50/35',
+    chapterActive: 'border-indigo-300/80 bg-indigo-50/75 shadow-[0_10px_18px_rgba(99,102,241,0.16)]',
+    chapterAccent: 'text-indigo-700',
+    sectionHover: 'hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-900',
+    sectionActive: 'from-indigo-600 to-violet-500',
+    sectionShadow: 'shadow-[0_10px_18px_rgba(79,70,229,0.28)]',
+    panelSurface: 'border-indigo-200 bg-indigo-50/35',
+  },
+  physics: {
+    partIdle: 'border-cyan-200/80 bg-cyan-50/45',
+    partHover: 'hover:border-cyan-300 hover:bg-cyan-50/85',
+    partActive: 'from-cyan-600 to-blue-500',
+    partShadow: 'shadow-[0_14px_24px_rgba(8,145,178,0.3)]',
+    chapterIdle: 'border-cyan-100 bg-white',
+    chapterHover: 'hover:border-cyan-200 hover:bg-cyan-50/35',
+    chapterActive: 'border-cyan-300/80 bg-cyan-50/75 shadow-[0_10px_18px_rgba(14,116,144,0.16)]',
+    chapterAccent: 'text-cyan-700',
+    sectionHover: 'hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-900',
+    sectionActive: 'from-cyan-600 to-blue-500',
+    sectionShadow: 'shadow-[0_10px_18px_rgba(8,145,178,0.28)]',
+    panelSurface: 'border-cyan-200 bg-cyan-50/35',
+  },
+  english: {
+    partIdle: 'border-rose-200/80 bg-rose-50/45',
+    partHover: 'hover:border-rose-300 hover:bg-rose-50/85',
+    partActive: 'from-rose-600 to-pink-500',
+    partShadow: 'shadow-[0_14px_24px_rgba(225,29,72,0.3)]',
+    chapterIdle: 'border-rose-100 bg-white',
+    chapterHover: 'hover:border-rose-200 hover:bg-rose-50/35',
+    chapterActive: 'border-rose-300/80 bg-rose-50/75 shadow-[0_10px_18px_rgba(225,29,72,0.14)]',
+    chapterAccent: 'text-rose-700',
+    sectionHover: 'hover:border-rose-300 hover:bg-rose-50 hover:text-rose-900',
+    sectionActive: 'from-rose-600 to-pink-500',
+    sectionShadow: 'shadow-[0_10px_18px_rgba(225,29,72,0.26)]',
+    panelSurface: 'border-rose-200 bg-rose-50/35',
+  },
+  biology: {
+    partIdle: 'border-emerald-200/80 bg-emerald-50/45',
+    partHover: 'hover:border-emerald-300 hover:bg-emerald-50/85',
+    partActive: 'from-emerald-600 to-teal-500',
+    partShadow: 'shadow-[0_14px_24px_rgba(5,150,105,0.3)]',
+    chapterIdle: 'border-emerald-100 bg-white',
+    chapterHover: 'hover:border-emerald-200 hover:bg-emerald-50/35',
+    chapterActive: 'border-emerald-300/80 bg-emerald-50/75 shadow-[0_10px_18px_rgba(5,150,105,0.14)]',
+    chapterAccent: 'text-emerald-700',
+    sectionHover: 'hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-900',
+    sectionActive: 'from-emerald-600 to-teal-500',
+    sectionShadow: 'shadow-[0_10px_18px_rgba(5,150,105,0.26)]',
+    panelSurface: 'border-emerald-200 bg-emerald-50/35',
+  },
+  chemistry: {
+    partIdle: 'border-amber-200/80 bg-amber-50/45',
+    partHover: 'hover:border-amber-300 hover:bg-amber-50/85',
+    partActive: 'from-amber-500 to-orange-500',
+    partShadow: 'shadow-[0_14px_24px_rgba(245,158,11,0.3)]',
+    chapterIdle: 'border-amber-100 bg-white',
+    chapterHover: 'hover:border-amber-200 hover:bg-amber-50/35',
+    chapterActive: 'border-amber-300/80 bg-amber-50/75 shadow-[0_10px_18px_rgba(245,158,11,0.15)]',
+    chapterAccent: 'text-amber-700',
+    sectionHover: 'hover:border-amber-300 hover:bg-amber-50 hover:text-amber-900',
+    sectionActive: 'from-amber-500 to-orange-500',
+    sectionShadow: 'shadow-[0_10px_18px_rgba(245,158,11,0.26)]',
+    panelSurface: 'border-amber-200 bg-amber-50/35',
+  },
+};
+
 const FLAT_TOPIC_TABS: Record<'quantitative-mathematics' | 'design-aptitude', { title: string; topics: string[] }> = {
   'quantitative-mathematics': {
     title: 'Computer Science',
@@ -537,6 +626,7 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
           }
 
           const subject = tab.key;
+          const tone = syllabusToneBySubject[subject];
           const selectedPart = selectedPartBySubject[subject];
           const currentPart = selectedPart ? SYLLABUS[subject][selectedPart] : null;
           const selectedChapterId = selectedChapterBySubject[subject];
@@ -561,7 +651,7 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
                             setSelectedChapterBySubject((prev) => ({ ...prev, [subject]: null }));
                             setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
                           }}
-                          className={`rounded-xl border p-3 text-left transition-all duration-200 ${isSelected ? 'border-transparent bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-[0_12px_20px_rgba(79,70,229,0.28)]' : 'border-indigo-100 bg-white hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-indigo-50/60'}`}
+                          className={`rounded-xl border p-3 text-left transition-all duration-300 ease-out active:scale-[0.99] ${isSelected ? `border-transparent bg-gradient-to-r ${tone.partActive} text-white ${tone.partShadow}` : `${tone.partIdle} ${tone.partHover} hover:-translate-y-0.5 hover:shadow-[0_10px_16px_rgba(15,23,42,0.08)]`}`}
                         >
                           <p className={`text-sm font-semibold ${isSelected ? 'text-white' : 'text-indigo-950'}`}>{SYLLABUS[subject][part].label}</p>
                           <p className={`mt-1 text-xs ${isSelected ? 'text-indigo-100' : 'text-slate-500'}`}>{chapterCount} chapters</p>
@@ -581,11 +671,11 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
                         return (
                           <div
                             key={chapter.id}
-                            className={`rounded-xl border transition-all duration-200 ${active ? 'border-indigo-300 bg-indigo-50/55 shadow-[0_8px_16px_rgba(99,102,241,0.12)]' : 'border-indigo-100 bg-white hover:border-indigo-200 hover:bg-indigo-50/30'}`}
+                            className={`rounded-xl border transition-all duration-300 ease-out ${active ? tone.chapterActive : `${tone.chapterIdle} ${tone.chapterHover}`} ${!active ? 'hover:-translate-y-0.5 hover:shadow-[0_8px_15px_rgba(15,23,42,0.07)]' : ''}`}
                           >
                             <button
                               type="button"
-                              className="w-full p-3 text-left"
+                              className="w-full p-3 text-left transition-transform duration-200 active:scale-[0.995]"
                               onClick={() => {
                                 setSelectedChapterBySubject((prev) => ({
                                   ...prev,
@@ -599,18 +689,18 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
                                   <p className="font-medium text-indigo-950">{chapter.title}</p>
                                   <p className="mt-1 text-xs text-slate-500">{chapter.sections.length} sections</p>
                                 </div>
-                                <ChevronRight className={`h-4 w-4 text-slate-500 transition-transform ${active ? 'rotate-90' : ''}`} />
+                                <ChevronRight className={`h-4 w-4 transition-transform ${active ? `rotate-90 ${tone.chapterAccent}` : 'text-slate-500'}`} />
                               </div>
                             </button>
 
                             {active ? (
-                              <div className="border-t border-indigo-100 px-3 pb-3 pt-2">
+                              <div className={`border-t px-3 pb-3 pt-2 ${tone.panelSurface}`}>
                                 <ul className="space-y-2 text-sm">
                                   {chapter.sections.map((section) => (
                                     <li key={section}>
                                       <button
                                         type="button"
-                                        className={`w-full rounded-lg border px-3 py-2 text-left transition-all duration-200 ${selectedSectionBySubject[subject] === `${chapter.id}::${section}` ? 'border-transparent bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-[0_10px_18px_rgba(79,70,229,0.28)]' : 'border-indigo-100 bg-white text-slate-700 hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-900'}`}
+                                        className={`w-full rounded-lg border px-3 py-2 text-left transition-all duration-300 ease-out active:scale-[0.99] ${selectedSectionBySubject[subject] === `${chapter.id}::${section}` ? `border-transparent bg-gradient-to-r ${tone.sectionActive} text-white ${tone.sectionShadow}` : `border-slate-200/80 bg-white text-slate-700 hover:-translate-y-0.5 ${tone.sectionHover} hover:shadow-[0_8px_14px_rgba(15,23,42,0.07)]`}`}
                                         onClick={() => {
                                           const selection = {
                                             subject,
@@ -632,15 +722,15 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
                                 </ul>
 
                                 {selectedSectionBySubject[subject]?.startsWith(`${chapter.id}::`) ? (
-                                  <div className="mt-3 rounded-lg border border-indigo-200 bg-white p-3">
+                                  <div className={`mt-3 rounded-lg border bg-white p-3 ${tone.panelSurface}`}>
                                     <p className="mb-2 text-xs text-slate-500">
                                       Selected section:{' '}
-                                      <span className="font-medium text-indigo-900">
+                                      <span className={`font-medium ${tone.chapterAccent}`}>
                                         {selectedSectionBySubject[subject]?.slice(`${chapter.id}::`.length)}
                                       </span>
                                     </p>
                                     <Button
-                                      className="bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
+                                      className={`bg-gradient-to-r ${tone.sectionActive} text-white transition-all duration-200 hover:brightness-105`}
                                       disabled={Boolean(launchingSectionKey)}
                                       onClick={() => {
                                         const selectedSection = selectedSectionBySubject[subject]?.slice(`${chapter.id}::`.length) || '';
