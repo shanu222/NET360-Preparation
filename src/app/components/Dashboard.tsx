@@ -14,12 +14,30 @@ import {
 import { toast } from 'sonner';
 import { Progress } from './ui/progress';
 import { useAppData } from '../context/AppDataContext';
+import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
 
 interface DashboardProps {
   onNavigate: (section: string) => void;
 }
 
 const TEST_DATE = new Date('2026-06-30T00:00:00');
+
+const SUBJECT_STYLE_FALLBACKS = [
+  { badge: 'from-violet-500 to-violet-400', bar: 'bg-violet-500' },
+  { badge: 'from-cyan-500 to-blue-400', bar: 'bg-cyan-500' },
+  { badge: 'from-amber-400 to-orange-300', bar: 'bg-amber-500' },
+  { badge: 'from-emerald-500 to-teal-400', bar: 'bg-emerald-500' },
+  { badge: 'from-fuchsia-500 to-pink-400', bar: 'bg-fuchsia-500' },
+  { badge: 'from-sky-500 to-indigo-400', bar: 'bg-sky-500' },
+];
+
+const SUBJECT_STYLE_OVERRIDES: Partial<Record<SubjectKey, { badge: string; bar: string }>> = {
+  mathematics: { badge: 'from-violet-500 to-violet-400', bar: 'bg-violet-500' },
+  physics: { badge: 'from-cyan-500 to-blue-400', bar: 'bg-cyan-500' },
+  english: { badge: 'from-amber-400 to-orange-300', bar: 'bg-amber-500' },
+  biology: { badge: 'from-emerald-500 to-teal-400', bar: 'bg-emerald-500' },
+  chemistry: { badge: 'from-fuchsia-500 to-pink-400', bar: 'bg-fuchsia-500' },
+};
 
 export function Dashboard({ onNavigate }: DashboardProps) {
   const { mcqsBySubject, attempts, profile } = useAppData();
@@ -35,7 +53,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const firstName = profile.firstName?.trim() || 'Student';
 
   const metrics = useMemo(() => {
-    const questionPool = mcqsBySubject.mathematics.length + mcqsBySubject.physics.length + mcqsBySubject.english.length;
+    const questionPool = Object.values(mcqsBySubject).reduce((sum, list) => sum + list.length, 0);
     const attemptedQuestions = attempts.reduce((sum, attempt) => sum + attempt.totalQuestions, 0);
     const accuracy = attempts.length
       ? Math.round(attempts.reduce((sum, attempt) => sum + attempt.score, 0) / attempts.length)
@@ -80,22 +98,33 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   }, [attempts, mcqsBySubject]);
 
   const subjectStats = useMemo(() => {
-    const config = [
-      { key: 'mathematics' as const, label: 'Mathematics', badge: 'from-violet-500 to-violet-400', bar: 'bg-violet-500' },
-      { key: 'physics' as const, label: 'Physics', badge: 'from-cyan-500 to-blue-400', bar: 'bg-cyan-500' },
-      { key: 'english' as const, label: 'English', badge: 'from-amber-400 to-orange-300', bar: 'bg-amber-500' },
-    ];
+    const attemptedBySubject = attempts.reduce((acc, attempt) => {
+      acc[attempt.subject] = (acc[attempt.subject] || 0) + attempt.totalQuestions;
+      return acc;
+    }, {} as Record<string, number>);
 
-    return config.map((subject) => {
-      const total = mcqsBySubject[subject.key].length;
-      const attempted = attempts
-        .filter((attempt) => attempt.subject === subject.key)
-        .reduce((sum, attempt) => sum + attempt.totalQuestions, 0);
+    const subjectKeys = Array.from(
+      new Set([
+        ...(Object.keys(mcqsBySubject) as SubjectKey[]),
+        ...Object.keys(attemptedBySubject),
+      ]),
+    ).filter((key) => {
+      const total = mcqsBySubject[key as SubjectKey]?.length || 0;
+      const attempted = attemptedBySubject[key] || 0;
+      return total > 0 || attempted > 0;
+    });
 
+    return subjectKeys.map((key, index) => {
+      const total = mcqsBySubject[key as SubjectKey]?.length || 0;
+      const attempted = attemptedBySubject[key] || 0;
       const progress = total ? Math.min(100, Math.round((attempted / total) * 100)) : 0;
+      const theme = SUBJECT_STYLE_OVERRIDES[key as SubjectKey] || SUBJECT_STYLE_FALLBACKS[index % SUBJECT_STYLE_FALLBACKS.length];
 
       return {
-        ...subject,
+        key,
+        label: getSubjectLabel(key as SubjectKey),
+        badge: theme.badge,
+        bar: theme.bar,
         attempted,
         total,
         progress,
@@ -251,7 +280,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               {subjectStats.map((subject) => (
                 <div key={`${subject.key}-legend`} className="flex items-center gap-3 text-sm">
                   <span className={`h-2.5 w-2.5 rounded-full ${subject.bar}`} />
-                  <span className="w-24 text-slate-700">{subject.label}</span>
+                  <span className="min-w-[7rem] text-slate-700 sm:min-w-[8rem]">{subject.label}</span>
                   <div className="h-2 flex-1 rounded-full bg-slate-200">
                     <div className={`h-full rounded-full ${subject.bar}`} style={{ width: `${subject.progress}%` }} />
                   </div>
