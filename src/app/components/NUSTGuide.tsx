@@ -433,8 +433,9 @@ export function NUSTGuide() {
                   <div>
                     <h4>Computer-Based Test</h4>
                     <p className="text-sm text-muted-foreground">
-                      All NET tests are computer-based. Make sure to practice on computer
-                      to get familiar with the interface.
+                      NET tests at NUST Islamabad Main Campus are computer-based, while
+                      NET tests conducted in Karachi are paper-based. The test format
+                      depends on your selected test location.
                     </p>
                   </div>
                 </div>
