@@ -1,3 +1,5 @@
+import type { SubjectKey } from './mcq';
+
 export type NetProgramCategoryKey = 'engineering' | 'computing' | 'business' | 'architecture' | 'sciences' | 'applied';
 
 export type NetProgramIconKey =
@@ -151,3 +153,57 @@ export const NET_TARGET_PROGRAM_OPTIONS: NetTargetProgramOption[] = CATEGORY_ORD
       category: category.tag,
     }));
 });
+
+type NetTrackId =
+  | 'net-engineering'
+  | 'net-applied-sciences'
+  | 'net-business-social-sciences'
+  | 'net-architecture'
+  | 'net-natural-sciences';
+
+const SUBJECTS_BY_TRACK: Record<NetTrackId, SubjectKey[]> = {
+  'net-engineering': ['mathematics', 'physics', 'english'],
+  'net-applied-sciences': ['biology', 'chemistry', 'english'],
+  'net-business-social-sciences': ['mathematics', 'english'],
+  'net-architecture': ['mathematics', 'physics', 'english'],
+  'net-natural-sciences': ['mathematics', 'english'],
+};
+
+const TRACK_BY_PROGRAM_CATEGORY: Record<NetProgramCategoryKey, NetTrackId> = {
+  engineering: 'net-engineering',
+  computing: 'net-engineering',
+  business: 'net-business-social-sciences',
+  architecture: 'net-architecture',
+  sciences: 'net-natural-sciences',
+  applied: 'net-applied-sciences',
+};
+
+const trackIds = new Set<NetTrackId>(Object.keys(SUBJECTS_BY_TRACK) as NetTrackId[]);
+
+export function getProgramCategoryKey(targetProgram: string): NetProgramCategoryKey | null {
+  const normalizedTarget = String(targetProgram || '').trim().toLowerCase();
+  if (!normalizedTarget) return null;
+
+  for (const key of CATEGORY_ORDER) {
+    const hasMatch = NET_PROGRAMS_BY_CATEGORY[key].programs.some(
+      (program) => program.name.trim().toLowerCase() === normalizedTarget,
+    );
+    if (hasMatch) return key;
+  }
+
+  return null;
+}
+
+export function getRequiredSubjectsForTargetProgram(targetProgram: string, netType?: string): SubjectKey[] {
+  const normalizedNetType = String(netType || '').trim().toLowerCase() as NetTrackId;
+  if (normalizedNetType && trackIds.has(normalizedNetType)) {
+    return SUBJECTS_BY_TRACK[normalizedNetType];
+  }
+
+  const categoryKey = getProgramCategoryKey(targetProgram);
+  if (categoryKey) {
+    return SUBJECTS_BY_TRACK[TRACK_BY_PROGRAM_CATEGORY[categoryKey]];
+  }
+
+  return [];
+}

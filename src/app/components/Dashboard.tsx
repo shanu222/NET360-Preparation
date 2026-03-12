@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import { Progress } from './ui/progress';
 import { useAppData } from '../context/AppDataContext';
 import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
+import { getRequiredSubjectsForTargetProgram } from '../lib/netPrograms';
 
 interface DashboardProps {
   onNavigate: (section: string) => void;
@@ -103,16 +104,21 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       return acc;
     }, {} as Record<string, number>);
 
-    const subjectKeys = Array.from(
-      new Set([
-        ...(Object.keys(mcqsBySubject) as SubjectKey[]),
-        ...Object.keys(attemptedBySubject),
-      ]),
-    ).filter((key) => {
-      const total = mcqsBySubject[key as SubjectKey]?.length || 0;
-      const attempted = attemptedBySubject[key] || 0;
-      return total > 0 || attempted > 0;
-    });
+    const requiredSubjects = getRequiredSubjectsForTargetProgram(profile.targetProgram);
+    const hasProfileDrivenSubjects = requiredSubjects.length > 0;
+
+    const subjectKeys = hasProfileDrivenSubjects
+      ? requiredSubjects
+      : Array.from(
+          new Set([
+            ...(Object.keys(mcqsBySubject) as SubjectKey[]),
+            ...Object.keys(attemptedBySubject),
+          ]),
+        ).filter((key) => {
+          const total = mcqsBySubject[key as SubjectKey]?.length || 0;
+          const attempted = attemptedBySubject[key] || 0;
+          return total > 0 || attempted > 0;
+        });
 
     return subjectKeys.map((key, index) => {
       const total = mcqsBySubject[key as SubjectKey]?.length || 0;
@@ -131,7 +137,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         remaining: Math.max(0, total - attempted),
       };
     });
-  }, [attempts, mcqsBySubject]);
+  }, [attempts, mcqsBySubject, profile.targetProgram]);
 
   const weekChart = useMemo(() => {
     const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
