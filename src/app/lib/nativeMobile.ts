@@ -20,6 +20,9 @@ export async function initializeNativeExperience() {
     return;
   }
 
+  const platform = Capacitor.getPlatform();
+  document.documentElement.classList.add('native-runtime', `native-${platform}`);
+
   await Promise.allSettled([
     configureStatusBar(),
     configureSplashScreen(),
