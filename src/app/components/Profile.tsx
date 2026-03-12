@@ -548,8 +548,8 @@ export function Profile({ onNavigate }: ProfileProps) {
     return (
       <div className="space-y-5">
         <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-indigo-100 bg-white p-2 shadow-sm">
-            <img src={BRAND_LOGO_SRC} alt="NET360 logo" className="h-full w-full object-contain" loading="lazy" />
+          <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-indigo-100 bg-transparent shadow-sm">
+            <img src={BRAND_LOGO_SRC} alt="NET360 logo" className="h-full w-full scale-[1.3] object-contain" loading="lazy" />
           </div>
           <div>
           <h1>Account Access</h1>
