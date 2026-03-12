@@ -1228,13 +1228,15 @@ export function Community() {
   }
 
   const sectionTabTriggerClassName =
-    'rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 hover:-translate-y-0.5 hover:scale-[1.02] hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 hover:shadow-[0_10px_20px_rgba(34,211,238,0.22)] data-[state=active]:border-amber-400 data-[state=active]:bg-gradient-to-r data-[state=active]:from-amber-500 data-[state=active]:to-orange-500 data-[state=active]:text-white data-[state=active]:shadow-[0_12px_24px_rgba(249,115,22,0.35)]';
+    'rounded-xl border border-slate-200/90 bg-white/90 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:scale-[1.02] hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 hover:shadow-[0_10px_20px_rgba(34,211,238,0.2)] active:scale-[0.98] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!via-violet-500 data-[state=active]:!to-fuchsia-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_14px_26px_rgba(109,40,217,0.34)]';
+  const viewProfileButtonClassName =
+    'border-cyan-300 bg-gradient-to-r from-white to-cyan-50 text-cyan-700 transition-all duration-250 ease-out hover:-translate-y-0.5 hover:scale-[1.03] hover:border-cyan-400 hover:from-cyan-50 hover:to-blue-50 hover:text-cyan-800 hover:shadow-[0_10px_16px_rgba(34,211,238,0.22)] active:scale-[0.98]';
 
   return (
     <div className="space-y-4">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-4">
         <div className="overflow-x-auto">
-          <TabsList className="inline-flex h-auto min-w-max gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-cyan-50 to-orange-50 p-1.5">
+          <TabsList className="inline-flex h-auto min-w-max gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 via-indigo-50 to-fuchsia-50 p-1.5 shadow-[0_10px_20px_rgba(99,102,241,0.12)]">
             <TabsTrigger value="discover-students" className={sectionTabTriggerClassName}>Discover Students</TabsTrigger>
             <TabsTrigger value="study-partners" className={sectionTabTriggerClassName}>Study Partners</TabsTrigger>
             <TabsTrigger value="discussion-rooms" className={sectionTabTriggerClassName}>Discussion Rooms</TabsTrigger>
@@ -1425,7 +1427,7 @@ export function Community() {
                           <Button
                             size="sm"
                             variant="outline"
-                            className="border-cyan-300 bg-white text-cyan-700 transition-all duration-200 hover:-translate-y-0.5 hover:scale-[1.03] hover:border-cyan-400 hover:bg-cyan-50 hover:text-cyan-800 hover:shadow-md"
+                            className={viewProfileButtonClassName}
                             onClick={() => setProfilePreview(result)}
                           >
                             View Profile
@@ -1540,7 +1542,7 @@ export function Community() {
                     <Button
                       size="sm"
                       variant="outline"
-                      className="border-cyan-300 bg-white text-cyan-700 transition-all duration-200 hover:-translate-y-0.5 hover:scale-[1.03] hover:border-cyan-400 hover:bg-cyan-50 hover:text-cyan-800 hover:shadow-md"
+                      className={viewProfileButtonClassName}
                       onClick={() => setStudyPartnersProfilePreview(item.user)}
                     >
                       View Profile
