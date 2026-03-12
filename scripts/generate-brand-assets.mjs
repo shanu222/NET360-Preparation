@@ -1,7 +1,12 @@
 import sharp from 'sharp';
 import fs from 'node:fs';
 
-const src = 'NET360 logo.png';
+const srcCandidates = ['New NET360 logo.png', 'NET360 logo.png'];
+const src = srcCandidates.find((candidate) => fs.existsSync(candidate));
+
+if (!src) {
+  throw new Error(`Logo source not found. Expected one of: ${srcCandidates.join(', ')}`);
+}
 
 const webTargets = [
   ['public/net360-logo.png', 256, 'cover'],
