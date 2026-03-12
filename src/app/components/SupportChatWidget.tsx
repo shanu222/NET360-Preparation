@@ -35,6 +35,39 @@ const USER_SUPPORT_NOTIFICATIONS_KEY = 'net360-support-notifications-user';
 const SUPPORT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
 const SUPPORT_ATTACHMENT_ACCEPT = '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp,.svg';
 const SUPPORT_REACTION_SET = ['😀', '🙏', '👍', '❤️', '✅'];
+const CHAT_EDGE_GAP = 12;
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function getChatButtonSize(viewportWidth: number): number {
+  return viewportWidth < 420 ? 48 : 56;
+}
+
+function getPanelMetrics(viewportWidth: number, viewportHeight: number): { width: number; maxHeight: number } {
+  const width = Math.min(360, Math.max(280, viewportWidth - CHAT_EDGE_GAP * 2));
+  const maxHeight = Math.max(300, Math.min(560, viewportHeight - CHAT_EDGE_GAP * 2));
+  return { width, maxHeight };
+}
+
+function getButtonBounds(viewportWidth: number, viewportHeight: number): { min: number; maxX: number; maxY: number } {
+  const buttonSize = getChatButtonSize(viewportWidth);
+  return {
+    min: CHAT_EDGE_GAP,
+    maxX: Math.max(CHAT_EDGE_GAP, viewportWidth - buttonSize - CHAT_EDGE_GAP),
+    maxY: Math.max(CHAT_EDGE_GAP, viewportHeight - buttonSize - CHAT_EDGE_GAP),
+  };
+}
+
+function getPanelBounds(viewportWidth: number, viewportHeight: number): { min: number; maxX: number; maxY: number } {
+  const metrics = getPanelMetrics(viewportWidth, viewportHeight);
+  return {
+    min: CHAT_EDGE_GAP,
+    maxX: Math.max(CHAT_EDGE_GAP, viewportWidth - metrics.width - CHAT_EDGE_GAP),
+    maxY: Math.max(CHAT_EDGE_GAP, viewportHeight - metrics.maxHeight - CHAT_EDGE_GAP),
+  };
+}
 
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -61,14 +94,21 @@ export function SupportChatWidget() {
       return false;
     }
   });
-  const [position, setPosition] = useState(() => ({
-    x: Math.max(16, window.innerWidth - 88),
-    y: Math.max(16, window.innerHeight - 140),
-  }));
-  const [panelPosition, setPanelPosition] = useState(() => ({
-    x: Math.max(12, window.innerWidth - 392),
-    y: Math.max(12, window.innerHeight - 520),
-  }));
+  const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
+  const [position, setPosition] = useState(() => {
+    const bounds = getButtonBounds(window.innerWidth, window.innerHeight);
+    return {
+      x: bounds.maxX,
+      y: clamp(bounds.maxY - 72, bounds.min, bounds.maxY),
+    };
+  });
+  const [panelPosition, setPanelPosition] = useState(() => {
+    const bounds = getPanelBounds(window.innerWidth, window.innerHeight);
+    return {
+      x: bounds.maxX,
+      y: clamp(bounds.maxY - 140, bounds.min, bounds.maxY),
+    };
+  });
 
   const dragStateRef = useRef({ dragging: false, target: 'button' as 'button' | 'panel', offsetX: 0, offsetY: 0 });
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -97,6 +137,7 @@ export function SupportChatWidget() {
 
   const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
   const canUseWebNotifications = typeof window !== 'undefined' && 'Notification' in window;
+  const panelMetrics = useMemo(() => getPanelMetrics(viewport.width, viewport.height), [viewport.height, viewport.width]);
 
   const setNotificationPreference = (enabled: boolean) => {
     setNotificationsEnabled(enabled);
@@ -172,10 +213,12 @@ export function SupportChatWidget() {
 
   const panelStyle = useMemo(
     () => ({
-      left: Math.min(Math.max(12, panelPosition.x), Math.max(12, window.innerWidth - 372)),
-      top: Math.min(Math.max(12, panelPosition.y), Math.max(12, window.innerHeight - 220)),
+      left: clamp(panelPosition.x, getPanelBounds(viewport.width, viewport.height).min, getPanelBounds(viewport.width, viewport.height).maxX),
+      top: clamp(panelPosition.y, getPanelBounds(viewport.width, viewport.height).min, getPanelBounds(viewport.width, viewport.height).maxY),
+      width: panelMetrics.width,
+      maxHeight: panelMetrics.maxHeight,
     }),
-    [panelPosition.x, panelPosition.y],
+    [panelMetrics.maxHeight, panelMetrics.width, panelPosition.x, panelPosition.y, viewport.height, viewport.width],
   );
 
   const loadMessages = async () => {
@@ -229,13 +272,18 @@ export function SupportChatWidget() {
 
   useEffect(() => {
     const onResize = () => {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+      const buttonBounds = getButtonBounds(width, height);
+      const panelBounds = getPanelBounds(width, height);
+      setViewport({ width, height });
       setPosition((prev) => ({
-        x: Math.min(Math.max(12, prev.x), Math.max(12, window.innerWidth - 56)),
-        y: Math.min(Math.max(12, prev.y), Math.max(12, window.innerHeight - 56)),
+        x: clamp(prev.x, buttonBounds.min, buttonBounds.maxX),
+        y: clamp(prev.y, buttonBounds.min, buttonBounds.maxY),
       }));
       setPanelPosition((prev) => ({
-        x: Math.min(Math.max(12, prev.x), Math.max(12, window.innerWidth - 372)),
-        y: Math.min(Math.max(12, prev.y), Math.max(12, window.innerHeight - 220)),
+        x: clamp(prev.x, panelBounds.min, panelBounds.maxX),
+        y: clamp(prev.y, panelBounds.min, panelBounds.maxY),
       }));
     };
 
@@ -247,14 +295,16 @@ export function SupportChatWidget() {
     const onMove = (event: PointerEvent) => {
       if (!dragStateRef.current.dragging) return;
       if (dragStateRef.current.target === 'panel') {
+        const panelBounds = getPanelBounds(viewport.width, viewport.height);
         setPanelPosition({
-          x: Math.min(Math.max(12, event.clientX - dragStateRef.current.offsetX), Math.max(12, window.innerWidth - 372)),
-          y: Math.min(Math.max(12, event.clientY - dragStateRef.current.offsetY), Math.max(12, window.innerHeight - 220)),
+          x: clamp(event.clientX - dragStateRef.current.offsetX, panelBounds.min, panelBounds.maxX),
+          y: clamp(event.clientY - dragStateRef.current.offsetY, panelBounds.min, panelBounds.maxY),
         });
       } else {
+        const buttonBounds = getButtonBounds(viewport.width, viewport.height);
         setPosition({
-          x: Math.min(Math.max(12, event.clientX - dragStateRef.current.offsetX), Math.max(12, window.innerWidth - 56)),
-          y: Math.min(Math.max(12, event.clientY - dragStateRef.current.offsetY), Math.max(12, window.innerHeight - 56)),
+          x: clamp(event.clientX - dragStateRef.current.offsetX, buttonBounds.min, buttonBounds.maxX),
+          y: clamp(event.clientY - dragStateRef.current.offsetY, buttonBounds.min, buttonBounds.maxY),
         });
       }
     };
@@ -269,20 +319,21 @@ export function SupportChatWidget() {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
     };
-  }, []);
+  }, [viewport.height, viewport.width]);
 
   useEffect(() => {
     const openFromHeader = () => {
+      const panelBounds = getPanelBounds(viewport.width, viewport.height);
       setOpen(true);
       setPanelPosition({
-        x: Math.min(Math.max(12, position.x - 302), Math.max(12, window.innerWidth - 372)),
-        y: Math.min(Math.max(12, position.y - 340), Math.max(12, window.innerHeight - 220)),
+        x: clamp(position.x - panelMetrics.width + 56, panelBounds.min, panelBounds.maxX),
+        y: clamp(position.y - panelMetrics.maxHeight + 180, panelBounds.min, panelBounds.maxY),
       });
     };
 
     window.addEventListener('net360:open-support-chat', openFromHeader as EventListener);
     return () => window.removeEventListener('net360:open-support-chat', openFromHeader as EventListener);
-  }, [position.x, position.y]);
+  }, [panelMetrics.maxHeight, panelMetrics.width, position.x, position.y, viewport.height, viewport.width]);
 
   const startDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
     dragStateRef.current.target = 'button';
@@ -366,7 +417,7 @@ export function SupportChatWidget() {
     <>
       {open ? (
         <Card
-          className="fixed z-[60] w-[min(92vw,360px)] border-emerald-200 bg-white/95 text-slate-900 shadow-[0_16px_44px_rgba(15,118,110,0.24)] transition-all duration-200 dark:border-emerald-500/40 dark:bg-slate-900/96 dark:text-emerald-50 dark:shadow-[0_18px_44px_rgba(3,8,24,0.7)]"
+          className="fixed z-[60] w-full max-w-full overflow-hidden border-emerald-200 bg-white/95 text-slate-900 shadow-[0_16px_44px_rgba(15,118,110,0.24)] transition-all duration-200 dark:border-emerald-500/40 dark:bg-slate-900/96 dark:text-emerald-50 dark:shadow-[0_18px_44px_rgba(3,8,24,0.7)]"
           style={panelStyle}
         >
           <CardHeader className="pb-2">
@@ -407,7 +458,7 @@ export function SupportChatWidget() {
                 <div className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-[11px] text-emerald-800 dark:border-emerald-500/45 dark:bg-emerald-900/30 dark:text-emerald-200">
                   Messages are end-to-end encrypted.
                 </div>
-                <ScrollArea className="h-64 rounded-lg border bg-slate-50 p-2 dark:border-slate-600 dark:bg-slate-800/65">
+                <ScrollArea className="h-[min(42vh,16rem)] rounded-lg border bg-slate-50 p-2 sm:h-64 dark:border-slate-600 dark:bg-slate-800/65">
                   <div className="space-y-2">
                     {loading ? <p className="text-xs text-slate-500 dark:text-slate-300">Loading messages...</p> : null}
                     {!messages.length ? <p className="text-xs text-slate-500 dark:text-slate-300">Start a conversation with admin support.</p> : null}
@@ -501,19 +552,19 @@ export function SupportChatWidget() {
 
       <button
         type="button"
-        className="fixed z-[70] flex h-14 w-14 items-center justify-center rounded-full border border-emerald-300 bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-[0_12px_28px_rgba(13,148,136,0.35)]"
+        className="fixed z-[70] flex h-12 w-12 items-center justify-center rounded-full border border-emerald-300 bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-[0_12px_28px_rgba(13,148,136,0.35)] sm:h-14 sm:w-14"
         style={{ left: position.x, top: position.y }}
         onPointerDown={startDrag}
         onClick={() => setOpen((prev) => !prev)}
         title="Drag to move. Click to open support chat."
       >
-        <MessageCircle className="h-6 w-6" />
+        <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6" />
         {unreadCount > 0 ? (
           <Badge className="absolute -right-2 -top-2 h-5 min-w-[1.25rem] bg-rose-600 px-1 text-[10px] text-white">
             {unreadCount > 9 ? '9+' : unreadCount}
           </Badge>
         ) : null}
-        <span className="pointer-events-none absolute -bottom-5 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white">
+        <span className="pointer-events-none absolute -bottom-5 hidden items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white sm:inline-flex">
           <GripHorizontal className="h-3 w-3" /> drag
         </span>
       </button>

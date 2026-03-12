@@ -322,6 +322,18 @@
     filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.45));
   }
 
+  /* Shared icon surface for small icon wrappers that should adapt to theme changes. */
+  .net360-icon-surface {
+    border: 1px solid rgba(105, 124, 224, 0.3);
+    background: rgba(255, 255, 255, 0.88);
+    color: #3d52b8;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 4px 10px rgba(72, 93, 203, 0.14);
+  }
+
+  .net360-icon-surface > svg {
+    color: inherit;
+  }
+
   .net360-page [data-slot='button'][class*='variant-outline'],
   .net360-page [data-slot='button'].border {
     border-color: rgba(121, 138, 231, 0.35);
@@ -372,6 +384,14 @@
 
   .native-android .net360-page [data-slot='tabs-trigger'][data-state='active']:active {
     filter: brightness(0.92) saturate(1.06);
+  }
+
+  /* Avoid Android WebView input zoom and uneven font scaling. */
+  .native-android input,
+  .native-android textarea,
+  .native-android select,
+  .native-android button {
+    font-size: max(16px, 1rem);
   }
 
   .net360-page input,
@@ -469,6 +489,13 @@
     background: linear-gradient(145deg, rgba(70, 89, 170, 0.9), rgba(47, 63, 132, 0.94));
     color: #eef3ff !important;
     box-shadow: inset 0 1px 0 rgba(187, 203, 255, 0.24), 0 8px 16px rgba(4, 9, 29, 0.46);
+  }
+
+  .dark .net360-icon-surface {
+    border-color: rgba(132, 151, 255, 0.52);
+    background: rgba(40, 55, 112, 0.72);
+    color: #edf2ff;
+    box-shadow: inset 0 1px 0 rgba(187, 203, 255, 0.16), 0 8px 16px rgba(4, 9, 29, 0.38);
   }
 
   .dark .net360-page [data-slot='button'][class*='variant-outline'],
@@ -632,6 +659,68 @@
 
     .net360-page [data-slot='card'] {
       border-radius: 0.9rem;
+    }
+
+    /* Collapse explicit desktop grid templates into one column on phones. */
+    .net360-page [class*='lg:grid-cols-['],
+    .net360-page [class*='xl:grid-cols-['],
+    .net360-page [class*='2xl:grid-cols-['] {
+      grid-template-columns: minmax(0, 1fr) !important;
+    }
+
+    /* Let fixed min/max width utility classes shrink on narrow screens. */
+    .net360-page [class*='min-w-['] {
+      min-width: 0 !important;
+    }
+
+    .net360-page [class*='max-w-['] {
+      max-width: 100% !important;
+    }
+
+    /* Keep tab lists and dense horizontal controls usable on small devices. */
+    .net360-page [data-slot='tabs-list'] {
+      overflow-x: auto;
+      overscroll-behavior-x: contain;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: thin;
+    }
+
+    .net360-page [data-slot='tabs-trigger'] {
+      white-space: normal;
+    }
+  }
+
+  @media (max-width: 480px) {
+    html {
+      font-size: 15px;
+    }
+
+    .net360-shell {
+      border-radius: 1rem;
+      padding: 0.35rem;
+    }
+
+    .net360-page {
+      padding-top: 0;
+    }
+
+    .net360-page [data-slot='button'] {
+      min-height: 2.5rem;
+    }
+
+    .net360-page [data-slot='card'] {
+      box-shadow: 0 10px 20px rgba(98, 113, 202, 0.12);
+    }
+  }
+
+  @media (max-height: 540px) and (orientation: landscape) {
+    .net360-shell {
+      padding: 0.3rem;
+      gap: 0.35rem;
+    }
+
+    .net360-page [data-slot='card'] {
+      box-shadow: 0 8px 16px rgba(98, 113, 202, 0.1);
     }
 
   }

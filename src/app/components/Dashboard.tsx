@@ -310,7 +310,7 @@ function QuickActionCard({
           : 'hover:-translate-y-0.5 hover:shadow-[0_12px_28px_rgba(88,103,195,0.18)]'
       }`}
     >
-      <div className="mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl bg-white text-indigo-700 shadow-sm">
+      <div className="net360-icon-surface mb-3 inline-flex h-10 w-10 items-center justify-center rounded-xl">
         <Icon className="h-5 w-5" />
       </div>
       <p className="text-sm font-semibold text-indigo-950">{title}</p>

@@ -294,12 +294,12 @@ export default function App() {
   return (
     <AuthProvider>
       <AppDataProvider>
-      <div className="min-h-dvh p-1.5 sm:p-4 md:p-5 xl:p-6">
+      <div className="min-h-dvh p-1 sm:p-3 md:p-5 xl:p-6">
         <div className="net360-shell mx-auto flex w-full max-w-[1600px] flex-col gap-2 rounded-[20px] border border-white/70 bg-white/65 p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl sm:gap-3 sm:rounded-[24px] sm:p-2 xl:rounded-[28px]">
           <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white/85 to-[#f2f4ff]/80 backdrop-blur sm:rounded-3xl">
             {/* Header */}
-            <header className="sticky top-0 z-40 flex h-14 items-center justify-between rounded-t-2xl border-b border-indigo-100/70 bg-white/65 px-2.5 backdrop-blur-xl sm:h-16 sm:px-5 sm:rounded-t-3xl">
-              <div className="flex items-center gap-3">
+            <header className="sticky top-0 z-40 flex min-h-14 flex-wrap items-center justify-between gap-2 rounded-t-2xl border-b border-indigo-100/70 bg-white/65 px-2 py-1.5 backdrop-blur-xl sm:min-h-16 sm:flex-nowrap sm:px-5 sm:py-0 sm:rounded-t-3xl">
+              <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
                 <Sheet open={sidebarMenuOpen} onOpenChange={setSidebarMenuOpen}>
                   <SheetTrigger asChild>
                     <Button variant="ghost" size="icon" className="rounded-xl">
@@ -325,21 +325,21 @@ export default function App() {
                     </div>
                   </SheetContent>
                 </Sheet>
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 items-center gap-2">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-indigo-100 bg-transparent shadow-[0_6px_12px_rgba(76,93,172,0.14)]">
                     <img src={BRAND_LOGO_SRC} alt="NET360 logo" className="h-full w-full scale-[1.3] object-contain" loading="lazy" />
                   </div>
-                  <div>
-                  <h1 className="text-base text-indigo-950 sm:text-xl">{activeTitle}</h1>
+                  <div className="min-w-0">
+                  <h1 className="max-w-[42vw] truncate text-base text-indigo-950 sm:max-w-none sm:text-xl">{activeTitle}</h1>
                   <p className="hidden text-xs text-slate-500 sm:block">My page</p>
                   </div>
                 </div>
               </div>
-              <div className="flex items-center gap-1 sm:gap-2">
+              <div className="ml-auto flex items-center gap-1 sm:gap-2">
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="rounded-xl px-2 text-slate-600 hover:bg-indigo-50 hover:text-indigo-700"
+                  className="rounded-xl px-1.5 text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 sm:px-2"
                   onClick={() => setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'))}
                   aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
                   title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -380,7 +380,7 @@ export default function App() {
             </header>
 
             {/* Main Content */}
-            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip px-2.5 py-3 sm:px-5 sm:py-5">
+            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip px-2 py-2.5 sm:px-5 sm:py-5">
               {activeTab === 'home' ? (
                 <div className="mt-0 net360-page">
                   <Dashboard onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} />

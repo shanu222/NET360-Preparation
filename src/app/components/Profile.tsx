@@ -984,7 +984,7 @@ export function Profile({ onNavigate }: ProfileProps) {
             <Button
               variant="outline"
               size="icon"
-              className="h-10 w-10 rounded-xl border-emerald-300 bg-white/90 p-0 hover:bg-emerald-50"
+              className="net360-icon-surface h-10 w-10 rounded-xl border-emerald-300 p-0 hover:bg-emerald-50 dark:border-emerald-500/45 dark:hover:bg-emerald-900/45"
               aria-label="Open WhatsApp chat with admin"
               title="WhatsApp Admin"
             >
