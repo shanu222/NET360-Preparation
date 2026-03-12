@@ -1503,7 +1503,7 @@ function StatPill({
 }) {
   return (
     <div className="inline-flex items-center gap-2 rounded-xl border border-white/70 bg-white/80 px-3 py-2 text-sm text-indigo-900">
-      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+      <span className="net360-icon-circle inline-flex h-7 w-7 items-center justify-center rounded-full">
         <Icon className="h-4 w-4" />
       </span>
       <span className="font-medium">{label}</span>

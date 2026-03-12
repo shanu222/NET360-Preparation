@@ -277,7 +277,7 @@ function MetricCard({
 }) {
   return (
     <div className="rounded-xl border border-white/35 bg-white/80 p-3 text-slate-800 shadow-sm">
-      <div className="mb-1 inline-flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-indigo-700">
+      <div className="net360-icon-circle mb-1 inline-flex h-7 w-7 items-center justify-center rounded-full">
         <Icon className="h-4 w-4" />
       </div>
       <p className="text-lg font-semibold leading-none">{value}</p>

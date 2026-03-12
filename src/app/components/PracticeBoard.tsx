@@ -64,8 +64,10 @@ function downloadDataUrlFile(file?: { dataUrl?: string | null; name?: string | n
   }
 }
 
-const PEN_COLORS = [
-  { name: 'Black', value: '#111827' },
+const LIGHT_PEN_PRIMARY = { name: 'Black', value: '#111827' };
+const DARK_PEN_PRIMARY = { name: 'White', value: '#f8fafc' };
+
+const SHARED_PEN_COLORS = [
   { name: 'Blue', value: '#1d4ed8' },
   { name: 'Red', value: '#dc2626' },
   { name: 'Green', value: '#15803d' },
@@ -82,7 +84,16 @@ export function PracticeBoard() {
   const [questionBankSubject, setQuestionBankSubject] = useState('');
   const [questionBankQuestions, setQuestionBankQuestions] = useState<BoardQuestion[]>([]);
   const [tool, setTool] = useState<Tool>('pen');
-  const [penColor, setPenColor] = useState(PEN_COLORS[0].value);
+  const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
+
+  const penColors = useMemo(
+    () => [isDarkMode ? DARK_PEN_PRIMARY : LIGHT_PEN_PRIMARY, ...SHARED_PEN_COLORS],
+    [isDarkMode],
+  );
+
+  const [penColor, setPenColor] = useState(() =>
+    document.documentElement.classList.contains('dark') ? DARK_PEN_PRIMARY.value : LIGHT_PEN_PRIMARY.value,
+  );
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -134,6 +145,25 @@ export function PracticeBoard() {
       return blob.includes(needle);
     });
   }, [activeQuestionBankSubject, questionBankQuery]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const updateThemeState = () => {
+      setIsDarkMode(root.classList.contains('dark'));
+    };
+
+    updateThemeState();
+    const observer = new MutationObserver(updateThemeState);
+    observer.observe(root, { attributes: true, attributeFilter: ['class'] });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
+    const hasCurrentColor = penColors.some((color) => color.value === penColor);
+    if (!hasCurrentColor) {
+      setPenColor(penColors[0].value);
+    }
+  }, [penColor, penColors]);
 
   const redrawCanvas = useCallback(() => {
     const canvas = canvasRef.current;
@@ -495,7 +525,7 @@ export function PracticeBoard() {
                 Eraser
               </Button>
               <div className="flex items-center gap-1 rounded-md border border-indigo-200 bg-white px-2 py-1">
-                {PEN_COLORS.map((color) => (
+                {penColors.map((color) => (
                   <button
                     key={color.value}
                     type="button"

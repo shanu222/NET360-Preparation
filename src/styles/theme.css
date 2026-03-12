@@ -309,6 +309,19 @@
     color: #263372;
   }
 
+  /* Shared circular icon chip for consistent visibility in both themes. */
+  .net360-icon-circle {
+    border: 1px solid rgba(105, 124, 224, 0.36);
+    background: linear-gradient(145deg, rgba(233, 239, 255, 0.95), rgba(214, 225, 255, 0.93));
+    color: #3d52b8 !important;
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72), 0 4px 10px rgba(72, 93, 203, 0.16);
+  }
+
+  .net360-icon-circle > svg {
+    color: inherit;
+    filter: drop-shadow(0 1px 0 rgba(255, 255, 255, 0.45));
+  }
+
   .net360-page [data-slot='button'][class*='variant-outline'],
   .net360-page [data-slot='button'].border {
     border-color: rgba(121, 138, 231, 0.35);
@@ -449,6 +462,13 @@
     border-color: rgba(137, 154, 255, 0.34);
     background: linear-gradient(180deg, rgba(24, 34, 73, 0.88), rgba(16, 24, 56, 0.88));
     box-shadow: 0 14px 34px rgba(6, 10, 28, 0.58);
+  }
+
+  .dark .net360-icon-circle {
+    border-color: rgba(142, 166, 255, 0.62);
+    background: linear-gradient(145deg, rgba(70, 89, 170, 0.9), rgba(47, 63, 132, 0.94));
+    color: #eef3ff !important;
+    box-shadow: inset 0 1px 0 rgba(187, 203, 255, 0.24), 0 8px 16px rgba(4, 9, 29, 0.46);
   }
 
   .dark .net360-page [data-slot='button'][class*='variant-outline'],

@@ -279,7 +279,7 @@ function TopChip({
 }) {
   return (
     <div className="inline-flex h-auto min-h-11 w-full items-center gap-2 rounded-xl border border-indigo-100 bg-white/85 px-3 py-2 text-slate-700 shadow-sm">
-      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+      <span className="net360-icon-circle inline-flex h-6 w-6 items-center justify-center rounded-full">
         <Icon className="h-3.5 w-3.5" />
       </span>
       <span className="min-w-0 text-sm font-medium leading-tight break-words">{text}</span>

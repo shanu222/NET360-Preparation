@@ -366,24 +366,24 @@ export function SupportChatWidget() {
     <>
       {open ? (
         <Card
-          className="fixed z-[60] w-[min(92vw,360px)] border-emerald-200 bg-white/95 shadow-[0_16px_44px_rgba(15,118,110,0.24)] transition-all duration-200"
+          className="fixed z-[60] w-[min(92vw,360px)] border-emerald-200 bg-white/95 text-slate-900 shadow-[0_16px_44px_rgba(15,118,110,0.24)] transition-all duration-200 dark:border-emerald-500/40 dark:bg-slate-900/96 dark:text-emerald-50 dark:shadow-[0_18px_44px_rgba(3,8,24,0.7)]"
           style={panelStyle}
         >
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between gap-2 cursor-move" onPointerDown={startPanelDrag}>
-              <CardTitle className="text-base text-emerald-900">Live Support Chat</CardTitle>
-              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setOpen(false)}>
+              <CardTitle className="text-base text-emerald-900 dark:text-emerald-300">Live Support Chat</CardTitle>
+              <Button size="icon" variant="ghost" className="h-8 w-8 dark:hover:bg-emerald-500/15 dark:text-emerald-100" onClick={() => setOpen(false)}>
                 <X className="h-4 w-4" />
               </Button>
             </div>
-            <p className="text-xs text-slate-500">Reach NET360 admin directly. Replies appear here in real time.</p>
+            <p className="text-xs text-slate-500 dark:text-slate-300">Reach NET360 admin directly. Replies appear here in real time.</p>
             <div className="mt-1 flex items-center justify-end gap-2">
               {notificationsEnabled ? (
-                <Button type="button" size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => setNotificationPreference(false)}>
+                <Button type="button" size="sm" variant="outline" className="h-7 text-[11px] dark:border-emerald-500/45 dark:bg-emerald-900/30 dark:text-emerald-100 dark:hover:bg-emerald-800/40" onClick={() => setNotificationPreference(false)}>
                   Notifications: On
                 </Button>
               ) : (
-                <Button type="button" size="sm" variant="outline" className="h-7 text-[11px]" onClick={() => void enableNotifications()}>
+                <Button type="button" size="sm" variant="outline" className="h-7 text-[11px] dark:border-emerald-500/45 dark:bg-slate-800 dark:text-emerald-100 dark:hover:bg-emerald-900/35" onClick={() => void enableNotifications()}>
                   Enable Notifications
                 </Button>
               )}
@@ -391,33 +391,33 @@ export function SupportChatWidget() {
           </CardHeader>
           <CardContent className="space-y-3">
             {!canUseChat ? (
-              <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm">
+              <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm dark:border-amber-500/45 dark:bg-amber-900/25 dark:text-amber-100">
                 <p>Login as student to use support chat.</p>
                 <a
                   href="https://wa.me/923403318127"
                   target="_blank"
                   rel="noreferrer"
-                  className="text-emerald-700 underline underline-offset-2"
+                  className="text-emerald-700 underline underline-offset-2 dark:text-emerald-300"
                 >
                   Contact on WhatsApp (+923403318127)
                 </a>
               </div>
             ) : (
               <>
-                <div className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-[11px] text-emerald-800">
+                <div className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-[11px] text-emerald-800 dark:border-emerald-500/45 dark:bg-emerald-900/30 dark:text-emerald-200">
                   Messages are end-to-end encrypted.
                 </div>
-                <ScrollArea className="h-64 rounded-lg border bg-slate-50 p-2">
+                <ScrollArea className="h-64 rounded-lg border bg-slate-50 p-2 dark:border-slate-600 dark:bg-slate-800/65">
                   <div className="space-y-2">
-                    {loading ? <p className="text-xs text-slate-500">Loading messages...</p> : null}
-                    {!messages.length ? <p className="text-xs text-slate-500">Start a conversation with admin support.</p> : null}
+                    {loading ? <p className="text-xs text-slate-500 dark:text-slate-300">Loading messages...</p> : null}
+                    {!messages.length ? <p className="text-xs text-slate-500 dark:text-slate-300">Start a conversation with admin support.</p> : null}
                     {messages.map((item) => (
                       <div
                         key={item.id}
                         className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                           item.senderRole === 'user'
-                            ? 'ml-auto bg-emerald-600 text-white'
-                            : 'mr-auto border bg-white text-slate-700'
+                            ? 'ml-auto bg-emerald-600 text-white dark:bg-emerald-500 dark:text-emerald-950'
+                            : 'mr-auto border bg-white text-slate-700 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100'
                         }`}
                       >
                         {item.messageType === 'file' && item.attachment ? (
@@ -435,7 +435,7 @@ export function SupportChatWidget() {
                             <button
                               key={`${item.id}-${emoji}`}
                               type="button"
-                              className="rounded border bg-white/80 px-1.5 py-0.5 text-[11px] text-slate-800"
+                              className="rounded border bg-white/80 px-1.5 py-0.5 text-[11px] text-slate-800 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100"
                               onClick={() => void reactToMessage(item.id, emoji)}
                             >
                               {emoji}
@@ -447,7 +447,7 @@ export function SupportChatWidget() {
                             {item.reactions.map((reaction) => reaction.emoji).join(' ')}
                           </p>
                         ) : null}
-                        <p className={`mt-1 text-[10px] ${item.senderRole === 'user' ? 'text-emerald-100' : 'text-slate-400'}`}>
+                        <p className={`mt-1 text-[10px] ${item.senderRole === 'user' ? 'text-emerald-100 dark:text-emerald-900/80' : 'text-slate-400 dark:text-slate-300'}`}>
                           {item.createdAt ? new Date(item.createdAt).toLocaleTimeString() : ''}
                         </p>
                       </div>
@@ -461,7 +461,7 @@ export function SupportChatWidget() {
                     value={messageText}
                     onChange={(event) => setMessageText(event.target.value)}
                     placeholder="Type your message"
-                    className="min-h-[70px]"
+                    className="min-h-[70px] dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-400"
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' && !event.shiftKey) {
                         event.preventDefault();
@@ -470,7 +470,7 @@ export function SupportChatWidget() {
                     }}
                   />
                   <div className="flex flex-col gap-2">
-                    <Button type="button" variant="outline" className="h-10" onClick={() => fileInputRef.current?.click()} disabled={sending}>
+                    <Button type="button" variant="outline" className="h-10 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600" onClick={() => fileInputRef.current?.click()} disabled={sending}>
                       File
                     </Button>
                     <input
@@ -480,15 +480,15 @@ export function SupportChatWidget() {
                       className="hidden"
                       onChange={(e) => void onFileSelected(e)}
                     />
-                    <Button className="h-10 bg-emerald-600 hover:bg-emerald-700" onClick={() => void sendMessage()} disabled={sending || (!messageText.trim() && !messageAttachment)}>
+                    <Button className="h-10 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400" onClick={() => void sendMessage()} disabled={sending || (!messageText.trim() && !messageAttachment)}>
                       <Send className="h-4 w-4" />
                     </Button>
                   </div>
                 </div>
                 {messageAttachment ? (
-                  <div className="rounded-md border bg-slate-50 px-3 py-2 text-xs">
+                  <div className="rounded-md border bg-slate-50 px-3 py-2 text-xs dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100">
                     <p className="font-medium">Attached: {messageAttachment.name}</p>
-                    <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => setMessageAttachment(null)}>
+                    <Button type="button" size="sm" variant="outline" className="mt-2 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100 dark:hover:bg-slate-600" onClick={() => setMessageAttachment(null)}>
                       Remove File
                     </Button>
                   </div>
