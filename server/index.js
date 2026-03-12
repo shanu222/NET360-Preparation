@@ -58,6 +58,7 @@ const OPENAI_MODEL = process.env.MODEL_PROVIDER_MODEL || process.env.OPENAI_MODE
 const SIGNUP_TOKEN_TTL_HOURS = Number(process.env.SIGNUP_TOKEN_TTL_HOURS || 24);
 const PREMIUM_TOKEN_TTL_HOURS = Number(process.env.PREMIUM_TOKEN_TTL_HOURS || 24);
 const NUST_UPDATES_CACHE_MS = Number(process.env.NUST_UPDATES_CACHE_MS || 60 * 1000);
+const NUST_ADMISSIONS_REFRESH_MS = clamp(Number(process.env.NUST_ADMISSIONS_REFRESH_MS || 3 * 60 * 60 * 1000), 15 * 60 * 1000, 24 * 60 * 60 * 1000);
 const MAX_JSON_BODY_MB = clamp(Number(process.env.MAX_JSON_BODY_MB || 10), 1, 20);
 const REQUEST_TIMEOUT_MS = clamp(Number(process.env.REQUEST_TIMEOUT_MS || 30_000), 5_000, 120_000);
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
@@ -394,8 +395,54 @@ app.use(
   }),
 );
 
+const DEFAULT_NUST_IMPORTANT_DATES = [
+  {
+    key: 'series-1',
+    title: 'NET Series 1',
+    registration: 'Registration: October 5 - November 25, 2025',
+    testDate: 'Test Date: December 2025',
+    status: 'completed',
+  },
+  {
+    key: 'series-2',
+    title: 'NET Series 2',
+    registration: 'Registration: December 14, 2025 - February 1, 2026',
+    testDate: 'Test Date: February 2026',
+    status: 'open',
+  },
+  {
+    key: 'series-3',
+    title: 'NET Series 3',
+    registration: 'Registration: February 22 - March 30, 2026',
+    testDate: 'Test Date: April 2026',
+    status: 'upcoming',
+  },
+  {
+    key: 'series-4',
+    title: 'NET Series 4',
+    registration: 'Registration: April - June 2026',
+    testDate: 'Test Date: June 2026',
+    status: 'upcoming',
+  },
+];
+
+const DEFAULT_NUST_IMPORTANT_NOTICES = [
+  {
+    key: 'notice-default-1',
+    title: 'Important notices are being refreshed automatically.',
+    subtitle: 'Latest updates from NUST undergraduate admissions will appear here shortly.',
+    category: 'notice',
+    status: 'info',
+  },
+];
+
 const nustUpdatesCache = {
   fetchedAt: 0,
+  lastAttemptAt: 0,
+  refreshInFlight: false,
+  lastError: '',
+  dates: DEFAULT_NUST_IMPORTANT_DATES,
+  notices: DEFAULT_NUST_IMPORTANT_NOTICES,
   updates: [],
 };
 
@@ -3542,6 +3589,55 @@ function sanitizeUpdateText(text, maxLen = 220) {
     .slice(0, maxLen);
 }
 
+function normalizeNustStatus(raw, fallback = 'info') {
+  const text = String(raw || '').toLowerCase();
+  if (text.includes('open soon') || text.includes('open now') || text.includes('open')) return 'open';
+  if (text.includes('closed')) return 'closed';
+  if (text.includes('completed') || text.includes('result declared') || text.includes('result announced')) return 'completed';
+  if (text.includes('upcoming') || text.includes('will start') || text.includes('starting')) return 'upcoming';
+  return fallback;
+}
+
+function parseNustImportantDates(html) {
+  const sourceText = stripHtml(html).replace(/\s+/g, ' ').trim();
+  const items = [];
+
+  for (let series = 1; series <= 4; series += 1) {
+    const nextBoundary = series < 4
+      ? `NET\\s*Series\\s*${series + 1}`
+      : '(?:ACT\\s*\\/\\s*SAT|Important\\s*Notice|Result\\s*NET|$)';
+    const blockRegex = new RegExp(`NET\\s*Series\\s*${series}([\\s\\S]{0,700}?)(?=${nextBoundary})`, 'i');
+    const blockMatch = sourceText.match(blockRegex);
+    if (!blockMatch) continue;
+
+    const block = String(blockMatch[0] || '').trim();
+    const registrationMatch = block.match(/(?:Registration|Online Registration|Applications?)\\s*(?:[:\\-]|for)?\\s*([^.|]{8,150})/i);
+    const testDateMatch = block.match(/(?:Test\\s*Date|Test)\\s*(?:[:\\-])?\\s*([^.|]{5,110})/i);
+    const lastDateMatch = block.match(/Last\\s*Date\\s*[:\\-]\\s*([^.|]{5,90})/i);
+
+    let registration = registrationMatch
+      ? `Registration: ${String(registrationMatch[1] || '').trim()}`
+      : '';
+    if (!registration && lastDateMatch) {
+      registration = `Registration: Last Date ${String(lastDateMatch[1] || '').trim()}`;
+    }
+
+    const testDate = testDateMatch
+      ? `Test Date: ${String(testDateMatch[1] || '').trim()}`
+      : 'Test Date: To be announced';
+
+    items.push({
+      key: `series-${series}`,
+      title: `NET Series ${series}`,
+      registration: registration || 'Registration: To be announced',
+      testDate,
+      status: normalizeNustStatus(block, series === 1 ? 'completed' : 'upcoming'),
+    });
+  }
+
+  return items;
+}
+
 function sliceNoticeBlock(html) {
   const source = String(html || '');
   const lower = source.toLowerCase();
@@ -3555,15 +3651,7 @@ function sliceNoticeBlock(html) {
   return source.slice(start, end);
 }
 
-function toAbsoluteUrl(href) {
-  try {
-    return new URL(href, 'https://ugadmissions.nust.edu.pk/').toString();
-  } catch {
-    return 'https://ugadmissions.nust.edu.pk/';
-  }
-}
-
-function parseNustUpdates(html) {
+function parseNustNotices(html) {
   const block = sliceNoticeBlock(html);
   const anchorRegex = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
   const ignoredTitles = new Set([
@@ -3580,13 +3668,11 @@ function parseNustUpdates(html) {
   const seen = new Set();
 
   for (const match of block.matchAll(anchorRegex)) {
-    const href = String(match[1] || '').trim();
     const title = sanitizeUpdateText(stripHtml(match[2] || ''), 180);
-    if (!href || !title || title.length < 6) continue;
+    if (!title || title.length < 6) continue;
     if (ignoredTitles.has(title.toLowerCase())) continue;
 
-    const absoluteUrl = toAbsoluteUrl(href);
-    const key = `${title.toLowerCase()}|${absoluteUrl}`;
+    const key = title.toLowerCase();
     if (seen.has(key)) continue;
 
     // Capture nearby sentence fragments for subtitle context.
@@ -3594,21 +3680,108 @@ function parseNustUpdates(html) {
     const nearbyRaw = block.slice(Math.max(0, index - 180), Math.min(block.length, index + 360));
     const nearbyText = sanitizeUpdateText(stripHtml(nearbyRaw).replace(title, ''), 220);
 
-    let subtitle = nearbyText.slice(0, 180);
-    if (!subtitle) {
-      subtitle = 'Tap to view full update on NUST admissions portal.';
-    }
+    const subtitle = nearbyText.slice(0, 180)
+      || 'Important admission notice extracted from latest NUST undergraduate updates.';
+
+    const combined = `${title} ${subtitle}`.toLowerCase();
+    let category = 'notice';
+    if (combined.includes('result')) category = 'result';
+    else if (combined.includes('act/sat') || combined.includes('act sat') || combined.includes('act') || combined.includes('sat')) category = 'act_sat';
+    else if (combined.includes('net')) category = 'net';
 
     items.push({
+      key: `notice-${items.length + 1}`,
       title,
       subtitle,
-      url: absoluteUrl,
+      category,
+      status: normalizeNustStatus(combined, 'info'),
     });
     seen.add(key);
     if (items.length >= 8) break;
   }
 
+  if (!items.length) {
+    const plain = stripHtml(block).replace(/\s+/g, ' ').trim();
+    const resultMatch = plain.match(/Result\s+NET[^.]{0,220}/i);
+    const actSatMatch = plain.match(/ACT\s*\/\s*SAT[^.]{0,220}/i);
+
+    if (resultMatch) {
+      items.push({
+        key: 'notice-result-fallback',
+        title: sanitizeUpdateText(String(resultMatch[0] || ''), 180),
+        subtitle: 'Result-related update extracted from latest admissions notices.',
+        category: 'result',
+        status: normalizeNustStatus(resultMatch[0], 'completed'),
+      });
+    }
+
+    if (actSatMatch) {
+      items.push({
+        key: 'notice-actsat-fallback',
+        title: sanitizeUpdateText(String(actSatMatch[0] || ''), 180),
+        subtitle: 'ACT/SAT admission update extracted from latest admissions notices.',
+        category: 'act_sat',
+        status: normalizeNustStatus(actSatMatch[0], 'upcoming'),
+      });
+    }
+  }
+
   return items;
+}
+
+function parseNustAdmissionsFeed(html) {
+  const dates = parseNustImportantDates(html);
+  const notices = parseNustNotices(html);
+
+  return {
+    dates: dates.length ? dates : DEFAULT_NUST_IMPORTANT_DATES,
+    notices: notices.length ? notices : DEFAULT_NUST_IMPORTANT_NOTICES,
+  };
+}
+
+async function refreshNustAdmissionsCache({ force = false } = {}) {
+  const now = Date.now();
+  const cacheAge = now - Number(nustUpdatesCache.fetchedAt || 0);
+  if (!force && nustUpdatesCache.fetchedAt > 0 && cacheAge < NUST_ADMISSIONS_REFRESH_MS) {
+    return;
+  }
+  if (nustUpdatesCache.refreshInFlight) {
+    return;
+  }
+
+  nustUpdatesCache.refreshInFlight = true;
+  nustUpdatesCache.lastAttemptAt = now;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+
+    const response = await fetch('https://ugadmissions.nust.edu.pk/', {
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'NET360-App/1.0 (NUST admissions parser)',
+        Accept: 'text/html,application/xhtml+xml',
+      },
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      throw new Error(`NUST source returned status ${response.status}.`);
+    }
+
+    const html = await response.text();
+    const parsed = parseNustAdmissionsFeed(html);
+
+    nustUpdatesCache.fetchedAt = Date.now();
+    nustUpdatesCache.lastError = '';
+    nustUpdatesCache.dates = parsed.dates;
+    nustUpdatesCache.notices = parsed.notices;
+    nustUpdatesCache.updates = parsed.notices.map((item) => ({ title: item.title, subtitle: item.subtitle }));
+  } catch (error) {
+    nustUpdatesCache.lastError = error instanceof Error ? error.message : 'Unknown refresh error';
+  } finally {
+    nustUpdatesCache.refreshInFlight = false;
+  }
 }
 
 function pdfEscape(value) {
@@ -4210,68 +4383,46 @@ app.get('/api/recommendations/adaptive', authMiddleware, async (req, res) => {
   });
 });
 
-app.get('/api/public/nust-updates', async (req, res) => {
+app.get('/api/public/nust-admissions-feed', async (_req, res) => {
   const now = Date.now();
-  const hasFreshCache =
-    nustUpdatesCache.fetchedAt > 0
-    && (now - nustUpdatesCache.fetchedAt) < NUST_UPDATES_CACHE_MS
-    && Array.isArray(nustUpdatesCache.updates)
-    && nustUpdatesCache.updates.length > 0;
+  const hasCache = Number(nustUpdatesCache.fetchedAt || 0) > 0;
 
-  if (hasFreshCache) {
-    res.json({
-      source: 'cache',
-      fetchedAt: new Date(nustUpdatesCache.fetchedAt).toISOString(),
-      updates: nustUpdatesCache.updates,
-    });
-    return;
+  if (!hasCache) {
+    await refreshNustAdmissionsCache({ force: true });
+  } else if ((now - Number(nustUpdatesCache.fetchedAt || 0)) >= NUST_ADMISSIONS_REFRESH_MS) {
+    void refreshNustAdmissionsCache({ force: true });
   }
 
-  try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+  const source = nustUpdatesCache.lastError
+    ? (hasCache ? 'stale-cache' : 'seed')
+    : (hasCache ? 'cache' : 'seed');
 
-    const response = await fetch('https://ugadmissions.nust.edu.pk/', {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'NET360-App/1.0 (+https://ugadmissions.nust.edu.pk)',
-        Accept: 'text/html,application/xhtml+xml',
-      },
-    });
+  res.json({
+    source,
+    fetchedAt: nustUpdatesCache.fetchedAt ? new Date(nustUpdatesCache.fetchedAt).toISOString() : null,
+    refreshIntervalMs: NUST_ADMISSIONS_REFRESH_MS,
+    dates: Array.isArray(nustUpdatesCache.dates) && nustUpdatesCache.dates.length
+      ? nustUpdatesCache.dates
+      : DEFAULT_NUST_IMPORTANT_DATES,
+    notices: Array.isArray(nustUpdatesCache.notices) && nustUpdatesCache.notices.length
+      ? nustUpdatesCache.notices
+      : DEFAULT_NUST_IMPORTANT_NOTICES,
+  });
+});
 
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      throw new Error(`NUST source returned status ${response.status}.`);
-    }
-
-    const html = await response.text();
-    const updates = parseNustUpdates(html);
-    if (!updates.length) {
-      throw new Error('No update items found on NUST page.');
-    }
-
-    nustUpdatesCache.fetchedAt = Date.now();
-    nustUpdatesCache.updates = updates;
-
-    res.json({
-      source: 'live',
-      fetchedAt: new Date(nustUpdatesCache.fetchedAt).toISOString(),
-      updates,
-    });
-  } catch (error) {
-    if (nustUpdatesCache.updates.length) {
-      res.json({
-        source: 'stale-cache',
-        fetchedAt: new Date(nustUpdatesCache.fetchedAt).toISOString(),
-        updates: nustUpdatesCache.updates,
-        warning: 'Showing last cached updates because live fetch failed.',
-      });
-      return;
-    }
-
-    res.status(502).json({ error: 'Could not fetch live updates from NUST admissions website.' });
+app.get('/api/public/nust-updates', async (_req, res) => {
+  const now = Date.now();
+  if (nustUpdatesCache.fetchedAt <= 0 || (now - nustUpdatesCache.fetchedAt) >= NUST_UPDATES_CACHE_MS) {
+    await refreshNustAdmissionsCache({ force: true });
   }
+
+  res.json({
+    source: nustUpdatesCache.lastError ? 'stale-cache' : 'cache',
+    fetchedAt: nustUpdatesCache.fetchedAt ? new Date(nustUpdatesCache.fetchedAt).toISOString() : null,
+    updates: Array.isArray(nustUpdatesCache.updates) && nustUpdatesCache.updates.length
+      ? nustUpdatesCache.updates
+      : DEFAULT_NUST_IMPORTANT_NOTICES.map((item) => ({ title: item.title, subtitle: item.subtitle })),
+  });
 });
 
 app.post('/api/auth/signup-request', async (req, res) => {
@@ -10320,6 +10471,11 @@ async function bootstrap() {
   validateCriticalConfiguration();
   await connectMongo(MONGODB_URI);
   await bootstrapAdminAccounts();
+
+  await refreshNustAdmissionsCache({ force: true });
+  setInterval(() => {
+    void refreshNustAdmissionsCache({ force: true });
+  }, NUST_ADMISSIONS_REFRESH_MS);
 
   const server = app.listen(PORT, () => {
     console.log(`NET360 API running on http://localhost:${PORT}`);

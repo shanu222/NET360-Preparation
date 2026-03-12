@@ -1,10 +1,11 @@
-import { type ComponentType, useState } from 'react';
+import { type ComponentType, useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
+import { apiRequest } from '../lib/api';
 import {
   AlertCircle,
   ArrowRight,
@@ -22,11 +23,133 @@ import {
 
 type GuideTab = 'overview' | 'policy' | 'dates' | 'eligibility';
 
+interface NustImportantDateRow {
+  key: string;
+  title: string;
+  registration: string;
+  testDate: string;
+  status: 'open' | 'closed' | 'upcoming' | 'completed' | 'info';
+}
+
+interface NustImportantNoticeRow {
+  key: string;
+  title: string;
+  subtitle: string;
+  category: 'notice' | 'result' | 'act_sat' | 'net';
+  status: 'open' | 'closed' | 'upcoming' | 'completed' | 'info';
+}
+
+const DEFAULT_IMPORTANT_DATES: NustImportantDateRow[] = [
+  {
+    key: 'series-1',
+    title: 'NET Series 1',
+    registration: 'Registration: October 5 - November 25, 2025',
+    testDate: 'Test Date: December 2025',
+    status: 'completed',
+  },
+  {
+    key: 'series-2',
+    title: 'NET Series 2',
+    registration: 'Registration: December 14, 2025 - February 1, 2026',
+    testDate: 'Test Date: February 2026',
+    status: 'open',
+  },
+  {
+    key: 'series-3',
+    title: 'NET Series 3',
+    registration: 'Registration: February 22 - March 30, 2026',
+    testDate: 'Test Date: April 2026',
+    status: 'upcoming',
+  },
+  {
+    key: 'series-4',
+    title: 'NET Series 4',
+    registration: 'Registration: April - June 2026',
+    testDate: 'Test Date: June 2026',
+    status: 'upcoming',
+  },
+];
+
+const DEFAULT_IMPORTANT_NOTICES: NustImportantNoticeRow[] = [
+  {
+    key: 'notice-default',
+    title: 'Important notices update automatically from admissions data.',
+    subtitle: 'Latest NET, result, and ACT/SAT updates will appear here.',
+    category: 'notice',
+    status: 'info',
+  },
+];
+
+function statusToCardTone(status: NustImportantDateRow['status']) {
+  switch (status) {
+    case 'completed':
+      return 'border-blue-500 bg-blue-50';
+    case 'open':
+      return 'border-green-500 bg-green-50';
+    case 'closed':
+      return 'border-rose-500 bg-rose-50';
+    case 'upcoming':
+      return 'border-purple-500 bg-purple-50';
+    default:
+      return 'border-orange-500 bg-orange-50';
+  }
+}
+
+function statusToBadge(status: NustImportantDateRow['status']) {
+  switch (status) {
+    case 'completed':
+      return { label: 'Completed', className: '', variant: 'secondary' as const };
+    case 'open':
+      return { label: 'Open', className: 'bg-green-500', variant: 'default' as const };
+    case 'closed':
+      return { label: 'Closed', className: 'bg-rose-500', variant: 'default' as const };
+    case 'upcoming':
+      return { label: 'Upcoming', className: '', variant: 'outline' as const };
+    default:
+      return { label: 'Info', className: '', variant: 'outline' as const };
+  }
+}
+
 export function NUSTGuide() {
   const [activeTab, setActiveTab] = useState<GuideTab>('overview');
   const [sscMarks, setSscMarks] = useState('');
   const [hsscMarks, setHsscMarks] = useState('');
   const [eligibilityResult, setEligibilityResult] = useState<string[]>([]);
+  const [importantDates, setImportantDates] = useState<NustImportantDateRow[]>(DEFAULT_IMPORTANT_DATES);
+  const [importantNotices, setImportantNotices] = useState<NustImportantNoticeRow[]>(DEFAULT_IMPORTANT_NOTICES);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadFeed = async () => {
+      try {
+        const payload = await apiRequest<{
+          dates?: NustImportantDateRow[];
+          notices?: NustImportantNoticeRow[];
+        }>('/api/public/nust-admissions-feed');
+
+        if (cancelled) return;
+        if (Array.isArray(payload.dates) && payload.dates.length) {
+          setImportantDates(payload.dates);
+        }
+        if (Array.isArray(payload.notices) && payload.notices.length) {
+          setImportantNotices(payload.notices);
+        }
+      } catch {
+        // Keep fallback data when live updates are unavailable.
+      }
+    };
+
+    void loadFeed();
+    const timer = window.setInterval(() => {
+      void loadFeed();
+    }, 15 * 60 * 1000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const navigateTo = (tab: GuideTab, sectionId?: string) => {
     setActiveTab(tab);
@@ -344,41 +467,42 @@ export function NUSTGuide() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-4">
-                <div className="p-4 border-l-4 border-blue-500 bg-blue-50 rounded-r-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4>NET Series 1</h4>
-                    <Badge variant="secondary">Completed</Badge>
-                  </div>
-                  <p className="text-sm">Registration: October 5 - November 25, 2025</p>
-                  <p className="text-sm text-muted-foreground">Test Date: December 2025</p>
-                </div>
+                {importantDates.map((item) => {
+                  const badge = statusToBadge(item.status);
+                  return (
+                    <div key={item.key} className={`p-4 border-l-4 rounded-r-lg ${statusToCardTone(item.status)}`}>
+                      <div className="flex items-center justify-between mb-2">
+                        <h4>{item.title}</h4>
+                        <Badge variant={badge.variant} className={badge.className}>{badge.label}</Badge>
+                      </div>
+                      <p className="text-sm">{item.registration}</p>
+                      <p className="text-sm text-muted-foreground">{item.testDate}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
 
-                <div className="p-4 border-l-4 border-green-500 bg-green-50 rounded-r-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4>NET Series 2</h4>
-                    <Badge className="bg-green-500">Open Soon</Badge>
-                  </div>
-                  <p className="text-sm">Registration: December 14, 2025 - February 1, 2026</p>
-                  <p className="text-sm text-muted-foreground">Test Date: February 2026</p>
-                </div>
-
-                <div className="p-4 border-l-4 border-purple-500 bg-purple-50 rounded-r-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4>NET Series 3</h4>
-                    <Badge variant="outline">Upcoming</Badge>
-                  </div>
-                  <p className="text-sm">Registration: February 22 - March 30, 2026</p>
-                  <p className="text-sm text-muted-foreground">Test Date: April 2026</p>
-                </div>
-
-                <div className="p-4 border-l-4 border-orange-500 bg-orange-50 rounded-r-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <h4>NET Series 4</h4>
-                    <Badge variant="outline">Upcoming</Badge>
-                  </div>
-                  <p className="text-sm">Registration: April - June 2026</p>
-                  <p className="text-sm text-muted-foreground">Test Date: June 2026</p>
-                </div>
+          <Card>
+            <CardHeader>
+              <CardTitle>Important Notices</CardTitle>
+              <CardDescription>Live admission announcements, result alerts, and ACT/SAT updates</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4">
+                {importantNotices.map((item) => {
+                  const badge = statusToBadge(item.status);
+                  return (
+                    <div key={item.key} className={`p-4 border-l-4 rounded-r-lg ${statusToCardTone(item.status)}`}>
+                      <div className="flex items-center justify-between gap-2 mb-2">
+                        <h4 className="leading-tight">{item.title}</h4>
+                        <Badge variant={badge.variant} className={badge.className}>{badge.label}</Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground">{item.subtitle}</p>
+                    </div>
+                  );
+                })}
               </div>
             </CardContent>
           </Card>
