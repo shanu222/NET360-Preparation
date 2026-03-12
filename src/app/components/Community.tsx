@@ -302,6 +302,7 @@ export function Community() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Array<CommunityUser & { connectionStatus?: string }>>([]);
   const [profilePreview, setProfilePreview] = useState<CommunityUser | null>(null);
+  const [studyPartnersProfilePreview, setStudyPartnersProfilePreview] = useState<CommunityUser | null>(null);
 
   const [incomingRequests, setIncomingRequests] = useState<CommunityRequestRow[]>([]);
   const [outgoingRequests, setOutgoingRequests] = useState<CommunityRequestRow[]>([]);
@@ -1226,17 +1227,20 @@ export function Community() {
     );
   }
 
+  const sectionTabTriggerClassName =
+    'rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 hover:-translate-y-0.5 hover:scale-[1.02] hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 hover:shadow-[0_10px_20px_rgba(34,211,238,0.22)] data-[state=active]:border-amber-400 data-[state=active]:bg-gradient-to-r data-[state=active]:from-amber-500 data-[state=active]:to-orange-500 data-[state=active]:text-white data-[state=active]:shadow-[0_12px_24px_rgba(249,115,22,0.35)]';
+
   return (
     <div className="space-y-4">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-4">
         <div className="overflow-x-auto">
-          <TabsList className="inline-flex h-auto min-w-max gap-1">
-            <TabsTrigger value="discover-students">Discover Students</TabsTrigger>
-            <TabsTrigger value="study-partners">Study Partners</TabsTrigger>
-            <TabsTrigger value="discussion-rooms">Discussion Rooms</TabsTrigger>
-            <TabsTrigger value="quiz-battles">Quiz Battles</TabsTrigger>
-            <TabsTrigger value="leaderboard">Leaderboard</TabsTrigger>
-            <TabsTrigger value="messages">Messages</TabsTrigger>
+          <TabsList className="inline-flex h-auto min-w-max gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-slate-50 via-cyan-50 to-orange-50 p-1.5">
+            <TabsTrigger value="discover-students" className={sectionTabTriggerClassName}>Discover Students</TabsTrigger>
+            <TabsTrigger value="study-partners" className={sectionTabTriggerClassName}>Study Partners</TabsTrigger>
+            <TabsTrigger value="discussion-rooms" className={sectionTabTriggerClassName}>Discussion Rooms</TabsTrigger>
+            <TabsTrigger value="quiz-battles" className={sectionTabTriggerClassName}>Quiz Battles</TabsTrigger>
+            <TabsTrigger value="leaderboard" className={sectionTabTriggerClassName}>Leaderboard</TabsTrigger>
+            <TabsTrigger value="messages" className={sectionTabTriggerClassName}>Messages</TabsTrigger>
           </TabsList>
         </div>
 
@@ -1418,7 +1422,14 @@ export function Community() {
                                   : 'Request Pending'}
                             </Button>
                           )}
-                          <Button size="sm" variant="outline" onClick={() => setProfilePreview(result)}>View profile</Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="border-cyan-300 bg-white text-cyan-700 transition-all duration-200 hover:-translate-y-0.5 hover:scale-[1.03] hover:border-cyan-400 hover:bg-cyan-50 hover:text-cyan-800 hover:shadow-md"
+                            onClick={() => setProfilePreview(result)}
+                          >
+                            View Profile
+                          </Button>
                         </div>
                       </div>
                     </div>
@@ -1526,13 +1537,40 @@ export function Community() {
                             : 'Request Pending'}
                       </Button>
                     )}
-                    <Button size="sm" variant="outline" onClick={() => setProfilePreview(item.user)}>View profile</Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="border-cyan-300 bg-white text-cyan-700 transition-all duration-200 hover:-translate-y-0.5 hover:scale-[1.03] hover:border-cyan-400 hover:bg-cyan-50 hover:text-cyan-800 hover:shadow-md"
+                      onClick={() => setStudyPartnersProfilePreview(item.user)}
+                    >
+                      View Profile
+                    </Button>
                   </div>
                 </div>
               ))}
               {!studyPartners.length ? <p className="text-xs text-muted-foreground">No study partners found yet.</p> : null}
             </CardContent>
           </Card>
+
+          {studyPartnersProfilePreview ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <CommunityAvatar userLike={studyPartnersProfilePreview} />
+                  <span>{displayName(studyPartnersProfilePreview)}</span>
+                </CardTitle>
+                <CardDescription>Profile preview</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-1 text-sm text-muted-foreground">
+                <p>Target NET: {studyPartnersProfilePreview.targetNetType || '-'}</p>
+                <p>Needs Help: {(studyPartnersProfilePreview.subjectsNeedHelp || []).join(', ') || '-'}</p>
+                <p>Level: {studyPartnersProfilePreview.preparationLevel || '-'}</p>
+                <p>Time: {studyPartnersProfilePreview.studyTimePreference || '-'}</p>
+                <p>Score: {Math.round(Number(studyPartnersProfilePreview.score || 0))}</p>
+                <Button size="sm" variant="outline" onClick={() => setStudyPartnersProfilePreview(null)}>Close</Button>
+              </CardContent>
+            </Card>
+          ) : null}
         </TabsContent>
 
         <TabsContent value="discussion-rooms" className="mt-0 space-y-4">
