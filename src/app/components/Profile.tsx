@@ -1105,19 +1105,13 @@ export function Profile({ onNavigate }: ProfileProps) {
 
             <div className="space-y-2">
               <Label htmlFor="city">City</Label>
-              <Select value={localProfile.city} onValueChange={(value) => updateField('city', value)}>
-                <SelectTrigger id="city">
-                  <SelectValue placeholder="Select city" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Islamabad">Islamabad</SelectItem>
-                  <SelectItem value="Rawalpindi">Rawalpindi</SelectItem>
-                  <SelectItem value="Lahore">Lahore</SelectItem>
-                  <SelectItem value="Karachi">Karachi</SelectItem>
-                  <SelectItem value="Peshawar">Peshawar</SelectItem>
-                  <SelectItem value="Quetta">Quetta</SelectItem>
-                </SelectContent>
-              </Select>
+              <Input
+                id="city"
+                type="text"
+                value={localProfile.city}
+                onChange={(e) => updateField('city', e.target.value)}
+                placeholder="Enter your city"
+              />
             </div>
 
             <div className="flex flex-wrap gap-2">
@@ -1219,6 +1213,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                   <SelectValue placeholder="Select series" />
                 </SelectTrigger>
                 <SelectContent>
+                  <SelectItem value="series1">NET Series 1 (Dec 2025)</SelectItem>
                   <SelectItem value="series2">NET Series 2 (Feb 2026)</SelectItem>
                   <SelectItem value="series3">NET Series 3 (Apr 2026)</SelectItem>
                   <SelectItem value="series4">NET Series 4 (Jun 2026)</SelectItem>

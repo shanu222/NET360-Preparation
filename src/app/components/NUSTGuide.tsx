@@ -43,29 +43,29 @@ const DEFAULT_IMPORTANT_DATES: NustImportantDateRow[] = [
   {
     key: 'series-1',
     title: 'NET Series 1',
-    registration: 'Registration: October 5 - November 25, 2025',
-    testDate: 'Test Date: December 2025',
+    registration: 'Online Registration: 05 Oct - 25 Nov 2025',
+    testDate: 'Test Schedule: 22 Nov - 10 Dec 2025',
     status: 'completed',
   },
   {
     key: 'series-2',
     title: 'NET Series 2',
-    registration: 'Registration: December 14, 2025 - February 1, 2026',
-    testDate: 'Test Date: February 2026',
+    registration: 'Online Registration: 14 Dec 2025 - 01 Feb 2026',
+    testDate: 'Test Schedule: 31 Jan - 15 Feb 2026 (Islamabad); 25 - 26 Mar 2026 (Quetta)',
     status: 'open',
   },
   {
     key: 'series-3',
     title: 'NET Series 3',
-    registration: 'Registration: February 22 - March 30, 2026',
-    testDate: 'Test Date: April 2026',
+    registration: 'Online Registration: 22 Feb - 30 Mar 2026',
+    testDate: 'Test Schedule: 04 Apr 2026 onwards',
     status: 'upcoming',
   },
   {
     key: 'series-4',
     title: 'NET Series 4',
-    registration: 'Registration: April - June 2026',
-    testDate: 'Test Date: June 2026',
+    registration: 'Online Registration: Apr - Jun 2026',
+    testDate: 'Test Schedule: Jun 2026 (Islamabad); Jul 2026 (Quetta)',
     status: 'upcoming',
   },
 ];
@@ -230,7 +230,7 @@ export function NUSTGuide() {
     { label: 'NET Series 1', month: 'December' },
     { label: 'NET Series 2', month: 'February' },
     { label: 'NET Series 3', month: 'April' },
-    { label: 'Merit Lists', month: 'July - August' },
+    { label: 'NET Series 4', month: 'June / July' },
   ];
 
   return (
