@@ -31,6 +31,8 @@ import {
   MessageSquare,
   Users,
   ChevronDown,
+  Moon,
+  Sun,
 } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from './components/ui/sheet';
@@ -41,6 +43,20 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
 
 const BRAND_LOGO_SRC = '/net360-logo.png';
+const THEME_STORAGE_KEY = 'net360-theme-mode';
+
+type ThemeMode = 'light' | 'dark';
+
+function resolveInitialThemeMode(): ThemeMode {
+  if (typeof window === 'undefined') return 'light';
+
+  const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (storedTheme === 'light' || storedTheme === 'dark') {
+    return storedTheme;
+  }
+
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
 
 const ProgramExplorer = lazy(async () => {
   try {
@@ -175,9 +191,18 @@ export default function App() {
   const smartMentorTabId = 'smart-mentor';
   const [setupCompleted, setSetupCompleted] = useState(() => isTermsAccepted());
   const [sidebarMenuOpen, setSidebarMenuOpen] = useState(false);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(resolveInitialThemeMode);
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = useMemo(() => resolveSectionFromLocation(location.pathname, location.hash), [location.hash, location.pathname]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const isDark = themeMode === 'dark';
+    root.classList.toggle('dark', isDark);
+    root.style.colorScheme = themeMode;
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [themeMode]);
 
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get('tab') as SectionId | null;
@@ -311,6 +336,17 @@ export default function App() {
                 </div>
               </div>
               <div className="flex items-center gap-1 sm:gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-xl px-2 text-slate-600 hover:bg-indigo-50 hover:text-indigo-700"
+                  onClick={() => setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'))}
+                  aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                  title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                >
+                  {themeMode === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                  <span className="ml-1 hidden text-xs font-medium sm:inline">{themeMode === 'dark' ? 'Light' : 'Dark'}</span>
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon"

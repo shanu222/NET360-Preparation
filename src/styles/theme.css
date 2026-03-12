@@ -145,6 +145,7 @@
     background-attachment: fixed;
     padding-top: env(safe-area-inset-top, 0px);
     padding-bottom: env(safe-area-inset-bottom, 0px);
+    transition: background-color 260ms ease, background-image 320ms ease, color 220ms ease;
   }
 
   #root {
@@ -233,6 +234,7 @@
 
   .net360-shell {
     animation: net360-fade-in 420ms ease-out;
+    transition: background-color 260ms ease, border-color 260ms ease, box-shadow 260ms ease;
   }
 
   .net360-page {
@@ -370,6 +372,145 @@
   .net360-page .border.rounded-xl {
     border-color: rgba(129, 145, 230, 0.24);
     background: rgba(255, 255, 255, 0.82);
+  }
+
+  .dark body {
+    background-image:
+      radial-gradient(circle at 14% 14%, rgba(85, 111, 248, 0.26), transparent 38%),
+      radial-gradient(circle at 88% 12%, rgba(58, 192, 220, 0.2), transparent 35%),
+      linear-gradient(180deg, #0f1325 0%, #111831 55%, #0b1225 100%);
+  }
+
+  .dark .net360-shell {
+    border-color: rgba(125, 145, 255, 0.28);
+    background: linear-gradient(180deg, rgba(16, 23, 48, 0.82), rgba(15, 21, 44, 0.86));
+    box-shadow: 0 28px 56px rgba(4, 7, 20, 0.62);
+  }
+
+  .dark .net360-shell > section {
+    border-color: rgba(131, 149, 255, 0.3);
+    background: linear-gradient(180deg, rgba(18, 25, 54, 0.9), rgba(12, 18, 41, 0.92));
+  }
+
+  .dark .net360-shell header {
+    border-color: rgba(125, 145, 255, 0.24);
+    background: linear-gradient(180deg, rgba(19, 27, 58, 0.82), rgba(16, 22, 49, 0.78));
+  }
+
+  .dark .net360-shell header h1 {
+    color: #e7ecff;
+  }
+
+  .dark .net360-shell header p {
+    color: #b7c2eb;
+  }
+
+  .dark .net360-shell header [data-slot='button'],
+  .dark .net360-shell header button {
+    color: #d7e0ff;
+  }
+
+  .dark .net360-shell header [data-slot='button']:hover,
+  .dark .net360-shell header button:hover {
+    background: rgba(121, 141, 252, 0.18);
+    color: #f2f5ff;
+  }
+
+  .dark .net360-page h1,
+  .dark .net360-page h2,
+  .dark .net360-page h3,
+  .dark .net360-page h4 {
+    color: #e7ecff;
+  }
+
+  .dark .net360-page p,
+  .dark .net360-page span,
+  .dark .net360-page label,
+  .dark .net360-page a {
+    color: #c2cced;
+  }
+
+  .dark .net360-page [data-slot='tabs-list'] {
+    border-color: rgba(131, 149, 255, 0.4);
+    background: linear-gradient(180deg, rgba(43, 55, 112, 0.45), rgba(29, 40, 92, 0.52));
+  }
+
+  .dark .net360-page [data-slot='tabs-trigger'] {
+    color: #d1dcff;
+  }
+
+  .dark .net360-page [data-slot='tabs-trigger'][data-state='active'] {
+    background: linear-gradient(135deg, #7f93ff, #9a7dff);
+    color: #0e1430;
+    box-shadow: 0 9px 22px rgba(7, 10, 28, 0.55);
+  }
+
+  .dark .net360-page [data-slot='card'] {
+    border-color: rgba(137, 154, 255, 0.34);
+    background: linear-gradient(180deg, rgba(24, 34, 73, 0.88), rgba(16, 24, 56, 0.88));
+    box-shadow: 0 14px 34px rgba(6, 10, 28, 0.58);
+  }
+
+  .dark .net360-page [data-slot='button'][class*='variant-outline'],
+  .dark .net360-page [data-slot='button'].border {
+    border-color: rgba(132, 151, 255, 0.48);
+    background: rgba(30, 41, 86, 0.75);
+    color: #dee6ff;
+  }
+
+  .dark .net360-page [data-slot='button'][class*='variant-outline']:hover,
+  .dark .net360-page [data-slot='button'].border:hover {
+    border-color: rgba(160, 177, 255, 0.6);
+    background: rgba(53, 67, 132, 0.78);
+  }
+
+  .dark .net360-page [data-slot='button']:not([class*='variant-outline']) {
+    background: linear-gradient(135deg, #7a8fff, #9f81ff);
+    color: #101832;
+  }
+
+  .dark .net360-page [data-slot='button']:not([class*='variant-outline']):hover {
+    filter: brightness(1.05);
+  }
+
+  .dark .net360-page input,
+  .dark .net360-page textarea,
+  .dark .net360-page select {
+    border-color: rgba(133, 152, 255, 0.42);
+    background: rgba(23, 32, 68, 0.86);
+    color: #e5ebff;
+  }
+
+  .dark .net360-page .text-muted-foreground,
+  .dark .net360-page .text-slate-500,
+  .dark .net360-page .text-slate-600,
+  .dark .net360-page .text-slate-700,
+  .dark .net360-page .text-slate-800,
+  .dark .net360-page .text-slate-900,
+  .dark .net360-page .text-indigo-700,
+  .dark .net360-page .text-indigo-800,
+  .dark .net360-page .text-indigo-900 {
+    color: #d4ddff;
+  }
+
+  .dark .net360-page .bg-white,
+  .dark .net360-page .bg-white\/70,
+  .dark .net360-page .bg-white\/80,
+  .dark .net360-page .bg-white\/90,
+  .dark .net360-page .bg-slate-50,
+  .dark .net360-page .bg-slate-50\/60,
+  .dark .net360-page .bg-slate-50\/70,
+  .dark .net360-page .bg-indigo-50,
+  .dark .net360-page .bg-indigo-50\/40,
+  .dark .net360-page .bg-indigo-50\/50 {
+    background-color: rgba(28, 40, 84, 0.78);
+  }
+
+  .dark .net360-page .border,
+  .dark .net360-page .border-indigo-100,
+  .dark .net360-page .border-indigo-200,
+  .dark .net360-page .border-slate-200 {
+    border-color: rgba(132, 151, 255, 0.36);
   }
 
 
