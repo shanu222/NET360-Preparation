@@ -14,7 +14,63 @@ interface SessionQuestion {
   topic: string;
   question: string;
   options: string[];
+  optionMedia?: Array<{
+    key: string;
+    text: string;
+    image?: {
+      name: string;
+      mimeType: string;
+      size: number;
+      dataUrl: string;
+    } | null;
+  }>;
+  questionImage?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
   difficulty: Difficulty;
+}
+
+interface ReviewRow {
+  questionId: string;
+  question: string;
+  questionImage?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
+  optionMedia?: Array<{
+    key: string;
+    text: string;
+    image?: {
+      name: string;
+      mimeType: string;
+      size: number;
+      dataUrl: string;
+    } | null;
+  }>;
+  selectedKey: string | null;
+  correctKey: string;
+  selectedText?: string;
+  correctText?: string;
+  isCorrect: boolean;
+  explanationText?: string;
+  explanationImage?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
+  shortTrickText?: string;
+  shortTrickImage?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
 }
 
 interface TestSession {
@@ -74,6 +130,23 @@ interface ResultState {
   unanswered?: number;
 }
 
+function buildOptionMedia(question: SessionQuestion) {
+  const rows = Array.isArray(question.optionMedia) ? question.optionMedia : [];
+  if (rows.length) {
+    return rows.map((item, idx) => ({
+      key: String(item.key || String.fromCharCode(65 + idx)).toUpperCase(),
+      text: String(item.text || ''),
+      image: item.image || null,
+    }));
+  }
+
+  return (Array.isArray(question.options) ? question.options : []).map((text, idx) => ({
+    key: String.fromCharCode(65 + idx),
+    text: String(text || ''),
+    image: null,
+  }));
+}
+
 function formatSubject(value: SubjectKey) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
@@ -97,6 +170,7 @@ export function TestInterfacePage() {
   const [markedForReview, setMarkedForReview] = useState<Record<string, boolean>>({});
   const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [result, setResult] = useState<ResultState | null>(null);
+  const [reviewRows, setReviewRows] = useState<ReviewRow[]>([]);
 
   const [resolvedToken, setResolvedToken] = useState<string | null>(null);
   const [resolvedSessionId, setResolvedSessionId] = useState<string | null>(null);
@@ -280,6 +354,9 @@ export function TestInterfacePage() {
               topic: String(row.topic || challenge.topic || '').trim(),
               question: String(row.question || '').trim(),
               options: Array.isArray(row.options) ? row.options.map((item) => String(item || '').trim()) : [],
+              optionMedia: Array.isArray(row.options)
+                ? row.options.map((item, idx) => ({ key: String.fromCharCode(65 + idx), text: String(item || '').trim(), image: null }))
+                : [],
               difficulty: (String(row.difficulty || 'Medium') as Difficulty),
             })),
           };
@@ -458,7 +535,10 @@ export function TestInterfacePage() {
         return;
       }
 
-      const response = await apiRequest<{ attempt: { score: number; correctAnswers?: number; wrongAnswers?: number; unanswered?: number } }>(
+      const response = await apiRequest<{
+        attempt: { score: number; correctAnswers?: number; wrongAnswers?: number; unanswered?: number };
+        review?: ReviewRow[];
+      }>(
         `/api/tests/${session.id}/finish`,
         {
           method: 'POST',
@@ -478,6 +558,7 @@ export function TestInterfacePage() {
         wrongAnswers: attempt.wrongAnswers,
         unanswered: attempt.unanswered,
       });
+      setReviewRows(Array.isArray(response.review) ? response.review : []);
 
       if (auto) {
         toast.message('Time is up. Test auto-submitted.');
@@ -581,6 +662,7 @@ export function TestInterfacePage() {
   }
 
   const questionNumber = currentIndex + 1;
+  const optionRows = buildOptionMedia(question);
 
   return (
     <div className="min-h-screen bg-[#f2f6fb] p-2 text-[#0d2c5a] sm:p-3">
@@ -601,6 +683,13 @@ export function TestInterfacePage() {
             <p className="mb-2 font-semibold text-black">Question</p>
             <div className="min-h-[120px] rounded border border-[#1e3f6e] bg-white p-3 text-sm text-black sm:text-base">
               {question.question}
+              {question.questionImage?.dataUrl ? (
+                <img
+                  src={question.questionImage.dataUrl}
+                  alt="Question visual"
+                  className="mt-3 max-h-60 w-full rounded border border-slate-200 object-contain"
+                />
+              ) : null}
             </div>
           </section>
 
@@ -618,8 +707,9 @@ export function TestInterfacePage() {
         </section>
 
         <section className="space-y-2 border-b border-[#2b5f9f] bg-[#d6dbe2] p-2">
-          {question.options.map((option, idx) => {
-            const isSelected = answers[question.id] === option;
+          {optionRows.map((option, idx) => {
+            const optionValue = isChallengeMode ? option.text : option.key;
+            const isSelected = answers[question.id] === optionValue;
             const isLocked = isChallengeMode && String(challengeType) === 'live' && Boolean(challengeLockedAnswers[question.id]);
             return (
               <label key={`${question.id}-${idx}`} className="grid grid-cols-[24px_1fr] items-start gap-2 sm:grid-cols-[28px_1fr] sm:items-center">
@@ -630,7 +720,7 @@ export function TestInterfacePage() {
                   disabled={isLocked && !isSelected}
                   onChange={() => {
                     if (!isChallengeMode || String(challengeType) !== 'live') {
-                      setAnswers((prev) => ({ ...prev, [question.id]: option }));
+                      setAnswers((prev) => ({ ...prev, [question.id]: optionValue }));
                       return;
                     }
 
@@ -649,20 +739,30 @@ export function TestInterfacePage() {
                       `/api/community/quiz-challenges/${resolvedChallengeId}/progress`,
                       {
                         method: 'POST',
-                        body: JSON.stringify({ questionId: question.id, selectedOption: option, elapsedSeconds }),
+                        body: JSON.stringify({ questionId: question.id, selectedOption: optionValue, elapsedSeconds }),
                       },
                       resolvedToken,
                     )
                       .then(() => {
-                        setChallengeLockedAnswers((prev) => ({ ...prev, [question.id]: option }));
-                        setAnswers((prev) => ({ ...prev, [question.id]: option }));
+                        setChallengeLockedAnswers((prev) => ({ ...prev, [question.id]: optionValue }));
+                        setAnswers((prev) => ({ ...prev, [question.id]: optionValue }));
                       })
                       .catch((error) => {
                         toast.error(error instanceof Error ? error.message : 'Could not lock answer for live challenge.');
                       });
                   }}
                 />
-                <div className="rounded border border-[#1e3f6e] bg-white px-2 py-2 text-sm text-black sm:text-base">{option}</div>
+                <div className="rounded border border-[#1e3f6e] bg-white px-2 py-2 text-sm text-black sm:text-base">
+                  <p className="font-medium text-slate-700">{option.key}.</p>
+                  {option.text ? <p>{option.text}</p> : null}
+                  {option.image?.dataUrl ? (
+                    <img
+                      src={option.image.dataUrl}
+                      alt={`Option ${option.key}`}
+                      className="mt-2 max-h-40 w-full rounded border border-slate-200 object-contain"
+                    />
+                  ) : null}
+                </div>
               </label>
             );
           })}
@@ -768,12 +868,38 @@ export function TestInterfacePage() {
                 className="rounded border border-emerald-700 bg-emerald-100 px-3 py-1 text-emerald-800"
                 onClick={() => {
                   setResult(null);
+                  setReviewRows([]);
                   window.location.href = '/';
                 }}
               >
                 Back to Dashboard
               </button>
             </div>
+
+            {!isChallengeMode && reviewRows.length ? (
+              <div className="mt-4 max-h-[48vh] space-y-2 overflow-auto rounded border border-slate-200 p-2">
+                <p className="text-sm font-semibold text-slate-800">Review (shown after completion)</p>
+                {reviewRows.map((row, idx) => (
+                  <div key={`${row.questionId}-${idx}`} className="rounded border border-slate-200 p-2 text-xs sm:text-sm">
+                    <p className="font-semibold">Q{idx + 1}. {row.question}</p>
+                    {row.questionImage?.dataUrl ? (
+                      <img src={row.questionImage.dataUrl} alt={`Review question ${idx + 1}`} className="mt-2 max-h-48 w-full rounded border object-contain" />
+                    ) : null}
+                    <p className={`mt-2 font-medium ${row.isCorrect ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {row.isCorrect ? 'Correct' : 'Incorrect'} • Your answer: {row.selectedKey || 'Not answered'} • Correct: {row.correctKey || '-'}
+                    </p>
+                    {row.explanationText ? <p className="mt-1 whitespace-pre-wrap">Explanation: {row.explanationText}</p> : null}
+                    {row.explanationImage?.dataUrl ? (
+                      <img src={row.explanationImage.dataUrl} alt={`Explanation ${idx + 1}`} className="mt-2 max-h-40 w-full rounded border object-contain" />
+                    ) : null}
+                    {row.shortTrickText ? <p className="mt-1 whitespace-pre-wrap text-blue-700">Short Trick: {row.shortTrickText}</p> : null}
+                    {row.shortTrickImage?.dataUrl ? (
+                      <img src={row.shortTrickImage.dataUrl} alt={`Short trick ${idx + 1}`} className="mt-2 max-h-40 w-full rounded border object-contain" />
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

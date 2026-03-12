@@ -1,6 +1,19 @@
 export type SubjectKey = 'mathematics' | 'physics' | 'english' | 'biology' | 'chemistry';
 export type Difficulty = 'Easy' | 'Medium' | 'Hard';
 
+export interface McqImageFile {
+  name: string;
+  mimeType: string;
+  size: number;
+  dataUrl: string;
+}
+
+export interface McqOptionMedia {
+  key: string;
+  text: string;
+  image?: McqImageFile | null;
+}
+
 export interface MCQ {
 	id: string;
 	subject: SubjectKey;
@@ -10,9 +23,16 @@ export interface MCQ {
 	topic: string;
 	question: string;
 	questionImageUrl?: string;
+	questionImage?: McqImageFile | null;
 	options: string[];
+	optionMedia?: McqOptionMedia[];
 	answer: string;
+	answerKey?: string;
 	tip: string;
+	explanationText?: string;
+	explanationImage?: McqImageFile | null;
+	shortTrickText?: string;
+	shortTrickImage?: McqImageFile | null;
 	difficulty: Difficulty;
 }
 

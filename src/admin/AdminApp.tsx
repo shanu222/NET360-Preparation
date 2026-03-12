@@ -221,10 +221,54 @@ interface AdminMCQ {
   topic: string;
   question: string;
   questionImageUrl?: string;
+  questionImage?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
   options: string[];
+  optionMedia?: Array<{
+    key: string;
+    text: string;
+    image?: {
+      name: string;
+      mimeType: string;
+      size: number;
+      dataUrl: string;
+    } | null;
+  }>;
   answer: string;
+  answerKey?: string;
   tip: string;
+  explanationText?: string;
+  explanationImage?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
+  shortTrickText?: string;
+  shortTrickImage?: {
+    name: string;
+    mimeType: string;
+    size: number;
+    dataUrl: string;
+  } | null;
   difficulty: string;
+}
+
+interface AdminMcqImageFile {
+  name: string;
+  mimeType: string;
+  size: number;
+  dataUrl: string;
+}
+
+interface AdminMcqOptionMedia {
+  key: string;
+  text: string;
+  image?: AdminMcqImageFile | null;
 }
 
 interface AdminMcqBankStructureItem {
@@ -387,10 +431,18 @@ function emptyForm() {
     section: '',
     topic: 'General',
     question: '',
-    questionImageUrl: '',
-    options: 'Option A\nOption B',
+    questionImage: null as AdminMcqImageFile | null,
+    optionMedia: [
+      { key: 'A', text: '', image: null },
+      { key: 'B', text: '', image: null },
+      { key: 'C', text: '', image: null },
+      { key: 'D', text: '', image: null },
+    ] as AdminMcqOptionMedia[],
     answer: '',
-    tip: '',
+    explanationText: '',
+    explanationImage: null as AdminMcqImageFile | null,
+    shortTrickText: '',
+    shortTrickImage: null as AdminMcqImageFile | null,
     difficulty: 'Medium',
   };
 }
@@ -619,6 +671,46 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(new Error('Could not read file.'));
     reader.readAsDataURL(file);
   });
+}
+
+const MCQ_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const MCQ_IMAGE_NAME_PATTERN = /\.(jpe?g|png|webp)$/i;
+const MCQ_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+
+function isSupportedMcqImage(file: File) {
+  const mime = String(file.type || '').toLowerCase();
+  return MCQ_IMAGE_MIME_TYPES.has(mime) || MCQ_IMAGE_NAME_PATTERN.test(file.name || '');
+}
+
+async function fileToMcqImage(file: File): Promise<AdminMcqImageFile> {
+  return {
+    name: file.name,
+    mimeType: file.type || 'application/octet-stream',
+    size: file.size,
+    dataUrl: await fileToDataUrl(file),
+  };
+}
+
+function resolveAnswerKeyFromInput(options: AdminMcqOptionMedia[], answerInput: string): string {
+  const normalized = String(answerInput || '').trim().toLowerCase();
+  if (!normalized) return '';
+
+  const direct = normalized.match(/^(?:option\s*)?([a-d]|\d{1,2})(?:\b|\)|\.|:)?/i);
+  if (direct) {
+    const token = direct[1];
+    const idx = /^\d+$/.test(token)
+      ? Number(token) - 1
+      : token.toUpperCase().charCodeAt(0) - 65;
+    if (idx >= 0 && idx < options.length) {
+      return String(options[idx].key || '').toUpperCase();
+    }
+  }
+
+  const byText = options.find((item) => String(item.text || '').trim().toLowerCase() === normalized);
+  if (byText) return String(byText.key || '').toUpperCase();
+
+  const byKey = options.find((item) => String(item.key || '').trim().toLowerCase() === normalized);
+  return byKey ? String(byKey.key || '').toUpperCase() : '';
 }
 
 const PRACTICE_FILE_MIME_TYPES = new Set([
@@ -2009,13 +2101,29 @@ export default function AdminApp() {
   const saveMcq = async () => {
     if (!authToken) return;
 
-    const options = form.options
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
+    const normalizedOptionMedia = form.optionMedia
+      .map((item, idx) => ({
+        key: String(item.key || String.fromCharCode(65 + idx)).trim().toUpperCase(),
+        text: String(item.text || '').trim(),
+        image: item.image || null,
+      }))
+      .filter((item) => item.text || item.image);
 
-    if (!form.question.trim() || !form.answer.trim() || options.length < 2) {
-      toast.error('Question, answer, and at least 2 options are required.');
+    const options = normalizedOptionMedia.map((item) => item.text || `[${item.key}]`);
+
+    if (!form.question.trim() && !form.questionImage) {
+      toast.error('Question text or question image is required.');
+      return;
+    }
+
+    if (normalizedOptionMedia.length < 2) {
+      toast.error('At least 2 options are required (text, image, or both).');
+      return;
+    }
+
+    const answerKey = resolveAnswerKeyFromInput(normalizedOptionMedia, form.answer);
+    if (!answerKey) {
+      toast.error('Provide a valid answer (A-D, option number, or exact option text).');
       return;
     }
 
@@ -2044,10 +2152,16 @@ export default function AdminApp() {
       section: isFlatTopicSubject ? (form.section || form.topic) : form.section,
       topic: form.topic,
       question: form.question,
-      questionImageUrl: form.questionImageUrl,
+      questionImage: form.questionImage,
       options,
-      answer: form.answer,
-      tip: form.tip,
+      optionMedia: normalizedOptionMedia,
+      answer: answerKey,
+      answerKey,
+      tip: form.explanationText,
+      explanationText: form.explanationText,
+      explanationImage: form.explanationImage,
+      shortTrickText: form.shortTrickText,
+      shortTrickImage: form.shortTrickImage,
       difficulty: form.difficulty,
     };
 
@@ -3803,21 +3917,117 @@ export default function AdminApp() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label>Optional Image URL (diagram/equation)</Label>
+                    <Label htmlFor="mcq-question-image-upload">Question Image (optional)</Label>
                     <Input
-                      value={form.questionImageUrl}
-                      onChange={(e) => setForm((prev) => ({ ...prev, questionImageUrl: e.target.value }))}
-                      placeholder="https://..."
+                      id="mcq-question-image-upload"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        if (!file) return;
+                        if (!isSupportedMcqImage(file)) {
+                          toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
+                          e.currentTarget.value = '';
+                          return;
+                        }
+                        if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                          toast.error('Image is too large. Maximum size is 5 MB.');
+                          e.currentTarget.value = '';
+                          return;
+                        }
+                        void fileToMcqImage(file)
+                          .then((image) => setForm((prev) => ({ ...prev, questionImage: image })))
+                          .catch(() => toast.error('Could not read selected image.'));
+                        e.currentTarget.value = '';
+                      }}
                     />
+                    {form.questionImage ? (
+                      <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
+                        <span>{form.questionImage.name}</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setForm((prev) => ({ ...prev, questionImage: null }))}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label>Options (one per line, minimum 2)</Label>
-                    <Textarea
-                      value={form.options}
-                      onChange={(e) => setForm((prev) => ({ ...prev, options: e.target.value }))}
-                      className="min-h-[120px]"
-                    />
+                  <div className="space-y-2">
+                    <Label>Options (text and/or image)</Label>
+                    <div className="space-y-2">
+                      {form.optionMedia.map((option, optionIdx) => (
+                        <div key={`option-${option.key}`} className="space-y-2 rounded-md border p-2">
+                          <div className="grid gap-2 md:grid-cols-[80px_1fr] md:items-center">
+                            <Label>Option {option.key}</Label>
+                            <Input
+                              value={option.text}
+                              placeholder={`Option ${option.key} text`}
+                              onChange={(e) => {
+                                const nextValue = e.target.value;
+                                setForm((prev) => {
+                                  const optionMedia = [...prev.optionMedia];
+                                  optionMedia[optionIdx] = { ...optionMedia[optionIdx], text: nextValue };
+                                  return { ...prev, optionMedia };
+                                });
+                              }}
+                            />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0] || null;
+                                if (!file) return;
+                                if (!isSupportedMcqImage(file)) {
+                                  toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                  toast.error('Image is too large. Maximum size is 5 MB.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                void fileToMcqImage(file)
+                                  .then((image) => {
+                                    setForm((prev) => {
+                                      const optionMedia = [...prev.optionMedia];
+                                      optionMedia[optionIdx] = { ...optionMedia[optionIdx], image };
+                                      return { ...prev, optionMedia };
+                                    });
+                                  })
+                                  .catch(() => toast.error('Could not read selected image.'));
+                                e.currentTarget.value = '';
+                              }}
+                            />
+                            {option.image ? (
+                              <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
+                                <span>{option.image.name}</span>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    setForm((prev) => {
+                                      const optionMedia = [...prev.optionMedia];
+                                      optionMedia[optionIdx] = { ...optionMedia[optionIdx], image: null };
+                                      return { ...prev, optionMedia };
+                                    });
+                                  }}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
                   <div className="grid gap-3 md:grid-cols-2">
@@ -3839,8 +4049,99 @@ export default function AdminApp() {
                   </div>
 
                   <div className="space-y-1.5">
-                    <Label>Explanation (optional)</Label>
-                    <Textarea value={form.tip} onChange={(e) => setForm((prev) => ({ ...prev, tip: e.target.value }))} className="min-h-[90px]" />
+                    <Label>Explanation Text (optional)</Label>
+                    <Textarea
+                      value={form.explanationText}
+                      onChange={(e) => setForm((prev) => ({ ...prev, explanationText: e.target.value }))}
+                      className="min-h-[90px]"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Explanation Image (optional)</Label>
+                    <Input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        if (!file) return;
+                        if (!isSupportedMcqImage(file)) {
+                          toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
+                          e.currentTarget.value = '';
+                          return;
+                        }
+                        if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                          toast.error('Image is too large. Maximum size is 5 MB.');
+                          e.currentTarget.value = '';
+                          return;
+                        }
+                        void fileToMcqImage(file)
+                          .then((image) => setForm((prev) => ({ ...prev, explanationImage: image })))
+                          .catch(() => toast.error('Could not read selected image.'));
+                        e.currentTarget.value = '';
+                      }}
+                    />
+                    {form.explanationImage ? (
+                      <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
+                        <span>{form.explanationImage.name}</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setForm((prev) => ({ ...prev, explanationImage: null }))}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Short Trick Text (optional)</Label>
+                    <Textarea
+                      value={form.shortTrickText}
+                      onChange={(e) => setForm((prev) => ({ ...prev, shortTrickText: e.target.value }))}
+                      className="min-h-[90px]"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <Label>Short Trick Image (optional)</Label>
+                    <Input
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0] || null;
+                        if (!file) return;
+                        if (!isSupportedMcqImage(file)) {
+                          toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
+                          e.currentTarget.value = '';
+                          return;
+                        }
+                        if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                          toast.error('Image is too large. Maximum size is 5 MB.');
+                          e.currentTarget.value = '';
+                          return;
+                        }
+                        void fileToMcqImage(file)
+                          .then((image) => setForm((prev) => ({ ...prev, shortTrickImage: image })))
+                          .catch(() => toast.error('Could not read selected image.'));
+                        e.currentTarget.value = '';
+                      }}
+                    />
+                    {form.shortTrickImage ? (
+                      <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
+                        <span>{form.shortTrickImage.name}</span>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setForm((prev) => ({ ...prev, shortTrickImage: null }))}
+                        >
+                          Remove
+                        </Button>
+                      </div>
+                    ) : null}
                   </div>
 
                   <div className="space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/30 p-3">
@@ -3969,10 +4270,24 @@ export default function AdminApp() {
                               section: item.section || '',
                               topic: item.topic,
                               question: item.question,
-                              questionImageUrl: item.questionImageUrl || '',
-                              options: item.options.join('\n'),
-                              answer: item.answer,
-                              tip: item.tip,
+                              questionImage: item.questionImage || null,
+                              optionMedia: Array.isArray(item.optionMedia) && item.optionMedia.length
+                                ? item.optionMedia.map((option, optionIdx) => ({
+                                  key: String(option.key || String.fromCharCode(65 + optionIdx)).toUpperCase(),
+                                  text: String(option.text || ''),
+                                  image: option.image || null,
+                                }))
+                                : [
+                                  { key: 'A', text: String(item.options?.[0] || ''), image: null },
+                                  { key: 'B', text: String(item.options?.[1] || ''), image: null },
+                                  { key: 'C', text: String(item.options?.[2] || ''), image: null },
+                                  { key: 'D', text: String(item.options?.[3] || ''), image: null },
+                                ],
+                              answer: item.answerKey || item.answer,
+                              explanationText: item.explanationText || item.tip || '',
+                              explanationImage: item.explanationImage || null,
+                              shortTrickText: item.shortTrickText || '',
+                              shortTrickImage: item.shortTrickImage || null,
                               difficulty: item.difficulty,
                             });
                           }}

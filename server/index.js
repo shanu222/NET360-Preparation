@@ -460,7 +460,7 @@ const COMMUNITY_CONNECTION_SELECT = 'participantA participantB createdAt blocked
 const COMMUNITY_REQUEST_SELECT = 'fromUserId toUserId status createdAt';
 const COMMUNITY_MESSAGE_SELECT = 'connectionId senderUserId messageType text attachment voiceMeta callInvite reactions createdAt readByUserIds';
 const COMMUNITY_ROOM_POST_SELECT = 'roomId authorUserId type title text subject upvotes answers flagged createdAt';
-const MCQ_SELECT = 'subject part chapter section topic question questionImageUrl options answer tip difficulty source createdAt';
+const MCQ_SELECT = 'subject part chapter section topic question questionImageUrl questionImage options optionMedia answer tip explanationText explanationImage shortTrickText shortTrickImage difficulty source createdAt';
 const PRACTICE_BOARD_SELECT = 'subject difficulty questionText questionFile questionImageUrl solutionText solutionFile solutionImageUrl source createdAt';
 
 const CHAT_ATTACHMENT_MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -487,6 +487,17 @@ const PRACTICE_BOARD_ALLOWED_MIME_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 ]);
 const PRACTICE_BOARD_MAX_FILE_BYTES = 8 * 1024 * 1024;
+const MCQ_ALLOWED_IMAGE_MIME_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+  'image/svg+xml',
+  'image/bmp',
+  'image/avif',
+  'image/tiff',
+]);
+const MCQ_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const COMMUNITY_PROFILE_PICTURE_ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -692,6 +703,133 @@ function normalizePracticeBoardFile(input) {
     size,
     dataUrl,
   };
+}
+
+function normalizeMcqImageFile(input, fieldLabel = 'Image') {
+  if (input == null) return null;
+  if (typeof input !== 'object') return null;
+
+  const name = String(input.name || '').trim();
+  const dataUrl = String(input.dataUrl || '').trim();
+  if (!name && !dataUrl) return null;
+  if (!name || !dataUrl) {
+    throw new Error(`${fieldLabel} must include both name and dataUrl.`);
+  }
+
+  const parsed = parseDataUrl(dataUrl);
+  if (!parsed?.buffer) {
+    throw new Error(`Invalid uploaded data for ${fieldLabel.toLowerCase()}.`);
+  }
+
+  const mimeType = String(input.mimeType || parsed.mimeType || 'application/octet-stream').trim().toLowerCase();
+  if (!MCQ_ALLOWED_IMAGE_MIME_TYPES.has(mimeType)) {
+    throw new Error(`Unsupported ${fieldLabel.toLowerCase()} format. Use JPG, PNG, WEBP, GIF, SVG, BMP, AVIF, or TIFF.`);
+  }
+
+  const size = Number(input.size || parsed.buffer.length || 0);
+  if (!size || size > MCQ_MAX_IMAGE_BYTES) {
+    throw new Error(`${fieldLabel} exceeds the ${Math.floor(MCQ_MAX_IMAGE_BYTES / (1024 * 1024))}MB limit.`);
+  }
+
+  return {
+    name,
+    mimeType,
+    size,
+    dataUrl,
+  };
+}
+
+function sanitizeMcqOptionsWithMedia(optionsRaw, optionMediaRaw) {
+  const optionTexts = Array.isArray(optionsRaw)
+    ? optionsRaw.map((item) => String(item || '').trim())
+    : [];
+
+  const mediaRows = Array.isArray(optionMediaRaw) ? optionMediaRaw : [];
+  const maxLength = Math.max(optionTexts.length, mediaRows.length);
+  const resolved = [];
+
+  for (let i = 0; i < maxLength; i += 1) {
+    const legacyText = optionTexts[i] || '';
+    const row = mediaRows[i] && typeof mediaRows[i] === 'object' ? mediaRows[i] : {};
+    const text = String(row.text || legacyText).trim();
+    const image = normalizeMcqImageFile(row.image, `Option ${String.fromCharCode(65 + i)} image`);
+
+    if (!text && !image) continue;
+
+    resolved.push({
+      key: String(row.key || String.fromCharCode(65 + i)).trim().toUpperCase(),
+      text,
+      image,
+    });
+  }
+
+  if (resolved.length < 2) {
+    throw new Error('At least two options are required. Each option can contain text, image, or both.');
+  }
+
+  const normalizedWithStableKeys = resolved.slice(0, 8).map((item, index) => ({
+    key: String.fromCharCode(65 + index),
+    text: String(item.text || '').trim(),
+    image: item.image || null,
+  }));
+
+  const plainOptions = normalizedWithStableKeys.map((item) => item.text || `[${item.key}]`).filter(Boolean);
+
+  return {
+    optionMedia: normalizedWithStableKeys,
+    options: plainOptions,
+  };
+}
+
+function normalizeLegacyImageUrlAsFile(rawUrl, fallbackName) {
+  const dataUrl = String(rawUrl || '').trim();
+  if (!dataUrl) return null;
+  if (!dataUrl.startsWith('data:')) {
+    return {
+      name: fallbackName,
+      mimeType: 'image/*',
+      size: 0,
+      dataUrl,
+    };
+  }
+
+  const parsed = parseDataUrl(dataUrl);
+  if (!parsed?.buffer) return null;
+  return {
+    name: fallbackName,
+    mimeType: parsed.mimeType || 'image/*',
+    size: parsed.buffer.length,
+    dataUrl,
+  };
+}
+
+function resolveAnswerToOptionKey(answerRaw, optionMedia, options) {
+  const raw = String(answerRaw || '').trim();
+  if (!raw) return '';
+
+  const normalizedOptions = Array.isArray(optionMedia) && optionMedia.length
+    ? optionMedia
+    : (Array.isArray(options)
+      ? options.map((text, index) => ({ key: String.fromCharCode(65 + index), text: String(text || '').trim() }))
+      : []);
+
+  const byText = normalizedOptions.find((item) => String(item?.text || '').trim().toLowerCase() === raw.toLowerCase());
+  if (byText?.key) {
+    return String(byText.key).trim().toUpperCase();
+  }
+
+  const direct = raw.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\b|\)|\.|:)?/i);
+  if (direct) {
+    const token = direct[1];
+    const index = /^\d+$/.test(token)
+      ? Number(token) - 1
+      : token.toUpperCase().charCodeAt(0) - 65;
+    if (index >= 0 && index < normalizedOptions.length) {
+      return String(normalizedOptions[index].key || String.fromCharCode(65 + index)).trim().toUpperCase();
+    }
+  }
+
+  return '';
 }
 
 function normalizeCommunityProfilePicture(dataUrlRaw) {
@@ -2546,6 +2684,87 @@ function serializeMcq(item) {
   const chapter = String(item.chapter || '').trim();
   const section = String(item.section || '').trim() || String(item.topic || '').trim();
   const topic = String(item.topic || '').trim() || section || chapter || 'General';
+
+  const normalizedQuestionImage = item.questionImage
+    ? {
+      name: String(item.questionImage.name || '').trim(),
+      mimeType: String(item.questionImage.mimeType || '').trim().toLowerCase(),
+      size: Number(item.questionImage.size || 0),
+      dataUrl: String(item.questionImage.dataUrl || '').trim(),
+    }
+    : normalizeLegacyImageUrlAsFile(item.questionImageUrl, 'question-image');
+
+  const mediaOptions = Array.isArray(item.optionMedia) ? item.optionMedia : [];
+  const textOptions = Array.isArray(item.options) ? item.options : [];
+  const optionCount = Math.max(mediaOptions.length, textOptions.length);
+  const normalizedOptionMedia = Array.from({ length: optionCount }, (_unused, index) => {
+    const media = mediaOptions[index] && typeof mediaOptions[index] === 'object' ? mediaOptions[index] : {};
+    const text = String(media.text || textOptions[index] || '').trim();
+    const image = media.image
+      ? {
+        name: String(media.image.name || '').trim(),
+        mimeType: String(media.image.mimeType || '').trim().toLowerCase(),
+        size: Number(media.image.size || 0),
+        dataUrl: String(media.image.dataUrl || '').trim(),
+      }
+      : null;
+    if (!text && !image) return null;
+    return {
+      key: String.fromCharCode(65 + index),
+      text,
+      image,
+    };
+  }).filter(Boolean);
+
+  const resolvedOptionMedia = normalizedOptionMedia.length
+    ? normalizedOptionMedia
+    : textOptions.map((text, index) => ({
+      key: String.fromCharCode(65 + index),
+      text: String(text || '').trim(),
+      image: null,
+    }));
+
+  const resolvedOptions = resolvedOptionMedia.map((item) => item.text || `[${item.key}]`);
+
+  const explanationText = String(item.explanationText || item.tip || '').trim();
+  const explanationImage = item.explanationImage
+    ? {
+      name: String(item.explanationImage.name || '').trim(),
+      mimeType: String(item.explanationImage.mimeType || '').trim().toLowerCase(),
+      size: Number(item.explanationImage.size || 0),
+      dataUrl: String(item.explanationImage.dataUrl || '').trim(),
+    }
+    : null;
+
+  const shortTrickText = String(item.shortTrickText || '').trim();
+  const shortTrickImage = item.shortTrickImage
+    ? {
+      name: String(item.shortTrickImage.name || '').trim(),
+      mimeType: String(item.shortTrickImage.mimeType || '').trim().toLowerCase(),
+      size: Number(item.shortTrickImage.size || 0),
+      dataUrl: String(item.shortTrickImage.dataUrl || '').trim(),
+    }
+    : null;
+
+  const rawAnswer = String(item.answer || '').trim();
+  const loweredAnswer = rawAnswer.toLowerCase();
+  let answerKey = '';
+  resolvedOptionMedia.forEach((option) => {
+    if (!answerKey && option.text && option.text.trim().toLowerCase() === loweredAnswer) {
+      answerKey = option.key;
+    }
+  });
+  if (!answerKey) {
+    const direct = rawAnswer.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\b|\)|\.|:)?/i);
+    if (direct) {
+      const token = direct[1];
+      const idx = /^\d+$/.test(token) ? Number(token) - 1 : token.toUpperCase().charCodeAt(0) - 65;
+      if (idx >= 0 && idx < resolvedOptionMedia.length) {
+        answerKey = resolvedOptionMedia[idx].key;
+      }
+    }
+  }
+
   return {
     id: String(item._id),
     subject: item.subject,
@@ -2555,9 +2774,16 @@ function serializeMcq(item) {
     topic,
     question: item.question,
     questionImageUrl: String(item.questionImageUrl || '').trim(),
-    options: item.options,
+    questionImage: normalizedQuestionImage,
+    options: resolvedOptions,
+    optionMedia: resolvedOptionMedia,
     answer: item.answer,
+    answerKey,
     tip: item.tip,
+    explanationText,
+    explanationImage,
+    shortTrickText,
+    shortTrickImage,
     difficulty: item.difficulty,
   };
 }
@@ -8271,23 +8497,56 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     return;
   }
 
-  const questions = selected.map((question) => ({
-    id: String(question._id),
-    subject: question.subject,
-    part: String(question.part || '').trim(),
-    chapter: String(question.chapter || '').trim(),
-    section: String(question.section || '').trim(),
-    topic: question.topic,
-    question: question.question,
-    questionImageUrl: String(question.questionImageUrl || '').trim(),
-    options: question.options,
-    difficulty: question.difficulty,
-    explanation: question.tip || '',
-  }));
+  const questions = selected.map((question) => {
+    const serialized = serializeMcq(question);
+    return {
+      id: String(question._id),
+      subject: question.subject,
+      part: String(question.part || '').trim(),
+      chapter: String(question.chapter || '').trim(),
+      section: String(question.section || '').trim(),
+      topic: question.topic,
+      question: question.question,
+      questionImageUrl: String(question.questionImageUrl || '').trim(),
+      questionImage: serialized.questionImage || null,
+      options: serialized.options,
+      optionMedia: serialized.optionMedia || [],
+      difficulty: question.difficulty,
+      explanation: serialized.explanationText || '',
+      explanationImage: serialized.explanationImage || null,
+      shortTrick: serialized.shortTrickText || '',
+      shortTrickImage: serialized.shortTrickImage || null,
+    };
+  });
 
   const answerKey = {};
-  selected.forEach((question) => {
-    answerKey[String(question._id)] = String(question.answer || '').trim();
+  questions.forEach((question) => {
+    const answerRaw = String(selected.find((entry) => String(entry._id) === question.id)?.answer || '').trim();
+    const loweredAnswer = answerRaw.toLowerCase();
+
+    let answerKeyValue = '';
+    (Array.isArray(question.optionMedia) ? question.optionMedia : []).forEach((option) => {
+      if (!answerKeyValue && String(option?.text || '').trim().toLowerCase() === loweredAnswer) {
+        answerKeyValue = String(option.key || '').trim().toUpperCase();
+      }
+    });
+
+    if (!answerKeyValue) {
+      const direct = answerRaw.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\b|\)|\.|:)?/i);
+      if (direct) {
+        const token = direct[1];
+        const idx = /^\d+$/.test(token) ? Number(token) - 1 : token.toUpperCase().charCodeAt(0) - 65;
+        if (idx >= 0 && idx < question.optionMedia.length) {
+          answerKeyValue = String(question.optionMedia[idx].key || '').trim().toUpperCase();
+        }
+      }
+    }
+
+    if (!answerKeyValue) {
+      answerKeyValue = 'A';
+    }
+
+    answerKey[String(question.id)] = answerKeyValue;
   });
 
   const session = await TestSessionModel.create({
@@ -8431,7 +8690,16 @@ app.post('/api/tests/:sessionId/finish', authMiddleware, async (req, res) => {
       return;
     }
 
-    if (String(selectedOption).trim().toLowerCase() === expected) {
+    const normalizedSelection = String(selectedOption).trim().toLowerCase();
+
+    const questionRow = Array.isArray(session.questions)
+      ? session.questions.find((item) => String(item?.id || '') === String(questionId))
+      : null;
+    const optionRows = Array.isArray(questionRow?.optionMedia) ? questionRow.optionMedia : [];
+    const selectedOptionRow = optionRows.find((item) => String(item?.key || '').trim().toLowerCase() === normalizedSelection);
+    const normalizedSelectionText = String(selectedOptionRow?.text || '').trim().toLowerCase();
+
+    if (normalizedSelection === expected || (normalizedSelectionText && normalizedSelectionText === expected)) {
       correctAnswers += 1;
     } else {
       wrongAnswers += 1;
@@ -8473,7 +8741,34 @@ app.post('/api/tests/:sessionId/finish', authMiddleware, async (req, res) => {
     data: { type: 'attempt.finished', userId: String(req.user._id), sessionId: String(session._id) },
   });
   broadcastSyncEvent({ role: 'admin', event: 'sync', data: { type: 'admin.analytics.updated' } });
-  res.status(201).json({ attempt: serializeAttempt(attempt) });
+
+  const review = (Array.isArray(session.questions) ? session.questions : []).map((item) => {
+    const questionId = String(item?.id || '');
+    const selectedKeyRaw = answerMap.has(questionId) ? answerMap.get(questionId) : null;
+    const selectedKey = selectedKeyRaw ? String(selectedKeyRaw).trim().toUpperCase() : null;
+    const expectedKey = String(session.answerKey?.get?.(questionId) || session.answerKey?.[questionId] || '').trim().toUpperCase();
+    const optionMedia = Array.isArray(item?.optionMedia) ? item.optionMedia : [];
+    const selectedOption = optionMedia.find((option) => String(option?.key || '').trim().toUpperCase() === selectedKey) || null;
+    const correctOption = optionMedia.find((option) => String(option?.key || '').trim().toUpperCase() === expectedKey) || null;
+
+    return {
+      questionId,
+      question: String(item?.question || ''),
+      questionImage: item?.questionImage || null,
+      optionMedia,
+      selectedKey,
+      correctKey: expectedKey,
+      selectedText: selectedOption ? String(selectedOption.text || '') : '',
+      correctText: correctOption ? String(correctOption.text || '') : '',
+      isCorrect: Boolean(selectedKey) && selectedKey === expectedKey,
+      explanationText: String(item?.explanation || '').trim(),
+      explanationImage: item?.explanationImage || null,
+      shortTrickText: String(item?.shortTrick || '').trim(),
+      shortTrickImage: item?.shortTrickImage || null,
+    };
+  });
+
+  res.status(201).json({ attempt: serializeAttempt(attempt), review });
 });
 
 app.get('/api/analytics/summary', authMiddleware, async (req, res) => {
@@ -9593,7 +9888,9 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const {
     question,
     questionImageUrl = '',
+    questionImage = null,
     options,
+    optionMedia,
     answer,
     subject,
     part,
@@ -9602,6 +9899,10 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
     topic,
     difficulty = 'Medium',
     tip = '',
+    explanationText = '',
+    explanationImage = null,
+    shortTrickText = '',
+    shortTrickImage = null,
   } = req.body || {};
 
   const normalizedSubject = String(subject || '').toLowerCase().trim();
@@ -9611,8 +9912,8 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const normalizedTopic = String(topic || '').trim();
   const isFlatTopicSubject = normalizedSubject === 'quantitative-mathematics' || normalizedSubject === 'design-aptitude';
 
-  if (!question || !Array.isArray(options) || options.length < 2 || !answer || !normalizedSubject) {
-    res.status(400).json({ error: 'question, options (min 2), answer, and subject are required.' });
+  if (!answer || !normalizedSubject) {
+    res.status(400).json({ error: 'answer and subject are required.' });
     return;
   }
 
@@ -9626,11 +9927,28 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
     return;
   }
 
-  const cleanOptions = options
-    .map((item) => String(item || '').trim())
-    .filter(Boolean);
-  if (cleanOptions.length < 2) {
-    res.status(400).json({ error: 'At least two non-empty options are required.' });
+  let normalizedQuestionImage;
+  let normalizedExplanationImage;
+  let normalizedShortTrickImage;
+  let normalizedOptions;
+  let normalizedOptionMedia;
+
+  try {
+    normalizedQuestionImage = normalizeMcqImageFile(questionImage, 'Question image');
+    normalizedExplanationImage = normalizeMcqImageFile(explanationImage, 'Explanation image');
+    normalizedShortTrickImage = normalizeMcqImageFile(shortTrickImage, 'Short trick image');
+    const normalized = sanitizeMcqOptionsWithMedia(options, optionMedia);
+    normalizedOptions = normalized.options;
+    normalizedOptionMedia = normalized.optionMedia;
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid MCQ image payload.' });
+    return;
+  }
+
+  const normalizedQuestionText = String(question || '').trim();
+  const hasQuestionImage = Boolean(normalizedQuestionImage) || Boolean(String(questionImageUrl || '').trim());
+  if (!normalizedQuestionText && !hasQuestionImage) {
+    res.status(400).json({ error: 'Question text or question image is required.' });
     return;
   }
 
@@ -9638,19 +9956,31 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
     ? (normalizedTopic || normalizedSection)
     : String(normalizedTopic || `${normalizedChapter} - ${normalizedSection}`).trim();
   const resolvedSection = isFlatTopicSubject ? (normalizedSection || resolvedTopic) : normalizedSection;
+  const resolvedAnswerKey = resolveAnswerToOptionKey(answer, normalizedOptionMedia, normalizedOptions);
+
+  if (!resolvedAnswerKey) {
+    res.status(400).json({ error: 'Correct answer must match one option (A/B/C/D, 1/2/3/4, or exact option text).' });
+    return;
+  }
 
   const mcq = await MCQModel.create({
-    question: String(question),
+    question: normalizedQuestionText || 'Refer to attached image.',
     questionImageUrl: String(questionImageUrl || '').trim(),
-    options: cleanOptions,
-    answer: String(answer),
+    questionImage: normalizedQuestionImage,
+    options: normalizedOptions,
+    optionMedia: normalizedOptionMedia,
+    answer: resolvedAnswerKey,
     subject: normalizedSubject,
     part: isFlatTopicSubject ? '' : normalizedPart,
     chapter: isFlatTopicSubject ? '' : normalizedChapter,
     section: resolvedSection,
     topic: resolvedTopic,
     difficulty: String(difficulty),
-    tip: String(tip),
+    tip: String(explanationText || tip || ''),
+    explanationText: String(explanationText || tip || ''),
+    explanationImage: normalizedExplanationImage,
+    shortTrickText: String(shortTrickText || ''),
+    shortTrickImage: normalizedShortTrickImage,
     source: 'Admin',
   });
 
@@ -9663,20 +9993,96 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
 
 app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res) => {
   const payload = {};
-  ['question', 'questionImageUrl', 'answer', 'subject', 'part', 'chapter', 'section', 'topic', 'difficulty', 'tip'].forEach((field) => {
+  ['question', 'questionImageUrl', 'answer', 'subject', 'part', 'chapter', 'section', 'topic', 'difficulty', 'tip', 'explanationText', 'shortTrickText'].forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(req.body, field)) {
       const value = String(req.body[field] ?? '');
       payload[field] = ['subject', 'part'].includes(field) ? value.toLowerCase().trim() : value;
     }
   });
+
+  try {
+    if (Object.prototype.hasOwnProperty.call(req.body, 'questionImage')) {
+      payload.questionImage = normalizeMcqImageFile(req.body.questionImage, 'Question image');
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'explanationImage')) {
+      payload.explanationImage = normalizeMcqImageFile(req.body.explanationImage, 'Explanation image');
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'shortTrickImage')) {
+      payload.shortTrickImage = normalizeMcqImageFile(req.body.shortTrickImage, 'Short trick image');
+    }
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid image payload.' });
+    return;
+  }
+
   if (Array.isArray(req.body?.options)) {
-    payload.options = req.body.options
-      .map((item) => String(item || '').trim())
-      .filter(Boolean);
-    if (payload.options.length < 2) {
-      res.status(400).json({ error: 'At least two non-empty options are required.' });
+    try {
+      const normalized = sanitizeMcqOptionsWithMedia(req.body.options, req.body.optionMedia);
+      payload.options = normalized.options;
+      payload.optionMedia = normalized.optionMedia;
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid options payload.' });
       return;
     }
+  } else if (Array.isArray(req.body?.optionMedia)) {
+    try {
+      const existing = await MCQModel.findById(req.params.mcqId).lean();
+      if (!existing) {
+        res.status(404).json({ error: 'MCQ not found.' });
+        return;
+      }
+      const normalized = sanitizeMcqOptionsWithMedia(existing.options || [], req.body.optionMedia);
+      payload.options = normalized.options;
+      payload.optionMedia = normalized.optionMedia;
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid options payload.' });
+      return;
+    }
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'answer')) {
+    const existingForAnswer = await MCQModel.findById(req.params.mcqId).lean();
+    if (!existingForAnswer) {
+      res.status(404).json({ error: 'MCQ not found.' });
+      return;
+    }
+
+    const answerKey = resolveAnswerToOptionKey(
+      payload.answer,
+      payload.optionMedia || existingForAnswer.optionMedia || [],
+      payload.options || existingForAnswer.options || [],
+    );
+
+    if (!answerKey) {
+      res.status(400).json({ error: 'Correct answer must match one option (A/B/C/D, 1/2/3/4, or exact option text).' });
+      return;
+    }
+
+    payload.answer = answerKey;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'explanationText') || Object.prototype.hasOwnProperty.call(payload, 'tip')) {
+    const explanation = String(payload.explanationText || payload.tip || '').trim();
+    payload.explanationText = explanation;
+    payload.tip = explanation;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(payload, 'question')) {
+    const existingForQuestion = await MCQModel.findById(req.params.mcqId).lean();
+    if (!existingForQuestion) {
+      res.status(404).json({ error: 'MCQ not found.' });
+      return;
+    }
+
+    const nextQuestion = String(payload.question || '').trim();
+    const nextQuestionImage = payload.questionImage || existingForQuestion.questionImage || null;
+    const nextLegacyImageUrl = String(payload.questionImageUrl || existingForQuestion.questionImageUrl || '').trim();
+    if (!nextQuestion && !nextQuestionImage && !nextLegacyImageUrl) {
+      res.status(400).json({ error: 'Question text or question image is required.' });
+      return;
+    }
+
+    payload.question = nextQuestion || 'Refer to attached image.';
   }
 
   if (!payload.topic && (payload.chapter || payload.section)) {

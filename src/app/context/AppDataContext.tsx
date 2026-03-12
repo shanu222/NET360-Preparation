@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { Difficulty, MCQ, SubjectKey } from '../lib/mcq';
+import { Difficulty, MCQ, McqImageFile, McqOptionMedia, SubjectKey } from '../lib/mcq';
 import { apiRequest, buildApiUrl } from '../lib/api';
 import { useAuth } from './AuthContext';
 
@@ -28,8 +28,34 @@ interface SessionQuestion {
   topic: string;
   question: string;
   options: string[];
+  optionMedia?: McqOptionMedia[];
+  questionImage?: McqImageFile | null;
   difficulty: Difficulty;
   explanation?: string;
+  explanationImage?: McqImageFile | null;
+  shortTrick?: string;
+  shortTrickImage?: McqImageFile | null;
+}
+
+interface TestReviewRow {
+  questionId: string;
+  question: string;
+  questionImage?: McqImageFile | null;
+  optionMedia: McqOptionMedia[];
+  selectedKey: string | null;
+  correctKey: string;
+  selectedText?: string;
+  correctText?: string;
+  isCorrect: boolean;
+  explanationText?: string;
+  explanationImage?: McqImageFile | null;
+  shortTrickText?: string;
+  shortTrickImage?: McqImageFile | null;
+}
+
+interface SubmitTestSessionResult {
+  attempt: TestAttempt;
+  review?: TestReviewRow[];
 }
 
 interface TestSession {
@@ -102,7 +128,7 @@ interface AppDataContextValue {
     sessionId: string;
     answers: Array<{ questionId: string; selectedOption: string | null }>;
     elapsedSeconds: number;
-  }) => Promise<TestAttempt>;
+  }) => Promise<SubmitTestSessionResult>;
   saveProfile: (partial: Partial<ProfileState>) => Promise<void>;
   savePreferences: (partial: Partial<PreferencesState>) => Promise<void>;
   refreshAttempts: () => Promise<void>;
@@ -382,7 +408,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       throw new Error('Please login first to submit a test session.');
     }
 
-    const payload = await apiRequest<{ attempt: TestAttempt }>(
+    const payload = await apiRequest<{ attempt: TestAttempt; review?: TestReviewRow[] }>(
       `/api/tests/${sessionId}/finish`,
       {
         method: 'POST',
@@ -396,7 +422,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const withoutSame = previous.filter((item) => item.id !== attempt.id);
       return [attempt, ...withoutSame];
     });
-    return attempt;
+    return {
+      attempt,
+      review: Array.isArray(payload.review) ? payload.review : [],
+    };
   };
 
   const startPracticeTest: AppDataContextValue['startPracticeTest'] = async ({
@@ -414,7 +443,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       selectedOption: question.options[0] || null,
     }));
 
-    const attempt = await submitTestSession({
+    const { attempt } = await submitTestSession({
       sessionId: session.id,
       answers,
       elapsedSeconds: Math.max(60, Math.round(session.durationMinutes * 60 * 0.6)),
