@@ -235,12 +235,12 @@ export function NUSTGuide() {
 
   return (
     <div className="space-y-5">
-      <section className="relative overflow-hidden rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-[#edf2ff] via-[#e8e5ff] to-[#f8dff0] p-5 sm:p-6">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_24%,rgba(88,108,242,0.18),transparent_35%),radial-gradient(circle_at_84%_22%,rgba(247,180,214,0.28),transparent_32%)]" />
+      <section className="relative overflow-hidden rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-[#edf2ff] via-[#e8e5ff] to-[#f8dff0] p-5 sm:p-6 dark:border-indigo-900/60 dark:bg-gradient-to-r dark:from-slate-900 dark:via-indigo-950/90 dark:to-slate-900">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_24%,rgba(88,108,242,0.18),transparent_35%),radial-gradient(circle_at_84%_22%,rgba(247,180,214,0.28),transparent_32%)] dark:bg-[radial-gradient(circle_at_18%_24%,rgba(96,165,250,0.2),transparent_38%),radial-gradient(circle_at_84%_22%,rgba(129,140,248,0.16),transparent_34%)]" />
         <div className="relative space-y-4">
           <div>
-            <h1 className="text-3xl text-indigo-950">Complete NUST Admission Guide</h1>
-            <p className="text-base text-slate-600">Everything you need to know about NUST admissions</p>
+            <h1 className="text-3xl text-indigo-950 dark:text-indigo-100">Complete NUST Admission Guide</h1>
+            <p className="text-base text-slate-600 dark:text-indigo-200/90">Everything you need to know about NUST admissions</p>
           </div>
 
           <div className="grid gap-2 sm:grid-cols-3">
@@ -626,8 +626,8 @@ function GuidePill({
   label: string;
 }) {
   return (
-    <div className="inline-flex items-center gap-2 rounded-xl border border-white/70 bg-white/75 px-3 py-2 text-sm text-indigo-900 shadow-sm">
-      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-indigo-600">
+    <div className="inline-flex items-center gap-2 rounded-xl border border-white/70 bg-white/75 px-3 py-2 text-sm text-indigo-900 shadow-sm dark:border-indigo-400/25 dark:bg-indigo-950/55 dark:text-indigo-100">
+      <span className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-indigo-100 text-indigo-600 dark:bg-indigo-400/20 dark:text-indigo-200">
         <Icon className="h-4 w-4" />
       </span>
       <span className="font-medium">{label}</span>
