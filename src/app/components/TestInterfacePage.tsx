@@ -157,8 +157,17 @@ function formatTime(totalSeconds: number) {
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
+const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
+
 export function TestInterfacePage() {
   const { user } = useAuth();
+  const candidatePhoto = useMemo(() => {
+    try {
+      return localStorage.getItem(PROFILE_PHOTO_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  }, []);
 
   const [session, setSession] = useState<TestSession | null>(null);
   const [loading, setLoading] = useState(true);
@@ -698,7 +707,17 @@ export function TestInterfacePage() {
             <div className="mb-2 rounded border border-[#d25555] bg-white p-2 text-center text-[13px] text-black">
               {user?.firstName || 'Candidate'} {user?.lastName || ''}
             </div>
-            <div className="rounded border border-[#d25555] bg-white p-2 text-center text-xs text-black">Photo</div>
+            <div className="rounded border border-[#d25555] bg-white p-1.5 text-center text-xs text-black">
+              {candidatePhoto ? (
+                <img
+                  src={candidatePhoto}
+                  alt="Candidate profile"
+                  className="mx-auto h-14 w-full rounded-sm border border-slate-200 object-cover"
+                />
+              ) : (
+                <div className="flex h-14 items-center justify-center">Photo</div>
+              )}
+            </div>
           </aside>
         </main>
 

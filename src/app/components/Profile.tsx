@@ -4,18 +4,30 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { Apple, Bot, ChevronDown, ChevronUp, Copy, FlaskConical, GraduationCap, LogOut, MessageCircle, RefreshCw, Settings, Target, UserRound, Award } from 'lucide-react';
+import { Apple, Award, Bot, Check, ChevronDown, ChevronUp, ChevronsUpDown, Copy, FlaskConical, GraduationCap, LogOut, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
 import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK, PAYMENT_METHODS } from '../lib/paymentMethods';
+import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 
 const ADVERTISEMENT_PREVIEW_SRC = '/advertisement-page.webp';
 const BRAND_LOGO_SRC = '/net360-logo.png';
+const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
+
+const LEGACY_TARGET_PROGRAM_LABELS: Record<string, string> = {
+  cs: 'Computer Science',
+  ee: 'Electrical Engineering',
+  me: 'Mechanical Engineering',
+  'artificial-intelligence': 'Artificial Intelligence',
+  se: 'Software Engineering',
+};
 
 interface ProfileProps {
   onNavigate?: (section: string) => void;
@@ -27,7 +39,13 @@ export function Profile({ onNavigate }: ProfileProps) {
   const { user, login, submitSignupRequest, registerWithToken, logout } = useAuth();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
   const [localProfile, setLocalProfile] = useState(profile);
-  const [avatarPreview, setAvatarPreview] = useState('');
+  const [avatarPreview, setAvatarPreview] = useState(() => {
+    try {
+      return localStorage.getItem(PROFILE_PHOTO_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  });
   const photoInputRef = useRef<HTMLInputElement | null>(null);
   const paymentProofInputRef = useRef<HTMLInputElement | null>(null);
   const [authMode, setAuthMode] = useState<AuthPanelMode>('login');
@@ -67,6 +85,13 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isPersonalInfoExpanded, setIsPersonalInfoExpanded] = useState(true);
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
+  const [isTargetProgramOpen, setIsTargetProgramOpen] = useState(false);
+
+  const targetProgramOptions = useMemo(() => NET_TARGET_PROGRAM_OPTIONS, []);
+  const selectedTargetProgramLabel =
+    targetProgramOptions.find((option) => option.value === localProfile.targetProgram)?.label ||
+    LEGACY_TARGET_PROGRAM_LABELS[String(localProfile.targetProgram || '').toLowerCase()] ||
+    localProfile.targetProgram;
 
   useEffect(() => {
     setLocalProfile(profile);
@@ -91,7 +116,7 @@ export function Profile({ onNavigate }: ProfileProps) {
 
   useEffect(() => {
     return () => {
-      if (avatarPreview) {
+      if (avatarPreview && avatarPreview.startsWith('blob:')) {
         URL.revokeObjectURL(avatarPreview);
       }
     };
@@ -398,14 +423,35 @@ export function Profile({ onNavigate }: ProfileProps) {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const nextUrl = URL.createObjectURL(file);
-    setAvatarPreview((previous) => {
-      if (previous) {
-        URL.revokeObjectURL(previous);
+    const reader = new FileReader();
+    reader.onload = () => {
+      const nextUrl = typeof reader.result === 'string' ? reader.result : '';
+      if (!nextUrl) {
+        toast.error('Could not read selected photo.');
+        return;
       }
-      return nextUrl;
-    });
-    toast.success('Profile photo updated locally for this browser session.');
+
+      setAvatarPreview((previous) => {
+        if (previous && previous.startsWith('blob:')) {
+          URL.revokeObjectURL(previous);
+        }
+        return nextUrl;
+      });
+
+      try {
+        localStorage.setItem(PROFILE_PHOTO_STORAGE_KEY, nextUrl);
+      } catch {
+        // Non-blocking when storage is not available.
+      }
+
+      toast.success('Profile photo updated locally for this browser session.');
+    };
+
+    reader.onerror = () => {
+      toast.error('Could not read selected photo.');
+    };
+
+    reader.readAsDataURL(file);
   };
 
   const handlePaymentProofSelected = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -935,9 +981,19 @@ export function Profile({ onNavigate }: ProfileProps) {
         </div>
         <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:justify-end">
           <a href={NET360_ADMIN_WHATSAPP_LINK} target="_blank" rel="noreferrer">
-            <Button variant="outline" className="border-emerald-300 text-emerald-700 hover:bg-emerald-50">
-              <MessageCircle className="mr-2 h-4 w-4" />
-              WhatsApp Admin
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-10 w-10 rounded-xl border-emerald-300 bg-white/90 p-0 hover:bg-emerald-50"
+              aria-label="Open WhatsApp chat with admin"
+              title="WhatsApp Admin"
+            >
+              <span className="relative inline-flex h-7 w-7 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-[#25D366] via-[#20c95d] to-[#128C7E] shadow-[inset_0_-2px_5px_rgba(0,0,0,0.22),0_2px_6px_rgba(18,140,126,0.35)]">
+                <span className="pointer-events-none absolute inset-x-1 top-0 h-2.5 rounded-full bg-white/35 blur-[0.5px]" />
+                <svg viewBox="0 0 24 24" className="relative h-4.5 w-4.5 fill-white" aria-hidden="true">
+                  <path d="M19.1 4.9A9.72 9.72 0 0 0 12.03 2C6.67 2 2.3 6.37 2.3 11.73c0 1.72.45 3.39 1.3 4.86L2 22l5.55-1.58a9.7 9.7 0 0 0 4.47 1.14h.01c5.36 0 9.73-4.37 9.73-9.73 0-2.6-1.01-5.03-2.66-6.93ZM12.03 19.9h-.01a8.08 8.08 0 0 1-4.13-1.14l-.3-.18-3.29.94.88-3.2-.2-.33a8.03 8.03 0 0 1-1.24-4.26 8.29 8.29 0 0 1 8.29-8.29c2.21 0 4.29.87 5.85 2.43a8.24 8.24 0 0 1 2.42 5.86 8.29 8.29 0 0 1-8.27 8.17Zm4.54-6.2c-.25-.12-1.5-.74-1.73-.82-.23-.08-.4-.12-.56.13-.17.25-.65.82-.8.99-.15.16-.3.19-.55.06-.25-.13-1.07-.4-2.03-1.27-.75-.67-1.25-1.5-1.4-1.75-.15-.25-.01-.38.11-.5.11-.11.25-.29.37-.43.12-.14.16-.25.25-.41.08-.17.04-.31-.02-.44-.06-.12-.56-1.35-.76-1.84-.2-.49-.41-.42-.56-.42h-.48c-.16 0-.42.06-.64.31-.22.25-.85.83-.85 2.02 0 1.19.87 2.35.99 2.52.12.16 1.72 2.62 4.17 3.68.58.25 1.04.4 1.39.51.58.18 1.11.16 1.53.1.47-.07 1.5-.61 1.71-1.2.21-.58.21-1.08.15-1.2-.06-.1-.23-.16-.48-.28Z" />
+                </svg>
+              </span>
             </Button>
           </a>
           <Button variant="outline" onClick={() => onNavigate?.('analytics')}>View Analytics</Button>
@@ -1113,18 +1169,47 @@ export function Profile({ onNavigate }: ProfileProps) {
           <div className="grid md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="target-program">Target Program</Label>
-              <Select value={localProfile.targetProgram} onValueChange={(value) => updateField('targetProgram', value)}>
-                <SelectTrigger id="target-program">
-                  <SelectValue placeholder="Select program" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="cs">Computer Science</SelectItem>
-                  <SelectItem value="ee">Electrical Engineering</SelectItem>
-                  <SelectItem value="me">Mechanical Engineering</SelectItem>
-                  <SelectItem value="artificial-intelligence">Artificial Intelligence</SelectItem>
-                  <SelectItem value="se">Software Engineering</SelectItem>
-                </SelectContent>
-              </Select>
+              <Popover open={isTargetProgramOpen} onOpenChange={setIsTargetProgramOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    id="target-program"
+                    type="button"
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={isTargetProgramOpen}
+                    className="h-10 w-full justify-between"
+                  >
+                    <span className="truncate text-left">{selectedTargetProgramLabel || 'Select program'}</span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-60" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                  <Command>
+                    <CommandInput placeholder="Search programs..." />
+                    <CommandList>
+                      <CommandEmpty>No program found.</CommandEmpty>
+                      <CommandGroup heading="All NET Programs">
+                        {targetProgramOptions.map((option) => (
+                          <CommandItem
+                            key={`${option.category}-${option.value}`}
+                            value={`${option.label} ${option.category}`}
+                            onSelect={() => {
+                              updateField('targetProgram', option.value);
+                              setIsTargetProgramOpen(false);
+                            }}
+                          >
+                            <Check
+                              className={`mr-2 h-4 w-4 ${localProfile.targetProgram === option.value ? 'opacity-100' : 'opacity-0'}`}
+                            />
+                            <span className="truncate">{option.label}</span>
+                            <span className="ml-auto text-xs text-muted-foreground">{option.category}</span>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
             </div>
 
             <div className="space-y-2">

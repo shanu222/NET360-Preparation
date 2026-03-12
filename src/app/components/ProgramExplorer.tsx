@@ -19,129 +19,56 @@ import {
   Sparkles,
   Zap,
 } from 'lucide-react';
+import {
+  NET_PROGRAMS_BY_CATEGORY,
+  type NetProgramCategory,
+  type NetProgramCategoryKey,
+  type NetProgramIconKey,
+  type NetProgramItem,
+} from '../lib/netPrograms';
 
-type CategoryKey = 'engineering' | 'computing' | 'business' | 'architecture' | 'sciences' | 'applied';
+type CategoryKey = NetProgramCategoryKey;
 
-interface ProgramItem {
-  name: string;
-  institution: string;
-  location: string;
+interface ProgramCategory extends NetProgramCategory {
   icon: LucideIcon;
 }
 
-interface ProgramCategory {
-  icon: LucideIcon;
-  label: string;
-  tag: string;
-  description: string;
-  programs: ProgramItem[];
-  institutions?: string[];
-}
+const CATEGORY_ICON_MAP: Record<CategoryKey, LucideIcon> = {
+  engineering: Building2,
+  computing: Code,
+  business: Briefcase,
+  architecture: Ruler,
+  sciences: Beaker,
+  applied: Sparkles,
+};
+
+const PROGRAM_ICON_MAP: Record<NetProgramIconKey, LucideIcon> = {
+  zap: Zap,
+  cog: Cog,
+  mountain: Mountain,
+  landmark: Landmark,
+  sparkles: Sparkles,
+  bot: Bot,
+  flask: FlaskConical,
+  beaker: Beaker,
+  code: Code,
+  atom: Atom,
+  briefcase: Briefcase,
+  building2: Building2,
+  ruler: Ruler,
+};
 
 const PROGRAM_TAB_TRIGGER_CLASS =
   'min-w-[150px] rounded-xl border border-indigo-200/90 bg-white/88 px-3 py-2 text-[13px] font-semibold tracking-[0.01em] text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!via-violet-500 data-[state=active]:!to-blue-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)]';
 
 export function ProgramExplorer() {
   const programs: Record<CategoryKey, ProgramCategory> = {
-    engineering: {
-      icon: Building2,
-      label: 'Engineering Programs',
-      tag: 'Engineering',
-      description: 'Engineering schools and colleges across Islamabad, Rawalpindi, Risalpur, Karachi, and Quetta',
-      programs: [
-        { name: 'Electrical Engineering', institution: 'SEECS', location: 'Main Campus, Islamabad', icon: Zap },
-        { name: 'Mechanical Engineering', institution: 'SMME', location: 'Main Campus, Islamabad', icon: Cog },
-        { name: 'Aerospace Engineering', institution: 'SMME', location: 'Main Campus, Islamabad', icon: Mountain },
-        { name: 'Civil Engineering', institution: 'SCEE', location: 'Main Campus, Islamabad', icon: Landmark },
-        { name: 'Environmental Engineering', institution: 'SCEE', location: 'Main Campus, Islamabad', icon: Sparkles },
-        { name: 'Geoinformatics Engineering', institution: 'SCEE', location: 'Main Campus, Islamabad', icon: Bot },
-        { name: 'Chemical Engineering', institution: 'SCME', location: 'Main Campus, Islamabad', icon: FlaskConical },
-        { name: 'Metallurgy & Materials Engineering', institution: 'SCME', location: 'Main Campus, Islamabad', icon: Beaker },
-        { name: 'Mechanical Engineering', institution: 'CEME', location: 'Rawalpindi', icon: Cog },
-        { name: 'Electrical Engineering', institution: 'CEME', location: 'Rawalpindi', icon: Zap },
-        { name: 'Mechatronics Engineering', institution: 'CEME', location: 'Rawalpindi', icon: Bot },
-        { name: 'Civil Engineering', institution: 'MCE', location: 'Risalpur', icon: Landmark },
-        { name: 'Aerospace Engineering', institution: 'CAE', location: 'Risalpur', icon: Mountain },
-        { name: 'Avionics Engineering', institution: 'CAE', location: 'Risalpur', icon: Sparkles },
-        { name: 'Electrical Engineering', institution: 'PNEC', location: 'Karachi', icon: Zap },
-        { name: 'Mechanical Engineering', institution: 'PNEC', location: 'Karachi', icon: Cog },
-        { name: 'Naval Architecture & Marine Engineering', institution: 'PNEC', location: 'Karachi', icon: Mountain },
-        { name: 'Civil Engineering', institution: 'NBC', location: 'Quetta', icon: Landmark },
-      ],
-      institutions: ['SEECS', 'SMME', 'SCEE', 'SCME', 'CEME', 'MCE', 'CAE', 'PNEC', 'NBC'],
-    },
-    computing: {
-      icon: Code,
-      label: 'Computing Programs',
-      tag: 'Computing',
-      description: 'Computer science, computational intelligence, data, software, and security programs',
-      programs: [
-        { name: 'BS Computer Science', institution: 'SEECS', location: 'Main Campus, Islamabad', icon: Code },
-        { name: 'BS Artificial Intelligence', institution: 'SEECS', location: 'Main Campus, Islamabad', icon: Sparkles },
-        { name: 'BS Data Science', institution: 'SEECS', location: 'Main Campus, Islamabad', icon: Atom },
-        { name: 'Computer Engineering', institution: 'CEME', location: 'Rawalpindi', icon: Bot },
-        { name: 'Software Engineering', institution: 'MCS', location: 'Rawalpindi', icon: Code },
-        { name: 'Information Security', institution: 'MCS', location: 'Rawalpindi', icon: Sparkles },
-        { name: 'Computer Science', institution: 'PNEC', location: 'Karachi', icon: Code },
-        { name: 'Computer Science', institution: 'NBC', location: 'Quetta', icon: Code },
-        { name: 'Artificial Intelligence', institution: 'NBC', location: 'Quetta', icon: Sparkles },
-      ],
-      institutions: ['SEECS', 'CEME', 'MCS', 'PNEC', 'NBC'],
-    },
-    business: {
-      icon: Briefcase,
-      label: 'Business, Social Sciences & Law',
-      tag: 'Business/Social',
-      description: 'Business, humanities, public policy, and law programs',
-      programs: [
-        { name: 'BBA', institution: 'NBS', location: 'Main Campus, Islamabad', icon: Briefcase },
-        { name: 'MBA', institution: 'NBS', location: 'Main Campus, Islamabad', icon: Briefcase },
-        { name: 'BS Economics', institution: 'S3H', location: 'Main Campus, Islamabad', icon: Building2 },
-        { name: 'BS Psychology', institution: 'S3H', location: 'Main Campus, Islamabad', icon: Sparkles },
-        { name: 'BS Mass Communication', institution: 'S3H', location: 'Main Campus, Islamabad', icon: Code },
-        { name: 'BS Liberal Arts & Humanities', institution: 'S3H', location: 'Main Campus, Islamabad', icon: Landmark },
-        { name: 'BS Public Administration', institution: 'JSPPL', location: 'Main Campus, Islamabad', icon: Building2 },
-        { name: 'LLB', institution: 'NLS', location: 'Main Campus, Islamabad', icon: Landmark },
-      ],
-      institutions: ['NBS', 'S3H', 'JSPPL', 'NLS'],
-    },
-    architecture: {
-      icon: Ruler,
-      label: 'Architecture & Design',
-      tag: 'Architecture',
-      description: 'Creative programs in architecture and industrial design',
-      programs: [
-        { name: 'Bachelor of Architecture', institution: 'SADA', location: 'Main Campus, Islamabad', icon: Ruler },
-        { name: 'Bachelor of Industrial Design', institution: 'SADA', location: 'Main Campus, Islamabad', icon: Mountain },
-      ],
-      institutions: ['SADA'],
-    },
-    sciences: {
-      icon: Beaker,
-      label: 'Natural & Interdisciplinary Sciences',
-      tag: 'Sciences',
-      description: 'Natural sciences and interdisciplinary biosciences programs',
-      programs: [
-        { name: 'BS Physics', institution: 'SNS', location: 'Main Campus, Islamabad', icon: Zap },
-        { name: 'BS Mathematics', institution: 'SNS', location: 'Main Campus, Islamabad', icon: Atom },
-        { name: 'BS Chemistry', institution: 'SNS', location: 'Main Campus, Islamabad', icon: FlaskConical },
-        { name: 'BS Bioinformatics', institution: 'SINES', location: 'Main Campus, Islamabad', icon: Beaker },
-        { name: 'Biosciences', institution: 'SINES', location: 'Main Campus, Islamabad', icon: Sparkles },
-      ],
-      institutions: ['SNS', 'SINES'],
-    },
-    applied: {
-      icon: Sparkles,
-      label: 'Applied Sciences',
-      tag: 'Applied',
-      description: 'Applied biosciences, agriculture, and food science programs',
-      programs: [
-        { name: 'BS Biotechnology', institution: 'ASAB', location: 'Main Campus, Islamabad', icon: Beaker },
-        { name: 'BS Agriculture', institution: 'ASAB', location: 'Main Campus, Islamabad', icon: Sparkles },
-        { name: 'BS Food Science & Technology', institution: 'ASAB', location: 'Main Campus, Islamabad', icon: FlaskConical },
-      ],
-      institutions: ['ASAB'],
-    },
+    engineering: { ...NET_PROGRAMS_BY_CATEGORY.engineering, icon: CATEGORY_ICON_MAP.engineering },
+    computing: { ...NET_PROGRAMS_BY_CATEGORY.computing, icon: CATEGORY_ICON_MAP.computing },
+    business: { ...NET_PROGRAMS_BY_CATEGORY.business, icon: CATEGORY_ICON_MAP.business },
+    architecture: { ...NET_PROGRAMS_BY_CATEGORY.architecture, icon: CATEGORY_ICON_MAP.architecture },
+    sciences: { ...NET_PROGRAMS_BY_CATEGORY.sciences, icon: CATEGORY_ICON_MAP.sciences },
+    applied: { ...NET_PROGRAMS_BY_CATEGORY.applied, icon: CATEGORY_ICON_MAP.applied },
   };
 
   const totalInstitutions = 18;
@@ -277,10 +204,10 @@ function ProgramCard({
   program,
   tag,
 }: {
-  program: ProgramItem;
+  program: NetProgramItem;
   tag: string;
 }) {
-  const Icon = program.icon as ComponentType<{ className?: string }>;
+  const Icon = (PROGRAM_ICON_MAP[program.iconKey] || Sparkles) as ComponentType<{ className?: string }>;
 
   return (
     <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-white to-[#f8f5ff] p-4 shadow-sm">
