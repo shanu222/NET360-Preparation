@@ -174,7 +174,7 @@ function SectionLoadingFallback({ sectionName }: { sectionName: string }) {
 export default function App() {
   const smartMentorTabId = 'smart-mentor';
   const [setupCompleted, setSetupCompleted] = useState(() => isTermsAccepted());
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sidebarMenuOpen, setSidebarMenuOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const activeTab = useMemo(() => resolveSectionFromLocation(location.pathname, location.hash), [location.hash, location.pathname]);
@@ -245,7 +245,7 @@ export default function App() {
                 return;
               }
               navigate(PATH_BY_SECTION[item.id]);
-              setMobileMenuOpen(false);
+              setSidebarMenuOpen(false);
             }}
             aria-disabled={item.id === smartMentorTabId}
             className={`w-full grid grid-cols-[18px_minmax(0,1fr)] items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 ${
@@ -270,33 +270,13 @@ export default function App() {
     <AuthProvider>
       <AppDataProvider>
       <div className="min-h-dvh p-1.5 sm:p-4 md:p-5 xl:p-6">
-        <div className="net360-shell mx-auto flex w-full max-w-[1600px] flex-col gap-2 rounded-[20px] border border-white/70 bg-white/65 p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl sm:gap-3 sm:rounded-[24px] sm:p-2 xl:flex-row xl:rounded-[28px]">
-          {/* Desktop Sidebar */}
-          <aside className="relative hidden xl:flex w-64 shrink-0 flex-col overflow-hidden rounded-3xl border border-indigo-300/30 bg-gradient-to-b from-[#5f4ee6] via-[#5b40d7] to-[#5e3ae0] p-4">
-            <div className="pointer-events-none absolute -bottom-20 -left-16 h-56 w-72 rounded-full bg-fuchsia-400/25 blur-3xl" />
-            <div className="pointer-events-none absolute bottom-8 right-3 h-36 w-36 rounded-full bg-cyan-300/20 blur-3xl" />
-            <div className="mb-5 rounded-2xl border border-white/20 bg-white/12 px-3 py-3 backdrop-blur-sm">
-              <div className="flex items-center gap-2">
-                <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg bg-white p-1.5 shadow-sm">
-                  <img src={BRAND_LOGO_SRC} alt="NET360 logo" className="h-full w-full object-contain" loading="lazy" />
-                </div>
-                <div>
-                  <p className="text-lg font-semibold leading-none tracking-tight text-white">NET360</p>
-                  <p className="text-[11px] text-indigo-100/90">Your Smart NET Preparation</p>
-                </div>
-              </div>
-            </div>
-            <ScrollArea className="relative h-[calc(100dvh-170px)] pr-2">
-              <NavigationContent />
-            </ScrollArea>
-          </aside>
-
+        <div className="net360-shell mx-auto flex w-full max-w-[1600px] flex-col gap-2 rounded-[20px] border border-white/70 bg-white/65 p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl sm:gap-3 sm:rounded-[24px] sm:p-2 xl:rounded-[28px]">
           <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white/85 to-[#f2f4ff]/80 backdrop-blur sm:rounded-3xl">
             {/* Header */}
             <header className="sticky top-0 z-40 flex h-14 items-center justify-between rounded-t-2xl border-b border-indigo-100/70 bg-white/65 px-2.5 backdrop-blur-xl sm:h-16 sm:px-5 sm:rounded-t-3xl">
               <div className="flex items-center gap-3">
-                <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
-                  <SheetTrigger asChild className="xl:hidden">
+                <Sheet open={sidebarMenuOpen} onOpenChange={setSidebarMenuOpen}>
+                  <SheetTrigger asChild>
                     <Button variant="ghost" size="icon" className="rounded-xl">
                       <Menu className="w-5 h-5" />
                     </Button>
