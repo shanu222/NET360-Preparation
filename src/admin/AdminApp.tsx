@@ -3782,7 +3782,7 @@ export default function AdminApp() {
           <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1.8fr)]">
             <Card className="min-w-0">
               <CardHeader>
-                <CardTitle>PTB Syllabus Browser (Admin)</CardTitle>
+                <CardTitle>Syllabus Browser (Admin)</CardTitle>
                 <CardDescription>
                   Select Subject / Part / Chapter / Section, or choose Quantitative Mathematics/Design Aptitude topics.
                 </CardDescription>

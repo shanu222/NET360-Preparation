@@ -28,7 +28,7 @@ const tabItems: Array<{ key: TabKey; label: string }> = [
   { key: 'english', label: 'English' },
   { key: 'biology', label: 'Biology' },
   { key: 'chemistry', label: 'Chemistry' },
-  { key: 'quantitative-mathematics', label: 'Quantitative Mathematics' },
+  { key: 'quantitative-mathematics', label: 'Computer Science' },
   { key: 'design-aptitude', label: 'Design Aptitude' },
 ];
 
@@ -75,7 +75,7 @@ const tabWidthPresetByKey: Record<TabKey, string> = {
 
 const FLAT_TOPIC_TABS: Record<'quantitative-mathematics' | 'design-aptitude', { title: string; topics: string[] }> = {
   'quantitative-mathematics': {
-    title: 'Quantitative Mathematics',
+    title: 'Computer Science',
     topics: ['Algebra', 'Ratios & proportions', 'Arithmetic', 'Graphs', 'Functions'],
   },
   'design-aptitude': {
@@ -92,7 +92,7 @@ const FLAT_TAB_SUBJECT_FALLBACKS: Record<'quantitative-mathematics' | 'design-ap
 export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
   mathematics: {
     part1: {
-      label: 'Mathematics Part 1 (FSc 1st Year - Punjab Textbook Board)',
+      label: 'Mathematics Part 1 (FSc 1st Year)',
       chapters: [
         { id: 'm1-c1', title: 'Chapter 1 - Number Systems', sections: ['1.1 Real Numbers', '1.2 Complex Numbers', '1.3 Conjugate of a Complex Number', '1.4 Modulus and Argument of Complex Number', '1.5 Argand Diagram'] },
         { id: 'm1-c2', title: 'Chapter 2 - Functions and Graphs', sections: ['2.1 Functions', '2.2 Domain and Range', '2.3 Types of Functions', '2.4 Composite Functions', '2.5 Inverse Functions', '2.6 Graphs of Functions'] },
@@ -108,7 +108,7 @@ export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
       ],
     },
     part2: {
-      label: 'Mathematics Part 2 (FSc 2nd Year - Punjab Textbook Board)',
+      label: 'Mathematics Part 2 (FSc 2nd Year)',
       chapters: [
         { id: 'm2-c1', title: 'Chapter 1 - Functions Limits and Continuity', sections: ['1.1 Real Functions', '1.2 Limit of a Function', '1.3 Limit Theorems', '1.4 Continuity'] },
         { id: 'm2-c2', title: 'Chapter 2 - Differentiation', sections: ['2.1 Derivative of a Function', '2.2 Derivatives of Algebraic Functions', '2.3 Derivatives of Trigonometric Functions', '2.4 Logarithmic and Exponential Functions', '2.5 Chain Rule', '2.6 Implicit Differentiation', '2.7 Higher Order Derivatives'] },
@@ -125,7 +125,7 @@ export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
   },
   physics: {
     part1: {
-      label: 'Physics Part 1 (FSc 1st Year - PTB)',
+      label: 'Physics Part 1 (FSc 1st Year)',
       chapters: [
         { id: 'p1-c1', title: 'Chapter 1 - Measurements', sections: ['1.1 Introduction', '1.2 Physical Quantities', '1.3 International System of Units', '1.4 Significant Figures', '1.5 Precision and Accuracy', '1.6 Errors and Uncertainties'] },
         { id: 'p1-c2', title: 'Chapter 2 - Vectors and Equilibrium', sections: ['2.1 Introduction to Vectors', '2.2 Addition of Vectors', '2.3 Resolution of Vectors', '2.4 Scalar and Vector Products', '2.5 Equilibrium of Forces', '2.6 Torque'] },
@@ -141,7 +141,7 @@ export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
       ],
     },
     part2: {
-      label: 'Physics Part 2 (FSc 2nd Year - PTB)',
+      label: 'Physics Part 2 (FSc 2nd Year)',
       chapters: [
         { id: 'p2-c12', title: 'Chapter 12 - Electrostatics', sections: ['12.1 Electric Charge', '12.2 Coulomb\'s Law', '12.3 Electric Field', '12.4 Electric Field Lines', '12.5 Electric Potential', '12.6 Capacitors'] },
         { id: 'p2-c13', title: 'Chapter 13 - Current Electricity', sections: ['13.1 Electric Current', '13.2 Ohm\'s Law', '13.3 Electrical Resistance', '13.4 Combination of Resistors', '13.5 Kirchhoff\'s Laws', '13.6 Electrical Energy and Power'] },
@@ -158,7 +158,7 @@ export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
   },
   english: {
     part1: {
-      label: 'English Part 1 (FSc 1st Year - PTB)',
+      label: 'English Part 1 (FSc 1st Year)',
       chapters: [
         { id: 'e1-c1', title: 'Chapter 1 - Button Button', sections: ['1.1 Story Theme', '1.2 Characters', '1.3 Vocabulary'] },
         { id: 'e1-c2', title: 'Chapter 2 - Clearing in the Sky', sections: ['2.1 Theme', '2.2 Character Study'] },
@@ -166,7 +166,7 @@ export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
       ],
     },
     part2: {
-      label: 'English Part 2 (FSc 2nd Year - PTB)',
+      label: 'English Part 2 (FSc 2nd Year)',
       chapters: [
         { id: 'e2-c1', title: 'Chapter 1 - The Dying Sun', sections: ['1.1 Theme', '1.2 Vocabulary'] },
         { id: 'e2-c2', title: 'Chapter 2 - Using the Scientific Method', sections: ['2.1 Scientific Thinking'] },
@@ -176,7 +176,7 @@ export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
   },
   biology: {
     part1: {
-      label: 'Biology Part 1 (FSc 1st Year - PTB)',
+      label: 'Biology Part 1 (FSc 1st Year)',
       chapters: [
         { id: 'b1-c1', title: 'Chapter 1 - Introduction to Biology', sections: ['1.1 Biology and its Branches', '1.2 Biological Method'] },
         { id: 'b1-c2', title: 'Chapter 2 - Biological Molecules', sections: ['2.1 Carbohydrates', '2.2 Lipids', '2.3 Proteins', '2.4 Nucleic Acids'] },
@@ -186,7 +186,7 @@ export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
       ],
     },
     part2: {
-      label: 'Biology Part 2 (FSc 2nd Year - PTB)',
+      label: 'Biology Part 2 (FSc 2nd Year)',
       chapters: [
         { id: 'b2-c13', title: 'Chapter 13 - Gaseous Exchange', sections: ['13.1 Respiratory Surfaces', '13.2 Breathing Mechanism', '13.3 Transport of Gases'] },
         { id: 'b2-c14', title: 'Chapter 14 - Transport', sections: ['14.1 Transport in Plants', '14.2 Circulatory System'] },
@@ -199,7 +199,7 @@ export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
   },
   chemistry: {
     part1: {
-      label: 'Chemistry Part 1 (FSc 1st Year - PTB)',
+      label: 'Chemistry Part 1 (FSc 1st Year)',
       chapters: [
         { id: 'c1-c1', title: 'Chapter 1 - Basic Concepts', sections: ['1.1 Importance of Chemistry', '1.2 Branches of Chemistry', '1.3 Scientific Method', '1.4 Units and Measurements', '1.5 Significant Figures', '1.6 Mole Concept', '1.7 Chemical Equations'] },
         { id: 'c1-c2', title: 'Chapter 2 - Experimental Techniques', sections: ['2.1 Filtration', '2.2 Crystallization', '2.3 Distillation', '2.4 Chromatography'] },
@@ -216,7 +216,7 @@ export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
       ],
     },
     part2: {
-      label: 'Chemistry Part 2 (FSc 2nd Year - Punjab Textbook Board)',
+      label: 'Chemistry Part 2 (FSc 2nd Year)',
       chapters: [
         { id: 'c2-c1', title: 'Chapter 1 - Periodic Classification of Elements', sections: ['1.1 Modern Periodic Law', '1.2 Atomic Radius', '1.3 Ionization Energy', '1.4 Electron Affinity', '1.5 Electronegativity'] },
         { id: 'c2-c2', title: 'Chapter 2 - s Block Elements', sections: ['2.1 Alkali Metals', '2.2 Properties of Alkali Metals', '2.3 Alkaline Earth Metals', '2.4 Properties of Alkaline Earth Metals'] },
@@ -462,17 +462,17 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
     <div className="space-y-6">
       <div>
         <h1>Preparation Materials</h1>
-        <p className="text-muted-foreground">PTB syllabus browser by subject, part, chapter, and section</p>
+        <p className="text-muted-foreground">Syllabus browser by subject, part, chapter, and section</p>
       </div>
 
       <Tabs defaultValue="mathematics">
         <div className="overflow-x-auto pb-1">
-          <TabsList className="inline-flex h-auto min-w-max flex-nowrap gap-2 rounded-2xl border border-indigo-100/80 bg-gradient-to-r from-white to-indigo-50/60 p-1.5 shadow-sm lg:min-w-0 lg:flex-wrap lg:justify-center">
+          <TabsList className="inline-flex h-auto min-w-max flex-nowrap gap-1.5 rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-[#eef2ff] via-[#f1ecff] to-[#f5f8ff] p-1.5 shadow-[0_8px_18px_rgba(79,70,229,0.14)] lg:min-w-0 lg:flex-wrap lg:justify-center">
             {tabItems.map((tab) => (
               <TabsTrigger
                 key={tab.key}
                 value={tab.key}
-                className={`!flex-none min-h-[2.55rem] rounded-xl border px-3 py-1.5 text-center text-[12px] font-semibold leading-tight tracking-[0.01em] whitespace-normal break-words transition-all duration-300 ease-out hover:-translate-y-0.5 data-[state=active]:-translate-y-0.5 data-[state=active]:bg-gradient-to-r data-[state=active]:text-white data-[state=active]:ring-2 data-[state=active]:ring-white/60 sm:text-sm ${tabWidthPresetByKey[tab.key]} ${tabTriggerToneByKey[tab.key].idle} ${tabTriggerToneByKey[tab.key].active}`}
+                className={`!flex-none min-h-[2.55rem] rounded-xl border border-indigo-200/90 bg-white/88 px-3 py-1.5 text-center text-[12px] font-semibold leading-tight tracking-[0.01em] text-slate-700 whitespace-normal break-words transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:-translate-y-0.5 data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)] sm:text-sm ${tabWidthPresetByKey[tab.key]} ${tabTriggerToneByKey[tab.key].active}`}
               >
                 {tab.label}
               </TabsTrigger>
