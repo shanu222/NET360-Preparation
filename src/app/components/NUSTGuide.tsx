@@ -252,11 +252,31 @@ export function NUSTGuide() {
       </section>
 
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as GuideTab)} className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2 sm:grid-cols-4 !bg-white/70 !border-indigo-100">
-          <TabsTrigger value="overview">Overview</TabsTrigger>
-          <TabsTrigger value="policy">Admission Policy</TabsTrigger>
-          <TabsTrigger value="dates">Important Dates</TabsTrigger>
-          <TabsTrigger value="eligibility">Eligibility</TabsTrigger>
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1.5 rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-[#eef2ff] via-[#f1ecff] to-[#f5f8ff] p-1.5 shadow-[0_8px_18px_rgba(79,70,229,0.14)] sm:grid-cols-4">
+          <TabsTrigger
+            value="overview"
+            className="rounded-xl border border-indigo-200/90 bg-white/88 px-3 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!to-violet-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)]"
+          >
+            Overview
+          </TabsTrigger>
+          <TabsTrigger
+            value="policy"
+            className="rounded-xl border border-indigo-200/90 bg-white/88 px-3 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!to-violet-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)]"
+          >
+            Admission Policy
+          </TabsTrigger>
+          <TabsTrigger
+            value="dates"
+            className="rounded-xl border border-indigo-200/90 bg-white/88 px-3 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!to-violet-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)]"
+          >
+            Important Dates
+          </TabsTrigger>
+          <TabsTrigger
+            value="eligibility"
+            className="rounded-xl border border-indigo-200/90 bg-white/88 px-3 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!to-violet-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)]"
+          >
+            Eligibility
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview" className="space-y-4">

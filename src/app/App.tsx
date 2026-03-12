@@ -331,10 +331,24 @@ export default function App() {
                 </div>
               </div>
               <div className="flex items-center gap-1 sm:gap-2">
-                <Button variant="ghost" size="icon" className="rounded-xl text-slate-600 hover:bg-indigo-50">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-xl text-slate-600 hover:bg-indigo-50"
+                  onClick={() => toast.success('You will receive updates here.')}
+                  aria-label="Notifications"
+                >
                   <Bell className="w-4 h-4" />
                 </Button>
-                <Button variant="ghost" size="icon" className="rounded-xl text-slate-600 hover:bg-indigo-50">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="rounded-xl text-slate-600 hover:bg-indigo-50"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('net360:open-support-chat'));
+                  }}
+                  aria-label="Open chat"
+                >
                   <MessageSquare className="w-4 h-4" />
                 </Button>
                 <button
@@ -343,7 +357,7 @@ export default function App() {
                   className="ml-1 inline-flex items-center gap-2 rounded-xl px-2 py-1.5 text-slate-700 transition hover:bg-indigo-50"
                 >
                   <div className="h-8 w-8 rounded-full bg-gradient-to-br from-amber-300 to-orange-500" />
-                  <span className="hidden text-sm sm:inline">Inter</span>
+                  <span className="hidden text-sm sm:inline">Login / Sign Up</span>
                   <ChevronDown className="hidden w-4 h-4 sm:inline" />
                 </button>
               </div>

@@ -38,32 +38,8 @@ interface ProgramCategory {
   institutions?: string[];
 }
 
-const categoryTabTone: Record<CategoryKey, { idle: string; active: string }> = {
-  engineering: {
-    idle: 'border-indigo-200 bg-indigo-50/80 text-indigo-700 hover:bg-indigo-100',
-    active: 'data-[state=active]:from-indigo-600 data-[state=active]:to-violet-500 data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)]',
-  },
-  computing: {
-    idle: 'border-cyan-200 bg-cyan-50/80 text-cyan-700 hover:bg-cyan-100',
-    active: 'data-[state=active]:from-cyan-600 data-[state=active]:to-blue-500 data-[state=active]:shadow-[0_12px_24px_rgba(8,145,178,0.35)]',
-  },
-  business: {
-    idle: 'border-rose-200 bg-rose-50/80 text-rose-700 hover:bg-rose-100',
-    active: 'data-[state=active]:from-rose-600 data-[state=active]:to-pink-500 data-[state=active]:shadow-[0_12px_24px_rgba(225,29,72,0.32)]',
-  },
-  architecture: {
-    idle: 'border-amber-200 bg-amber-50/80 text-amber-700 hover:bg-amber-100',
-    active: 'data-[state=active]:from-amber-500 data-[state=active]:to-orange-500 data-[state=active]:shadow-[0_12px_24px_rgba(245,158,11,0.34)]',
-  },
-  sciences: {
-    idle: 'border-emerald-200 bg-emerald-50/80 text-emerald-700 hover:bg-emerald-100',
-    active: 'data-[state=active]:from-emerald-600 data-[state=active]:to-teal-500 data-[state=active]:shadow-[0_12px_24px_rgba(5,150,105,0.33)]',
-  },
-  applied: {
-    idle: 'border-fuchsia-200 bg-fuchsia-50/80 text-fuchsia-700 hover:bg-fuchsia-100',
-    active: 'data-[state=active]:from-fuchsia-600 data-[state=active]:to-purple-500 data-[state=active]:shadow-[0_12px_24px_rgba(192,38,211,0.34)]',
-  },
-};
+const PROGRAM_TAB_TRIGGER_CLASS =
+  'min-w-[150px] rounded-xl border border-indigo-200/90 bg-white/88 px-3 py-2 text-[13px] font-semibold tracking-[0.01em] text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!via-violet-500 data-[state=active]:!to-blue-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)]';
 
 export function ProgramExplorer() {
   const programs: Record<CategoryKey, ProgramCategory> = {
@@ -183,12 +159,12 @@ export function ProgramExplorer() {
 
       <Tabs defaultValue="engineering" className="space-y-4">
         <div className="overflow-x-auto pb-1">
-          <TabsList className="inline-flex h-auto min-w-max gap-2 rounded-2xl border border-indigo-100/80 bg-gradient-to-r from-white to-indigo-50/60 p-1.5 shadow-sm">
+          <TabsList className="inline-flex h-auto min-w-max gap-1.5 rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-[#eef2ff] via-[#f1ecff] to-[#f5f8ff] p-1.5 shadow-[0_8px_18px_rgba(79,70,229,0.14)]">
             {(['engineering', 'computing', 'business', 'architecture', 'sciences', 'applied'] as CategoryKey[]).map((key) => (
               <TabsTrigger
                 key={key}
                 value={key}
-                className={`min-w-[150px] rounded-xl border bg-white/80 px-3 py-1.5 text-[13px] font-semibold tracking-[0.01em] transition-all duration-300 ease-out hover:-translate-y-0.5 data-[state=active]:-translate-y-0.5 data-[state=active]:bg-gradient-to-r data-[state=active]:text-white data-[state=active]:ring-2 data-[state=active]:ring-white/60 ${categoryTabTone[key].idle} ${categoryTabTone[key].active}`}
+                className={PROGRAM_TAB_TRIGGER_CLASS}
               >
                 {programs[key].tag}
               </TabsTrigger>

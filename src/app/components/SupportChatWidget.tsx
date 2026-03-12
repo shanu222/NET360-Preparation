@@ -65,8 +65,12 @@ export function SupportChatWidget() {
     x: Math.max(16, window.innerWidth - 88),
     y: Math.max(16, window.innerHeight - 140),
   }));
+  const [panelPosition, setPanelPosition] = useState(() => ({
+    x: Math.max(12, window.innerWidth - 392),
+    y: Math.max(12, window.innerHeight - 520),
+  }));
 
-  const dragStateRef = useRef({ dragging: false, offsetX: 0, offsetY: 0 });
+  const dragStateRef = useRef({ dragging: false, target: 'button' as 'button' | 'panel', offsetX: 0, offsetY: 0 });
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const didHydrateRef = useRef(false);
@@ -166,16 +170,13 @@ export function SupportChatWidget() {
 
   const canUseChat = Boolean(token && user && user.role !== 'admin');
 
-  const panelPosition = useMemo(() => {
-    const nearRight = position.x > window.innerWidth / 2;
-    const nearBottom = position.y > window.innerHeight / 2;
-    return {
-      right: nearRight ? Math.max(10, window.innerWidth - position.x - 56) : undefined,
-      left: !nearRight ? Math.max(10, position.x - 280) : undefined,
-      bottom: nearBottom ? Math.max(76, window.innerHeight - position.y + 8) : undefined,
-      top: !nearBottom ? Math.max(10, position.y + 60) : undefined,
-    };
-  }, [position.x, position.y]);
+  const panelStyle = useMemo(
+    () => ({
+      left: Math.min(Math.max(12, panelPosition.x), Math.max(12, window.innerWidth - 372)),
+      top: Math.min(Math.max(12, panelPosition.y), Math.max(12, window.innerHeight - 220)),
+    }),
+    [panelPosition.x, panelPosition.y],
+  );
 
   const loadMessages = async () => {
     if (!canUseChat || !token) return;
@@ -232,6 +233,10 @@ export function SupportChatWidget() {
         x: Math.min(Math.max(12, prev.x), Math.max(12, window.innerWidth - 56)),
         y: Math.min(Math.max(12, prev.y), Math.max(12, window.innerHeight - 56)),
       }));
+      setPanelPosition((prev) => ({
+        x: Math.min(Math.max(12, prev.x), Math.max(12, window.innerWidth - 372)),
+        y: Math.min(Math.max(12, prev.y), Math.max(12, window.innerHeight - 220)),
+      }));
     };
 
     window.addEventListener('resize', onResize);
@@ -241,10 +246,17 @@ export function SupportChatWidget() {
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
       if (!dragStateRef.current.dragging) return;
-      setPosition({
-        x: Math.min(Math.max(12, event.clientX - dragStateRef.current.offsetX), Math.max(12, window.innerWidth - 56)),
-        y: Math.min(Math.max(12, event.clientY - dragStateRef.current.offsetY), Math.max(12, window.innerHeight - 56)),
-      });
+      if (dragStateRef.current.target === 'panel') {
+        setPanelPosition({
+          x: Math.min(Math.max(12, event.clientX - dragStateRef.current.offsetX), Math.max(12, window.innerWidth - 372)),
+          y: Math.min(Math.max(12, event.clientY - dragStateRef.current.offsetY), Math.max(12, window.innerHeight - 220)),
+        });
+      } else {
+        setPosition({
+          x: Math.min(Math.max(12, event.clientX - dragStateRef.current.offsetX), Math.max(12, window.innerWidth - 56)),
+          y: Math.min(Math.max(12, event.clientY - dragStateRef.current.offsetY), Math.max(12, window.innerHeight - 56)),
+        });
+      }
     };
 
     const onUp = () => {
@@ -259,10 +271,31 @@ export function SupportChatWidget() {
     };
   }, []);
 
+  useEffect(() => {
+    const openFromHeader = () => {
+      setOpen(true);
+      setPanelPosition({
+        x: Math.min(Math.max(12, position.x - 302), Math.max(12, window.innerWidth - 372)),
+        y: Math.min(Math.max(12, position.y - 340), Math.max(12, window.innerHeight - 220)),
+      });
+    };
+
+    window.addEventListener('net360:open-support-chat', openFromHeader as EventListener);
+    return () => window.removeEventListener('net360:open-support-chat', openFromHeader as EventListener);
+  }, [position.x, position.y]);
+
   const startDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    dragStateRef.current.target = 'button';
     dragStateRef.current.dragging = true;
     dragStateRef.current.offsetX = event.clientX - position.x;
     dragStateRef.current.offsetY = event.clientY - position.y;
+  };
+
+  const startPanelDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    dragStateRef.current.target = 'panel';
+    dragStateRef.current.dragging = true;
+    dragStateRef.current.offsetX = event.clientX - panelPosition.x;
+    dragStateRef.current.offsetY = event.clientY - panelPosition.y;
   };
 
   const sendMessage = async () => {
@@ -333,11 +366,11 @@ export function SupportChatWidget() {
     <>
       {open ? (
         <Card
-          className="fixed z-[60] w-[min(92vw,360px)] border-emerald-200 bg-white/95 shadow-[0_16px_44px_rgba(15,118,110,0.24)]"
-          style={panelPosition}
+          className="fixed z-[60] w-[min(92vw,360px)] border-emerald-200 bg-white/95 shadow-[0_16px_44px_rgba(15,118,110,0.24)] transition-all duration-200"
+          style={panelStyle}
         >
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center justify-between gap-2 cursor-move" onPointerDown={startPanelDrag}>
               <CardTitle className="text-base text-emerald-900">Live Support Chat</CardTitle>
               <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => setOpen(false)}>
                 <X className="h-4 w-4" />
