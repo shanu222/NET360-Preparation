@@ -482,11 +482,13 @@
   }
 
   .dark .net360-page .text-muted-foreground,
+  .dark .net360-page .text-slate-400,
   .dark .net360-page .text-slate-500,
   .dark .net360-page .text-slate-600,
   .dark .net360-page .text-slate-700,
   .dark .net360-page .text-slate-800,
   .dark .net360-page .text-slate-900,
+  .dark .net360-page .text-indigo-950,
   .dark .net360-page .text-indigo-700,
   .dark .net360-page .text-indigo-800,
   .dark .net360-page .text-indigo-900 {
@@ -511,6 +513,83 @@
   .dark .net360-page .border-indigo-200,
   .dark .net360-page .border-slate-200 {
     border-color: rgba(132, 151, 255, 0.36);
+  }
+
+  /* Keep all dashboard and page cards in dark surfaces, including custom utility-based cards. */
+  .dark .net360-shell main [data-slot='card'],
+  .dark .net360-shell main .rounded-2xl.border,
+  .dark .net360-shell main .rounded-xl.border,
+  .dark .net360-shell main .rounded-lg.border {
+    border-color: rgba(132, 151, 255, 0.34) !important;
+    background-color: rgba(24, 34, 73, 0.88);
+    box-shadow: 0 14px 34px rgba(6, 10, 28, 0.52);
+  }
+
+  /* Neutralize light gradients used by utility classes so text never sits on bright cards in dark mode. */
+  .dark .net360-shell main [class*='bg-gradient-to-'][class*='to-white'],
+  .dark .net360-shell main [class*='bg-gradient-to-'][class*='to-[#eef1ff]'],
+  .dark .net360-shell main [class*='bg-gradient-to-'][class*='to-[#e6ebff]'],
+  .dark .net360-shell main [class*='bg-gradient-to-'][class*='to-[#eef2ff]'] {
+    background-image: linear-gradient(180deg, rgba(34, 47, 95, 0.86), rgba(22, 32, 70, 0.9));
+  }
+
+  .dark .net360-shell main .text-muted-foreground,
+  .dark .net360-shell main .text-slate-400,
+  .dark .net360-shell main .text-slate-500,
+  .dark .net360-shell main .text-slate-600,
+  .dark .net360-shell main .text-slate-700,
+  .dark .net360-shell main .text-slate-800,
+  .dark .net360-shell main .text-slate-900,
+  .dark .net360-shell main .text-indigo-700,
+  .dark .net360-shell main .text-indigo-800,
+  .dark .net360-shell main .text-indigo-900,
+  .dark .net360-shell main .text-indigo-950 {
+    color: #d7e1ff;
+  }
+
+  .dark .net360-shell main .bg-white,
+  .dark .net360-shell main .bg-white\/70,
+  .dark .net360-shell main .bg-white\/80,
+  .dark .net360-shell main .bg-white\/90,
+  .dark .net360-shell main .bg-slate-50,
+  .dark .net360-shell main .bg-slate-50\/60,
+  .dark .net360-shell main .bg-slate-50\/70,
+  .dark .net360-shell main .bg-indigo-50,
+  .dark .net360-shell main .bg-indigo-50\/40,
+  .dark .net360-shell main .bg-indigo-50\/50 {
+    background-color: rgba(27, 38, 82, 0.8);
+  }
+
+  .dark .net360-shell main input,
+  .dark .net360-shell main textarea,
+  .dark .net360-shell main select,
+  .dark .net360-shell main [data-slot='select-trigger'],
+  .dark .net360-shell main [data-slot='popover-content'],
+  .dark .net360-shell main [data-slot='select-content'],
+  .dark .net360-shell main [data-slot='command'] {
+    border-color: rgba(133, 152, 255, 0.42);
+    background: rgba(23, 32, 68, 0.9);
+    color: #e7edff;
+  }
+
+  .dark .net360-shell main input::placeholder,
+  .dark .net360-shell main textarea::placeholder,
+  .dark .net360-shell main [data-slot='command-input']::placeholder {
+    color: #aebbe6;
+    opacity: 1;
+  }
+
+  .dark .net360-shell main [data-slot='button'][class*='variant-outline'],
+  .dark .net360-shell main [data-slot='button'].border {
+    border-color: rgba(132, 151, 255, 0.48);
+    background: rgba(33, 45, 93, 0.78);
+    color: #e1e8ff;
+  }
+
+  .dark .net360-shell main [data-slot='button'][class*='variant-outline']:hover,
+  .dark .net360-shell main [data-slot='button'].border:hover {
+    background: rgba(52, 67, 129, 0.82);
+    color: #f0f4ff;
   }
 
 

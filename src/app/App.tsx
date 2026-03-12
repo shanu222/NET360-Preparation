@@ -381,7 +381,11 @@ export default function App() {
 
             {/* Main Content */}
             <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip px-2.5 py-3 sm:px-5 sm:py-5">
-              {activeTab === 'home' ? <Dashboard onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} /> : null}
+              {activeTab === 'home' ? (
+                <div className="mt-0 net360-page">
+                  <Dashboard onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} />
+                </div>
+              ) : null}
               {activeTab === 'guide' ? <div className="mt-0 net360-page"><NUSTGuide /></div> : null}
               {activeTab === 'programs' ? (
                 <div className="mt-0 net360-page">
