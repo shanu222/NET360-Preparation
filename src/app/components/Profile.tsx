@@ -15,7 +15,7 @@ import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
 import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK, PAYMENT_METHODS } from '../lib/paymentMethods';
-import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
+import { NET_ENGINEERING_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 
 const ADVERTISEMENT_PREVIEW_SRC = '/advertisement-page.webp';
 const BRAND_LOGO_SRC = '/net360-logo.png';
@@ -87,7 +87,7 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
   const [isTargetProgramOpen, setIsTargetProgramOpen] = useState(false);
 
-  const targetProgramOptions = useMemo(() => NET_TARGET_PROGRAM_OPTIONS, []);
+  const targetProgramOptions = useMemo(() => NET_ENGINEERING_TARGET_PROGRAM_OPTIONS, []);
   const selectedTargetProgramLabel =
     targetProgramOptions.find((option) => option.value === localProfile.targetProgram)?.label ||
     LEGACY_TARGET_PROGRAM_LABELS[String(localProfile.targetProgram || '').toLowerCase()] ||
@@ -1182,7 +1182,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                     <CommandInput placeholder="Search programs..." />
                     <CommandList>
                       <CommandEmpty>No program found.</CommandEmpty>
-                      <CommandGroup heading="All NET Programs">
+                      <CommandGroup heading="All Engineering Programs">
                         {targetProgramOptions.map((option) => (
                           <CommandItem
                             key={`${option.category}-${option.value}`}

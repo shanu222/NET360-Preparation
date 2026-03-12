@@ -54,8 +54,18 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const firstName = profile.firstName?.trim() || 'Student';
 
   const metrics = useMemo(() => {
-    const questionPool = Object.values(mcqsBySubject).reduce((sum, list) => sum + list.length, 0);
-    const attemptedQuestions = attempts.reduce((sum, attempt) => sum + attempt.totalQuestions, 0);
+    const requiredSubjects = getRequiredSubjectsForTargetProgram(profile.targetProgram);
+    const hasProfileDrivenSubjects = requiredSubjects.length > 0;
+
+    const questionPool = hasProfileDrivenSubjects
+      ? requiredSubjects.reduce((sum, subject) => sum + (mcqsBySubject[subject]?.length || 0), 0)
+      : Object.values(mcqsBySubject).reduce((sum, list) => sum + list.length, 0);
+
+    const attemptedQuestions = hasProfileDrivenSubjects
+      ? attempts
+          .filter((attempt) => requiredSubjects.includes(attempt.subject as SubjectKey))
+          .reduce((sum, attempt) => sum + attempt.totalQuestions, 0)
+      : attempts.reduce((sum, attempt) => sum + attempt.totalQuestions, 0);
     const accuracy = attempts.length
       ? Math.round(attempts.reduce((sum, attempt) => sum + attempt.score, 0) / attempts.length)
       : 0;
@@ -96,7 +106,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       streakDays,
       overallProgress,
     };
-  }, [attempts, mcqsBySubject]);
+  }, [attempts, mcqsBySubject, profile.targetProgram]);
 
   const subjectStats = useMemo(() => {
     const attemptedBySubject = attempts.reduce((acc, attempt) => {

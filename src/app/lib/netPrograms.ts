@@ -136,7 +136,27 @@ export interface NetTargetProgramOption {
 
 const CATEGORY_ORDER: NetProgramCategoryKey[] = ['engineering', 'computing', 'business', 'architecture', 'sciences', 'applied'];
 
+const ENGINEERING_CATEGORY_ORDER: NetProgramCategoryKey[] = ['engineering', 'computing'];
+
 export const NET_TARGET_PROGRAM_OPTIONS: NetTargetProgramOption[] = CATEGORY_ORDER.flatMap((key) => {
+  const category = NET_PROGRAMS_BY_CATEGORY[key];
+  const seen = new Set<string>();
+
+  return category.programs
+    .map((program) => program.name.trim())
+    .filter((name) => {
+      if (!name || seen.has(name.toLowerCase())) return false;
+      seen.add(name.toLowerCase());
+      return true;
+    })
+    .map((name) => ({
+      value: name,
+      label: name,
+      category: category.tag,
+    }));
+});
+
+export const NET_ENGINEERING_TARGET_PROGRAM_OPTIONS: NetTargetProgramOption[] = ENGINEERING_CATEGORY_ORDER.flatMap((key) => {
   const category = NET_PROGRAMS_BY_CATEGORY[key];
   const seen = new Set<string>();
 
