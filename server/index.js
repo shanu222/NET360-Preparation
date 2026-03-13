@@ -10676,6 +10676,37 @@ function validateCriticalConfiguration() {
   warnings.forEach((message) => console.warn(`Security warning: ${message}`));
 }
 
+function isMongoNetworkError(error) {
+  const name = String(error?.name || '');
+  const message = String(error?.message || '').toLowerCase();
+
+  if (name.includes('MongoNetworkTimeoutError') || name.includes('MongoServerSelectionError')) {
+    return true;
+  }
+
+  return message.includes('timed out')
+    && (message.includes('mongodb') || message.includes('mongo'));
+}
+
+process.on('unhandledRejection', (reason) => {
+  if (isMongoNetworkError(reason)) {
+    console.error('[mongo] Unhandled rejection due to transient network issue:', String(reason?.message || reason));
+    return;
+  }
+
+  console.error('Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  if (isMongoNetworkError(error)) {
+    console.error('[mongo] Uncaught exception due to transient network issue:', error?.message || error);
+    return;
+  }
+
+  console.error('Uncaught exception:', error);
+  process.exit(1);
+});
+
 async function bootstrap() {
   validateCriticalConfiguration();
   await connectMongo(MONGODB_URI);
