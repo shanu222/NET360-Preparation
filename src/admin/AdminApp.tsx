@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type ChangeEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -2563,7 +2563,10 @@ export default function AdminApp() {
     setForm(fresh);
   };
 
-  const saveMcq = async () => {
+  const handleAddMCQ = async (event?: MouseEvent<HTMLButtonElement>) => {
+    event?.preventDefault();
+    event?.stopPropagation();
+
     if (isSavingMcq) return;
     if (!authToken) {
       toast.error('Failed to add MCQ');
@@ -2660,6 +2663,13 @@ export default function AdminApp() {
     }
 
     const payload = {
+      question: form.question,
+      option_a: options[0] || '',
+      option_b: options[1] || '',
+      option_c: options[2] || '',
+      option_d: options[3] || '',
+      correct_answer: answerKey,
+      explanation: form.explanationText,
       subject: normalizedSubject,
       part: isFlatTopicSubject ? '' : selectedContext.part,
       chapter: isFlatTopicSubject ? '' : selectedContext.chapter,
@@ -2669,7 +2679,6 @@ export default function AdminApp() {
       chapter_id: String(selectedContext.chapter || '').trim(),
       section_id: String(selectedContext.section || selectedContext.topic || '').trim(),
       topic_id: String(selectedContext.topic || '').trim(),
-      question: form.question,
       questionImage: form.questionImage,
       options,
       optionMedia: normalizedOptionMedia,
@@ -2727,6 +2736,7 @@ export default function AdminApp() {
         .then((payload) => setMcqStructure(payload.structure || []))
         .catch(() => undefined);
     } catch (error) {
+      console.error('Add MCQ failed:', error);
       if (!form.id) {
         toast.error('Failed to add MCQ');
       } else {
@@ -5199,7 +5209,7 @@ export default function AdminApp() {
                         </div>
 
                         <div className="flex flex-wrap gap-2">
-                          <Button onClick={() => void saveMcq()} disabled={isSavingMcq}>
+                          <Button type="button" onClick={(event) => void handleAddMCQ(event)} disabled={isSavingMcq}>
                             {isSavingMcq ? (
                               <>
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
