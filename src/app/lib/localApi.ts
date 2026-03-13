@@ -1216,82 +1216,153 @@ function splitInlineOptions(line: string): string[] {
   return extracted;
 }
 
-function parseBulkMcqsFromText(raw: string): { parsed: Array<{ question: string; questionImageUrl: string; options: string[]; answer: string; tip: string; difficulty: 'Easy' | 'Medium' | 'Hard' }>; errors: string[] } {
-  const text = normalizeBulkText(raw);
-  if (!text) return { parsed: [], errors: ['No content found to parse.'] };
+function normalizeAnswerToken(answer: string, options: string[]): string {
+  const normalizedAnswer = String(answer || '').trim();
+  if (!normalizedAnswer) return '';
 
+  const answerToken = normalizedAnswer.match(/(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\b|\)|\.|:)?/i);
+  if (answerToken) {
+    const token = answerToken[1];
+    const idx = /^\d+$/.test(token)
+      ? Number(token) - 1
+      : token.toUpperCase().charCodeAt(0) - 65;
+    if (idx >= 0 && idx < options.length) {
+      return options[idx];
+    }
+  }
+
+  return options.find((option) => option.trim().toLowerCase() === normalizedAnswer.toLowerCase()) || '';
+}
+
+function extractImageReference(line: string): string {
+  const raw = String(line || '').trim();
+  if (!raw) return '';
+
+  const markdownMatch = raw.match(/!\[[^\]]*\]\(([^)\s]+)\)/i);
+  if (markdownMatch?.[1]) return markdownMatch[1].trim();
+
+  const labelledMatch = raw.match(/(?:question\s*image|option\s*[A-H\d]*\s*image|explanation\s*image|solution\s*image|tip\s*image|image|img)\s*[:=-]\s*(.+)$/i);
+  if (labelledMatch?.[1]) {
+    const candidate = labelledMatch[1].trim();
+    if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(candidate) || /^https?:\/\//i.test(candidate)) {
+      return candidate;
+    }
+  }
+
+  const urlMatch = raw.match(/(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+|https?:\/\/\S+)/i);
+  return urlMatch?.[1]?.replace(/\s+/g, '') || '';
+}
+
+function splitQuestionBlocks(text: string): Array<{ number: string; content: string }> {
   const starts: Array<{ index: number; number: string }> = [];
-  const startRegex = /^\s*(?:q(?:uestion)?\s*)?(\d{1,3})\s*[\).:-]\s+/gim;
+  const startRegex = /^\s*(?:q(?:uestion)?\s*)?(\d{1,3})(?:\s*[\).:-])?\s+/gim;
   let match: RegExpExecArray | null;
+
   while ((match = startRegex.exec(text))) {
     starts.push({ index: match.index, number: match[1] });
   }
 
   if (!starts.length) {
-    return {
-      parsed: [],
-      errors: ['Could not detect question numbering. Use format like "1. ...", "2) ...", etc.'],
-    };
+    return [{ number: '1', content: text.trim() }];
   }
 
-  const blocks = starts.map((entry, idx) => {
+  return starts.map((entry, idx) => {
     const end = idx + 1 < starts.length ? starts[idx + 1].index : text.length;
     return {
       number: entry.number,
       content: text.slice(entry.index, end).trim(),
     };
   });
+}
+
+function parseBulkMcqsFromText(raw: string): { parsed: Array<{ question: string; questionImageUrl: string; questionImageDataUrl?: string; options: string[]; optionImageDataUrls?: string[]; answer: string; tip: string; explanationImageDataUrl?: string; difficulty: 'Easy' | 'Medium' | 'Hard' }>; errors: string[] } {
+  const text = normalizeBulkText(raw);
+  if (!text) return { parsed: [], errors: ['No content found to parse.'] };
+
+  const blocks = splitQuestionBlocks(text);
 
   const errors: string[] = [];
-  const parsed: Array<{ question: string; questionImageUrl: string; options: string[]; answer: string; tip: string; difficulty: 'Easy' | 'Medium' | 'Hard' }> = [];
+  const parsed: Array<{ question: string; questionImageUrl: string; questionImageDataUrl?: string; options: string[]; optionImageDataUrls?: string[]; answer: string; tip: string; explanationImageDataUrl?: string; difficulty: 'Easy' | 'Medium' | 'Hard' }> = [];
+  let skipped = 0;
 
   blocks.forEach((block) => {
+    if (parsed.length >= 15) return;
+
     const lines = block.content
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean);
 
-    if (!lines.length) {
-      errors.push(`Q${block.number}: empty block.`);
-      return;
-    }
+    if (!lines.length) return;
 
-    lines[0] = lines[0].replace(/^(?:q(?:uestion)?\s*)?\d{1,3}\s*[\).:-]\s*/i, '').trim();
+    lines[0] = lines[0].replace(/^(?:q(?:uestion)?\s*)?\d{1,3}(?:\s*[\).:-])?\s*/i, '').trim();
 
     let questionImageUrl = '';
-    let answer = '';
-    let explanation = '';
+    let questionImageDataUrl = '';
+    let answerToken = '';
+    const explanationLines: string[] = [];
+    let explanationImageDataUrl = '';
     let difficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium';
     const questionLines: string[] = [];
-    const options: string[] = [];
+    const options: Array<{ text: string; imageDataUrl: string }> = [];
     let capturingExplanation = false;
+    let activeOptionIndex = -1;
 
     for (const rawLine of lines) {
       const line = rawLine.trim();
       if (!line) continue;
 
-      const imageMatch = line.match(/^(?:image|img|question\s*image)\s*[:=-]\s*(https?:\/\/\S+)$/i)
-        || line.match(/^!\[[^\]]*\]\((https?:\/\/[^\)\s]+)\)$/i);
-      if (imageMatch) {
-        questionImageUrl = imageMatch[1].trim();
+      const imageRef = extractImageReference(line);
+      if (imageRef) {
+        const isDataUrl = /^data:image\//i.test(imageRef);
+        const optionImageLabel = line.match(/option\s*([A-H]|\d{1,2})\s*image/i);
+
+        if (optionImageLabel) {
+          const token = optionImageLabel[1];
+          const optionIndex = /^\d+$/.test(token)
+            ? Number(token) - 1
+            : token.toUpperCase().charCodeAt(0) - 65;
+          if (optionIndex >= 0 && optionIndex < options.length) {
+            options[optionIndex].imageDataUrl = isDataUrl ? imageRef : '';
+          }
+          continue;
+        }
+
+        if (/explanation\s*image|solution\s*image|tip\s*image/i.test(line) || capturingExplanation) {
+          explanationImageDataUrl = isDataUrl ? imageRef : explanationImageDataUrl;
+          continue;
+        }
+
+        if (activeOptionIndex >= 0 && activeOptionIndex < options.length) {
+          options[activeOptionIndex].imageDataUrl = isDataUrl ? imageRef : '';
+          continue;
+        }
+
+        if (isDataUrl) {
+          questionImageDataUrl = imageRef;
+        } else {
+          questionImageUrl = imageRef;
+        }
         continue;
       }
 
-      const answerMatch = line.match(/^(?:correct\s*answer|correct|answer|ans\.?)\s*[:=-]\s*(.+)$/i);
+      const answerMatch = line.match(/^(?:correct\s*answer|correct\s*option|correct|answer|ans(?:wer)?\.?)\s*[:=-]\s*(.+)$/i);
       if (answerMatch) {
-        answer = answerMatch[1].trim();
+        answerToken = answerMatch[1].trim();
         capturingExplanation = false;
+        activeOptionIndex = -1;
         continue;
       }
 
-      const explanationMatch = line.match(/^(?:explanation|solution|reason)\s*[:=-]\s*(.*)$/i);
+      const explanationMatch = line.match(/^(?:explanation|solution|reason|short\s*trick|tip)\s*[:=-]?\s*(.*)$/i);
       if (explanationMatch) {
-        explanation = explanationMatch[1].trim();
+        if (explanationMatch[1].trim()) explanationLines.push(explanationMatch[1].trim());
         capturingExplanation = true;
+        activeOptionIndex = -1;
         continue;
       }
 
-      const difficultyMatch = line.match(/^difficulty\s*[:=-]\s*(easy|medium|hard)$/i);
+      const difficultyMatch = line.match(/^(?:difficulty|level)\s*[:=-]\s*(easy|medium|hard)$/i);
       if (difficultyMatch) {
         const normalized = difficultyMatch[1].toLowerCase();
         difficulty = normalized === 'easy' ? 'Easy' : normalized === 'hard' ? 'Hard' : 'Medium';
@@ -1300,62 +1371,58 @@ function parseBulkMcqsFromText(raw: string): { parsed: Array<{ question: string;
 
       const inlineOptions = splitInlineOptions(line);
       if (inlineOptions.length) {
-        options.push(...inlineOptions);
+        inlineOptions.forEach((optionText) => {
+          options.push({ text: optionText, imageDataUrl: '' });
+        });
         capturingExplanation = false;
+        activeOptionIndex = options.length - 1;
         continue;
       }
 
-      const optionMatch = line.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\s*[\).:-])?\s+(.+)$/i);
+      const optionMatch = line.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\s*[\).:-])\s*(.+)$/i);
       if (optionMatch) {
-        options.push(optionMatch[2].trim());
+        options.push({ text: optionMatch[2].trim(), imageDataUrl: '' });
         capturingExplanation = false;
+        activeOptionIndex = options.length - 1;
         continue;
       }
 
       if (capturingExplanation) {
-        explanation = explanation ? `${explanation}\n${line}` : line;
+        explanationLines.push(line);
+      } else if (activeOptionIndex >= 0 && options[activeOptionIndex]) {
+        options[activeOptionIndex].text = `${options[activeOptionIndex].text} ${line}`.trim();
       } else {
         questionLines.push(line);
       }
     }
 
     const question = questionLines.join(' ').trim();
-    if (!question) {
-      errors.push(`Q${block.number}: question text is missing.`);
+    const normalizedOptions = options.map((option) => option.text.trim()).filter(Boolean);
+    const normalizedAnswer = normalizeAnswerToken(answerToken, normalizedOptions);
+    if ((!question && !questionImageUrl && !questionImageDataUrl) || normalizedOptions.length < 2 || !normalizedAnswer) {
+      skipped += 1;
       return;
-    }
-    if (options.length < 2) {
-      errors.push(`Q${block.number}: at least 2 options are required.`);
-      return;
-    }
-
-    const normalizedAnswer = answer.trim();
-    if (!normalizedAnswer) {
-      errors.push(`Q${block.number}: correct answer is missing.`);
-      return;
-    }
-
-    let resolvedAnswer = normalizedAnswer;
-    const answerToken = normalizedAnswer.match(/(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\b|\)|\.|:)?/i);
-    if (answerToken) {
-      const token = answerToken[1];
-      const idx = /^\d+$/.test(token)
-        ? Number(token) - 1
-        : token.toUpperCase().charCodeAt(0) - 65;
-      if (idx >= 0 && idx < options.length) {
-        resolvedAnswer = options[idx];
-      }
     }
 
     parsed.push({
-      question,
+      question: question || 'Refer to attached image.',
       questionImageUrl,
-      options,
-      answer: resolvedAnswer,
-      tip: explanation,
+      questionImageDataUrl,
+      options: normalizedOptions,
+      optionImageDataUrls: options.map((option) => option.imageDataUrl || ''),
+      answer: normalizedAnswer,
+      tip: explanationLines.join('\n').trim(),
+      explanationImageDataUrl,
       difficulty,
     });
   });
+
+  if (blocks.length > 15) {
+    errors.push('Only the first 15 MCQs were kept from this import.');
+  }
+  if (skipped > 0) {
+    errors.push(`Skipped ${skipped} unclear block(s) and continued parsing the rest.`);
+  }
 
   return { parsed, errors };
 }

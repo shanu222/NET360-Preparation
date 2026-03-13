@@ -1145,6 +1145,49 @@ function extractJsonObject(text) {
   }
 }
 
+const BULK_PARSE_LIMIT = 15;
+
+function extractImageReference(line) {
+  const raw = String(line || '').trim();
+  if (!raw) return '';
+
+  const markdownMatch = raw.match(/!\[[^\]]*\]\(([^)\s]+)\)/i);
+  if (markdownMatch?.[1]) return markdownMatch[1].trim();
+
+  const labelledMatch = raw.match(/(?:question\s*image|option\s*[A-H\d]*\s*image|explanation\s*image|solution\s*image|tip\s*image|image|img)\s*[:=-]\s*(.+)$/i);
+  if (labelledMatch?.[1]) {
+    const candidate = labelledMatch[1].trim();
+    if (/^data:image\/[a-z0-9.+-]+;base64,/i.test(candidate) || /^https?:\/\//i.test(candidate)) {
+      return candidate;
+    }
+  }
+
+  const urlMatch = raw.match(/(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+|https?:\/\/\S+)/i);
+  return urlMatch?.[1]?.replace(/\s+/g, '') || '';
+}
+
+function splitQuestionBlocks(text) {
+  const starts = [];
+  const startRegex = /^\s*(?:q(?:uestion)?\s*)?(\d{1,3})(?:\s*[\).:-])?\s+/gim;
+  let match;
+
+  while ((match = startRegex.exec(text))) {
+    starts.push({ index: match.index, number: match[1] });
+  }
+
+  if (!starts.length) {
+    return [{ number: '1', content: text.trim() }];
+  }
+
+  return starts.map((entry, idx) => {
+    const end = idx + 1 < starts.length ? starts[idx + 1].index : text.length;
+    return {
+      number: entry.number,
+      content: text.slice(entry.index, end).trim(),
+    };
+  });
+}
+
 async function parseBulkMcqsWithAi(rawText) {
   if (!openai) {
     return { parsed: [], errors: ['AI parser is unavailable.'] };
@@ -1168,13 +1211,15 @@ async function parseBulkMcqsWithAi(rawText) {
           content: [
             'You extract ALL MCQs from messy educational documents.',
             'Return strict JSON only in this schema:',
-            '{"mcqs":[{"question":"...","options":["..."],"answer":"...","explanation":"...","difficulty":"Easy|Medium|Hard"}]}',
+            '{"mcqs":[{"question":"...","questionImage":"","options":["..."],"optionImages":[""],"answer":"...","explanation":"...","explanationImage":"","difficulty":"Easy|Medium|Hard"}]}',
             'Rules:',
             '- Detect all question boundaries (1., 1), Q1, Question 1, etc.).',
             '- Support mixed option formats: A) A. A, Option 1, 1) and inline options in one line.',
             '- Keep options separated as array items.',
+            '- Capture image references (data URLs or http URLs) near question/options/explanation when available.',
             '- answer may be letter/number/text; provide best available answer token from source.',
             '- If explanation is not present, use empty string.',
+            `- Return at most ${BULK_PARSE_LIMIT} MCQs.`,
           ].join('\n'),
         },
         {
@@ -1191,12 +1236,17 @@ async function parseBulkMcqsWithAi(rawText) {
     const parsed = [];
     const errors = [];
 
-    rows.forEach((row, idx) => {
+    rows.slice(0, BULK_PARSE_LIMIT).forEach((row, idx) => {
       const question = String(row?.question || '').replace(/\s+/g, ' ').trim();
       const options = parseOptionsFromUnknown(row?.options);
       const answer = resolveAnswerToOption(row?.answer, options);
       const tip = String(row?.explanation || '').trim();
       const difficulty = normalizeDifficulty(row?.difficulty);
+      const questionImageRef = String(row?.questionImage || '').trim();
+      const explanationImageRef = String(row?.explanationImage || '').trim();
+      const optionImageRefs = Array.isArray(row?.optionImages)
+        ? row.optionImages.map((item) => String(item || '').trim())
+        : [];
 
       if (!question) {
         errors.push(`Q${idx + 1}: question text is missing.`);
@@ -1213,10 +1263,13 @@ async function parseBulkMcqsWithAi(rawText) {
 
       parsed.push({
         question,
-        questionImageUrl: '',
+        questionImageUrl: /^https?:\/\//i.test(questionImageRef) ? questionImageRef : '',
+        questionImageDataUrl: /^data:image\//i.test(questionImageRef) ? questionImageRef : '',
         options,
+        optionImageDataUrls: optionImageRefs.map((ref) => (/^data:image\//i.test(ref) ? ref : '')),
         answer,
         tip,
+        explanationImageDataUrl: /^data:image\//i.test(explanationImageRef) ? explanationImageRef : '',
         difficulty,
       });
     });
@@ -1235,78 +1288,90 @@ function parseBulkMcqsFromText(raw) {
   const text = normalizePlainText(raw);
   if (!text) return { parsed: [], errors: ['No content found to parse.'] };
 
-  const starts = [];
-  const startRegex = /^\s*(?:q(?:uestion)?\s*)?(\d{1,3})\s*[\).:-]\s+/gim;
-  let match;
-  while ((match = startRegex.exec(text))) {
-    starts.push({ index: match.index, number: match[1] });
-  }
-
-  if (!starts.length) {
-    return {
-      parsed: [],
-      errors: ['Could not detect question numbering. Use format like "1. ...", "2) ...", etc.'],
-    };
-  }
-
-  const blocks = starts.map((entry, idx) => {
-    const end = idx + 1 < starts.length ? starts[idx + 1].index : text.length;
-    return {
-      number: entry.number,
-      content: text.slice(entry.index, end).trim(),
-    };
-  });
+  const blocks = splitQuestionBlocks(text);
 
   const errors = [];
   const parsed = [];
+  let skipped = 0;
 
   blocks.forEach((block) => {
+    if (parsed.length >= BULK_PARSE_LIMIT) return;
+
     const lines = block.content
       .split('\n')
       .map((line) => line.trim())
       .filter(Boolean);
 
-    if (!lines.length) {
-      errors.push(`Q${block.number}: empty block.`);
-      return;
-    }
+    if (!lines.length) return;
 
-    lines[0] = lines[0].replace(/^(?:q(?:uestion)?\s*)?\d{1,3}\s*[\).:-]\s*/i, '').trim();
+    lines[0] = lines[0].replace(/^(?:q(?:uestion)?\s*)?\d{1,3}(?:\s*[\).:-])?\s*/i, '').trim();
 
     let questionImageUrl = '';
+    let questionImageDataUrl = '';
     let answer = '';
-    let explanation = '';
+    const explanationLines = [];
+    let explanationImageDataUrl = '';
     let difficulty = 'Medium';
     const questionLines = [];
     const options = [];
     let capturingExplanation = false;
+    let activeOptionIndex = -1;
 
     for (const rawLine of lines) {
       const line = rawLine.trim();
       if (!line) continue;
 
-      const imageMatch = line.match(/^(?:image|img|question\s*image)\s*[:=-]\s*(https?:\/\/\S+)$/i)
-        || line.match(/^!\[[^\]]*\]\((https?:\/\/[^\)\s]+)\)$/i);
-      if (imageMatch) {
-        questionImageUrl = imageMatch[1].trim();
+      const imageRef = extractImageReference(line);
+      if (imageRef) {
+        const isDataUrl = /^data:image\//i.test(imageRef);
+        const optionImageLabel = line.match(/option\s*([A-H]|\d{1,2})\s*image/i);
+
+        if (optionImageLabel) {
+          const token = optionImageLabel[1];
+          const optionIndex = /^\d+$/.test(token)
+            ? Number(token) - 1
+            : token.toUpperCase().charCodeAt(0) - 65;
+          if (optionIndex >= 0 && optionIndex < options.length) {
+            options[optionIndex].imageDataUrl = isDataUrl ? imageRef : '';
+          }
+          continue;
+        }
+
+        if (/explanation\s*image|solution\s*image|tip\s*image/i.test(line) || capturingExplanation) {
+          explanationImageDataUrl = isDataUrl ? imageRef : explanationImageDataUrl;
+          continue;
+        }
+
+        if (activeOptionIndex >= 0 && activeOptionIndex < options.length) {
+          options[activeOptionIndex].imageDataUrl = isDataUrl ? imageRef : '';
+          continue;
+        }
+
+        if (isDataUrl) {
+          questionImageDataUrl = imageRef;
+        } else {
+          questionImageUrl = imageRef;
+        }
         continue;
       }
 
-      const answerMatch = line.match(/^(?:correct\s*answer|correct|answer|ans\.?)\s*[:=-]\s*(.+)$/i);
+      const answerMatch = line.match(/^(?:correct\s*answer|correct\s*option|correct|answer|ans(?:wer)?\.?)\s*[:=-]\s*(.+)$/i);
       if (answerMatch) {
         answer = answerMatch[1].trim();
         capturingExplanation = false;
+        activeOptionIndex = -1;
         continue;
       }
 
-      const explanationMatch = line.match(/^(?:explanation|solution|reason)\s*[:=-]\s*(.*)$/i);
+      const explanationMatch = line.match(/^(?:explanation|solution|reason|short\s*trick|tip)\s*[:=-]?\s*(.*)$/i);
       if (explanationMatch) {
-        explanation = explanationMatch[1].trim();
+        if (explanationMatch[1].trim()) explanationLines.push(explanationMatch[1].trim());
         capturingExplanation = true;
+        activeOptionIndex = -1;
         continue;
       }
 
-      const difficultyMatch = line.match(/^difficulty\s*[:=-]\s*(easy|medium|hard)$/i);
+      const difficultyMatch = line.match(/^(?:difficulty|level)\s*[:=-]\s*(easy|medium|hard)$/i);
       if (difficultyMatch) {
         const normalized = difficultyMatch[1].toLowerCase();
         difficulty = normalized === 'easy' ? 'Easy' : normalized === 'hard' ? 'Hard' : 'Medium';
@@ -1315,63 +1380,58 @@ function parseBulkMcqsFromText(raw) {
 
       const inlineOptions = splitInlineOptions(line);
       if (inlineOptions.length) {
-        options.push(...inlineOptions);
+        inlineOptions.forEach((optionText) => {
+          options.push({ text: optionText, imageDataUrl: '' });
+        });
         capturingExplanation = false;
+        activeOptionIndex = options.length - 1;
         continue;
       }
 
-      const optionMatch = line.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\s*[\).:-])?\s+(.+)$/i);
+      const optionMatch = line.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\s*[\).:-])\s*(.+)$/i);
       if (optionMatch) {
-        options.push(optionMatch[2].trim());
+        options.push({ text: optionMatch[2].trim(), imageDataUrl: '' });
         capturingExplanation = false;
+        activeOptionIndex = options.length - 1;
         continue;
       }
 
       if (capturingExplanation) {
-        explanation = explanation ? `${explanation}\n${line}` : line;
+        explanationLines.push(line);
+      } else if (activeOptionIndex >= 0 && options[activeOptionIndex]) {
+        options[activeOptionIndex].text = `${options[activeOptionIndex].text} ${line}`.trim();
       } else {
         questionLines.push(line);
       }
     }
 
     const question = questionLines.join(' ').trim();
-    if (!question) {
-      errors.push(`Q${block.number}: question text is missing.`);
+    const normalizedOptions = options.map((option) => option.text.trim()).filter(Boolean);
+    const resolvedAnswer = resolveAnswerToOption(answer, normalizedOptions);
+    if ((!question && !questionImageUrl && !questionImageDataUrl) || normalizedOptions.length < 2 || !resolvedAnswer) {
+      skipped += 1;
       return;
-    }
-
-    if (options.length < 2) {
-      errors.push(`Q${block.number}: at least 2 options are required.`);
-      return;
-    }
-
-    const normalizedAnswer = answer.trim();
-    if (!normalizedAnswer) {
-      errors.push(`Q${block.number}: correct answer is missing.`);
-      return;
-    }
-
-    let resolvedAnswer = normalizedAnswer;
-    const answerToken = normalizedAnswer.match(/(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\b|\)|\.|:)?/i);
-    if (answerToken) {
-      const token = answerToken[1];
-      const idx = /^\d+$/.test(token)
-        ? Number(token) - 1
-        : token.toUpperCase().charCodeAt(0) - 65;
-      if (idx >= 0 && idx < options.length) {
-        resolvedAnswer = options[idx];
-      }
     }
 
     parsed.push({
-      question,
+      question: question || 'Refer to attached image.',
       questionImageUrl,
-      options,
+      questionImageDataUrl,
+      options: normalizedOptions,
+      optionImageDataUrls: options.map((option) => option.imageDataUrl || ''),
       answer: resolvedAnswer,
-      tip: explanation,
+      tip: explanationLines.join('\n').trim(),
+      explanationImageDataUrl,
       difficulty,
     });
   });
+
+  if (blocks.length > BULK_PARSE_LIMIT) {
+    errors.push(`Only the first ${BULK_PARSE_LIMIT} MCQs were kept from this import.`);
+  }
+  if (skipped > 0) {
+    errors.push(`Skipped ${skipped} unclear block(s) and continued parsing the rest.`);
+  }
 
   return { parsed, errors };
 }
@@ -10060,7 +10120,13 @@ app.post('/api/admin/mcqs/parse', authMiddleware, requireAdmin, async (req, res)
       }
     }
 
-    res.json(finalResult);
+    const parsed = Array.isArray(finalResult.parsed) ? finalResult.parsed.slice(0, BULK_PARSE_LIMIT) : [];
+    const errors = Array.isArray(finalResult.errors) ? [...finalResult.errors] : [];
+    if ((finalResult.parsed?.length || 0) > BULK_PARSE_LIMIT && !errors.some((item) => /first 15 mcqs/i.test(String(item)))) {
+      errors.unshift(`Only the first ${BULK_PARSE_LIMIT} MCQs were kept from this import.`);
+    }
+
+    res.json({ parsed, errors });
   } catch (error) {
     res.status(400).json({
       parsed: [],
