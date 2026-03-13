@@ -1064,6 +1064,7 @@ export default function AdminApp() {
   const [practiceQuery, setPracticeQuery] = useState('');
   const [practiceBankSubjectKey, setPracticeBankSubjectKey] = useState('');
   const [practiceForm, setPracticeForm] = useState(emptyPracticeForm());
+  const [isPracticeEditorOpen, setIsPracticeEditorOpen] = useState(false);
   const [practiceQuestionUpload, setPracticeQuestionUpload] = useState<File | null>(null);
   const [practiceSolutionUpload, setPracticeSolutionUpload] = useState<File | null>(null);
   const [bulkInput, setBulkInput] = useState('');
@@ -5034,13 +5035,43 @@ export default function AdminApp() {
         <TabsContent value="practice-board" className="space-y-4">
           <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.1fr)_minmax(0,1.9fr)]">
             <Card className="min-w-0">
-              <CardHeader>
-                <CardTitle>Practice Board Question Editor</CardTitle>
-                <CardDescription>
-                  Add conceptual questions using text, optional file uploads, or both.
-                </CardDescription>
+              <CardHeader
+                className="cursor-pointer"
+                role="button"
+                tabIndex={0}
+                onClick={() => setIsPracticeEditorOpen((prev) => !prev)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setIsPracticeEditorOpen((prev) => !prev);
+                  }
+                }}
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <CardTitle>Practice Board Question Editor</CardTitle>
+                    <CardDescription>
+                      Add conceptual questions using text, optional file uploads, or both.
+                    </CardDescription>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    aria-expanded={isPracticeEditorOpen}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsPracticeEditorOpen((prev) => !prev);
+                    }}
+                  >
+                    {isPracticeEditorOpen ? 'Close Practice Board Editor' : 'Open Practice Board Editor'}
+                  </Button>
+                </div>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <div
+                className={`overflow-hidden transition-all duration-300 ease-in-out ${isPracticeEditorOpen ? 'max-h-[1400px] opacity-100' : 'max-h-0 opacity-0'}`}
+              >
+              <CardContent className="space-y-3 border-t border-slate-200/60 pt-4 dark:border-white/10">
                 <div className="grid gap-3 md:grid-cols-2">
                   <div className="space-y-1.5">
                     <Label>Subject</Label>
@@ -5150,6 +5181,7 @@ export default function AdminApp() {
                   <Button variant="outline" onClick={resetPracticeForm}>Clear</Button>
                 </div>
               </CardContent>
+              </div>
             </Card>
 
             <Card className="min-w-0">
