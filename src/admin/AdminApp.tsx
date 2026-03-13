@@ -1132,11 +1132,7 @@ export default function AdminApp() {
   const [selectedHierarchy, setSelectedHierarchy] = useState<SelectedHierarchy | null>(null);
   const [isSectionEditorOpen, setIsSectionEditorOpen] = useState(false);
   const [isUploadMcqsOpen, setIsUploadMcqsOpen] = useState(false);
-  const [mcqPanelOpen, setMcqPanelOpen] = useState<{ upload: boolean; deleter: boolean; bank: boolean }>({
-    upload: true,
-    deleter: false,
-    bank: true,
-  });
+  const [activeMcqPanel, setActiveMcqPanel] = useState<'upload' | 'deleter' | 'bank'>('upload');
   const [uploadMode, setUploadMode] = useState<'manual' | 'document'>('manual');
   const [subscriptionOverview, setSubscriptionOverview] = useState<AdminSubscriptionOverview | null>(null);
   const [subscriptionUsers, setSubscriptionUsers] = useState<AdminSubscriptionUser[]>([]);
@@ -2021,6 +2017,18 @@ export default function AdminApp() {
 
   useEffect(() => {
     if (!selectedHierarchy) return;
+
+    setForm((prev) => ({
+      ...prev,
+      subject: selectedHierarchy.subject,
+      part: selectedHierarchy.kind === 'section' ? selectedHierarchy.part : '',
+      chapter: selectedHierarchy.kind === 'section' ? selectedHierarchy.chapterTitle : '',
+      section: selectedHierarchy.sectionTitle,
+      topic: selectedHierarchy.kind === 'section'
+        ? `${selectedHierarchy.chapterTitle} - ${selectedHierarchy.sectionTitle}`
+        : selectedHierarchy.sectionTitle,
+    }));
+
     setBulkDeleteSubject(selectedHierarchy.subject);
     if (selectedHierarchy.kind === 'section') {
       setBulkDeleteChapter(selectedHierarchy.chapterTitle);
@@ -4754,28 +4762,28 @@ export default function AdminApp() {
                   <div className="grid gap-2 md:grid-cols-3">
                     <button
                       type="button"
-                      onClick={() => setMcqPanelOpen((prev) => ({ ...prev, upload: !prev.upload }))}
-                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${mcqPanelOpen.upload ? 'border-indigo-400 bg-indigo-100/70 text-indigo-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
+                      onClick={() => setActiveMcqPanel('upload')}
+                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${activeMcqPanel === 'upload' ? 'border-indigo-400 bg-indigo-100/70 text-indigo-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
                     >
                       Upload MCQs
                     </button>
                     <button
                       type="button"
-                      onClick={() => setMcqPanelOpen((prev) => ({ ...prev, deleter: !prev.deleter }))}
-                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${mcqPanelOpen.deleter ? 'border-rose-400 bg-rose-100/70 text-rose-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
+                      onClick={() => setActiveMcqPanel('deleter')}
+                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${activeMcqPanel === 'deleter' ? 'border-rose-400 bg-rose-100/70 text-rose-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
                     >
                       MCQs Deleter
                     </button>
                     <button
                       type="button"
-                      onClick={() => setMcqPanelOpen((prev) => ({ ...prev, bank: !prev.bank }))}
-                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${mcqPanelOpen.bank ? 'border-cyan-400 bg-cyan-100/70 text-cyan-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
+                      onClick={() => setActiveMcqPanel('bank')}
+                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${activeMcqPanel === 'bank' ? 'border-cyan-400 bg-cyan-100/70 text-cyan-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
                     >
                       MCQs Bank
                     </button>
                   </div>
 
-                  {mcqPanelOpen.deleter ? (
+                  {activeMcqPanel === 'deleter' ? (
                   <div className="space-y-3 rounded-lg border border-rose-200 bg-rose-50/40 p-3">
                     <p className="text-sm font-medium text-rose-800">Bulk Delete MCQs (Admin Only)</p>
 
@@ -4798,8 +4806,8 @@ export default function AdminApp() {
                           <Label>Subject</Label>
                           <Input
                             value={bulkDeleteSubject}
-                            onChange={(e) => setBulkDeleteSubject(e.target.value)}
-                            placeholder="e.g. mathematics"
+                            readOnly
+                            placeholder="Auto-filled from Syllabus Browser"
                           />
                         </div>
                       ) : null}
@@ -4810,8 +4818,8 @@ export default function AdminApp() {
                         <Label>Chapter</Label>
                         <Input
                           value={bulkDeleteChapter}
-                          onChange={(e) => setBulkDeleteChapter(e.target.value)}
-                          placeholder="Exact chapter title (optional for section/topic mode)"
+                          readOnly
+                          placeholder="Auto-filled from Syllabus Browser"
                         />
                       </div>
                     ) : null}
@@ -4821,8 +4829,8 @@ export default function AdminApp() {
                         <Label>Section / Topic</Label>
                         <Input
                           value={bulkDeleteSectionOrTopic}
-                          onChange={(e) => setBulkDeleteSectionOrTopic(e.target.value)}
-                          placeholder="Exact section or topic title"
+                          readOnly
+                          placeholder="Auto-filled from Syllabus Browser"
                         />
                       </div>
                     ) : null}
@@ -4839,7 +4847,7 @@ export default function AdminApp() {
                   </div>
                   ) : null}
 
-                  {mcqPanelOpen.upload ? (
+                  {activeMcqPanel === 'upload' ? (
                   <div className="space-y-3 rounded-lg border border-indigo-200/70 bg-indigo-50/25 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
@@ -5055,47 +5063,19 @@ export default function AdminApp() {
                             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                               <div className="space-y-1.5">
                                 <Label>Subject</Label>
-                                <Select value={form.subject} onValueChange={(value) => setForm((prev) => ({ ...prev, subject: value, chapter: '', section: '', topic: '' }))}>
-                                  <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
-                                  <SelectContent>
-                                    {manualSubjectOptions.map((item) => (
-                                      <SelectItem key={`manual-subject-${item}`} value={item}>{item}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                <Input value={form.subject} readOnly placeholder="Auto-filled from Syllabus Browser" />
                               </div>
                               <div className="space-y-1.5">
                                 <Label>Chapter</Label>
-                                <Select value={form.chapter} onValueChange={(value) => setForm((prev) => ({ ...prev, chapter: value, section: '', topic: '' }))}>
-                                  <SelectTrigger><SelectValue placeholder="Select chapter" /></SelectTrigger>
-                                  <SelectContent>
-                                    {manualChapterOptions.map((item) => (
-                                      <SelectItem key={`manual-chapter-${item}`} value={item}>{item}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                <Input value={form.chapter} readOnly placeholder="Auto-filled from Syllabus Browser" />
                               </div>
                               <div className="space-y-1.5">
                                 <Label>Section</Label>
-                                <Select value={form.section} onValueChange={(value) => setForm((prev) => ({ ...prev, section: value, topic: prev.topic || value }))}>
-                                  <SelectTrigger><SelectValue placeholder="Select section" /></SelectTrigger>
-                                  <SelectContent>
-                                    {manualSectionOptions.map((item) => (
-                                      <SelectItem key={`manual-section-${item}`} value={item}>{item}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                <Input value={form.section} readOnly placeholder="Auto-filled from Syllabus Browser" />
                               </div>
                               <div className="space-y-1.5">
                                 <Label>Topic</Label>
-                                <Select value={form.topic} onValueChange={(value) => setForm((prev) => ({ ...prev, topic: value }))}>
-                                  <SelectTrigger><SelectValue placeholder="Select topic" /></SelectTrigger>
-                                  <SelectContent>
-                                    {manualSectionOptions.map((item) => (
-                                      <SelectItem key={`manual-topic-${item}`} value={item}>{item}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                <Input value={form.topic} readOnly placeholder="Auto-filled from Syllabus Browser" />
                               </div>
                             </div>
 
@@ -5404,7 +5384,7 @@ export default function AdminApp() {
                 </div>
               </Card>
 
-              {mcqPanelOpen.bank ? (
+              {activeMcqPanel === 'bank' ? (
               <Card className="min-w-0">
                 <CardHeader>
                   <CardTitle>Section MCQ Bank</CardTitle>
@@ -5415,6 +5395,11 @@ export default function AdminApp() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <Input value={form.subject} readOnly placeholder="Subject (from Syllabus Browser)" />
+                    <Input value={form.chapter} readOnly placeholder="Chapter (from Syllabus Browser)" />
+                    <Input value={form.section || form.topic} readOnly placeholder="Section/Topic (from Syllabus Browser)" />
+                  </div>
                   <Input
                     placeholder="Search MCQs in this view"
                     value={query}
