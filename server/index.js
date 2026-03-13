@@ -7636,15 +7636,15 @@ app.get('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmin
   }
 
   const targetUser = await UserModel.findById(userId).select('firstName lastName email phone').lean();
-  if (!targetUser) {
-    res.status(404).json({ error: 'User not found.' });
-    return;
-  }
-
   const messages = await SupportChatMessageModel.find({ userId })
     .sort({ createdAt: 1 })
     .limit(500)
     .lean();
+
+  if (!targetUser && !messages.length) {
+    res.status(404).json({ error: 'Support thread not found.' });
+    return;
+  }
 
   await SupportChatMessageModel.updateMany(
     {
@@ -7657,10 +7657,13 @@ app.get('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmin
 
   res.json({
     user: {
-      id: String(targetUser._id),
-      name: `${String(targetUser.firstName || '').trim()} ${String(targetUser.lastName || '').trim()}`.trim(),
-      email: targetUser.email || '',
-      mobileNumber: targetUser.phone || '',
+      id: targetUser ? String(targetUser._id) : userId,
+      name: targetUser
+        ? `${String(targetUser.firstName || '').trim()} ${String(targetUser.lastName || '').trim()}`.trim()
+        : 'Deleted User',
+      email: targetUser?.email || '',
+      mobileNumber: targetUser?.phone || '',
+      isDeleted: !targetUser,
     },
     messages: messages.map((item) => serializeSupportMessage(item)),
   });
@@ -7686,7 +7689,7 @@ app.post('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmi
 
   const targetUser = await UserModel.findById(userId).lean();
   if (!targetUser) {
-    res.status(404).json({ error: 'User not found.' });
+    res.status(410).json({ error: 'User account was deleted. This support thread is now read-only.' });
     return;
   }
 

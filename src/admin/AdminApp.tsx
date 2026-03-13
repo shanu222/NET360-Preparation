@@ -511,6 +511,7 @@ interface AdminSupportThreadPayload {
     name: string;
     email: string;
     mobileNumber: string;
+    isDeleted?: boolean;
   };
   messages: AdminSupportMessage[];
 }
@@ -2565,6 +2566,10 @@ export default function AdminApp() {
 
   const sendSupportReply = async () => {
     if (!authToken || !selectedSupportUserId) return;
+    if (activeSupportUser?.isDeleted) {
+      toast.error('This user account was deleted. Thread is read-only.');
+      return;
+    }
     const text = supportReplyText.trim();
     const messageType = supportReplyAttachment ? 'file' : 'text';
     if (messageType === 'text' && !text) return;
@@ -4355,6 +4360,9 @@ export default function AdminApp() {
                       {activeSupportUser?.email || ''}
                       {activeSupportUser?.mobileNumber ? ` • ${activeSupportUser.mobileNumber}` : ''}
                     </p>
+                    {activeSupportUser?.isDeleted ? (
+                      <p className="mt-1 text-xs text-amber-700">This account was deleted. Thread is read-only.</p>
+                    ) : null}
                   </div>
 
                   <div className="admin-support-banner rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-[11px] text-emerald-800">
@@ -4413,7 +4421,7 @@ export default function AdminApp() {
                       onChange={(e) => setSupportReplyText(e.target.value)}
                       placeholder="Type support reply"
                       className="min-h-[82px]"
-                      disabled={!selectedSupportUserId}
+                      disabled={!selectedSupportUserId || Boolean(activeSupportUser?.isDeleted)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                           e.preventDefault();
@@ -4422,7 +4430,7 @@ export default function AdminApp() {
                       }}
                     />
                     <div className="flex flex-col gap-2">
-                      <Button type="button" variant="outline" className="h-10" onClick={() => supportReplyFileInputRef.current?.click()} disabled={!selectedSupportUserId || isSendingSupportReply}>
+                      <Button type="button" variant="outline" className="h-10" onClick={() => supportReplyFileInputRef.current?.click()} disabled={!selectedSupportUserId || isSendingSupportReply || Boolean(activeSupportUser?.isDeleted)}>
                         File
                       </Button>
                       <input
@@ -4435,7 +4443,7 @@ export default function AdminApp() {
                       <Button
                         className="h-10"
                         onClick={() => void sendSupportReply()}
-                        disabled={isSendingSupportReply || !selectedSupportUserId || (!supportReplyText.trim() && !supportReplyAttachment)}
+                        disabled={isSendingSupportReply || !selectedSupportUserId || Boolean(activeSupportUser?.isDeleted) || (!supportReplyText.trim() && !supportReplyAttachment)}
                       >
                         {isSendingSupportReply ? 'Sending...' : 'Send'}
                       </Button>
