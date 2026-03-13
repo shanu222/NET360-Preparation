@@ -3124,17 +3124,36 @@ export default function AdminApp() {
 
   if (!ready) {
     return (
-      <div className="min-h-screen p-5 flex items-center justify-center">
-        <Card>
-          <CardContent className="py-8">Loading admin panel...</CardContent>
-        </Card>
+      <div className="admin-shell min-h-screen bg-gradient-to-br from-slate-100 via-cyan-50 to-indigo-100 text-slate-900 dark:from-[#060b1b] dark:via-[#1b1642] dark:to-[#062a33] dark:text-slate-100">
+        <div className="flex min-h-screen items-center justify-center p-5">
+          <button
+            type="button"
+            onClick={() => setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+            className="fixed right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 shadow-md transition hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20"
+            aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          >
+            {themeMode === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+          </button>
+          <Card>
+            <CardContent className="py-8">Loading admin panel...</CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
 
   if (!authToken) {
     return (
-      <div className="min-h-screen p-5 flex items-center justify-center">
+      <div className="admin-shell min-h-screen bg-gradient-to-br from-slate-100 via-cyan-50 to-indigo-100 text-slate-900 dark:from-[#060b1b] dark:via-[#1b1642] dark:to-[#062a33] dark:text-slate-100">
+        <button
+          type="button"
+          onClick={() => setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+          className="fixed right-4 top-4 z-50 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 shadow-md transition hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20"
+          aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {themeMode === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </button>
+        <div className="flex min-h-screen items-center justify-center p-5">
         <Card className="w-full max-w-md">
           <CardHeader>
             <CardTitle>NET360 Admin Panel</CardTitle>
@@ -3164,6 +3183,7 @@ export default function AdminApp() {
             </Button>
           </CardContent>
         </Card>
+        </div>
       </div>
     );
   }
@@ -3499,17 +3519,16 @@ export default function AdminApp() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="rounded-xl px-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/10"
+                <button
+                  type="button"
                   onClick={() => setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+                  className="inline-flex h-10 items-center gap-1.5 rounded-xl border border-slate-300/70 bg-white/80 px-3 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20"
                   aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
                   title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
                 >
-                  {themeMode === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-                  <span className="ml-1 hidden text-xs font-medium sm:inline">{themeMode === 'dark' ? 'Light' : 'Dark'}</span>
-                </Button>
+                  {themeMode === 'dark' ? <Sun className="h-4 w-4 shrink-0" /> : <Moon className="h-4 w-4 shrink-0" />}
+                  <span className="hidden text-xs sm:inline">{themeMode === 'dark' ? 'Light' : 'Dark'}</span>
+                </button>
                 <Button variant="outline" className="border-slate-300/70 bg-white/70 text-slate-800 hover:bg-white dark:border-white/25 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20" onClick={logout}>Logout</Button>
               </div>
             </div>
