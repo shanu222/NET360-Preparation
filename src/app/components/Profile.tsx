@@ -6,7 +6,7 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { Apple, Award, Bot, ChevronDown, ChevronUp, Copy, FlaskConical, GraduationCap, Loader2, LogOut, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
+import { Award, Bot, ChevronDown, ChevronUp, Copy, FlaskConical, GraduationCap, Loader2, LogOut, MessageCircle, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
@@ -32,6 +32,7 @@ interface ProfileProps {
 }
 
 type AuthPanelMode = 'login' | 'register' | 'recovery';
+type AuthActionState = 'idle' | 'loggingIn' | 'creatingAccount' | 'activatingAccount';
 
 export function Profile({ onNavigate }: ProfileProps) {
   const { user, login, submitSignupRequest, registerWithToken, logout } = useAuth();
@@ -77,6 +78,10 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [isReadingPaymentProof, setIsReadingPaymentProof] = useState(false);
   const [showPaymentMethods, setShowPaymentMethods] = useState(false);
   const [registerConflictBanner, setRegisterConflictBanner] = useState('');
+  const [authActionState, setAuthActionState] = useState<AuthActionState>('idle');
+  const [signupFlowActive, setSignupFlowActive] = useState(false);
+  const [showAuthGuidanceCard, setShowAuthGuidanceCard] = useState(false);
+  const [authGuidanceMessage, setAuthGuidanceMessage] = useState('');
   const [showDeleteAccountPanel, setShowDeleteAccountPanel] = useState(false);
   const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
   const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState('');
@@ -84,6 +89,7 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [isPersonalInfoExpanded, setIsPersonalInfoExpanded] = useState(true);
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
   const [isSavingTargetProgram, setIsSavingTargetProgram] = useState(false);
+  const signupGuidanceTimeoutRef = useRef<number | null>(null);
 
   const targetProgramOptions = useMemo(() => NET_TARGET_PROGRAM_OPTIONS, []);
   const selectedTargetProgramLabel =
@@ -127,6 +133,14 @@ export function Profile({ onNavigate }: ProfileProps) {
     }, 1000);
     return () => window.clearInterval(timer);
   }, [forgotCooldownSeconds]);
+
+  useEffect(() => {
+    return () => {
+      if (signupGuidanceTimeoutRef.current) {
+        window.clearTimeout(signupGuidanceTimeoutRef.current);
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (authMode !== 'register') return;
@@ -184,10 +198,86 @@ export function Profile({ onNavigate }: ProfileProps) {
 
   const isRegisterMode = authMode === 'register';
   const isRecoveryMode = authMode === 'recovery';
+  const isAuthBusy = authActionState !== 'idle';
 
   const isValidInternationalWhatsApp = (value: string) => /^\+[1-9]\d{7,14}$/.test(value.trim());
 
+  const clearSignupGuidanceTimeout = () => {
+    if (signupGuidanceTimeoutRef.current) {
+      window.clearTimeout(signupGuidanceTimeoutRef.current);
+      signupGuidanceTimeoutRef.current = null;
+    }
+  };
+
+  const showTimedSignupGuidance = (message: string) => {
+    clearSignupGuidanceTimeout();
+    setAuthGuidanceMessage(message);
+    setShowAuthGuidanceCard(true);
+    signupGuidanceTimeoutRef.current = window.setTimeout(() => {
+      setShowAuthGuidanceCard(false);
+      signupGuidanceTimeoutRef.current = null;
+    }, 10000);
+  };
+
+  const resetAuthActionState = () => {
+    setAuthActionState('idle');
+    setSignupFlowActive(false);
+    setAuthGuidanceMessage('');
+    setShowAuthGuidanceCard(false);
+    clearSignupGuidanceTimeout();
+  };
+
+  const activateSignupWithToken = async () => {
+    setAuthActionState('activatingAccount');
+    await registerWithToken({
+      email: authForm.email,
+      password: authForm.password,
+      tokenCode: authForm.tokenCode,
+      firstName: authForm.firstName,
+      lastName: authForm.lastName,
+      securityQuestion: authForm.securityQuestion,
+      securityAnswer: authForm.securityAnswer,
+    });
+    setSignupFlowActive(false);
+    setAuthActionState('idle');
+    setShowAuthGuidanceCard(false);
+    clearSignupGuidanceTimeout();
+    toast.success('Signup completed successfully.');
+  };
+
+  useEffect(() => {
+    if (!signupFlowActive || !authForm.tokenCode || !authForm.password) return;
+
+    let cancelled = false;
+    const autoActivate = async () => {
+      try {
+        await activateSignupWithToken();
+      } catch (error) {
+        if (cancelled) return;
+        setAuthActionState('creatingAccount');
+        const message = error instanceof Error ? error.message : 'Could not activate account yet.';
+        toast.error(message);
+      }
+    };
+
+    void autoActivate();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    signupFlowActive,
+    authForm.tokenCode,
+    authForm.password,
+    authForm.email,
+    authForm.firstName,
+    authForm.lastName,
+    authForm.securityQuestion,
+    authForm.securityAnswer,
+  ]);
+
   const handleAuthSubmit = async () => {
+    if (isAuthBusy) return;
+
     try {
       if (isRegisterMode) {
         setRegisterConflictBanner('');
@@ -210,33 +300,30 @@ export function Profile({ onNavigate }: ProfileProps) {
         }
 
         if (authForm.tokenCode && authForm.password) {
-          await registerWithToken({
-            email: authForm.email,
-            password: authForm.password,
-            tokenCode: authForm.tokenCode,
-            firstName: authForm.firstName,
-            lastName: authForm.lastName,
-            securityQuestion: authForm.securityQuestion,
-            securityAnswer: authForm.securityAnswer,
-          });
-          toast.success('Signup completed successfully.');
+          await activateSignupWithToken();
         } else {
+          setAuthActionState('creatingAccount');
+
           if (!authForm.mobileNumber) {
+            setAuthActionState('idle');
             toast.error('Mobile number is required to submit signup request.');
             return;
           }
 
           if (!authForm.paymentTransactionId) {
+            setAuthActionState('idle');
             toast.error('Payment transaction ID is required to submit signup request.');
             return;
           }
 
           if (!authForm.paymentProof) {
+            setAuthActionState('idle');
             toast.error('Upload payment proof (JPG, PNG, or PDF) before submitting.');
             return;
           }
 
           if (!isValidInternationalWhatsApp(authForm.mobileNumber)) {
+            setAuthActionState('idle');
             toast.error('Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).');
             return;
           }
@@ -250,10 +337,18 @@ export function Profile({ onNavigate }: ProfileProps) {
             paymentTransactionId: authForm.paymentTransactionId,
             paymentProof: authForm.paymentProof,
           });
-          toast.success('Signup request submitted. Wait for admin approval, then use token to complete signup.');
+          setSignupFlowActive(true);
+          showTimedSignupGuidance(
+            'Your request has been submitted. Please wait while the admin verifies your payment and sends your token code here in the app shortly.',
+          );
+          toast.success('Signup request submitted. Waiting for token code and activation.');
         }
       } else {
+        setAuthActionState('loggingIn');
+        setAuthGuidanceMessage('Logging in... please wait.');
+
         if (!authForm.password) {
+          setAuthActionState('idle');
           toast.error('Password is required.');
           return;
         }
@@ -266,17 +361,24 @@ export function Profile({ onNavigate }: ProfileProps) {
             const shouldSwitch = window.confirm(
               'This account is active on another device. Do you want to log out the previous device and continue here?',
             );
-            if (!shouldSwitch) return;
+            if (!shouldSwitch) {
+              setAuthActionState('idle');
+              return;
+            }
             await login(authForm.email, authForm.password, { forceLogoutOtherDevice: true });
           } else {
             throw error;
           }
         }
+        setAuthActionState('idle');
         toast.success('Logged in successfully.');
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Authentication failed.';
       const typed = error as Error & { status?: number };
+      if (!signupFlowActive) {
+        setAuthActionState('idle');
+      }
       if (isRegisterMode && typed.status === 409) {
         setRegisterConflictBanner(message);
       }
@@ -881,9 +983,47 @@ export function Profile({ onNavigate }: ProfileProps) {
                 </>
               ) : null}
 
-              <Button className="h-11 w-full rounded-xl bg-gradient-to-r from-indigo-700 to-violet-600 !text-white font-semibold shadow-sm hover:from-indigo-800 hover:to-violet-700" onClick={handleAuthSubmit}>
-                {isRegisterMode ? 'Create Account' : 'Sign In'}
+              <Button
+                className="relative h-11 w-full rounded-xl bg-gradient-to-r from-indigo-700 to-violet-600 !text-white font-semibold shadow-sm hover:from-indigo-800 hover:to-violet-700 disabled:cursor-not-allowed disabled:opacity-90"
+                onClick={handleAuthSubmit}
+                disabled={isAuthBusy}
+              >
+                {isAuthBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                {authActionState === 'loggingIn'
+                  ? 'Logging in...'
+                  : authActionState === 'creatingAccount'
+                  ? 'Creating account...'
+                  : authActionState === 'activatingAccount'
+                  ? 'Activating account...'
+                  : isRegisterMode
+                  ? 'Create Account'
+                  : 'Sign In'}
               </Button>
+
+              {isAuthBusy ? (
+                <div className="h-1.5 w-full overflow-hidden rounded-full bg-indigo-100" aria-hidden="true">
+                  <div className="h-full w-1/3 animate-[pulse_1.4s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-indigo-500 via-violet-500 to-indigo-500" />
+                </div>
+              ) : null}
+
+              {(authActionState === 'loggingIn' || showAuthGuidanceCard || signupFlowActive) && !isRecoveryMode ? (
+                <div
+                  className="rounded-xl border border-indigo-200/80 bg-gradient-to-br from-white to-indigo-50 p-3 shadow-[0_10px_26px_rgba(79,70,229,0.14)]"
+                  role="status"
+                  aria-live="polite"
+                >
+                  <div className="flex items-start gap-2.5">
+                    <div className="mt-0.5 h-2.5 w-2.5 rounded-full bg-indigo-500 animate-pulse" />
+                    <p className="text-sm leading-relaxed text-slate-700">
+                      {authActionState === 'loggingIn'
+                        ? 'Logging in... please wait.'
+                        : showAuthGuidanceCard
+                        ? authGuidanceMessage
+                        : 'Creating account... waiting for admin token so your account can be activated automatically.'}
+                    </p>
+                  </div>
+                </div>
+              ) : null}
                 </>
               )}
 
@@ -899,6 +1039,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                     }`}
                     onClick={() => {
                       setRegisterConflictBanner('');
+                      resetAuthActionState();
                       setAuthMode('login');
                     }}
                   >
@@ -914,6 +1055,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                     }`}
                     onClick={() => {
                       setRegisterConflictBanner('');
+                      resetAuthActionState();
                       setAuthMode('register');
                     }}
                   >
@@ -929,6 +1071,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                     }`}
                     onClick={() => {
                       setRegisterConflictBanner('');
+                      resetAuthActionState();
                       setAuthMode('recovery');
                     }}
                   >
@@ -949,9 +1092,11 @@ export function Profile({ onNavigate }: ProfileProps) {
                   </div>
 
                   <div className="flex flex-wrap justify-center gap-3">
-                    <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white text-lg !text-slate-800 hover:bg-slate-50 hover:!text-slate-900">G</Button>
-                    <Button variant="outline" className="h-10 w-16 rounded-xl border-indigo-200 bg-white !text-slate-800 hover:bg-slate-50 hover:!text-slate-900">
-                      <Apple className="h-5 w-5" />
+                    <Button asChild variant="outline" className="h-11 rounded-xl border-emerald-200 bg-white px-4 !text-emerald-700 shadow-sm hover:bg-emerald-50 hover:!text-emerald-800">
+                      <a href={NET360_ADMIN_WHATSAPP_LINK} target="_blank" rel="noreferrer">
+                        <MessageCircle className="mr-2 h-4 w-4" />
+                        WhatsApp Admin
+                      </a>
                     </Button>
                   </div>
                 </>
