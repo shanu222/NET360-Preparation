@@ -8,14 +8,14 @@ import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { Apple, Award, Bot, Check, ChevronDown, ChevronUp, ChevronsUpDown, Copy, FlaskConical, GraduationCap, LogOut, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
+import { Apple, Award, Bot, Check, ChevronDown, ChevronUp, ChevronsUpDown, Copy, FlaskConical, GraduationCap, Loader2, LogOut, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
 import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK, PAYMENT_METHODS } from '../lib/paymentMethods';
-import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
+import { NET_ENGINEERING_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 
 const ADVERTISEMENT_PREVIEW_SRC = '/advertisement-page.webp';
 const BRAND_LOGO_SRC = '/net360-logo.png';
@@ -86,8 +86,9 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [isPersonalInfoExpanded, setIsPersonalInfoExpanded] = useState(true);
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
   const [isTargetProgramOpen, setIsTargetProgramOpen] = useState(false);
+  const [isSavingTargetProgram, setIsSavingTargetProgram] = useState(false);
 
-  const targetProgramOptions = useMemo(() => NET_TARGET_PROGRAM_OPTIONS, []);
+  const targetProgramOptions = useMemo(() => NET_ENGINEERING_TARGET_PROGRAM_OPTIONS, []);
   const selectedTargetProgramLabel =
     targetProgramOptions.find((option) => option.value === localProfile.targetProgram)?.label ||
     LEGACY_TARGET_PROGRAM_LABELS[String(localProfile.targetProgram || '').toLowerCase()] ||
@@ -402,6 +403,30 @@ export function Profile({ onNavigate }: ProfileProps) {
       setIsPreparationExpanded(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update details.');
+    }
+  };
+
+  const handleTargetProgramSelect = async (targetProgram: string) => {
+    if (!targetProgram || isSavingTargetProgram) return;
+
+    const previousProgram = String(localProfile.targetProgram || '');
+    if (previousProgram === targetProgram) {
+      setIsTargetProgramOpen(false);
+      return;
+    }
+
+    setLocalProfile((previous) => ({ ...previous, targetProgram }));
+    setIsTargetProgramOpen(false);
+    setIsSavingTargetProgram(true);
+
+    try {
+      await saveProfile({ targetProgram });
+      toast.success('Target program updated. Dashboard refreshed.');
+    } catch (error) {
+      setLocalProfile((previous) => ({ ...previous, targetProgram: previousProgram }));
+      toast.error(error instanceof Error ? error.message : 'Could not update target program.');
+    } finally {
+      setIsSavingTargetProgram(false);
     }
   };
 
@@ -1172,9 +1197,14 @@ export function Profile({ onNavigate }: ProfileProps) {
                     role="combobox"
                     aria-expanded={isTargetProgramOpen}
                     className="h-10 w-full justify-between"
+                    disabled={isSavingTargetProgram}
                   >
                     <span className="truncate text-left">{selectedTargetProgramLabel || 'Select program'}</span>
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-60" />
+                    {isSavingTargetProgram ? (
+                      <Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin opacity-60" />
+                    ) : (
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-60" />
+                    )}
                   </Button>
                 </PopoverTrigger>
                 <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
@@ -1188,8 +1218,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                             key={`${option.category}-${option.value}`}
                             value={`${option.label} ${option.category}`}
                             onSelect={() => {
-                              updateField('targetProgram', option.value);
-                              setIsTargetProgramOpen(false);
+                              void handleTargetProgramSelect(option.value);
                             }}
                           >
                             <Check

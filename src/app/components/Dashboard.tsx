@@ -15,7 +15,7 @@ import { toast } from 'sonner';
 import { Progress } from './ui/progress';
 import { useAppData } from '../context/AppDataContext';
 import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
-import { getRequiredSubjectsForTargetProgram } from '../lib/netPrograms';
+import { getProgramCategoryKey, getRequiredSubjectsForTargetProgram } from '../lib/netPrograms';
 
 interface DashboardProps {
   onNavigate: (section: string) => void;
@@ -32,16 +32,63 @@ const SUBJECT_STYLE_FALLBACKS = [
   { badge: 'from-sky-500 to-indigo-400', bar: 'bg-sky-500' },
 ];
 
-const SUBJECT_STYLE_OVERRIDES: Partial<Record<SubjectKey, { badge: string; bar: string }>> = {
+type DashboardSubjectKey = SubjectKey | 'computer-science' | 'intelligence';
+
+interface DashboardSubjectDescriptor {
+  key: DashboardSubjectKey;
+  label: string;
+  source: SubjectKey | null;
+}
+
+const DASHBOARD_LABEL_OVERRIDES: Partial<Record<DashboardSubjectKey, string>> = {
+  'computer-science': 'Computer Science',
+  intelligence: 'Intelligence',
+};
+
+function buildDashboardSubjects(targetProgram: string): DashboardSubjectDescriptor[] {
+  const category = getProgramCategoryKey(targetProgram);
+
+  if (category === 'engineering') {
+    return [
+      { key: 'mathematics', label: getSubjectLabel('mathematics'), source: 'mathematics' },
+      { key: 'physics', label: getSubjectLabel('physics'), source: 'physics' },
+      { key: 'chemistry', label: getSubjectLabel('chemistry'), source: 'chemistry' },
+      { key: 'english', label: getSubjectLabel('english'), source: 'english' },
+      { key: 'intelligence', label: DASHBOARD_LABEL_OVERRIDES.intelligence || 'Intelligence', source: null },
+    ];
+  }
+
+  if (category === 'computing') {
+    return [
+      { key: 'mathematics', label: getSubjectLabel('mathematics'), source: 'mathematics' },
+      { key: 'physics', label: getSubjectLabel('physics'), source: 'physics' },
+      { key: 'computer-science', label: DASHBOARD_LABEL_OVERRIDES['computer-science'] || 'Computer Science', source: null },
+      { key: 'english', label: getSubjectLabel('english'), source: 'english' },
+      { key: 'intelligence', label: DASHBOARD_LABEL_OVERRIDES.intelligence || 'Intelligence', source: null },
+    ];
+  }
+
+  const requiredSubjects = getRequiredSubjectsForTargetProgram(targetProgram);
+  return requiredSubjects.map((subject) => ({
+    key: subject,
+    label: getSubjectLabel(subject),
+    source: subject,
+  }));
+}
+
+const SUBJECT_STYLE_OVERRIDES: Partial<Record<DashboardSubjectKey, { badge: string; bar: string }>> = {
   mathematics: { badge: 'from-violet-500 to-violet-400', bar: 'bg-violet-500' },
   physics: { badge: 'from-cyan-500 to-blue-400', bar: 'bg-cyan-500' },
   english: { badge: 'from-amber-400 to-orange-300', bar: 'bg-amber-500' },
   biology: { badge: 'from-emerald-500 to-teal-400', bar: 'bg-emerald-500' },
   chemistry: { badge: 'from-fuchsia-500 to-pink-400', bar: 'bg-fuchsia-500' },
+  'computer-science': { badge: 'from-sky-500 to-indigo-400', bar: 'bg-sky-500' },
+  intelligence: { badge: 'from-purple-500 to-pink-400', bar: 'bg-purple-500' },
 };
 
 export function Dashboard({ onNavigate }: DashboardProps) {
   const { mcqsBySubject, attempts, profile } = useAppData();
+  const dashboardSubjects = useMemo(() => buildDashboardSubjects(profile.targetProgram), [profile.targetProgram]);
 
   const daysUntilNET = useMemo(() => {
     const userTestDate = profile.testDate ? new Date(profile.testDate) : TEST_DATE;
@@ -54,16 +101,18 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const firstName = profile.firstName?.trim() || 'Student';
 
   const metrics = useMemo(() => {
-    const requiredSubjects = getRequiredSubjectsForTargetProgram(profile.targetProgram);
-    const hasProfileDrivenSubjects = requiredSubjects.length > 0;
+    const requiredSources = dashboardSubjects
+      .map((subject) => subject.source)
+      .filter((source): source is SubjectKey => Boolean(source));
+    const hasProfileDrivenSubjects = requiredSources.length > 0;
 
     const questionPool = hasProfileDrivenSubjects
-      ? requiredSubjects.reduce((sum, subject) => sum + (mcqsBySubject[subject]?.length || 0), 0)
+      ? requiredSources.reduce((sum, subject) => sum + (mcqsBySubject[subject]?.length || 0), 0)
       : Object.values(mcqsBySubject).reduce((sum, list) => sum + list.length, 0);
 
     const attemptedQuestions = hasProfileDrivenSubjects
       ? attempts
-          .filter((attempt) => requiredSubjects.includes(attempt.subject as SubjectKey))
+          .filter((attempt) => requiredSources.includes(attempt.subject as SubjectKey))
           .reduce((sum, attempt) => sum + attempt.totalQuestions, 0)
       : attempts.reduce((sum, attempt) => sum + attempt.totalQuestions, 0);
     const accuracy = attempts.length
@@ -106,7 +155,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       streakDays,
       overallProgress,
     };
-  }, [attempts, mcqsBySubject, profile.targetProgram]);
+  }, [attempts, dashboardSubjects, mcqsBySubject]);
 
   const subjectStats = useMemo(() => {
     const attemptedBySubject = attempts.reduce((acc, attempt) => {
@@ -114,31 +163,34 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       return acc;
     }, {} as Record<string, number>);
 
-    const requiredSubjects = getRequiredSubjectsForTargetProgram(profile.targetProgram);
-    const hasProfileDrivenSubjects = requiredSubjects.length > 0;
+    const fallbackSubjects: DashboardSubjectDescriptor[] = Array.from(
+      new Set([
+        ...(Object.keys(mcqsBySubject) as SubjectKey[]),
+        ...Object.keys(attemptedBySubject),
+      ]),
+    )
+      .filter((key) => {
+        const total = mcqsBySubject[key as SubjectKey]?.length || 0;
+        const attempted = attemptedBySubject[key] || 0;
+        return total > 0 || attempted > 0;
+      })
+      .map((key) => ({
+        key: key as SubjectKey,
+        label: getSubjectLabel(key as SubjectKey),
+        source: key as SubjectKey,
+      }));
 
-    const subjectKeys = hasProfileDrivenSubjects
-      ? requiredSubjects
-      : Array.from(
-          new Set([
-            ...(Object.keys(mcqsBySubject) as SubjectKey[]),
-            ...Object.keys(attemptedBySubject),
-          ]),
-        ).filter((key) => {
-          const total = mcqsBySubject[key as SubjectKey]?.length || 0;
-          const attempted = attemptedBySubject[key] || 0;
-          return total > 0 || attempted > 0;
-        });
+    const activeSubjects = dashboardSubjects.length ? dashboardSubjects : fallbackSubjects;
 
-    return subjectKeys.map((key, index) => {
-      const total = mcqsBySubject[key as SubjectKey]?.length || 0;
-      const attempted = attemptedBySubject[key] || 0;
+    return activeSubjects.map((subject, index) => {
+      const total = subject.source ? (mcqsBySubject[subject.source]?.length || 0) : 0;
+      const attempted = subject.source ? (attemptedBySubject[subject.source] || 0) : 0;
       const progress = total ? Math.min(100, Math.round((attempted / total) * 100)) : 0;
-      const theme = SUBJECT_STYLE_OVERRIDES[key as SubjectKey] || SUBJECT_STYLE_FALLBACKS[index % SUBJECT_STYLE_FALLBACKS.length];
+      const theme = SUBJECT_STYLE_OVERRIDES[subject.key] || SUBJECT_STYLE_FALLBACKS[index % SUBJECT_STYLE_FALLBACKS.length];
 
       return {
-        key,
-        label: getSubjectLabel(key as SubjectKey),
+        key: subject.key,
+        label: subject.label,
         badge: theme.badge,
         bar: theme.bar,
         attempted,
@@ -147,7 +199,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         remaining: Math.max(0, total - attempted),
       };
     });
-  }, [attempts, mcqsBySubject, profile.targetProgram]);
+  }, [attempts, dashboardSubjects, mcqsBySubject]);
 
   const weekChart = useMemo(() => {
     const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
