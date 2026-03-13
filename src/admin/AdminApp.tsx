@@ -3771,7 +3771,7 @@ export default function AdminApp() {
             </CardHeader>
             <CardContent>
               <div className="grid gap-3 lg:grid-cols-[300px_1fr]">
-                <div className="space-y-2 rounded-lg border p-2">
+                <div className="admin-support-list space-y-2 rounded-lg border p-2">
                   <Input
                     value={supportConversationQuery}
                     onChange={(e) => setSupportConversationQuery(e.target.value)}
@@ -3787,27 +3787,27 @@ export default function AdminApp() {
                       key={conversation.userId}
                       type="button"
                       onClick={() => setSelectedSupportUserId(conversation.userId)}
-                      className={`w-full rounded-md border px-2.5 py-2 text-left transition ${
+                      className={`admin-support-conversation w-full rounded-md border px-2.5 py-2 text-left transition ${
                         selectedSupportUserId === conversation.userId
-                          ? 'border-indigo-300 bg-indigo-50'
+                          ? 'admin-support-conversation-active border-indigo-300 bg-indigo-50'
                           : 'hover:bg-slate-50'
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
                         <p className="line-clamp-1 text-sm font-medium">{conversation.userName || conversation.email}</p>
                         {conversation.unreadForAdmin > 0 ? (
-                          <Badge className="bg-rose-600 text-white">{conversation.unreadForAdmin}</Badge>
+                          <Badge className="admin-support-unread-badge bg-rose-600 text-white">{conversation.unreadForAdmin}</Badge>
                         ) : null}
                       </div>
                       <p className="line-clamp-1 text-xs text-muted-foreground">{conversation.email || 'No email'}</p>
-                      <p className="mt-1 line-clamp-2 text-xs text-slate-600">{conversation.lastMessageText || 'No message text'}</p>
+                      <p className="admin-support-conversation-preview mt-1 line-clamp-2 text-xs text-slate-600">{conversation.lastMessageText || 'No message text'}</p>
                     </button>
                   ))}
                   </div>
                 </div>
 
                 <div className="space-y-3">
-                  <div className="rounded-lg border p-3">
+                  <div className="admin-support-header rounded-lg border p-3">
                     <p className="text-sm font-medium">{activeSupportUser?.name || 'Select a conversation'}</p>
                     <p className="text-xs text-muted-foreground">
                       {activeSupportUser?.email || ''}
@@ -3815,24 +3815,24 @@ export default function AdminApp() {
                     </p>
                   </div>
 
-                  <div className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-[11px] text-emerald-800">
+                  <div className="admin-support-banner rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-[11px] text-emerald-800">
                     Secure chat channel active. Messages and files are protected in transit.
                   </div>
 
-                  <div className="max-h-[420px] space-y-2 overflow-auto rounded-lg border bg-slate-50 p-3">
+                  <div className="admin-support-thread max-h-[420px] space-y-2 overflow-auto rounded-lg border bg-slate-50 p-3">
                     {isSupportThreadLoading ? <p className="text-xs text-muted-foreground">Loading thread...</p> : null}
                     {!supportMessages.length ? <p className="text-xs text-muted-foreground">No messages in this thread.</p> : null}
                     {supportMessages.map((item) => (
                       <div
                         key={item.id}
-                        className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
+                        className={`admin-support-bubble max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                           item.senderRole === 'admin'
-                            ? 'ml-auto bg-indigo-600 text-white'
-                            : 'mr-auto border bg-white text-slate-700'
+                            ? 'admin-support-bubble-admin ml-auto bg-indigo-600 text-white'
+                            : 'admin-support-bubble-user mr-auto border bg-white text-slate-700'
                         }`}
                       >
                         {item.messageType === 'file' && item.attachment ? (
-                          <div className="space-y-1">
+                          <div className="admin-support-attachment space-y-1">
                             <p>{item.text || 'Shared a file'}</p>
                             <a href={item.attachment.dataUrl} download={item.attachment.name} className="text-xs underline underline-offset-2">
                               {item.attachment.name}
@@ -3846,7 +3846,7 @@ export default function AdminApp() {
                             <button
                               key={`${item.id}-${emoji}`}
                               type="button"
-                              className="rounded border bg-white/80 px-1.5 py-0.5 text-[11px] text-slate-800"
+                              className="admin-support-reaction-button rounded border bg-white/80 px-1.5 py-0.5 text-[11px] text-slate-800"
                               onClick={() => void reactToSupportMessage(item.id, emoji)}
                             >
                               {emoji}
@@ -3854,11 +3854,11 @@ export default function AdminApp() {
                           ))}
                         </div>
                         {Array.isArray(item.reactions) && item.reactions.length ? (
-                          <p className={`mt-1 text-[10px] ${item.senderRole === 'admin' ? 'text-indigo-100' : 'text-slate-500'}`}>
+                          <p className={`admin-support-bubble-meta mt-1 text-[10px] ${item.senderRole === 'admin' ? 'text-indigo-100' : 'text-slate-500'}`}>
                             {item.reactions.map((reaction) => reaction.emoji).join(' ')}
                           </p>
                         ) : null}
-                        <p className={`mt-1 text-[10px] ${item.senderRole === 'admin' ? 'text-indigo-100' : 'text-slate-400'}`}>
+                        <p className={`admin-support-bubble-meta mt-1 text-[10px] ${item.senderRole === 'admin' ? 'text-indigo-100' : 'text-slate-400'}`}>
                           {item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}
                         </p>
                       </div>
@@ -3900,7 +3900,7 @@ export default function AdminApp() {
                     </div>
                   </div>
                   {supportReplyAttachment ? (
-                    <div className="rounded-md border bg-slate-50 px-3 py-2 text-xs">
+                    <div className="admin-support-attachment-preview rounded-md border bg-slate-50 px-3 py-2 text-xs">
                       <p className="font-medium">Attached: {supportReplyAttachment.name}</p>
                       <Button type="button" size="sm" variant="outline" className="mt-2" onClick={() => setSupportReplyAttachment(null)}>
                         Remove File
