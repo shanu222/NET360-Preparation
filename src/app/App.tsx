@@ -1,4 +1,4 @@
-import { Component, Suspense, lazy, useEffect, useMemo, useState, type ErrorInfo, type ReactNode } from 'react';
+import { Component, Suspense, lazy, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
 import { ScrollArea } from './components/ui/scroll-area';
 import { Dashboard } from './components/Dashboard';
 import { NUSTGuide } from './components/NUSTGuide';
@@ -37,7 +37,7 @@ import {
 import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from './components/ui/sheet';
 import { AppDataProvider } from './context/AppDataContext';
-import { AuthProvider } from './context/AuthContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import { Toaster, toast } from 'sonner';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -183,6 +183,88 @@ function SectionLoadingFallback({ sectionName }: { sectionName: string }) {
   return (
     <div className="rounded-xl border border-indigo-100 bg-white/80 p-4 text-sm text-slate-600">
       Loading {sectionName}...
+    </div>
+  );
+}
+
+function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
+  const { user, logout } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!menuRef.current) return;
+      if (menuRef.current.contains(event.target as Node)) return;
+      setMenuOpen(false);
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+
+    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('mousedown', handlePointerDown);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [menuOpen]);
+
+  useEffect(() => {
+    if (!user) {
+      setMenuOpen(false);
+    }
+  }, [user]);
+
+  const displayName = `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || user?.email || 'User';
+
+  if (!user) {
+    return (
+      <button
+        type="button"
+        onClick={onOpenProfile}
+        className="ml-1 inline-flex items-center gap-2 rounded-xl px-2 py-1.5 text-slate-700 transition hover:bg-indigo-50"
+      >
+        <div className="h-8 w-8 rounded-full bg-gradient-to-br from-amber-300 to-orange-500" />
+        <span className="hidden text-sm sm:inline">Login / Sign Up</span>
+        <ChevronDown className="hidden w-4 h-4 sm:inline" />
+      </button>
+    );
+  }
+
+  return (
+    <div className="relative ml-1" ref={menuRef}>
+      <button
+        type="button"
+        onClick={() => setMenuOpen((current) => !current)}
+        className="inline-flex items-center gap-2 rounded-xl px-2 py-1.5 text-slate-700 transition hover:bg-indigo-50 dark:text-slate-100 dark:hover:bg-white/10"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+      >
+        <div className="h-8 w-8 rounded-full bg-gradient-to-br from-emerald-300 to-cyan-500" />
+        <span className="hidden max-w-[210px] truncate text-sm sm:inline">Logged in as {displayName}</span>
+        <ChevronDown className={`hidden h-4 w-4 transition-transform sm:inline ${menuOpen ? 'rotate-180' : ''}`} />
+      </button>
+
+      <div
+        className={`absolute right-0 top-[calc(100%+8px)] z-50 min-w-[180px] rounded-xl border border-indigo-100 bg-white/95 p-1.5 shadow-[0_16px_30px_rgba(15,23,42,0.18)] backdrop-blur-md transition-all duration-150 dark:border-white/15 dark:bg-slate-900/95 ${menuOpen ? 'translate-y-0 opacity-100' : 'pointer-events-none -translate-y-1 opacity-0'}`}
+        role="menu"
+      >
+        <button
+          type="button"
+          className="w-full rounded-lg px-3 py-2 text-left text-sm text-rose-600 transition hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-500/15"
+          role="menuitem"
+          onClick={() => {
+            logout();
+            setMenuOpen(false);
+          }}
+        >
+          Logout
+        </button>
+      </div>
     </div>
   );
 }
@@ -367,15 +449,7 @@ export default function App() {
                 >
                   <MessageSquare className="w-4 h-4" />
                 </Button>
-                <button
-                  type="button"
-                  onClick={() => navigate(PATH_BY_SECTION.profile)}
-                  className="ml-1 inline-flex items-center gap-2 rounded-xl px-2 py-1.5 text-slate-700 transition hover:bg-indigo-50"
-                >
-                  <div className="h-8 w-8 rounded-full bg-gradient-to-br from-amber-300 to-orange-500" />
-                  <span className="hidden text-sm sm:inline">Login / Sign Up</span>
-                  <ChevronDown className="hidden w-4 h-4 sm:inline" />
-                </button>
+                <HeaderAuthControl onOpenProfile={() => navigate(PATH_BY_SECTION.profile)} />
               </div>
             </header>
 
