@@ -1083,6 +1083,7 @@ export default function AdminApp() {
   const [submissionSubjectFilter, setSubmissionSubjectFilter] = useState('all');
   const [submissionQuery, setSubmissionQuery] = useState('');
   const [submissionReviewNotes, setSubmissionReviewNotes] = useState<Record<string, string>>({});
+  const [collapsedReviewedSubmissionIds, setCollapsedReviewedSubmissionIds] = useState<Record<string, boolean>>({});
   const [communityReports, setCommunityReports] = useState<AdminCommunityReport[]>([]);
   const [communityReportNotes, setCommunityReportNotes] = useState<Record<string, string>>({});
   const [supportConversations, setSupportConversations] = useState<AdminSupportConversation[]>([]);
@@ -2996,6 +2997,25 @@ export default function AdminApp() {
     if (!authToken) return;
 
     const notes = String(submissionReviewNotes[submissionId] || '').trim();
+    const previousSubmission = questionSubmissions.find((item) => item.id === submissionId) || null;
+
+    setQuestionSubmissions((prev) => prev.map((item) => {
+      if (item.id !== submissionId) return item;
+      const existingReasons = Array.isArray(item.moderation?.reasons) ? item.moderation?.reasons : [];
+      return {
+        ...item,
+        status,
+        reviewNotes: notes,
+        reviewedAt: new Date().toISOString(),
+        moderation: {
+          ...item.moderation,
+          result: status,
+          reasons: existingReasons,
+        },
+      };
+    }));
+    setCollapsedReviewedSubmissionIds((prev) => ({ ...prev, [submissionId]: true }));
+
     try {
       await apiRequest(
         `/api/admin/question-submissions/${submissionId}/review`,
@@ -3011,6 +3031,15 @@ export default function AdminApp() {
       toast.success('Submission review updated.');
       await loadAdminData(authToken);
     } catch (error) {
+      if (previousSubmission) {
+        setQuestionSubmissions((prev) => prev.map((item) => (item.id === submissionId ? previousSubmission : item)));
+      }
+      setCollapsedReviewedSubmissionIds((prev) => {
+        if (!Object.prototype.hasOwnProperty.call(prev, submissionId)) return prev;
+        const next = { ...prev };
+        delete next[submissionId];
+        return next;
+      });
       toast.error(error instanceof Error ? error.message : 'Could not update submission review.');
     }
   };
@@ -5277,120 +5306,147 @@ export default function AdminApp() {
               </div>
 
               <div className="space-y-3 max-h-[760px] overflow-auto">
-                {filteredQuestionSubmissions.map((item) => (
-                  <div key={item.id} className="rounded-lg border p-3 space-y-3">
-                    <div className="flex flex-wrap items-start justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-medium">{item.subject}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Submitted by {item.submittedByName || 'Anonymous'}
-                          {item.submittedByEmail ? ` (${item.submittedByEmail})` : ''}
-                          {item.submittedByUserId ? ` • UserId: ${item.submittedByUserId}` : ''}
-                          {!item.submittedByUserId && item.actorKey ? ` • Identifier: ${item.actorKey}` : ''}
-                          {item.createdAt ? ` • ${new Date(item.createdAt).toLocaleString()}` : ''}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant={item.status === 'pending' ? 'default' : 'outline'}>{item.status}</Badge>
-                        <Badge variant="outline">Moderation: {item.moderation?.result || 'approved'}</Badge>
-                        {item.queuedForBank ? <Badge variant="outline">Queued for Bank</Badge> : null}
-                      </div>
-                    </div>
+                {filteredQuestionSubmissions.map((item) => {
+                  const isCollapsedToSummary = Boolean(collapsedReviewedSubmissionIds[item.id]) && item.status !== 'pending';
 
-                    {item.moderation?.reasons?.length ? (
-                      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-                        <p className="font-medium">AI moderation reasons</p>
-                        <p>{item.moderation.reasons.join(' ')}</p>
+                  return (
+                    <div key={item.id} className="rounded-lg border p-3 space-y-3">
+                      <div className="flex flex-wrap items-start justify-between gap-2">
+                        <div>
+                          <p className="text-sm font-medium">{item.subject}</p>
+                          <p className="text-xs text-muted-foreground">
+                            Submitted by {item.submittedByName || 'Anonymous'}
+                            {item.submittedByEmail ? ` (${item.submittedByEmail})` : ''}
+                            {item.submittedByUserId ? ` • UserId: ${item.submittedByUserId}` : ''}
+                            {!item.submittedByUserId && item.actorKey ? ` • Identifier: ${item.actorKey}` : ''}
+                            {item.createdAt ? ` • ${new Date(item.createdAt).toLocaleString()}` : ''}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant={item.status === 'pending' ? 'default' : 'outline'}>{item.status}</Badge>
+                          <Badge variant="outline">Moderation: {item.moderation?.result || 'approved'}</Badge>
+                          {item.queuedForBank ? <Badge variant="outline">Queued for Bank</Badge> : null}
+                        </div>
                       </div>
-                    ) : null}
 
-                    <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-700 whitespace-pre-wrap">
-                      {item.questionText || 'No typed text provided. See attached files below.'}
-                    </div>
-
-                    {item.questionDescription ? (
-                      <div className="rounded-md border bg-white p-3 text-sm text-slate-700 whitespace-pre-wrap">
-                        <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Question Description</p>
-                        {item.questionDescription}
-                      </div>
-                    ) : null}
-
-                    {item.questionSource ? (
-                      <div className="rounded-md border bg-white p-3 text-sm text-slate-700 whitespace-pre-wrap">
-                        <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Source</p>
-                        {item.questionSource}
-                      </div>
-                    ) : null}
-
-                    {item.submissionReason ? (
-                      <div className="rounded-md border bg-white p-3 text-sm text-slate-700 whitespace-pre-wrap">
-                        <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Reason for Submission</p>
-                        {item.submissionReason}
-                      </div>
-                    ) : null}
-
-                    {item.attachments?.length ? (
-                      <div className="space-y-2">
-                        <p className="text-xs uppercase tracking-wide text-muted-foreground">Attachments</p>
-                        {item.attachments.map((file) => (
-                          <div
-                            key={`${item.id}-${file.name}`}
-                            className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
-                          >
-                            <span className="min-w-0 truncate">{file.name} • {file.mimeType}</span>
-                            <div className="flex items-center gap-2">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => {
-                                  if (!openDataUrlPreview(file.dataUrl)) {
-                                    toast.error('Could not open attachment preview.');
-                                  }
-                                }}
-                              >
-                                View
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => {
-                                  if (!downloadDataUrlFile(file.dataUrl, file.name || 'attachment')) {
-                                    toast.error('Could not download attachment.');
-                                  }
-                                }}
-                              >
-                                Download
-                              </Button>
-                            </div>
+                      <div
+                        className={`overflow-hidden transition-all duration-300 ease-in-out ${isCollapsedToSummary ? 'max-h-48 opacity-100' : 'max-h-0 opacity-0'}`}
+                      >
+                        <div className="rounded-md border border-emerald-200/60 bg-emerald-50/40 px-3 py-2 text-sm">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="font-medium">{item.submittedByName || 'Anonymous'}</p>
+                            <Badge className={item.status === 'approved' ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}>
+                              {item.status === 'approved' ? 'Approved' : 'Rejected'}
+                            </Badge>
                           </div>
-                        ))}
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {item.submittedByEmail || (item.submittedByUserId ? `UserId: ${item.submittedByUserId}` : item.actorKey || 'No identifier')}
+                            {item.reviewedAt ? ` • Reviewed ${new Date(item.reviewedAt).toLocaleString()}` : ''}
+                          </p>
+                        </div>
                       </div>
-                    ) : null}
 
-                    <div className="space-y-1.5">
-                      <Label>Review Notes (required for rejection)</Label>
-                      <Textarea
-                        value={Object.prototype.hasOwnProperty.call(submissionReviewNotes, item.id)
-                          ? submissionReviewNotes[item.id]
-                          : (item.reviewNotes || '')}
-                        onChange={(e) => setSubmissionReviewNotes((prev) => ({ ...prev, [item.id]: e.target.value }))}
-                        className="min-h-[90px]"
-                        placeholder="Add a short explanation, especially when rejecting."
-                      />
-                      {item.reviewedByEmail || item.reviewedAt ? (
-                        <p className="text-xs text-muted-foreground">
-                          Last review: {item.reviewedByEmail || 'Admin'}
-                          {item.reviewedAt ? ` • ${new Date(item.reviewedAt).toLocaleString()}` : ''}
-                        </p>
-                      ) : null}
-                    </div>
+                      <div
+                        className={`overflow-hidden transition-all duration-300 ease-in-out ${isCollapsedToSummary ? 'max-h-0 opacity-0 pointer-events-none' : 'max-h-[2600px] opacity-100'}`}
+                      >
+                        <div className="space-y-3">
+                          {item.moderation?.reasons?.length ? (
+                            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+                              <p className="font-medium">AI moderation reasons</p>
+                              <p>{item.moderation.reasons.join(' ')}</p>
+                            </div>
+                          ) : null}
 
-                    <div className="flex flex-wrap gap-2">
-                      <Button size="sm" onClick={() => void reviewQuestionSubmission(item.id, 'approved')}>Approve</Button>
-                      <Button size="sm" variant="outline" onClick={() => void reviewQuestionSubmission(item.id, 'rejected')}>Reject</Button>
+                          <div className="rounded-md bg-slate-50 p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                            {item.questionText || 'No typed text provided. See attached files below.'}
+                          </div>
+
+                          {item.questionDescription ? (
+                            <div className="rounded-md border bg-white p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                              <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Question Description</p>
+                              {item.questionDescription}
+                            </div>
+                          ) : null}
+
+                          {item.questionSource ? (
+                            <div className="rounded-md border bg-white p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                              <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Source</p>
+                              {item.questionSource}
+                            </div>
+                          ) : null}
+
+                          {item.submissionReason ? (
+                            <div className="rounded-md border bg-white p-3 text-sm text-slate-700 whitespace-pre-wrap">
+                              <p className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">Reason for Submission</p>
+                              {item.submissionReason}
+                            </div>
+                          ) : null}
+
+                          {item.attachments?.length ? (
+                            <div className="space-y-2">
+                              <p className="text-xs uppercase tracking-wide text-muted-foreground">Attachments</p>
+                              {item.attachments.map((file) => (
+                                <div
+                                  key={`${item.id}-${file.name}`}
+                                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm"
+                                >
+                                  <span className="min-w-0 truncate">{file.name} • {file.mimeType}</span>
+                                  <div className="flex items-center gap-2">
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        if (!openDataUrlPreview(file.dataUrl)) {
+                                          toast.error('Could not open attachment preview.');
+                                        }
+                                      }}
+                                    >
+                                      View
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => {
+                                        if (!downloadDataUrlFile(file.dataUrl, file.name || 'attachment')) {
+                                          toast.error('Could not download attachment.');
+                                        }
+                                      }}
+                                    >
+                                      Download
+                                    </Button>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          ) : null}
+
+                          <div className="space-y-1.5">
+                            <Label>Review Notes (required for rejection)</Label>
+                            <Textarea
+                              value={Object.prototype.hasOwnProperty.call(submissionReviewNotes, item.id)
+                                ? submissionReviewNotes[item.id]
+                                : (item.reviewNotes || '')}
+                              onChange={(e) => setSubmissionReviewNotes((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                              className="min-h-[90px]"
+                              placeholder="Add a short explanation, especially when rejecting."
+                            />
+                            {item.reviewedByEmail || item.reviewedAt ? (
+                              <p className="text-xs text-muted-foreground">
+                                Last review: {item.reviewedByEmail || 'Admin'}
+                                {item.reviewedAt ? ` • ${new Date(item.reviewedAt).toLocaleString()}` : ''}
+                              </p>
+                            ) : null}
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            <Button size="sm" onClick={() => void reviewQuestionSubmission(item.id, 'approved')}>Approve</Button>
+                            <Button size="sm" variant="outline" onClick={() => void reviewQuestionSubmission(item.id, 'rejected')}>Reject</Button>
+                          </div>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
 
                 {!filteredQuestionSubmissions.length ? (
                   <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
