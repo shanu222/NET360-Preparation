@@ -46,6 +46,9 @@ export const NET_PROGRAMS_BY_CATEGORY: Record<NetProgramCategoryKey, NetProgramC
       { name: 'Geoinformatics Engineering', institution: 'SCEE', location: 'Main Campus, Islamabad', iconKey: 'bot' },
       { name: 'Chemical Engineering', institution: 'SCME', location: 'Main Campus, Islamabad', iconKey: 'flask' },
       { name: 'Metallurgy & Materials Engineering', institution: 'SCME', location: 'Main Campus, Islamabad', iconKey: 'beaker' },
+      { name: 'Materials Engineering', institution: 'SCME', location: 'Main Campus, Islamabad', iconKey: 'beaker' },
+      { name: 'Industrial Engineering', institution: 'SMME', location: 'Main Campus, Islamabad', iconKey: 'cog' },
+      { name: 'Petroleum Engineering', institution: 'SCME', location: 'Main Campus, Islamabad', iconKey: 'flask' },
       { name: 'Mechanical Engineering', institution: 'CEME', location: 'Rawalpindi', iconKey: 'cog' },
       { name: 'Electrical Engineering', institution: 'CEME', location: 'Rawalpindi', iconKey: 'zap' },
       { name: 'Mechatronics Engineering', institution: 'CEME', location: 'Rawalpindi', iconKey: 'bot' },
@@ -200,6 +203,44 @@ const TRACK_BY_PROGRAM_CATEGORY: Record<NetProgramCategoryKey, NetTrackId> = {
 
 const trackIds = new Set<NetTrackId>(Object.keys(SUBJECTS_BY_TRACK) as NetTrackId[]);
 
+const PROGRAM_CATEGORY_ALIASES: Record<NetProgramCategoryKey, string[]> = {
+  engineering: [
+    'engineering',
+    'electrical',
+    'mechanical',
+    'civil',
+    'chemical',
+    'mechatronics',
+    'avionics',
+    'environmental',
+    'materials',
+    'metallurgy',
+    'petroleum',
+    'industrial',
+    'aerospace',
+    'geoinformatics',
+    'marine',
+    'naval architecture',
+  ],
+  computing: [
+    'computer science',
+    'cs',
+    'it',
+    'information technology',
+    'software engineering',
+    'computer engineering',
+    'artificial intelligence',
+    'ai',
+    'data science',
+    'information security',
+    'computing',
+  ],
+  business: ['business', 'bba', 'mba', 'economics', 'psychology', 'mass communication', 'public administration', 'llb'],
+  architecture: ['architecture', 'industrial design', 'design'],
+  sciences: ['physics', 'mathematics', 'math', 'chemistry', 'bioinformatics', 'biosciences', 'natural sciences'],
+  applied: ['biotechnology', 'agriculture', 'food science', 'applied sciences'],
+};
+
 export function getProgramCategoryKey(targetProgram: string): NetProgramCategoryKey | null {
   const normalizedTarget = String(targetProgram || '').trim().toLowerCase();
   if (!normalizedTarget) return null;
@@ -209,6 +250,13 @@ export function getProgramCategoryKey(targetProgram: string): NetProgramCategory
       (program) => program.name.trim().toLowerCase() === normalizedTarget,
     );
     if (hasMatch) return key;
+  }
+
+  for (const key of CATEGORY_ORDER) {
+    const aliases = PROGRAM_CATEGORY_ALIASES[key] || [];
+    if (aliases.some((alias) => normalizedTarget === alias || normalizedTarget.includes(alias))) {
+      return key;
+    }
   }
 
   return null;

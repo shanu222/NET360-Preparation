@@ -1212,7 +1212,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                     <CommandInput placeholder="Search programs..." />
                     <CommandList>
                       <CommandEmpty>No program found.</CommandEmpty>
-                      <CommandGroup heading="All NET Programs">
+                      <CommandGroup heading="Engineering & Computing Programs">
                         {targetProgramOptions.map((option) => (
                           <CommandItem
                             key={`${option.category}-${option.value}`}
