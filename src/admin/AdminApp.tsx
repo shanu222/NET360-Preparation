@@ -46,7 +46,7 @@ import {
   AlertDialogTrigger,
 } from '../app/components/ui/alert-dialog';
 import { toast } from 'sonner';
-import { Preparation, SYLLABUS } from '../app/components/Preparation';
+import { SYLLABUS } from '../app/components/Preparation';
 import type { SubjectKey } from '../app/lib/mcq';
 import {
   downloadBlobFile,
@@ -1479,30 +1479,105 @@ export default function AdminApp() {
   const activeBankSection = useMemo(() => activeBankChapter?.sections.find((item) => item.key === bankSectionKey) || null, [activeBankChapter, bankSectionKey]);
 
   const syllabusTree = useMemo(() => {
-    const subjects = Object.keys(SYLLABUS) as SubjectKey[];
-    return subjects
-      .map((subject) => {
-        const chapters: Array<{ key: string; title: string; part: 'part1' | 'part2'; sections: string[] }> = [];
-        (['part1', 'part2'] as const).forEach((part) => {
-          const partData = SYLLABUS[subject]?.[part];
-          (partData?.chapters || []).forEach((chapter) => {
-            chapters.push({
-              key: `${part}::${chapter.id}`,
-              title: chapter.title,
-              part,
-              sections: Array.isArray(chapter.sections) ? chapter.sections : [],
-            });
-          });
+    type ChapterNode = {
+      key: string;
+      title: string;
+      part: 'part1' | 'part2' | '';
+      sections: string[];
+    };
+
+    const subjectMap = new Map<string, { subject: string; label: string; chapters: Map<string, ChapterNode> }>();
+    const dbSubjectSet = new Set<string>();
+
+    const ensureSubject = (subjectKey: string, explicitLabel?: string) => {
+      const normalized = String(subjectKey || '').trim().toLowerCase();
+      if (!normalized) return null;
+      if (!subjectMap.has(normalized)) {
+        subjectMap.set(normalized, {
+          subject: normalized,
+          label: explicitLabel || toTitleLabel(normalized),
+          chapters: new Map<string, ChapterNode>(),
         });
-        return {
-          subject,
-          label: toTitleLabel(subject),
-          chapters,
-        };
-      })
-      .filter((item) => item.chapters.length > 0)
+      }
+      return subjectMap.get(normalized)!;
+    };
+
+    const ensureChapter = (
+      subjectNode: { subject: string; label: string; chapters: Map<string, ChapterNode> },
+      key: string,
+      title: string,
+      part: 'part1' | 'part2' | '',
+      sections: string[],
+    ) => {
+      if (!subjectNode.chapters.has(key)) {
+        subjectNode.chapters.set(key, {
+          key,
+          title,
+          part,
+          sections: [],
+        });
+      }
+      const chapter = subjectNode.chapters.get(key)!;
+      const merged = new Set<string>([...chapter.sections, ...sections.filter(Boolean)]);
+      chapter.sections = Array.from(merged).sort((a, b) => a.localeCompare(b));
+    };
+
+    const specialLabels: Record<string, string> = {
+      'quantitative-mathematics': 'Quantitative Mathematics',
+      'design-aptitude': 'Design Aptitude',
+      'computer-science': 'Computer Science',
+    };
+
+    (Object.keys(SYLLABUS) as SubjectKey[]).forEach((subject) => {
+      const subjectNode = ensureSubject(subject, toTitleLabel(subject));
+      if (!subjectNode) return;
+      (['part1', 'part2'] as const).forEach((part) => {
+        const partData = SYLLABUS[subject]?.[part];
+        (partData?.chapters || []).forEach((chapter) => {
+          ensureChapter(
+            subjectNode,
+            `syllabus::${part}::${chapter.id}`,
+            chapter.title,
+            part,
+            Array.isArray(chapter.sections) ? chapter.sections : [],
+          );
+        });
+      });
+    });
+
+    FLAT_TOPIC_SUBJECTS.forEach((subject) => {
+      ensureSubject(subject, specialLabels[subject] || toTitleLabel(subject));
+    });
+
+    mcqStructure.forEach((row) => {
+      const subjectKey = String(row.subject || '').trim().toLowerCase();
+      if (!subjectKey) return;
+      dbSubjectSet.add(subjectKey);
+
+      const subjectNode = ensureSubject(subjectKey, specialLabels[subjectKey] || toTitleLabel(subjectKey));
+      if (!subjectNode) return;
+
+      const partRaw = String(row.part || '').trim().toLowerCase();
+      const chapterRaw = String(row.chapter || '').trim();
+      const sectionRaw = String(row.section || '').trim();
+
+      const part: 'part1' | 'part2' | '' = partRaw === 'part1' || partRaw === 'part2' ? partRaw : '';
+      const chapterTitle = chapterRaw || 'General Topics';
+      const chapterKey = `db::${part || 'none'}::${chapterTitle.toLowerCase()}`;
+      const sectionFallback = chapterTitle;
+
+      ensureChapter(subjectNode, chapterKey, chapterTitle, part, [sectionRaw || sectionFallback]);
+    });
+
+    return Array.from(subjectMap.values())
+      .map((subject) => ({
+        subject: subject.subject,
+        label: subject.label,
+        fromDatabase: dbSubjectSet.has(subject.subject),
+        chapters: Array.from(subject.chapters.values()).sort((a, b) => a.title.localeCompare(b.title)),
+      }))
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, []);
+  }, [mcqStructure]);
 
   const manualSubjectOptions = useMemo(
     () => syllabusTree.map((item) => ({ value: item.subject, label: item.label })),
@@ -4778,23 +4853,7 @@ export default function AdminApp() {
         </TabsContent>
 
         <TabsContent value="mcqs" className="space-y-4">
-          <div className="grid gap-4 2xl:grid-cols-[minmax(0,1.2fr)_minmax(0,1.8fr)]">
-            <Card className="min-w-0">
-              <CardHeader>
-                <CardTitle>Syllabus Browser (Admin)</CardTitle>
-                <CardDescription>
-                  Select Subject / Part / Chapter / Section, or choose Quantitative Mathematics/Design Aptitude topics.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="max-h-[860px] overflow-auto">
-                <Preparation
-                  showStartTestButton={false}
-                  onSelectSection={(payload) => void handleSectionSelection(payload)}
-                  onSelectFlatTopic={(payload) => void handleFlatTopicSelection(payload)}
-                />
-              </CardContent>
-            </Card>
-
+          <div className="space-y-4">
             <div className="min-w-0 space-y-4">
               <div className="space-y-3">
                   <div className="grid gap-2 md:grid-cols-3">
@@ -4846,6 +4905,7 @@ export default function AdminApp() {
                             value={bulkDeleteSubject}
                             onValueChange={(value) => {
                               setBulkDeleteSubject(value);
+                              setBulkDeleteChapterKey('');
                               setBulkDeleteChapter('');
                               setBulkDeleteSectionOrTopic('');
                             }}
@@ -5535,9 +5595,12 @@ export default function AdminApp() {
                           setBankFilterSection(value);
                           const selectedChapter = bankChapterOptions.find((item) => item.value === bankFilterChapterKey);
                           if (!selectedChapter || !authToken) return;
+                          const selectedPart = selectedChapter.part === 'part1' || selectedChapter.part === 'part2'
+                            ? selectedChapter.part
+                            : 'part1';
                           void handleSectionSelection({
                             subject: bankFilterSubject as SubjectKey,
-                            part: selectedChapter.part,
+                            part: selectedPart,
                             chapterTitle: selectedChapter.chapterTitle,
                             sectionTitle: value,
                           });
