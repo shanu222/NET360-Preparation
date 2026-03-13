@@ -53,6 +53,7 @@ import {
   openBlobPreview,
   openDataUrlPreview,
 } from '../app/lib/filePreview';
+import '../styles/admin-theme.css';
 
 const FLAT_TOPIC_SUBJECTS = new Set(['quantitative-mathematics', 'design-aptitude']);
 const ADMIN_SUPPORT_DESKTOP_ALERTS_KEY = 'net360-support-desktop-alerts-admin';
@@ -3402,7 +3403,7 @@ export default function AdminApp() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-cyan-50 to-indigo-100 text-slate-900 transition-colors dark:from-[#060b1b] dark:via-[#1b1642] dark:to-[#062a33] dark:text-slate-100">
+    <div className="admin-shell min-h-screen bg-gradient-to-br from-slate-100 via-cyan-50 to-indigo-100 text-slate-900 transition-colors dark:from-[#060b1b] dark:via-[#1b1642] dark:to-[#062a33] dark:text-slate-100">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_16%_18%,rgba(56,189,248,0.16),transparent_40%),radial-gradient(circle_at_80%_10%,rgba(99,102,241,0.18),transparent_35%),radial-gradient(circle_at_78%_80%,rgba(20,184,166,0.14),transparent_40%)] dark:bg-[radial-gradient(circle_at_15%_20%,rgba(56,189,248,0.18),transparent_38%),radial-gradient(circle_at_80%_10%,rgba(168,85,247,0.26),transparent_36%),radial-gradient(circle_at_75%_78%,rgba(45,212,191,0.22),transparent_42%)]" />
 
       <div
@@ -3411,7 +3412,7 @@ export default function AdminApp() {
       />
 
       <aside
-        className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-slate-300/70 bg-white/80 px-3 py-4 shadow-[0_16px_45px_rgba(15,23,42,0.15)] backdrop-blur-xl transition-all duration-300 ease-out dark:border-white/10 dark:bg-slate-950/60 dark:shadow-[0_20px_45px_rgba(3,8,30,0.55)] ${isSidebarExpanded ? 'w-72' : 'w-20'} ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+        className={`admin-sidebar fixed inset-y-0 left-0 z-40 flex flex-col border-r border-slate-300/70 bg-white/80 px-3 py-4 shadow-[0_16px_45px_rgba(15,23,42,0.15)] backdrop-blur-xl transition-all duration-300 ease-out dark:border-white/10 dark:bg-slate-950/60 dark:shadow-[0_20px_45px_rgba(3,8,30,0.55)] ${isSidebarExpanded ? 'w-72' : 'w-20'} ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
       >
         <div className={`mb-5 flex items-center ${isSidebarExpanded ? 'justify-between' : 'justify-center'}`}>
           {isSidebarExpanded ? (
@@ -3446,7 +3447,7 @@ export default function AdminApp() {
                 key={item.section}
                 onClick={() => navigateToSection(item.section)}
                 title={!isSidebarExpanded ? item.label : undefined}
-                className={`group flex h-11 w-full items-center rounded-xl border px-3 text-sm transition-all duration-200 ${isSidebarExpanded ? 'justify-start gap-2.5' : 'justify-center'} ${isActive
+                className={`admin-nav-item group flex h-11 w-full items-center rounded-xl border px-3 text-sm transition-all duration-200 ${isSidebarExpanded ? 'justify-start gap-2.5' : 'justify-center'} ${isActive
                   ? 'border-cyan-400/40 bg-gradient-to-r from-cyan-500/25 to-indigo-500/25 text-slate-900 shadow-[0_8px_25px_rgba(14,116,144,0.22)] dark:text-white'
                   : 'border-slate-300/70 bg-white/65 text-slate-700 hover:border-cyan-300/45 hover:bg-cyan-50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10'}
                 `}
@@ -3459,9 +3460,9 @@ export default function AdminApp() {
         </nav>
       </aside>
 
-      <main className={`relative z-10 px-3 py-4 transition-[margin-left] duration-300 sm:px-5 lg:px-8 lg:py-6 ${isSidebarExpanded ? 'lg:ml-72' : 'lg:ml-20'}`}>
-        <div className="mx-auto w-full max-w-[1700px] space-y-5">
-          <header className="rounded-2xl border border-slate-300/70 bg-white/75 p-4 shadow-[0_16px_40px_rgba(15,23,42,0.12)] backdrop-blur-md dark:border-white/15 dark:bg-white/10 dark:shadow-[0_20px_50px_rgba(8,20,46,0.45)]">
+      <main className={`admin-main relative z-10 px-3 py-4 transition-[margin-left] duration-300 sm:px-5 lg:px-8 lg:py-6 ${isSidebarExpanded ? 'lg:ml-72' : 'lg:ml-20'}`}>
+        <div className="admin-content mx-auto w-full max-w-[1700px] space-y-5">
+          <header className="admin-header-panel rounded-2xl border border-slate-300/70 bg-white/75 p-4 shadow-[0_16px_40px_rgba(15,23,42,0.12)] backdrop-blur-md dark:border-white/15 dark:bg-white/10 dark:shadow-[0_20px_50px_rgba(8,20,46,0.45)]">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <button

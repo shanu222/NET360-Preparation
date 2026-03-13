@@ -1,0 +1,189 @@
+@keyframes admin-fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.admin-shell {
+  --admin-radius: 14px;
+  --admin-radius-sm: 12px;
+  --admin-radius-lg: 16px;
+  --admin-glass-light: linear-gradient(145deg, rgba(255, 255, 255, 0.82), rgba(250, 253, 255, 0.56));
+  --admin-glass-dark: linear-gradient(145deg, rgba(19, 30, 55, 0.72), rgba(10, 21, 44, 0.52));
+  --admin-border-light: rgba(148, 163, 184, 0.28);
+  --admin-border-dark: rgba(255, 255, 255, 0.12);
+  --admin-shadow-light: 0 12px 32px rgba(15, 23, 42, 0.12);
+  --admin-shadow-hover-light: 0 18px 42px rgba(15, 23, 42, 0.16);
+  --admin-shadow-dark: 0 20px 42px rgba(2, 6, 23, 0.48);
+  --admin-shadow-hover-dark: 0 28px 56px rgba(2, 6, 23, 0.58);
+  animation: admin-fade-up 380ms ease-out;
+}
+
+.admin-shell .admin-content > * {
+  animation: admin-fade-up 320ms ease-out;
+}
+
+.admin-shell .admin-header-panel,
+.admin-shell .admin-sidebar,
+.admin-shell [data-slot='card'] {
+  border-radius: var(--admin-radius-lg);
+}
+
+.admin-shell .admin-header-panel,
+.admin-shell [data-slot='card'] {
+  border-color: var(--admin-border-light);
+  background: var(--admin-glass-light);
+  box-shadow: var(--admin-shadow-light);
+  backdrop-filter: blur(14px);
+}
+
+.dark .admin-shell .admin-header-panel,
+.dark .admin-shell [data-slot='card'] {
+  border-color: var(--admin-border-dark);
+  background: var(--admin-glass-dark);
+  box-shadow: var(--admin-shadow-dark);
+}
+
+.admin-shell [data-slot='card'] {
+  transition: transform 220ms ease, box-shadow 220ms ease, border-color 220ms ease;
+}
+
+.admin-shell [data-slot='card']:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--admin-shadow-hover-light);
+}
+
+.dark .admin-shell [data-slot='card']:hover {
+  box-shadow: var(--admin-shadow-hover-dark);
+}
+
+.admin-shell [data-slot='card-title'] {
+  letter-spacing: 0.01em;
+  font-weight: 700;
+}
+
+.admin-shell [data-slot='card-description'] {
+  color: rgb(71 85 105 / 0.9);
+}
+
+.dark .admin-shell [data-slot='card-description'] {
+  color: rgb(203 213 225 / 0.85);
+}
+
+.admin-shell [data-slot='button'] {
+  border-radius: var(--admin-radius-sm);
+  font-weight: 600;
+  transition: transform 180ms ease, box-shadow 220ms ease, background-color 220ms ease, border-color 220ms ease, color 220ms ease;
+}
+
+.admin-shell [data-slot='button']:hover {
+  transform: translateY(-1px);
+}
+
+.admin-shell [data-slot='button']:focus-visible {
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.18);
+}
+
+.admin-shell [data-slot='button'].bg-primary {
+  background: linear-gradient(120deg, #0ea5e9, #4f46e5 55%, #8b5cf6);
+  border-color: rgba(79, 70, 229, 0.45);
+  box-shadow: 0 12px 28px rgba(79, 70, 229, 0.28);
+}
+
+.admin-shell [data-slot='button'].bg-primary:hover {
+  box-shadow: 0 16px 32px rgba(79, 70, 229, 0.34);
+}
+
+.admin-shell [data-slot='button'].bg-destructive,
+.admin-shell [data-slot='button'].bg-destructive\/60 {
+  box-shadow: 0 10px 24px rgba(225, 29, 72, 0.24);
+}
+
+.admin-shell [data-slot='input'],
+.admin-shell [data-slot='textarea'],
+.admin-shell [data-slot='select-trigger'] {
+  border-radius: var(--admin-radius-sm);
+  border-color: rgba(148, 163, 184, 0.32);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 1px 2px rgba(15, 23, 42, 0.04);
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+
+.dark .admin-shell [data-slot='input'],
+.dark .admin-shell [data-slot='textarea'],
+.dark .admin-shell [data-slot='select-trigger'] {
+  border-color: rgba(148, 163, 184, 0.28);
+  background: rgba(15, 23, 42, 0.52);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 1px 2px rgba(2, 6, 23, 0.22);
+}
+
+.admin-shell [data-slot='input']:focus-visible,
+.admin-shell [data-slot='textarea']:focus-visible,
+.admin-shell [data-slot='select-trigger']:focus-visible {
+  border-color: rgba(14, 165, 233, 0.65);
+  box-shadow: 0 0 0 4px rgba(56, 189, 248, 0.16);
+}
+
+.admin-shell [data-slot='badge'] {
+  border-radius: 999px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.admin-shell .admin-nav-item {
+  position: relative;
+  overflow: hidden;
+}
+
+.admin-shell .admin-nav-item::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, rgba(56, 189, 248, 0.1), rgba(79, 70, 229, 0.1));
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+
+.admin-shell .admin-nav-item:hover::after {
+  opacity: 1;
+}
+
+.admin-shell .admin-main section {
+  scroll-margin-top: 84px;
+}
+
+.admin-shell .rounded-md.border,
+.admin-shell .rounded-lg.border,
+.admin-shell .rounded-xl.border,
+.admin-shell .rounded-2xl.border {
+  border-color: rgba(148, 163, 184, 0.3);
+}
+
+.dark .admin-shell .rounded-md.border,
+.dark .admin-shell .rounded-lg.border,
+.dark .admin-shell .rounded-xl.border,
+.dark .admin-shell .rounded-2xl.border {
+  border-color: rgba(148, 163, 184, 0.28);
+}
+
+.admin-shell .max-h-\[520px\],
+.admin-shell .max-h-\[760px\],
+.admin-shell .max-h-\[860px\] {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(14, 165, 233, 0.45) transparent;
+}
+
+@media (max-width: 1279px) {
+  .admin-shell .admin-content {
+    padding-bottom: 1rem;
+  }
+
+  .admin-shell [data-slot='card'] {
+    border-radius: var(--admin-radius);
+  }
+}
