@@ -60,6 +60,22 @@ const ADMIN_SUPPORT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
 const ADMIN_SUPPORT_ATTACHMENT_ACCEPT = '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp,.svg';
 const ADMIN_SUPPORT_REACTIONS = ['😀', '🙏', '👍', '❤️', '✅'];
 const ADMIN_SIDEBAR_EXPANDED_KEY = 'net360-admin-sidebar-expanded';
+const ADMIN_DESKTOP_MIN_WIDTH = 1024;
+const ADMIN_TABLET_COLLAPSE_MAX_WIDTH = 1280;
+
+function readStoredAdminSidebarPreference() {
+  try {
+    const stored = localStorage.getItem(ADMIN_SIDEBAR_EXPANDED_KEY);
+    if (stored == null) return null;
+    return stored !== '0';
+  } catch {
+    return null;
+  }
+}
+
+function isTabletSidebarViewport(width: number) {
+  return width >= ADMIN_DESKTOP_MIN_WIDTH && width < ADMIN_TABLET_COLLAPSE_MAX_WIDTH;
+}
 
 type SelectedHierarchy =
   | {
@@ -967,13 +983,10 @@ export default function AdminApp() {
   const [ready, setReady] = useState(false);
   const [activeSection, setActiveSection] = useState<AdminSection>(initialSection);
   const [isSidebarExpanded, setIsSidebarExpanded] = useState<boolean>(() => {
-    try {
-      const stored = localStorage.getItem(ADMIN_SIDEBAR_EXPANDED_KEY);
-      if (stored == null) return true;
-      return stored !== '0';
-    } catch {
-      return true;
+    if (typeof window !== 'undefined' && isTabletSidebarViewport(window.innerWidth)) {
+      return false;
     }
+    return readStoredAdminSidebarPreference() ?? true;
   });
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
@@ -1147,7 +1160,16 @@ export default function AdminApp() {
 
   useEffect(() => {
     const syncSection = () => {
-      setActiveSection(getSectionFromPath(window.location.pathname));
+      const nextSection = getSectionFromPath(window.location.pathname);
+      setActiveSection(nextSection);
+
+      if (window.innerWidth < ADMIN_DESKTOP_MIN_WIDTH) {
+        setIsMobileSidebarOpen(false);
+      }
+
+      if (isTabletSidebarViewport(window.innerWidth)) {
+        setIsSidebarExpanded(false);
+      }
     };
 
     window.addEventListener('popstate', syncSection);
@@ -1157,21 +1179,30 @@ export default function AdminApp() {
   }, []);
 
   useEffect(() => {
-    try {
-      localStorage.setItem(ADMIN_SIDEBAR_EXPANDED_KEY, isSidebarExpanded ? '1' : '0');
-    } catch {
-      // Ignore persistence failures.
+    if (window.innerWidth < ADMIN_DESKTOP_MIN_WIDTH) {
+      setIsMobileSidebarOpen(false);
     }
-  }, [isSidebarExpanded]);
 
-  useEffect(() => {
-    setIsMobileSidebarOpen(false);
+    if (isTabletSidebarViewport(window.innerWidth)) {
+      setIsSidebarExpanded(false);
+    }
   }, [activeSection]);
 
   useEffect(() => {
     const handleResize = () => {
-      if (window.innerWidth >= 1024) {
+      const width = window.innerWidth;
+
+      if (width < ADMIN_DESKTOP_MIN_WIDTH) {
         setIsMobileSidebarOpen(false);
+      }
+
+      if (isTabletSidebarViewport(width)) {
+        setIsSidebarExpanded(false);
+        return;
+      }
+
+      if (width >= ADMIN_TABLET_COLLAPSE_MAX_WIDTH) {
+        setIsSidebarExpanded(readStoredAdminSidebarPreference() ?? true);
       }
     };
 
@@ -1397,19 +1428,37 @@ export default function AdminApp() {
   const navigateToSection = (section: AdminSection, replace = false) => {
     const nextPath = ADMIN_SECTION_ROUTES[section] || ADMIN_SECTION_ROUTES.dashboard;
     const nextUrl = `${nextPath}${window.location.search || ''}${window.location.hash || ''}`;
+    const currentUrl = `${window.location.pathname}${window.location.search || ''}${window.location.hash || ''}`;
 
     if (replace) {
       window.history.replaceState({}, '', nextUrl);
-    } else {
+    } else if (currentUrl !== nextUrl) {
       window.history.pushState({}, '', nextUrl);
     }
 
     setActiveSection(section);
+
+    if (window.innerWidth < ADMIN_DESKTOP_MIN_WIDTH) {
+      setIsMobileSidebarOpen(false);
+    }
+
+    if (isTabletSidebarViewport(window.innerWidth)) {
+      setIsSidebarExpanded(false);
+    }
   };
 
   const toggleSidebar = () => {
-    if (window.innerWidth >= 1024) {
-      setIsSidebarExpanded((prev) => !prev);
+    if (window.innerWidth >= ADMIN_DESKTOP_MIN_WIDTH) {
+      const nextExpanded = !isSidebarExpanded;
+      setIsSidebarExpanded(nextExpanded);
+
+      if (!isTabletSidebarViewport(window.innerWidth)) {
+        try {
+          localStorage.setItem(ADMIN_SIDEBAR_EXPANDED_KEY, nextExpanded ? '1' : '0');
+        } catch {
+          // Ignore persistence failures.
+        }
+      }
       return;
     }
     setIsMobileSidebarOpen((prev) => !prev);
