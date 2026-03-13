@@ -4348,6 +4348,7 @@ export default function AdminApp() {
               </CardHeader>
               <CardContent className="max-h-[860px] overflow-auto">
                 <Preparation
+                  showStartTestButton={false}
                   onSelectSection={(payload) => void handleSectionSelection(payload)}
                   onSelectFlatTopic={(payload) => void handleFlatTopicSelection(payload)}
                 />

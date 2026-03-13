@@ -327,6 +327,7 @@ export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
 };
 
 interface PreparationProps {
+  showStartTestButton?: boolean;
   onSelectSection?: (payload: {
     subject: SubjectKey;
     part: AcademicPart;
@@ -340,7 +341,7 @@ interface PreparationProps {
   }) => void;
 }
 
-export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationProps = {}) {
+export function Preparation({ showStartTestButton = true, onSelectSection, onSelectFlatTopic }: PreparationProps = {}) {
   const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<SubjectKey, AcademicPart | null>>({
     mathematics: null,
     physics: null,
@@ -603,7 +604,7 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
                       ))}
                     </ul>
 
-                    {!onSelectFlatTopic && selectedFlatTopic ? (
+                    {showStartTestButton && !onSelectFlatTopic && selectedFlatTopic ? (
                       <div className="mt-3 rounded-lg border border-indigo-200 bg-white p-3">
                         <p className="mb-2 text-xs text-slate-500">
                           Selected topic: <span className="font-medium text-indigo-900">{selectedFlatTopic}</span>
@@ -721,7 +722,7 @@ export function Preparation({ onSelectSection, onSelectFlatTopic }: PreparationP
                                   ))}
                                 </ul>
 
-                                {selectedSectionBySubject[subject]?.startsWith(`${chapter.id}::`) ? (
+                                {showStartTestButton && selectedSectionBySubject[subject]?.startsWith(`${chapter.id}::`) ? (
                                   <div className={`mt-3 rounded-lg border bg-white p-3 ${tone.panelSurface}`}>
                                     <p className="mb-2 text-xs text-slate-500">
                                       Selected section:{' '}
