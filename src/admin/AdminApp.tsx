@@ -1041,6 +1041,7 @@ export default function AdminApp() {
   const [query, setQuery] = useState('');
   const [form, setForm] = useState(emptyForm());
   const [selectedHierarchy, setSelectedHierarchy] = useState<SelectedHierarchy | null>(null);
+  const [isSectionEditorOpen, setIsSectionEditorOpen] = useState(false);
   const [subscriptionOverview, setSubscriptionOverview] = useState<AdminSubscriptionOverview | null>(null);
   const [subscriptionUsers, setSubscriptionUsers] = useState<AdminSubscriptionUser[]>([]);
   const [subscriptionFilter, setSubscriptionFilter] = useState('all');
@@ -4355,16 +4356,32 @@ export default function AdminApp() {
             <div className="min-w-0 space-y-4">
               <Card className="min-w-0">
                 <CardHeader>
-                  <CardTitle>Section MCQ Editor</CardTitle>
-                  <CardDescription>
-                    {selectedHierarchy
-                      ? selectedHierarchy.kind === 'section'
-                        ? `${selectedHierarchy.subject} / ${selectedHierarchy.part} / ${selectedHierarchy.chapterTitle} / ${selectedHierarchy.sectionTitle}`
-                        : `${selectedHierarchy.subject} / ${selectedHierarchy.sectionTitle}`
-                      : 'Pick a section from the syllabus browser first.'}
-                  </CardDescription>
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <CardTitle>Section MCQ Editor</CardTitle>
+                      <CardDescription>
+                        {selectedHierarchy
+                          ? selectedHierarchy.kind === 'section'
+                            ? `${selectedHierarchy.subject} / ${selectedHierarchy.part} / ${selectedHierarchy.chapterTitle} / ${selectedHierarchy.sectionTitle}`
+                            : `${selectedHierarchy.subject} / ${selectedHierarchy.sectionTitle}`
+                          : 'Pick a section from the syllabus browser first.'}
+                      </CardDescription>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setIsSectionEditorOpen((prev) => !prev)}
+                      aria-expanded={isSectionEditorOpen}
+                    >
+                      {isSectionEditorOpen ? 'Close Section MCQ Editor' : 'Open Section MCQ Editor'}
+                    </Button>
+                  </div>
                 </CardHeader>
-                <CardContent className="space-y-3">
+                <div
+                  className={`overflow-hidden transition-all duration-300 ease-in-out ${isSectionEditorOpen ? 'max-h-[2600px] opacity-100' : 'max-h-0 opacity-0'}`}
+                >
+                <CardContent className="space-y-3 border-t border-slate-200/60 pt-4 dark:border-white/10">
                   <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-3 text-xs text-indigo-800">
                     Step 1: choose subject/chapter/section from the syllabus browser. Step 2: edit or add MCQs here. Step 3: manage the selected section in the bank below.
                   </div>
@@ -4687,6 +4704,7 @@ export default function AdminApp() {
                     <Button variant="outline" onClick={resetForm}>Clear</Button>
                   </div>
                 </CardContent>
+                </div>
               </Card>
 
               <Card className="min-w-0">
