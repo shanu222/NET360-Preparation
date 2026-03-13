@@ -123,8 +123,16 @@ export async function connectMongo(uri) {
   mongoose.set('strictQuery', true);
   attachConnectionListeners();
 
-  await mongoose.connect(uri, MONGO_CONNECT_OPTIONS);
-  attachMongoClientListeners();
+  try {
+    await mongoose.connect(uri, MONGO_CONNECT_OPTIONS);
+    attachMongoClientListeners();
+  } catch (error) {
+    const name = String(error?.name || 'Error');
+    const message = String(error?.message || '').trim();
+    console.error(`[mongo] Initial connect failed: ${name}: ${message}`);
+    console.warn('[mongo] Server will continue running and retry MongoDB connection in the background.');
+    scheduleReconnect();
+  }
 
   return mongoose.connection;
 }

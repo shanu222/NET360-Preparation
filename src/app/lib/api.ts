@@ -62,6 +62,10 @@ function isPremiumSensitivePath(path: string) {
   return path.startsWith('/api/subscriptions/') || path.startsWith('/api/ai/');
 }
 
+function isAdminSensitivePath(path: string) {
+  return path.startsWith('/api/admin/') || path.startsWith('/api/stream');
+}
+
 function shouldFallbackFromHttpError(path: string, status: number, hasAuthToken: boolean) {
   if (!canFallbackToLocalMode()) {
     return false;
@@ -69,7 +73,7 @@ function shouldFallbackFromHttpError(path: string, status: number, hasAuthToken:
 
   // Do not switch premium/subscription endpoints to local mode when authenticated.
   // Mixing remote auth with local subscription state can incorrectly re-lock premium features.
-  if (hasAuthToken && isPremiumSensitivePath(path)) {
+  if (hasAuthToken && (isPremiumSensitivePath(path) || isAdminSensitivePath(path))) {
     return false;
   }
 
@@ -202,7 +206,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
     });
   } catch (error) {
     // If backend is unreachable, transparently fall back to browser-local mode.
-    if (canFallbackToLocalMode() && !(hasAuthToken && isPremiumSensitivePath(path))) {
+    if (canFallbackToLocalMode() && !(hasAuthToken && (isPremiumSensitivePath(path) || isAdminSensitivePath(path)))) {
       return localApiRequest<T>(path, options, token);
     }
     throw error;
@@ -223,7 +227,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
           } catch {
             const bodyText = await retryResponse.text().catch(() => '');
             if (isLikelyHtmlResponse(retryResponse, bodyText)) {
-              if (canFallbackToLocalMode() && !(hasAuthToken && isPremiumSensitivePath(path))) {
+              if (canFallbackToLocalMode() && !(hasAuthToken && (isPremiumSensitivePath(path) || isAdminSensitivePath(path)))) {
                 return localApiRequest<T>(path, options, token);
               }
               throw buildHtmlInsteadOfJsonError(path);
@@ -294,7 +298,7 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
     const bodyText = await response.text().catch(() => '');
     const looksHtml = isLikelyHtmlResponse(response, bodyText);
 
-    if (looksHtml && canFallbackToLocalMode() && !(hasAuthToken && isPremiumSensitivePath(path))) {
+    if (looksHtml && canFallbackToLocalMode() && !(hasAuthToken && (isPremiumSensitivePath(path) || isAdminSensitivePath(path)))) {
       return localApiRequest<T>(path, options, token);
     }
 

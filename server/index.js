@@ -10710,7 +10710,11 @@ process.on('uncaughtException', (error) => {
 async function bootstrap() {
   validateCriticalConfiguration();
   await connectMongo(MONGODB_URI);
-  await bootstrapAdminAccounts();
+  try {
+    await bootstrapAdminAccounts();
+  } catch (error) {
+    console.error('[startup] Admin bootstrap deferred because MongoDB is unavailable:', error?.message || error);
+  }
 
   await refreshNustAdmissionsCache({ force: true });
   setInterval(() => {

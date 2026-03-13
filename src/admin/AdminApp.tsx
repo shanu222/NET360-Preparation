@@ -1103,6 +1103,7 @@ export default function AdminApp() {
 
   const [authForm, setAuthForm] = useState({ email: '', password: '' });
   const [overview, setOverview] = useState<AdminOverview | null>(null);
+  const [adminLoadError, setAdminLoadError] = useState('');
   const [systemStatus, setSystemStatus] = useState<AdminSystemStatus | null>(null);
   const [isRefreshingSystemStatus, setIsRefreshingSystemStatus] = useState(false);
   const [configVariables, setConfigVariables] = useState<AdminConfigVariable[]>([]);
@@ -1584,6 +1585,10 @@ export default function AdminApp() {
     [syllabusTree],
   );
 
+  const isManualFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(String(form.subject || '').trim().toLowerCase());
+  const isBulkDeleteFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(String(bulkDeleteSubject || '').trim().toLowerCase());
+  const isBankFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(String(bankFilterSubject || '').trim().toLowerCase());
+
   const manualChapterOptions = useMemo(() => {
     const activeSubject = syllabusTree.find((item) => item.subject === form.subject);
     return (activeSubject?.chapters || []).map((chapter) => ({
@@ -1595,12 +1600,18 @@ export default function AdminApp() {
   }, [syllabusTree, form.subject]);
 
   const manualSectionOptions = useMemo(() => {
+    const activeSubject = syllabusTree.find((item) => item.subject === form.subject);
+    if (isManualFlatTopicSubject) {
+      return Array.from(
+        new Set((activeSubject?.chapters || []).flatMap((item) => item.sections || []).filter(Boolean)),
+      ).sort((a, b) => a.localeCompare(b));
+    }
+
     const chapter = manualChapterOptions.find((item) => item.value === uploadChapterKey);
     if (!chapter) return [];
-    const activeSubject = syllabusTree.find((item) => item.subject === form.subject);
     const subjectChapter = (activeSubject?.chapters || []).find((item) => item.key === chapter.value);
     return Array.from(new Set((subjectChapter?.sections || []).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  }, [syllabusTree, form.subject, uploadChapterKey, manualChapterOptions]);
+  }, [syllabusTree, form.subject, uploadChapterKey, manualChapterOptions, isManualFlatTopicSubject]);
 
   const deleteSubjectOptions = manualSubjectOptions;
 
@@ -1616,9 +1627,14 @@ export default function AdminApp() {
 
   const deleteSectionOptions = useMemo(() => {
     const activeSubject = syllabusTree.find((item) => item.subject === bulkDeleteSubject);
+    if (isBulkDeleteFlatTopicSubject) {
+      return Array.from(
+        new Set((activeSubject?.chapters || []).flatMap((item) => item.sections || []).filter(Boolean)),
+      ).sort((a, b) => a.localeCompare(b));
+    }
     const chapter = (activeSubject?.chapters || []).find((item) => item.key === bulkDeleteChapterKey);
     return Array.from(new Set((chapter?.sections || []).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  }, [syllabusTree, bulkDeleteSubject, bulkDeleteChapterKey]);
+  }, [syllabusTree, bulkDeleteSubject, bulkDeleteChapterKey, isBulkDeleteFlatTopicSubject]);
 
   const bankSubjectOptions = manualSubjectOptions;
 
@@ -1634,9 +1650,14 @@ export default function AdminApp() {
 
   const bankSectionOptions = useMemo(() => {
     const activeSubject = syllabusTree.find((item) => item.subject === bankFilterSubject);
+    if (isBankFlatTopicSubject) {
+      return Array.from(
+        new Set((activeSubject?.chapters || []).flatMap((item) => item.sections || []).filter(Boolean)),
+      ).sort((a, b) => a.localeCompare(b));
+    }
     const chapter = (activeSubject?.chapters || []).find((item) => item.key === bankFilterChapterKey);
     return Array.from(new Set((chapter?.sections || []).filter(Boolean))).sort((a, b) => a.localeCompare(b));
-  }, [syllabusTree, bankFilterSubject, bankFilterChapterKey]);
+  }, [syllabusTree, bankFilterSubject, bankFilterChapterKey, isBankFlatTopicSubject]);
 
   const authToken = token;
 
@@ -2043,9 +2064,14 @@ export default function AdminApp() {
     async function bootstrap() {
       try {
         await loadAdminData(currentToken);
+        if (!cancelled) {
+          setAdminLoadError('');
+        }
       } catch (error) {
         if (!cancelled) {
           const status = Number((error as { status?: number } | null)?.status || 0);
+          const message = error instanceof Error ? error.message : 'Could not load admin data.';
+          console.error('Admin data load failed:', error);
           const shouldTryRefresh = Boolean(currentRefreshToken) && (status === 401 || status === 403);
 
           if (shouldTryRefresh && currentRefreshToken) {
@@ -2065,6 +2091,9 @@ export default function AdminApp() {
               localStorage.setItem(TOKEN_KEY, refreshed.token);
               localStorage.setItem(REFRESH_TOKEN_KEY, refreshed.refreshToken);
               await loadAdminData(refreshed.token);
+              if (!cancelled) {
+                setAdminLoadError('');
+              }
               return;
             } catch {
               clearAdminSession();
@@ -2075,6 +2104,7 @@ export default function AdminApp() {
           if (status === 401 || status === 403) {
             clearAdminSession();
           } else {
+            setAdminLoadError(message);
             toast.error('Could not load admin data. Please try refreshing again.');
           }
         }
@@ -2121,7 +2151,13 @@ export default function AdminApp() {
 
       source.addEventListener('sync', () => {
         if (document.hidden) return;
-        void loadAdminData(authToken).catch(() => undefined);
+        void loadAdminData(authToken)
+          .then(() => setAdminLoadError(''))
+          .catch((error) => {
+            const message = error instanceof Error ? error.message : 'Could not refresh admin data.';
+            console.error('Admin data refresh failed:', error);
+            setAdminLoadError(message);
+          });
       });
 
       source.addEventListener('heartbeat', () => {
@@ -3227,6 +3263,7 @@ export default function AdminApp() {
     if (!authToken) return;
 
     const subject = String(bulkDeleteSubject || '').trim().toLowerCase();
+    const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(subject);
     const chapter = String(bulkDeleteChapter || '').trim();
     const sectionOrTopic = String(bulkDeleteSectionOrTopic || '').trim();
 
@@ -3235,7 +3272,7 @@ export default function AdminApp() {
       return;
     }
 
-    if (bulkDeleteMode === 'chapter' && (!subject || !chapter)) {
+    if (bulkDeleteMode === 'chapter' && !isFlatTopicSubject && (!subject || !chapter)) {
       toast.error('Subject and chapter are required for chapter-level deletion.');
       return;
     }
@@ -3250,7 +3287,7 @@ export default function AdminApp() {
         ? 'all MCQs in the application'
         : bulkDeleteMode === 'subject'
           ? `all MCQs in subject "${subject}"`
-          : bulkDeleteMode === 'chapter'
+          : bulkDeleteMode === 'chapter' && !isFlatTopicSubject
             ? `all MCQs in chapter "${chapter}" under subject "${subject}"`
             : `all MCQs in section/topic "${sectionOrTopic}"${chapter ? ` under chapter "${chapter}"` : ''} and subject "${subject}"`;
 
@@ -3264,9 +3301,9 @@ export default function AdminApp() {
         {
           method: 'POST',
           body: JSON.stringify({
-            mode: bulkDeleteMode,
+            mode: bulkDeleteMode === 'chapter' && isFlatTopicSubject ? 'section-topic' : bulkDeleteMode,
             subject,
-            chapter,
+            chapter: isFlatTopicSubject ? '' : chapter,
             sectionOrTopic,
           }),
         },
@@ -4036,6 +4073,14 @@ export default function AdminApp() {
               </div>
             </div>
           </header>
+
+          {adminLoadError ? (
+            <Card className="border-rose-300 bg-rose-50/90 dark:border-rose-400/40 dark:bg-rose-500/10">
+              <CardContent className="py-3 text-sm text-rose-800 dark:text-rose-200">
+                Admin data failed to load from backend: {adminLoadError}
+              </CardContent>
+            </Card>
+          ) : null}
 
           {activeSection === 'dashboard' ? (
             <>
@@ -4904,10 +4949,15 @@ export default function AdminApp() {
                           <Select
                             value={bulkDeleteSubject}
                             onValueChange={(value) => {
+                              const normalized = String(value || '').trim().toLowerCase();
+                              const isFlatTopic = FLAT_TOPIC_SUBJECTS.has(normalized);
                               setBulkDeleteSubject(value);
                               setBulkDeleteChapterKey('');
                               setBulkDeleteChapter('');
                               setBulkDeleteSectionOrTopic('');
+                              if (isFlatTopic && bulkDeleteMode === 'chapter') {
+                                setBulkDeleteMode('section-topic');
+                              }
                             }}
                           >
                             <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
@@ -4921,7 +4971,7 @@ export default function AdminApp() {
                       ) : null}
                     </div>
 
-                    {(bulkDeleteMode === 'chapter' || bulkDeleteMode === 'section-topic') && bulkDeleteSubject ? (
+                    {(bulkDeleteMode === 'chapter' || bulkDeleteMode === 'section-topic') && bulkDeleteSubject && !isBulkDeleteFlatTopicSubject ? (
                       <div className="space-y-1.5">
                         <Label>Chapter</Label>
                         <Select
@@ -4944,12 +4994,12 @@ export default function AdminApp() {
                       </div>
                     ) : null}
 
-                    {bulkDeleteMode === 'section-topic' && bulkDeleteSubject && bulkDeleteChapter ? (
+                    {bulkDeleteMode === 'section-topic' && bulkDeleteSubject && (isBulkDeleteFlatTopicSubject || bulkDeleteChapter) ? (
                       <div className="space-y-1.5">
                         <Label>Section / Topic</Label>
                         <Select
                           value={bulkDeleteSectionOrTopic}
-                          disabled={!bulkDeleteChapterKey}
+                          disabled={isBulkDeleteFlatTopicSubject ? !bulkDeleteSubject : !bulkDeleteChapterKey}
                           onValueChange={setBulkDeleteSectionOrTopic}
                         >
                           <SelectTrigger><SelectValue placeholder="Select section/topic" /></SelectTrigger>
@@ -5175,7 +5225,14 @@ export default function AdminApp() {
                                   value={form.subject}
                                   onValueChange={(value) => {
                                     setUploadChapterKey('');
-                                    setForm((prev) => ({ ...prev, subject: value, part: '', chapter: '', section: '', topic: '' }));
+                                    setForm((prev) => ({
+                                      ...prev,
+                                      subject: value,
+                                      part: '',
+                                      chapter: '',
+                                      section: '',
+                                      topic: '',
+                                    }));
                                   }}
                                 >
                                   <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
@@ -5186,7 +5243,7 @@ export default function AdminApp() {
                                   </SelectContent>
                                 </Select>
                               </div>
-                              {form.subject ? (
+                              {form.subject && !isManualFlatTopicSubject ? (
                                 <div className="space-y-1.5">
                                   <Label>Chapter</Label>
                                   <Select
@@ -5213,12 +5270,12 @@ export default function AdminApp() {
                                   </Select>
                                 </div>
                               ) : null}
-                              {form.subject && form.chapter ? (
+                              {form.subject && (isManualFlatTopicSubject || form.chapter) ? (
                                 <div className="space-y-1.5">
                                   <Label>Section / Topic</Label>
                                   <Select
                                     value={form.section}
-                                    disabled={!uploadChapterKey}
+                                    disabled={isManualFlatTopicSubject ? !form.subject : !uploadChapterKey}
                                     onValueChange={(value) => setForm((prev) => ({ ...prev, section: value, topic: value }))}
                                   >
                                     <SelectTrigger><SelectValue placeholder="Select section/topic" /></SelectTrigger>
@@ -5566,33 +5623,44 @@ export default function AdminApp() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-1.5">
-                      <Label>Chapter</Label>
-                      <Select
-                        value={bankFilterChapterKey}
-                        disabled={!bankFilterSubject}
-                        onValueChange={(value) => {
-                          setBankFilterChapterKey(value);
-                          setBankFilterSection('');
-                          setSelectedHierarchy(null);
-                          setMcqs([]);
-                        }}
-                      >
-                        <SelectTrigger><SelectValue placeholder="Select chapter" /></SelectTrigger>
-                        <SelectContent>
-                          {bankChapterOptions.map((item) => (
-                            <SelectItem key={`bank-chapter-${item.value}`} value={item.value}>{item.label}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
+                    {!isBankFlatTopicSubject ? (
+                      <div className="space-y-1.5">
+                        <Label>Chapter</Label>
+                        <Select
+                          value={bankFilterChapterKey}
+                          disabled={!bankFilterSubject}
+                          onValueChange={(value) => {
+                            setBankFilterChapterKey(value);
+                            setBankFilterSection('');
+                            setSelectedHierarchy(null);
+                            setMcqs([]);
+                          }}
+                        >
+                          <SelectTrigger><SelectValue placeholder="Select chapter" /></SelectTrigger>
+                          <SelectContent>
+                            {bankChapterOptions.map((item) => (
+                              <SelectItem key={`bank-chapter-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
                     <div className="space-y-1.5">
                       <Label>Section / Topic</Label>
                       <Select
                         value={bankFilterSection}
-                        disabled={!bankFilterChapterKey}
+                        disabled={isBankFlatTopicSubject ? !bankFilterSubject : !bankFilterChapterKey}
                         onValueChange={(value) => {
                           setBankFilterSection(value);
+                          if (isBankFlatTopicSubject) {
+                            if (!authToken) return;
+                            void handleFlatTopicSelection({
+                              tabKey: bankFilterSubject as 'quantitative-mathematics' | 'design-aptitude',
+                              subject: bankFilterSubject as 'quantitative-mathematics' | 'design-aptitude',
+                              topicTitle: value,
+                            });
+                            return;
+                          }
                           const selectedChapter = bankChapterOptions.find((item) => item.value === bankFilterChapterKey);
                           if (!selectedChapter || !authToken) return;
                           const selectedPart = selectedChapter.part === 'part1' || selectedChapter.part === 'part2'
