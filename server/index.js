@@ -4856,7 +4856,15 @@ app.post('/api/auth/login', async (req, res) => {
       return;
     }
 
-    const role = user.role || 'student';
+    let role = user.role || 'student';
+    // Keep admin access resilient when ADMIN_EMAILS is configured after initial account creation.
+    if (role !== 'admin' && ADMIN_EMAILS.includes(email)) {
+      user.role = 'admin';
+      user.updatedAt = new Date();
+      await user.save();
+      role = 'admin';
+    }
+
     if (role === 'student') {
       const activeSession = user.activeSession || null;
       if (activeSession && activeSession.deviceId && activeSession.deviceId !== deviceId && !forceLogoutOtherDevice) {
