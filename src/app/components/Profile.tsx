@@ -4,18 +4,16 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Popover, PopoverContent, PopoverTrigger } from './ui/popover';
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from './ui/command';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { Apple, Award, Bot, Check, ChevronDown, ChevronUp, ChevronsUpDown, Copy, FlaskConical, GraduationCap, Loader2, LogOut, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
+import { Apple, Award, Bot, ChevronDown, ChevronUp, Copy, FlaskConical, GraduationCap, Loader2, LogOut, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
 import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK, PAYMENT_METHODS } from '../lib/paymentMethods';
-import { NET_ENGINEERING_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
+import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 
 const ADVERTISEMENT_PREVIEW_SRC = '/advertisement-page.webp';
 const BRAND_LOGO_SRC = '/net360-logo.png';
@@ -85,10 +83,9 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isPersonalInfoExpanded, setIsPersonalInfoExpanded] = useState(true);
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
-  const [isTargetProgramOpen, setIsTargetProgramOpen] = useState(false);
   const [isSavingTargetProgram, setIsSavingTargetProgram] = useState(false);
 
-  const targetProgramOptions = useMemo(() => NET_ENGINEERING_TARGET_PROGRAM_OPTIONS, []);
+  const targetProgramOptions = useMemo(() => NET_TARGET_PROGRAM_OPTIONS, []);
   const selectedTargetProgramLabel =
     targetProgramOptions.find((option) => option.value === localProfile.targetProgram)?.label ||
     LEGACY_TARGET_PROGRAM_LABELS[String(localProfile.targetProgram || '').toLowerCase()] ||
@@ -411,12 +408,10 @@ export function Profile({ onNavigate }: ProfileProps) {
 
     const previousProgram = String(localProfile.targetProgram || '');
     if (previousProgram === targetProgram) {
-      setIsTargetProgramOpen(false);
       return;
     }
 
     setLocalProfile((previous) => ({ ...previous, targetProgram }));
-    setIsTargetProgramOpen(false);
     setIsSavingTargetProgram(true);
 
     try {
@@ -1188,51 +1183,29 @@ export function Profile({ onNavigate }: ProfileProps) {
           <div className="grid md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="target-program">Target Program</Label>
-              <Popover open={isTargetProgramOpen} onOpenChange={setIsTargetProgramOpen}>
-                <PopoverTrigger asChild>
-                  <Button
-                    id="target-program"
-                    type="button"
-                    variant="outline"
-                    role="combobox"
-                    aria-expanded={isTargetProgramOpen}
-                    className="h-10 w-full justify-between"
-                    disabled={isSavingTargetProgram}
-                  >
-                    <span className="truncate text-left">{selectedTargetProgramLabel || 'Select program'}</span>
-                    {isSavingTargetProgram ? (
-                      <Loader2 className="ml-2 h-4 w-4 shrink-0 animate-spin opacity-60" />
-                    ) : (
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-60" />
-                    )}
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-                  <Command>
-                    <CommandInput placeholder="Search programs..." />
-                    <CommandList>
-                      <CommandEmpty>No program found.</CommandEmpty>
-                      <CommandGroup heading="Engineering & Computing Programs">
-                        {targetProgramOptions.map((option) => (
-                          <CommandItem
-                            key={`${option.category}-${option.value}`}
-                            value={`${option.label} ${option.category}`}
-                            onSelect={() => {
-                              void handleTargetProgramSelect(option.value);
-                            }}
-                          >
-                            <Check
-                              className={`mr-2 h-4 w-4 ${localProfile.targetProgram === option.value ? 'opacity-100' : 'opacity-0'}`}
-                            />
-                            <span className="truncate">{option.label}</span>
-                            <span className="ml-auto text-xs text-muted-foreground">{option.category}</span>
-                          </CommandItem>
-                        ))}
-                      </CommandGroup>
-                    </CommandList>
-                  </Command>
-                </PopoverContent>
-              </Popover>
+              <Select
+                value={localProfile.targetProgram || undefined}
+                onValueChange={(value) => {
+                  void handleTargetProgramSelect(value);
+                }}
+                disabled={isSavingTargetProgram}
+              >
+                <SelectTrigger id="target-program" className="h-10">
+                  <SelectValue placeholder="Select program" />
+                </SelectTrigger>
+                <SelectContent className="max-h-80">
+                  {targetProgramOptions.map((option) => (
+                    <SelectItem key={`${option.category}-${option.value}`} value={option.value}>
+                      {option.label} ({option.category})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {isSavingTargetProgram ? (
+                <p className="inline-flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Saving target program...
+                </p>
+              ) : null}
             </div>
 
             <div className="space-y-2">
