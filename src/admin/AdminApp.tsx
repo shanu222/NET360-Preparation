@@ -1042,6 +1042,7 @@ export default function AdminApp() {
   const [form, setForm] = useState(emptyForm());
   const [selectedHierarchy, setSelectedHierarchy] = useState<SelectedHierarchy | null>(null);
   const [isSectionEditorOpen, setIsSectionEditorOpen] = useState(false);
+  const [isUploadMcqsOpen, setIsUploadMcqsOpen] = useState(false);
   const [subscriptionOverview, setSubscriptionOverview] = useState<AdminSubscriptionOverview | null>(null);
   const [subscriptionUsers, setSubscriptionUsers] = useState<AdminSubscriptionUser[]>([]);
   const [subscriptionFilter, setSubscriptionFilter] = useState('all');
@@ -4448,155 +4449,263 @@ export default function AdminApp() {
                     </div>
                   </div>
 
-                  {selectedHierarchy?.kind === 'flat-topic' ? (
-                    <div className="grid gap-3 md:grid-cols-2">
-                      <div className="space-y-1.5">
-                        <Label>Subject</Label>
-                        <Input value={form.subject} readOnly />
+                  <div className="space-y-3 rounded-lg border border-indigo-200/70 bg-indigo-50/25 p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm font-medium text-indigo-900">Upload MCQs</p>
+                        <p className="text-xs text-muted-foreground">Subject, question, options, media, answer, and explanation controls.</p>
                       </div>
-                      <div className="space-y-1.5">
-                        <Label>Topic</Label>
-                        <Input value={form.topic || form.section} readOnly />
-                      </div>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setIsUploadMcqsOpen((prev) => !prev)}
+                        aria-expanded={isUploadMcqsOpen}
+                      >
+                        {isUploadMcqsOpen ? 'Close Upload MCQs' : 'Open Upload MCQs'}
+                      </Button>
                     </div>
-                  ) : (
-                    <>
-                      <div className="grid gap-3 md:grid-cols-2">
-                        <div className="space-y-1.5">
-                          <Label>Subject</Label>
-                          <Input value={form.subject} readOnly />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label>Part</Label>
-                          <Input value={form.part} readOnly />
-                        </div>
-                      </div>
 
-                      <div className="grid gap-3 md:grid-cols-2">
+                    <div
+                      className={`overflow-hidden transition-all duration-300 ease-in-out ${isUploadMcqsOpen ? 'max-h-[2200px] opacity-100' : 'max-h-0 opacity-0'}`}
+                    >
+                      <div className="space-y-3 border-t border-indigo-200/70 pt-3 dark:border-indigo-300/20">
+                        {selectedHierarchy?.kind === 'flat-topic' ? (
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="space-y-1.5">
+                              <Label>Subject</Label>
+                              <Input value={form.subject} readOnly />
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Topic</Label>
+                              <Input value={form.topic || form.section} readOnly />
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="space-y-1.5">
+                                <Label>Subject</Label>
+                                <Input value={form.subject} readOnly />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label>Part</Label>
+                                <Input value={form.part} readOnly />
+                              </div>
+                            </div>
+
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="space-y-1.5">
+                                <Label>Chapter</Label>
+                                <Input value={form.chapter} readOnly />
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label>Section</Label>
+                                <Input value={form.section} readOnly />
+                              </div>
+                            </div>
+                          </>
+                        )}
+
                         <div className="space-y-1.5">
-                          <Label>Chapter</Label>
-                          <Input value={form.chapter} readOnly />
+                          <Label>Question</Label>
+                          <Textarea
+                            value={form.question}
+                            onChange={(e) => setForm((prev) => ({ ...prev, question: e.target.value }))}
+                            className="min-h-[95px]"
+                          />
                         </div>
+
                         <div className="space-y-1.5">
-                          <Label>Section</Label>
-                          <Input value={form.section} readOnly />
+                          <Label htmlFor="mcq-question-image-upload">Question Image (optional)</Label>
+                          <Input
+                            id="mcq-question-image-upload"
+                            type="file"
+                            accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] || null;
+                              if (!file) return;
+                              if (!isSupportedMcqImage(file)) {
+                                toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
+                                e.currentTarget.value = '';
+                                return;
+                              }
+                              if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                toast.error('Image is too large. Maximum size is 5 MB.');
+                                e.currentTarget.value = '';
+                                return;
+                              }
+                              void fileToMcqImage(file)
+                                .then((image) => setForm((prev) => ({ ...prev, questionImage: image })))
+                                .catch(() => toast.error('Could not read selected image.'));
+                              e.currentTarget.value = '';
+                            }}
+                          />
+                          {form.questionImage ? (
+                            <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
+                              <span>{form.questionImage.name}</span>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setForm((prev) => ({ ...prev, questionImage: null }))}
+                              >
+                                Remove
+                              </Button>
+                            </div>
+                          ) : null}
                         </div>
-                      </div>
-                    </>
-                  )}
 
-                  <div className="space-y-1.5">
-                    <Label>Question</Label>
-                    <Textarea
-                      value={form.question}
-                      onChange={(e) => setForm((prev) => ({ ...prev, question: e.target.value }))}
-                      className="min-h-[95px]"
-                    />
-                  </div>
+                        <div className="space-y-2">
+                          <Label>Options (text and/or image)</Label>
+                          <div className="space-y-2">
+                            {form.optionMedia.map((option, optionIdx) => (
+                              <div key={`option-${option.key}`} className="space-y-2 rounded-md border p-2">
+                                <div className="grid gap-2 md:grid-cols-[80px_1fr] md:items-center">
+                                  <Label>Option {option.key}</Label>
+                                  <Input
+                                    value={option.text}
+                                    placeholder={`Option ${option.key} text`}
+                                    onChange={(e) => {
+                                      const nextValue = e.target.value;
+                                      setForm((prev) => {
+                                        const optionMedia = [...prev.optionMedia];
+                                        optionMedia[optionIdx] = { ...optionMedia[optionIdx], text: nextValue };
+                                        return { ...prev, optionMedia };
+                                      });
+                                    }}
+                                  />
+                                </div>
+                                <div className="space-y-1.5">
+                                  <Input
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0] || null;
+                                      if (!file) return;
+                                      if (!isSupportedMcqImage(file)) {
+                                        toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
+                                        e.currentTarget.value = '';
+                                        return;
+                                      }
+                                      if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                        toast.error('Image is too large. Maximum size is 5 MB.');
+                                        e.currentTarget.value = '';
+                                        return;
+                                      }
+                                      void fileToMcqImage(file)
+                                        .then((image) => {
+                                          setForm((prev) => {
+                                            const optionMedia = [...prev.optionMedia];
+                                            optionMedia[optionIdx] = { ...optionMedia[optionIdx], image };
+                                            return { ...prev, optionMedia };
+                                          });
+                                        })
+                                        .catch(() => toast.error('Could not read selected image.'));
+                                      e.currentTarget.value = '';
+                                    }}
+                                  />
+                                  {option.image ? (
+                                    <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
+                                      <span>{option.image.name}</span>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => {
+                                          setForm((prev) => {
+                                            const optionMedia = [...prev.optionMedia];
+                                            optionMedia[optionIdx] = { ...optionMedia[optionIdx], image: null };
+                                            return { ...prev, optionMedia };
+                                          });
+                                        }}
+                                      >
+                                        Remove
+                                      </Button>
+                                    </div>
+                                  ) : null}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
 
-                  <div className="space-y-1.5">
-                    <Label htmlFor="mcq-question-image-upload">Question Image (optional)</Label>
-                    <Input
-                      id="mcq-question-image-upload"
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0] || null;
-                        if (!file) return;
-                        if (!isSupportedMcqImage(file)) {
-                          toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
-                          e.currentTarget.value = '';
-                          return;
-                        }
-                        if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                          toast.error('Image is too large. Maximum size is 5 MB.');
-                          e.currentTarget.value = '';
-                          return;
-                        }
-                        void fileToMcqImage(file)
-                          .then((image) => setForm((prev) => ({ ...prev, questionImage: image })))
-                          .catch(() => toast.error('Could not read selected image.'));
-                        e.currentTarget.value = '';
-                      }}
-                    />
-                    {form.questionImage ? (
-                      <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
-                        <span>{form.questionImage.name}</span>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setForm((prev) => ({ ...prev, questionImage: null }))}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Options (text and/or image)</Label>
-                    <div className="space-y-2">
-                      {form.optionMedia.map((option, optionIdx) => (
-                        <div key={`option-${option.key}`} className="space-y-2 rounded-md border p-2">
-                          <div className="grid gap-2 md:grid-cols-[80px_1fr] md:items-center">
-                            <Label>Option {option.key}</Label>
-                            <Input
-                              value={option.text}
-                              placeholder={`Option ${option.key} text`}
-                              onChange={(e) => {
-                                const nextValue = e.target.value;
-                                setForm((prev) => {
-                                  const optionMedia = [...prev.optionMedia];
-                                  optionMedia[optionIdx] = { ...optionMedia[optionIdx], text: nextValue };
-                                  return { ...prev, optionMedia };
-                                });
-                              }}
-                            />
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div className="space-y-1.5">
+                            <Label>Correct Answer</Label>
+                            <Input value={form.answer} onChange={(e) => setForm((prev) => ({ ...prev, answer: e.target.value }))} />
                           </div>
                           <div className="space-y-1.5">
-                            <Input
-                              type="file"
-                              accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0] || null;
-                                if (!file) return;
-                                if (!isSupportedMcqImage(file)) {
-                                  toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
-                                  e.currentTarget.value = '';
-                                  return;
-                                }
-                                if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                                  toast.error('Image is too large. Maximum size is 5 MB.');
-                                  e.currentTarget.value = '';
-                                  return;
-                                }
-                                void fileToMcqImage(file)
-                                  .then((image) => {
-                                    setForm((prev) => {
-                                      const optionMedia = [...prev.optionMedia];
-                                      optionMedia[optionIdx] = { ...optionMedia[optionIdx], image };
-                                      return { ...prev, optionMedia };
-                                    });
-                                  })
-                                  .catch(() => toast.error('Could not read selected image.'));
-                                e.currentTarget.value = '';
-                              }}
+                            <Label>Difficulty</Label>
+                            <Select value={form.difficulty} onValueChange={(value) => setForm((prev) => ({ ...prev, difficulty: value }))}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="Easy">Easy</SelectItem>
+                                <SelectItem value="Medium">Medium</SelectItem>
+                                <SelectItem value="Hard">Hard</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3 rounded-lg border border-indigo-200 bg-indigo-50/30 p-3">
+                          <p className="text-sm font-medium text-indigo-900">Explanation / Short Trick (optional)</p>
+
+                          <div className="space-y-1.5">
+                            <Label>Text</Label>
+                            <Textarea
+                              value={form.explanationText}
+                              onChange={(e) => setForm((prev) => ({ ...prev, explanationText: e.target.value, shortTrickText: '' }))}
+                              className="min-h-[110px]"
+                              placeholder="Write explanation, short trick, formula, steps, or reasoning"
                             />
-                            {option.image ? (
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <Label>Image</Label>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => explanationImageInputRef.current?.click()}
+                              >
+                                Upload Image
+                              </Button>
+                              <Input
+                                ref={explanationImageInputRef}
+                                type="file"
+                                className="hidden"
+                                accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0] || null;
+                                  if (!file) return;
+                                  if (!isSupportedMcqImage(file)) {
+                                    toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                    e.currentTarget.value = '';
+                                    return;
+                                  }
+                                  if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                    toast.error('Image is too large. Maximum size is 5 MB.');
+                                    e.currentTarget.value = '';
+                                    return;
+                                  }
+                                  void fileToMcqImage(file)
+                                    .then((image) => setForm((prev) => ({ ...prev, explanationImage: image, shortTrickImage: null })))
+                                    .catch(() => toast.error('Could not read selected image.'));
+                                  e.currentTarget.value = '';
+                                }}
+                              />
+                              <p className="text-xs text-muted-foreground">Supported: JPG, PNG, WEBP, SVG, GIF</p>
+                            </div>
+
+                            {form.explanationImage ? (
                               <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
-                                <span>{option.image.name}</span>
+                                <span>{form.explanationImage.name}</span>
                                 <Button
                                   type="button"
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => {
-                                    setForm((prev) => {
-                                      const optionMedia = [...prev.optionMedia];
-                                      optionMedia[optionIdx] = { ...optionMedia[optionIdx], image: null };
-                                      return { ...prev, optionMedia };
-                                    });
-                                  }}
+                                  onClick={() => setForm((prev) => ({ ...prev, explanationImage: null }))}
                                 >
                                   Remove
                                 </Button>
@@ -4604,104 +4713,20 @@ export default function AdminApp() {
                             ) : null}
                           </div>
                         </div>
-                      ))}
-                    </div>
-                  </div>
 
-                  <div className="grid gap-3 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label>Correct Answer</Label>
-                      <Input value={form.answer} onChange={(e) => setForm((prev) => ({ ...prev, answer: e.target.value }))} />
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Difficulty</Label>
-                      <Select value={form.difficulty} onValueChange={(value) => setForm((prev) => ({ ...prev, difficulty: value }))}>
-                        <SelectTrigger><SelectValue /></SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="Easy">Easy</SelectItem>
-                          <SelectItem value="Medium">Medium</SelectItem>
-                          <SelectItem value="Hard">Hard</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
-
-                  <div className="space-y-3 rounded-lg border border-indigo-200 bg-indigo-50/30 p-3">
-                    <p className="text-sm font-medium text-indigo-900">Explanation / Short Trick (optional)</p>
-
-                    <div className="space-y-1.5">
-                      <Label>Text</Label>
-                      <Textarea
-                        value={form.explanationText}
-                        onChange={(e) => setForm((prev) => ({ ...prev, explanationText: e.target.value, shortTrickText: '' }))}
-                        className="min-h-[110px]"
-                        placeholder="Write explanation, short trick, formula, steps, or reasoning"
-                      />
-                    </div>
-
-                    <div className="space-y-1.5">
-                      <Label>Image</Label>
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          onClick={() => explanationImageInputRef.current?.click()}
-                        >
-                          Upload Image
-                        </Button>
-                        <Input
-                          ref={explanationImageInputRef}
-                          type="file"
-                          className="hidden"
-                          accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0] || null;
-                            if (!file) return;
-                            if (!isSupportedMcqImage(file)) {
-                              toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
-                              e.currentTarget.value = '';
-                              return;
-                            }
-                            if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                              toast.error('Image is too large. Maximum size is 5 MB.');
-                              e.currentTarget.value = '';
-                              return;
-                            }
-                            void fileToMcqImage(file)
-                              .then((image) => setForm((prev) => ({ ...prev, explanationImage: image, shortTrickImage: null })))
-                              .catch(() => toast.error('Could not read selected image.'));
-                            e.currentTarget.value = '';
-                          }}
-                        />
-                        <p className="text-xs text-muted-foreground">Supported: JPG, PNG, WEBP, SVG, GIF</p>
-                      </div>
-
-                      {form.explanationImage ? (
-                        <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
-                          <span>{form.explanationImage.name}</span>
-                          <Button
-                            type="button"
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setForm((prev) => ({ ...prev, explanationImage: null }))}
-                          >
-                            Remove
+                        <div className="flex flex-wrap gap-2">
+                          <Button onClick={() => void saveMcq()} disabled={!selectedHierarchy || isSavingMcq}>
+                            {isSavingMcq ? (
+                              <>
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                Saving...
+                              </>
+                            ) : form.id ? 'Update MCQ' : 'Add MCQs'}
                           </Button>
+                          <Button variant="outline" onClick={resetForm}>Clear</Button>
                         </div>
-                      ) : null}
+                      </div>
                     </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-2">
-                    <Button onClick={() => void saveMcq()} disabled={!selectedHierarchy || isSavingMcq}>
-                      {isSavingMcq ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Saving...
-                        </>
-                      ) : form.id ? 'Update MCQ' : 'Add MCQs'}
-                    </Button>
-                    <Button variant="outline" onClick={resetForm}>Clear</Button>
                   </div>
                 </CardContent>
                 </div>
