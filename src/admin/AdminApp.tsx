@@ -11,13 +11,17 @@ import {
   Gauge,
   LayoutDashboard,
   Loader2,
+  Menu,
   MessageSquare,
+  PanelLeftClose,
+  PanelLeftOpen,
   RefreshCw,
   Settings,
   ShieldAlert,
   Sparkles,
   UserCog,
   Users,
+  X,
   type LucideIcon,
 } from 'lucide-react';
 import { apiRequest, buildApiUrl } from '../app/lib/api';
@@ -25,7 +29,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ap
 import { Button } from '../app/components/ui/button';
 import { Input } from '../app/components/ui/input';
 import { Label } from '../app/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '../app/components/ui/tabs';
+import { Tabs, TabsContent } from '../app/components/ui/tabs';
 import { Badge } from '../app/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../app/components/ui/select';
 import { Textarea } from '../app/components/ui/textarea';
@@ -55,6 +59,7 @@ const ADMIN_SUPPORT_DESKTOP_ALERTS_KEY = 'net360-support-desktop-alerts-admin';
 const ADMIN_SUPPORT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
 const ADMIN_SUPPORT_ATTACHMENT_ACCEPT = '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp,.svg';
 const ADMIN_SUPPORT_REACTIONS = ['😀', '🙏', '👍', '❤️', '✅'];
+const ADMIN_SIDEBAR_EXPANDED_KEY = 'net360-admin-sidebar-expanded';
 
 type SelectedHierarchy =
   | {
@@ -961,6 +966,16 @@ export default function AdminApp() {
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
   const [activeSection, setActiveSection] = useState<AdminSection>(initialSection);
+  const [isSidebarExpanded, setIsSidebarExpanded] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(ADMIN_SIDEBAR_EXPANDED_KEY);
+      if (stored == null) return true;
+      return stored !== '0';
+    } catch {
+      return true;
+    }
+  });
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   const [authForm, setAuthForm] = useState({ email: '', password: '' });
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -1139,6 +1154,29 @@ export default function AdminApp() {
     return () => {
       window.removeEventListener('popstate', syncSection);
     };
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(ADMIN_SIDEBAR_EXPANDED_KEY, isSidebarExpanded ? '1' : '0');
+    } catch {
+      // Ignore persistence failures.
+    }
+  }, [isSidebarExpanded]);
+
+  useEffect(() => {
+    setIsMobileSidebarOpen(false);
+  }, [activeSection]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth >= 1024) {
+        setIsMobileSidebarOpen(false);
+      }
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
 
   const practiceBankVisibleQuestions = useMemo(() => {
@@ -1367,6 +1405,14 @@ export default function AdminApp() {
     }
 
     setActiveSection(section);
+  };
+
+  const toggleSidebar = () => {
+    if (window.innerWidth >= 1024) {
+      setIsSidebarExpanded((prev) => !prev);
+      return;
+    }
+    setIsMobileSidebarOpen((prev) => !prev);
   };
 
   useEffect(() => {
@@ -3307,59 +3353,82 @@ export default function AdminApp() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-[#08122d] via-[#2a1c59] to-[#06393f] text-slate-100">
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(56,189,248,0.18),transparent_38%),radial-gradient(circle_at_80%_10%,rgba(168,85,247,0.26),transparent_36%),radial-gradient(circle_at_75%_78%,rgba(45,212,191,0.22),transparent_42%)]" />
+    <div className="min-h-screen bg-gradient-to-br from-slate-100 via-cyan-50 to-indigo-100 text-slate-900 transition-colors dark:from-[#060b1b] dark:via-[#1b1642] dark:to-[#062a33] dark:text-slate-100">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_16%_18%,rgba(56,189,248,0.16),transparent_40%),radial-gradient(circle_at_80%_10%,rgba(99,102,241,0.18),transparent_35%),radial-gradient(circle_at_78%_80%,rgba(20,184,166,0.14),transparent_40%)] dark:bg-[radial-gradient(circle_at_15%_20%,rgba(56,189,248,0.18),transparent_38%),radial-gradient(circle_at_80%_10%,rgba(168,85,247,0.26),transparent_36%),radial-gradient(circle_at_75%_78%,rgba(45,212,191,0.22),transparent_42%)]" />
 
-      <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 border-r border-white/15 bg-slate-950/45 p-5 backdrop-blur-xl lg:block">
-        <div className="mb-6">
-          <h1 className="text-2xl font-semibold tracking-tight">NET360 Admin</h1>
-          <p className="mt-1 text-sm text-slate-300">Professional control center</p>
+      <div
+        className={`fixed inset-0 z-30 bg-slate-900/45 backdrop-blur-sm transition-opacity duration-300 lg:hidden ${isMobileSidebarOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}
+        onClick={() => setIsMobileSidebarOpen(false)}
+      />
+
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 flex flex-col border-r border-slate-300/70 bg-white/80 px-3 py-4 shadow-[0_16px_45px_rgba(15,23,42,0.15)] backdrop-blur-xl transition-all duration-300 ease-out dark:border-white/10 dark:bg-slate-950/60 dark:shadow-[0_20px_45px_rgba(3,8,30,0.55)] ${isSidebarExpanded ? 'w-72' : 'w-20'} ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
+      >
+        <div className={`mb-5 flex items-center ${isSidebarExpanded ? 'justify-between' : 'justify-center'}`}>
+          {isSidebarExpanded ? (
+            <div>
+              <h1 className="text-lg font-semibold tracking-tight text-slate-900 dark:text-slate-100">NET360 Admin</h1>
+              <p className="text-xs text-slate-600 dark:text-slate-300">Control center</p>
+            </div>
+          ) : null}
+
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 transition hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20"
+            aria-label={isSidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
+          >
+            <span className="hidden lg:inline-flex">
+              {isSidebarExpanded ? <PanelLeftClose className="h-4.5 w-4.5" /> : <PanelLeftOpen className="h-4.5 w-4.5" />}
+            </span>
+            <span className="inline-flex lg:hidden">
+              <X className="h-4.5 w-4.5" />
+            </span>
+          </button>
         </div>
 
-        <Tabs value={activeSection} onValueChange={(value) => navigateToSection(value as AdminSection)} className="space-y-3">
-          <TabsList className="grid h-auto w-full grid-cols-1 gap-2 bg-transparent p-0">
-            {ADMIN_SECTION_META.map((item) => {
-              const Icon = item.icon;
-              return (
-                <TabsTrigger
-                  key={item.section}
-                  value={item.section}
-                  className="h-11 justify-start rounded-xl border border-white/10 bg-white/5 px-3 text-slate-200 transition-all data-[state=active]:border-cyan-300/40 data-[state=active]:bg-gradient-to-r data-[state=active]:from-cyan-500/35 data-[state=active]:to-violet-500/35"
-                >
-                  <Icon className="mr-2 h-4 w-4" />
-                  {item.label}
-                </TabsTrigger>
-              );
-            })}
-          </TabsList>
-        </Tabs>
+        <nav className="flex-1 space-y-1.5 overflow-y-auto pr-1">
+          {ADMIN_SECTION_META.map((item) => {
+            const Icon = item.icon;
+            const isActive = activeSection === item.section;
+            return (
+              <button
+                type="button"
+                key={item.section}
+                onClick={() => navigateToSection(item.section)}
+                title={!isSidebarExpanded ? item.label : undefined}
+                className={`group flex h-11 w-full items-center rounded-xl border px-3 text-sm transition-all duration-200 ${isSidebarExpanded ? 'justify-start gap-2.5' : 'justify-center'} ${isActive
+                  ? 'border-cyan-400/40 bg-gradient-to-r from-cyan-500/25 to-indigo-500/25 text-slate-900 shadow-[0_8px_25px_rgba(14,116,144,0.22)] dark:text-white'
+                  : 'border-slate-300/70 bg-white/65 text-slate-700 hover:border-cyan-300/45 hover:bg-cyan-50 dark:border-white/10 dark:bg-white/5 dark:text-slate-200 dark:hover:bg-white/10'}
+                `}
+              >
+                <Icon className={`h-4 w-4 ${isActive ? 'text-cyan-700 dark:text-cyan-200' : 'text-slate-500 dark:text-slate-300'}`} />
+                {isSidebarExpanded ? <span className="truncate">{item.label}</span> : null}
+              </button>
+            );
+          })}
+        </nav>
       </aside>
 
-      <main className="relative z-10 px-3 py-4 sm:px-5 lg:ml-72 lg:px-8 lg:py-6">
+      <main className={`relative z-10 px-3 py-4 transition-[margin-left] duration-300 sm:px-5 lg:px-8 lg:py-6 ${isSidebarExpanded ? 'lg:ml-72' : 'lg:ml-20'}`}>
         <div className="mx-auto w-full max-w-[1700px] space-y-5">
-          <header className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-[0_20px_50px_rgba(8,20,46,0.45)] backdrop-blur-md">
+          <header className="rounded-2xl border border-slate-300/70 bg-white/75 p-4 shadow-[0_16px_40px_rgba(15,23,42,0.12)] backdrop-blur-md dark:border-white/15 dark:bg-white/10 dark:shadow-[0_20px_50px_rgba(8,20,46,0.45)]">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h2 className="text-2xl font-semibold tracking-tight">NET360 Admin Management</h2>
-                <p className="text-sm text-slate-300">Manage users and MCQs from this separate panel</p>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={toggleSidebar}
+                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 transition hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20"
+                  aria-label={isMobileSidebarOpen ? 'Close sidebar' : 'Open sidebar'}
+                >
+                  <Menu className="h-4.5 w-4.5" />
+                </button>
+                <div>
+                  <h2 className="text-2xl font-semibold tracking-tight">NET360 Admin Management</h2>
+                  <p className="text-sm text-slate-600 dark:text-slate-300">Manage users and MCQs from this separate panel</p>
+                </div>
               </div>
-              <Button variant="outline" className="border-white/25 bg-white/10 text-slate-100 hover:bg-white/20" onClick={logout}>Logout</Button>
-            </div>
-
-            <div className="mt-4 overflow-x-auto pb-1 lg:hidden">
-              <Tabs value={activeSection} onValueChange={(value) => navigateToSection(value as AdminSection)} className="w-full">
-                <TabsList className="inline-flex h-auto min-w-max gap-1 rounded-xl border border-white/15 bg-slate-950/25 p-1">
-                  {ADMIN_SECTION_META.map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <TabsTrigger key={item.section} value={item.section} className="rounded-lg text-xs sm:text-sm">
-                        <Icon className="mr-1.5 h-3.5 w-3.5" />
-                        {item.label}
-                      </TabsTrigger>
-                    );
-                  })}
-                </TabsList>
-              </Tabs>
+              <Button variant="outline" className="border-slate-300/70 bg-white/70 text-slate-800 hover:bg-white dark:border-white/25 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20" onClick={logout}>Logout</Button>
             </div>
           </header>
 
