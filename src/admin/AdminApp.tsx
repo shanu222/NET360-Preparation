@@ -46,7 +46,7 @@ import {
   AlertDialogTrigger,
 } from '../app/components/ui/alert-dialog';
 import { toast } from 'sonner';
-import { Preparation } from '../app/components/Preparation';
+import { Preparation, SYLLABUS } from '../app/components/Preparation';
 import type { SubjectKey } from '../app/lib/mcq';
 import {
   downloadBlobFile,
@@ -65,7 +65,14 @@ const ADMIN_SIDEBAR_EXPANDED_KEY = 'net360-admin-sidebar-expanded';
 const ADMIN_DESKTOP_MIN_WIDTH = 1024;
 const ADMIN_TABLET_COLLAPSE_MAX_WIDTH = 1280;
 const ADMIN_BRAND_LOGO_SRC = '/net360-logo.png';
-const GENERAL_CHAPTER_VALUE = '__general_chapter__';
+
+function toTitleLabel(value: string) {
+  return String(value || '')
+    .split('-')
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
 
 function readStoredAdminSidebarPreference() {
   try {
@@ -1170,8 +1177,13 @@ export default function AdminApp() {
   const [bulkDeleteMode, setBulkDeleteMode] = useState<BulkDeleteMode>('section-topic');
   const [bulkDeleteSubject, setBulkDeleteSubject] = useState('mathematics');
   const [bulkDeleteChapter, setBulkDeleteChapter] = useState('');
+  const [bulkDeleteChapterKey, setBulkDeleteChapterKey] = useState('');
   const [bulkDeleteSectionOrTopic, setBulkDeleteSectionOrTopic] = useState('');
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [uploadChapterKey, setUploadChapterKey] = useState('');
+  const [bankFilterSubject, setBankFilterSubject] = useState('');
+  const [bankFilterChapterKey, setBankFilterChapterKey] = useState('');
+  const [bankFilterSection, setBankFilterSection] = useState('');
   const [questionSubmissions, setQuestionSubmissions] = useState<AdminQuestionSubmission[]>([]);
   const [submissionStatusFilter, setSubmissionStatusFilter] = useState('all');
   const [submissionSubjectFilter, setSubmissionSubjectFilter] = useState('all');
@@ -1468,77 +1480,90 @@ export default function AdminApp() {
   const activeBankChapter = useMemo(() => activeBankSubject?.chapters.find((item) => item.key === bankChapterKey) || null, [activeBankSubject, bankChapterKey]);
   const activeBankSection = useMemo(() => activeBankChapter?.sections.find((item) => item.key === bankSectionKey) || null, [activeBankChapter, bankSectionKey]);
 
+  const syllabusTree = useMemo(() => {
+    const subjects = Object.keys(SYLLABUS) as SubjectKey[];
+    return subjects
+      .map((subject) => {
+        const chapters: Array<{ key: string; title: string; part: 'part1' | 'part2'; sections: string[] }> = [];
+        (['part1', 'part2'] as const).forEach((part) => {
+          const partData = SYLLABUS[subject]?.[part];
+          (partData?.chapters || []).forEach((chapter) => {
+            chapters.push({
+              key: `${part}::${chapter.id}`,
+              title: chapter.title,
+              part,
+              sections: Array.isArray(chapter.sections) ? chapter.sections : [],
+            });
+          });
+        });
+        return {
+          subject,
+          label: toTitleLabel(subject),
+          chapters,
+        };
+      })
+      .filter((item) => item.chapters.length > 0)
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, []);
+
   const manualSubjectOptions = useMemo(
-    () => Array.from(new Set(mcqStructure.map((item) => String(item.subject || '').trim().toLowerCase()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
-    [mcqStructure],
+    () => syllabusTree.map((item) => ({ value: item.subject, label: item.label })),
+    [syllabusTree],
   );
 
   const manualChapterOptions = useMemo(() => {
-    const options = new Map<string, string>();
-    mcqStructure
-      .filter((item) => String(item.subject || '').trim().toLowerCase() === String(form.subject || '').trim().toLowerCase())
-      .forEach((item) => {
-        const chapter = String(item.chapter || '').trim();
-        if (!chapter) {
-          options.set(GENERAL_CHAPTER_VALUE, 'General Topics');
-        } else {
-          options.set(chapter, chapter);
-        }
-      });
-    return Array.from(options.entries()).map(([value, label]) => ({ value, label }));
-  }, [mcqStructure, form.subject]);
+    const activeSubject = syllabusTree.find((item) => item.subject === form.subject);
+    return (activeSubject?.chapters || []).map((chapter) => ({
+      value: chapter.key,
+      label: chapter.title,
+      chapterTitle: chapter.title,
+      part: chapter.part,
+    }));
+  }, [syllabusTree, form.subject]);
 
   const manualSectionOptions = useMemo(() => {
-    const options = new Set<string>();
-    const selectedChapterRaw = String(form.chapter || '').trim();
-    const selectedChapter = selectedChapterRaw === GENERAL_CHAPTER_VALUE ? '' : selectedChapterRaw;
-    mcqStructure
-      .filter((item) => String(item.subject || '').trim().toLowerCase() === String(form.subject || '').trim().toLowerCase())
-      .filter((item) => {
-        if (!selectedChapterRaw) return false;
-        const chapter = String(item.chapter || '').trim();
-        return chapter === selectedChapter;
-      })
-      .forEach((item) => {
-        const section = String(item.section || '').trim();
-        if (section) options.add(section);
-      });
-    return Array.from(options).sort((a, b) => a.localeCompare(b));
-  }, [mcqStructure, form.subject, form.chapter]);
+    const chapter = manualChapterOptions.find((item) => item.value === uploadChapterKey);
+    if (!chapter) return [];
+    const activeSubject = syllabusTree.find((item) => item.subject === form.subject);
+    const subjectChapter = (activeSubject?.chapters || []).find((item) => item.key === chapter.value);
+    return Array.from(new Set((subjectChapter?.sections || []).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [syllabusTree, form.subject, uploadChapterKey, manualChapterOptions]);
 
   const deleteSubjectOptions = manualSubjectOptions;
 
   const deleteChapterOptions = useMemo(() => {
-    const options = new Map<string, string>();
-    mcqStructure
-      .filter((item) => String(item.subject || '').trim().toLowerCase() === String(bulkDeleteSubject || '').trim().toLowerCase())
-      .forEach((item) => {
-        const chapter = String(item.chapter || '').trim();
-        if (!chapter) {
-          options.set(GENERAL_CHAPTER_VALUE, 'General Topics');
-        } else {
-          options.set(chapter, chapter);
-        }
-      });
-    return Array.from(options.entries()).map(([value, label]) => ({ value, label }));
-  }, [mcqStructure, bulkDeleteSubject]);
+    const activeSubject = syllabusTree.find((item) => item.subject === bulkDeleteSubject);
+    return (activeSubject?.chapters || []).map((chapter) => ({
+      value: chapter.key,
+      label: chapter.title,
+      chapterTitle: chapter.title,
+      part: chapter.part,
+    }));
+  }, [syllabusTree, bulkDeleteSubject]);
 
   const deleteSectionOptions = useMemo(() => {
-    const options = new Set<string>();
-    const selectedChapterRaw = String(bulkDeleteChapter || '').trim();
-    if (!selectedChapterRaw) return [];
-    const selectedChapter = selectedChapterRaw === GENERAL_CHAPTER_VALUE ? '' : selectedChapterRaw;
+    const activeSubject = syllabusTree.find((item) => item.subject === bulkDeleteSubject);
+    const chapter = (activeSubject?.chapters || []).find((item) => item.key === bulkDeleteChapterKey);
+    return Array.from(new Set((chapter?.sections || []).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [syllabusTree, bulkDeleteSubject, bulkDeleteChapterKey]);
 
-    mcqStructure
-      .filter((item) => String(item.subject || '').trim().toLowerCase() === String(bulkDeleteSubject || '').trim().toLowerCase())
-      .filter((item) => String(item.chapter || '').trim() === selectedChapter)
-      .forEach((item) => {
-        const section = String(item.section || '').trim();
-        if (section) options.add(section);
-      });
+  const bankSubjectOptions = manualSubjectOptions;
 
-    return Array.from(options).sort((a, b) => a.localeCompare(b));
-  }, [mcqStructure, bulkDeleteSubject, bulkDeleteChapter]);
+  const bankChapterOptions = useMemo(() => {
+    const activeSubject = syllabusTree.find((item) => item.subject === bankFilterSubject);
+    return (activeSubject?.chapters || []).map((chapter) => ({
+      value: chapter.key,
+      label: chapter.title,
+      chapterTitle: chapter.title,
+      part: chapter.part,
+    }));
+  }, [syllabusTree, bankFilterSubject]);
+
+  const bankSectionOptions = useMemo(() => {
+    const activeSubject = syllabusTree.find((item) => item.subject === bankFilterSubject);
+    const chapter = (activeSubject?.chapters || []).find((item) => item.key === bankFilterChapterKey);
+    return Array.from(new Set((chapter?.sections || []).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+  }, [syllabusTree, bankFilterSubject, bankFilterChapterKey]);
 
   const authToken = token;
 
@@ -2061,6 +2086,12 @@ export default function AdminApp() {
   useEffect(() => {
     if (!selectedHierarchy) return;
 
+    const subjectNode = syllabusTree.find((item) => item.subject === selectedHierarchy.subject);
+    const matchedChapter = selectedHierarchy.kind === 'section'
+      ? (subjectNode?.chapters || []).find((chapter) => chapter.title === selectedHierarchy.chapterTitle && chapter.part === selectedHierarchy.part)
+      : null;
+    const matchedChapterKey = matchedChapter?.key || '';
+
     setForm((prev) => ({
       ...prev,
       subject: selectedHierarchy.subject,
@@ -2071,16 +2102,23 @@ export default function AdminApp() {
         ? `${selectedHierarchy.chapterTitle} - ${selectedHierarchy.sectionTitle}`
         : selectedHierarchy.sectionTitle,
     }));
+    setUploadChapterKey(matchedChapterKey);
 
     setBulkDeleteSubject(selectedHierarchy.subject);
     if (selectedHierarchy.kind === 'section') {
       setBulkDeleteChapter(selectedHierarchy.chapterTitle);
+      setBulkDeleteChapterKey(matchedChapterKey);
       setBulkDeleteSectionOrTopic(selectedHierarchy.sectionTitle);
     } else {
       setBulkDeleteChapter('');
+      setBulkDeleteChapterKey('');
       setBulkDeleteSectionOrTopic(selectedHierarchy.sectionTitle);
     }
-  }, [selectedHierarchy]);
+
+    setBankFilterSubject(selectedHierarchy.subject);
+    setBankFilterChapterKey(matchedChapterKey);
+    setBankFilterSection(selectedHierarchy.sectionTitle);
+  }, [selectedHierarchy, syllabusTree]);
 
   useEffect(() => {
     if (!isQuestionBankView) return;
@@ -2719,9 +2757,7 @@ export default function AdminApp() {
           || (selectedHierarchy?.kind === 'section' ? selectedHierarchy.part : ''),
       ).trim().toLowerCase() || 'part1',
       chapter: String(
-        form.chapter === GENERAL_CHAPTER_VALUE
-          ? ''
-          : form.chapter
+        form.chapter
           || (selectedHierarchy?.kind === 'section' ? selectedHierarchy.chapterTitle : ''),
       ).trim(),
       section: String(form.section || selectedHierarchy?.sectionTitle || '').trim(),
@@ -3118,7 +3154,7 @@ export default function AdminApp() {
     if (!authToken) return;
 
     const subject = String(bulkDeleteSubject || '').trim().toLowerCase();
-    const chapter = String(bulkDeleteChapter === GENERAL_CHAPTER_VALUE ? '' : bulkDeleteChapter || '').trim();
+    const chapter = String(bulkDeleteChapter || '').trim();
     const sectionOrTopic = String(bulkDeleteSectionOrTopic || '').trim();
 
     if (bulkDeleteMode === 'subject' && !subject) {
@@ -4850,7 +4886,7 @@ export default function AdminApp() {
                             <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
                             <SelectContent>
                               {deleteSubjectOptions.map((item) => (
-                                <SelectItem key={`delete-subject-${item}`} value={item}>{item}</SelectItem>
+                                <SelectItem key={`delete-subject-${item.value}`} value={item.value}>{item.label}</SelectItem>
                               ))}
                             </SelectContent>
                           </Select>
@@ -4862,9 +4898,12 @@ export default function AdminApp() {
                       <div className="space-y-1.5">
                         <Label>Chapter</Label>
                         <Select
-                          value={bulkDeleteChapter}
+                          value={bulkDeleteChapterKey}
+                          disabled={!bulkDeleteSubject}
                           onValueChange={(value) => {
-                            setBulkDeleteChapter(value);
+                            setBulkDeleteChapterKey(value);
+                            const selectedChapter = deleteChapterOptions.find((item) => item.value === value);
+                            setBulkDeleteChapter(selectedChapter?.chapterTitle || '');
                             setBulkDeleteSectionOrTopic('');
                           }}
                         >
@@ -4883,6 +4922,7 @@ export default function AdminApp() {
                         <Label>Section / Topic</Label>
                         <Select
                           value={bulkDeleteSectionOrTopic}
+                          disabled={!bulkDeleteChapterKey}
                           onValueChange={setBulkDeleteSectionOrTopic}
                         >
                           <SelectTrigger><SelectValue placeholder="Select section/topic" /></SelectTrigger>
@@ -5125,12 +5165,15 @@ export default function AdminApp() {
                                 <Label>Subject</Label>
                                 <Select
                                   value={form.subject}
-                                  onValueChange={(value) => setForm((prev) => ({ ...prev, subject: value, chapter: '', section: '', topic: '' }))}
+                                  onValueChange={(value) => {
+                                    setUploadChapterKey('');
+                                    setForm((prev) => ({ ...prev, subject: value, part: '', chapter: '', section: '', topic: '' }));
+                                  }}
                                 >
                                   <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
                                   <SelectContent>
                                     {manualSubjectOptions.map((item) => (
-                                      <SelectItem key={`manual-subject-${item}`} value={item}>{item}</SelectItem>
+                                      <SelectItem key={`manual-subject-${item.value}`} value={item.value}>{item.label}</SelectItem>
                                     ))}
                                   </SelectContent>
                                 </Select>
@@ -5139,13 +5182,19 @@ export default function AdminApp() {
                                 <div className="space-y-1.5">
                                   <Label>Chapter</Label>
                                   <Select
-                                    value={form.chapter}
-                                    onValueChange={(value) => setForm((prev) => ({
-                                      ...prev,
-                                      chapter: value,
-                                      section: '',
-                                      topic: '',
-                                    }))}
+                                    value={uploadChapterKey}
+                                    disabled={!form.subject}
+                                    onValueChange={(value) => {
+                                      setUploadChapterKey(value);
+                                      const selectedChapter = manualChapterOptions.find((item) => item.value === value);
+                                      setForm((prev) => ({
+                                        ...prev,
+                                        part: selectedChapter?.part || '',
+                                        chapter: selectedChapter?.chapterTitle || '',
+                                        section: '',
+                                        topic: '',
+                                      }));
+                                    }}
                                   >
                                     <SelectTrigger><SelectValue placeholder="Select chapter" /></SelectTrigger>
                                     <SelectContent>
@@ -5161,6 +5210,7 @@ export default function AdminApp() {
                                   <Label>Section / Topic</Label>
                                   <Select
                                     value={form.section}
+                                    disabled={!uploadChapterKey}
                                     onValueChange={(value) => setForm((prev) => ({ ...prev, section: value, topic: value }))}
                                   >
                                     <SelectTrigger><SelectValue placeholder="Select section/topic" /></SelectTrigger>
@@ -5491,9 +5541,71 @@ export default function AdminApp() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="grid gap-2 md:grid-cols-3">
-                    <Input value={form.subject} readOnly placeholder="Subject (from Syllabus Browser)" />
-                    <Input value={form.chapter} readOnly placeholder="Chapter (from Syllabus Browser)" />
-                    <Input value={form.section || form.topic} readOnly placeholder="Section/Topic (from Syllabus Browser)" />
+                    <div className="space-y-1.5">
+                      <Label>Subject</Label>
+                      <Select
+                        value={bankFilterSubject}
+                        onValueChange={(value) => {
+                          setBankFilterSubject(value);
+                          setBankFilterChapterKey('');
+                          setBankFilterSection('');
+                          setSelectedHierarchy(null);
+                          setMcqs([]);
+                        }}
+                      >
+                        <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
+                        <SelectContent>
+                          {bankSubjectOptions.map((item) => (
+                            <SelectItem key={`bank-subject-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Chapter</Label>
+                      <Select
+                        value={bankFilterChapterKey}
+                        disabled={!bankFilterSubject}
+                        onValueChange={(value) => {
+                          setBankFilterChapterKey(value);
+                          setBankFilterSection('');
+                          setSelectedHierarchy(null);
+                          setMcqs([]);
+                        }}
+                      >
+                        <SelectTrigger><SelectValue placeholder="Select chapter" /></SelectTrigger>
+                        <SelectContent>
+                          {bankChapterOptions.map((item) => (
+                            <SelectItem key={`bank-chapter-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Section / Topic</Label>
+                      <Select
+                        value={bankFilterSection}
+                        disabled={!bankFilterChapterKey}
+                        onValueChange={(value) => {
+                          setBankFilterSection(value);
+                          const selectedChapter = bankChapterOptions.find((item) => item.value === bankFilterChapterKey);
+                          if (!selectedChapter || !authToken) return;
+                          void handleSectionSelection({
+                            subject: bankFilterSubject as SubjectKey,
+                            part: selectedChapter.part,
+                            chapterTitle: selectedChapter.chapterTitle,
+                            sectionTitle: value,
+                          });
+                        }}
+                      >
+                        <SelectTrigger><SelectValue placeholder="Select section/topic" /></SelectTrigger>
+                        <SelectContent>
+                          {bankSectionOptions.map((item) => (
+                            <SelectItem key={`bank-section-${item}`} value={item}>{item}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
                   <Input
                     placeholder="Search MCQs in this view"
