@@ -557,6 +557,7 @@ function emptyForm() {
     chapter: '',
     section: '',
     topic: 'General',
+    questionType: 'text' as 'text' | 'image',
     question: '',
     questionImage: null as AdminMcqImageFile | null,
     optionMedia: [
@@ -565,6 +566,7 @@ function emptyForm() {
       { key: 'C', text: '', image: null },
       { key: 'D', text: '', image: null },
     ] as AdminMcqOptionMedia[],
+    optionTypes: ['text', 'text', 'text', 'text'] as Array<'text' | 'image'>,
     answer: '',
     explanationText: '',
     explanationImage: null as AdminMcqImageFile | null,
@@ -1130,6 +1132,12 @@ export default function AdminApp() {
   const [selectedHierarchy, setSelectedHierarchy] = useState<SelectedHierarchy | null>(null);
   const [isSectionEditorOpen, setIsSectionEditorOpen] = useState(false);
   const [isUploadMcqsOpen, setIsUploadMcqsOpen] = useState(false);
+  const [mcqPanelOpen, setMcqPanelOpen] = useState<{ upload: boolean; deleter: boolean; bank: boolean }>({
+    upload: true,
+    deleter: false,
+    bank: true,
+  });
+  const [uploadMode, setUploadMode] = useState<'manual' | 'document'>('manual');
   const [subscriptionOverview, setSubscriptionOverview] = useState<AdminSubscriptionOverview | null>(null);
   const [subscriptionUsers, setSubscriptionUsers] = useState<AdminSubscriptionUser[]>([]);
   const [subscriptionFilter, setSubscriptionFilter] = useState('all');
@@ -1157,6 +1165,7 @@ export default function AdminApp() {
   const [bulkInput, setBulkInput] = useState('');
   const [bulkFile, setBulkFile] = useState<File | null>(null);
   const [bulkParsed, setBulkParsed] = useState<ParsedBulkMcq[]>([]);
+  const [showParsedPreview, setShowParsedPreview] = useState(false);
   const [bulkParseErrors, setBulkParseErrors] = useState<string[]>([]);
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
@@ -1191,6 +1200,7 @@ export default function AdminApp() {
   const [isSupportThreadLoading, setIsSupportThreadLoading] = useState(false);
   const [isSendingSupportReply, setIsSendingSupportReply] = useState(false);
   const supportReplyFileInputRef = useRef<HTMLInputElement | null>(null);
+  const bulkDocumentInputRef = useRef<HTMLInputElement | null>(null);
   const explanationImageInputRef = useRef<HTMLInputElement | null>(null);
   const didHydrateSupportRef = useRef(false);
   const lastUnreadTotalRef = useRef(0);
@@ -1460,6 +1470,36 @@ export default function AdminApp() {
   const activeBankSubject = useMemo(() => bankTree.find((item) => item.key === bankSubjectKey) || null, [bankTree, bankSubjectKey]);
   const activeBankChapter = useMemo(() => activeBankSubject?.chapters.find((item) => item.key === bankChapterKey) || null, [activeBankSubject, bankChapterKey]);
   const activeBankSection = useMemo(() => activeBankChapter?.sections.find((item) => item.key === bankSectionKey) || null, [activeBankChapter, bankSectionKey]);
+
+  const manualSubjectOptions = useMemo(
+    () => Array.from(new Set(mcqStructure.map((item) => String(item.subject || '').trim().toLowerCase()).filter(Boolean))).sort((a, b) => a.localeCompare(b)),
+    [mcqStructure],
+  );
+
+  const manualChapterOptions = useMemo(
+    () => Array.from(
+      new Set(
+        mcqStructure
+          .filter((item) => String(item.subject || '').trim().toLowerCase() === String(form.subject || '').trim().toLowerCase())
+          .map((item) => String(item.chapter || '').trim())
+          .filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b)),
+    [mcqStructure, form.subject],
+  );
+
+  const manualSectionOptions = useMemo(
+    () => Array.from(
+      new Set(
+        mcqStructure
+          .filter((item) => String(item.subject || '').trim().toLowerCase() === String(form.subject || '').trim().toLowerCase())
+          .filter((item) => !form.chapter || String(item.chapter || '').trim() === String(form.chapter || '').trim())
+          .map((item) => String(item.section || '').trim())
+          .filter(Boolean),
+      ),
+    ).sort((a, b) => a.localeCompare(b)),
+    [mcqStructure, form.subject, form.chapter],
+  );
 
   const authToken = token;
 
@@ -2583,18 +2623,29 @@ export default function AdminApp() {
 
     const options = normalizedOptionMedia.map((item) => item.text || `[${item.key}]`);
 
-    if (!form.question.trim()) {
-      toast.error('Question is required.');
+    const normalizedQuestionType = form.questionType === 'image' ? 'image' : 'text';
+    if (normalizedQuestionType === 'text' && !String(form.question || '').trim()) {
+      toast.error('Question Text is required.');
       return;
     }
 
-    const requiredOptionTexts = form.optionMedia.slice(0, 4).map((item) => String(item.text || '').trim());
-    if (requiredOptionTexts.some((value) => !value)) {
-      toast.error('Options A, B, C, and D are required.');
+    if (normalizedQuestionType === 'image' && !form.questionImage) {
+      toast.error('Question Image is required when Question Input Type is Image.');
       return;
     }
 
-    if (normalizedOptionMedia.length < 4) {
+    const requiredOptionKeys = ['A', 'B', 'C', 'D'];
+    const missingRequiredOption = requiredOptionKeys.find((key, idx) => {
+      const option = form.optionMedia[idx];
+      const optionType = form.optionTypes[idx] === 'image' ? 'image' : 'text';
+      if (!option) return true;
+      if (optionType === 'image') {
+        return !option.image;
+      }
+      return !String(option.text || '').trim();
+    });
+
+    if (missingRequiredOption) {
       toast.error('Options A, B, C, and D are required.');
       return;
     }
@@ -2663,11 +2714,20 @@ export default function AdminApp() {
     }
 
     const payload = {
+      question_type: normalizedQuestionType,
+      question_text: String(form.question || '').trim(),
+      question_image: form.questionImage || null,
       question: form.question,
       option_a: options[0] || '',
       option_b: options[1] || '',
       option_c: options[2] || '',
       option_d: options[3] || '',
+      options_structured: {
+        A: { type: form.optionTypes[0] === 'image' ? 'image' : 'text', value: form.optionTypes[0] === 'image' ? (form.optionMedia[0]?.image?.dataUrl || '') : (form.optionMedia[0]?.text || '') },
+        B: { type: form.optionTypes[1] === 'image' ? 'image' : 'text', value: form.optionTypes[1] === 'image' ? (form.optionMedia[1]?.image?.dataUrl || '') : (form.optionMedia[1]?.text || '') },
+        C: { type: form.optionTypes[2] === 'image' ? 'image' : 'text', value: form.optionTypes[2] === 'image' ? (form.optionMedia[2]?.image?.dataUrl || '') : (form.optionMedia[2]?.text || '') },
+        D: { type: form.optionTypes[3] === 'image' ? 'image' : 'text', value: form.optionTypes[3] === 'image' ? (form.optionMedia[3]?.image?.dataUrl || '') : (form.optionMedia[3]?.text || '') },
+      },
       correct_answer: answerKey,
       explanation: form.explanationText,
       subject: normalizedSubject,
@@ -2797,6 +2857,7 @@ export default function AdminApp() {
 
       setBulkParsed(payload.parsed || []);
       setBulkParseErrors(payload.errors || []);
+      setShowParsedPreview(false);
 
       if (!payload.parsed?.length) {
         toast.error(payload.errors?.[0] || 'No questions were parsed.');
@@ -2813,6 +2874,7 @@ export default function AdminApp() {
         setBulkParseErrors(nextErrors);
       }
       setBulkParsed(limitedParsed);
+      setShowParsedPreview(false);
 
       toast.success(`Parsed ${limitedParsed.length} MCQ(s). Review and confirm target before saving.`);
     } catch (error) {
@@ -2939,6 +3001,7 @@ export default function AdminApp() {
       setBulkFile(null);
       setBulkParsed([]);
       setBulkParseErrors([]);
+      setShowParsedPreview(false);
       if (selectedHierarchy) {
         await loadSectionMcqs(authToken, selectedHierarchy);
       }
@@ -4688,6 +4751,31 @@ export default function AdminApp() {
                     Step 1: choose subject/chapter/section from the syllabus browser. Step 2: edit or add MCQs here. Step 3: manage the selected section in the bank below.
                   </div>
 
+                  <div className="grid gap-2 md:grid-cols-3">
+                    <button
+                      type="button"
+                      onClick={() => setMcqPanelOpen((prev) => ({ ...prev, upload: !prev.upload }))}
+                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${mcqPanelOpen.upload ? 'border-indigo-400 bg-indigo-100/70 text-indigo-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
+                    >
+                      Upload MCQs
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMcqPanelOpen((prev) => ({ ...prev, deleter: !prev.deleter }))}
+                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${mcqPanelOpen.deleter ? 'border-rose-400 bg-rose-100/70 text-rose-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
+                    >
+                      MCQs Deleter
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMcqPanelOpen((prev) => ({ ...prev, bank: !prev.bank }))}
+                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${mcqPanelOpen.bank ? 'border-cyan-400 bg-cyan-100/70 text-cyan-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
+                    >
+                      MCQs Bank
+                    </button>
+                  </div>
+
+                  {mcqPanelOpen.deleter ? (
                   <div className="space-y-3 rounded-lg border border-rose-200 bg-rose-50/40 p-3">
                     <p className="text-sm font-medium text-rose-800">Bulk Delete MCQs (Admin Only)</p>
 
@@ -4749,7 +4837,9 @@ export default function AdminApp() {
                       </Button>
                     </div>
                   </div>
+                  ) : null}
 
+                  {mcqPanelOpen.upload ? (
                   <div className="space-y-3 rounded-lg border border-indigo-200/70 bg-indigo-50/25 p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
@@ -4771,6 +4861,24 @@ export default function AdminApp() {
                       className={`overflow-hidden transition-all duration-300 ease-in-out ${isUploadMcqsOpen ? 'max-h-[2200px] opacity-100' : 'max-h-0 opacity-0'}`}
                     >
                       <div className="space-y-3 border-t border-indigo-200/70 pt-3 dark:border-indigo-300/20">
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          <Button
+                            type="button"
+                            variant={uploadMode === 'manual' ? 'default' : 'outline'}
+                            onClick={() => setUploadMode('manual')}
+                          >
+                            Upload by Manual
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={uploadMode === 'document' ? 'default' : 'outline'}
+                            onClick={() => setUploadMode('document')}
+                          >
+                            Upload by Document
+                          </Button>
+                        </div>
+
+                        {uploadMode === 'document' ? (
                         <div className="space-y-3 rounded-lg border border-indigo-200 bg-white/70 p-3 dark:border-indigo-300/30 dark:bg-white/5">
                           <div>
                             <p className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">Document Parser</p>
@@ -4779,54 +4887,31 @@ export default function AdminApp() {
                             </p>
                           </div>
 
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div className="space-y-1.5">
-                              <Label htmlFor="mcq-bulk-document">Document Upload</Label>
-                              <Input
-                                id="mcq-bulk-document"
-                                type="file"
-                                accept=".pdf,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
-                                onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
-                              />
-                              {bulkFile ? (
-                                <p className="text-xs text-muted-foreground">Selected: {bulkFile.name}</p>
-                              ) : (
-                                <p className="text-xs text-muted-foreground">No file selected.</p>
-                              )}
-                            </div>
+                          <Input
+                            ref={bulkDocumentInputRef}
+                            id="mcq-bulk-document"
+                            type="file"
+                            className="hidden"
+                            accept=".pdf,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                            onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
+                          />
 
-                            <div className="space-y-1.5">
-                              <Label htmlFor="mcq-bulk-raw-text">Raw MCQ Text (optional)</Label>
-                              <Textarea
-                                id="mcq-bulk-raw-text"
-                                value={bulkInput}
-                                onChange={(e) => setBulkInput(e.target.value)}
-                                className="min-h-[96px]"
-                                placeholder="Paste MCQs here if you do not want to upload a file"
-                              />
-                            </div>
-                          </div>
+                          {bulkFile ? <p className="text-xs text-muted-foreground">Selected: {bulkFile.name}</p> : null}
 
                           <div className="flex flex-wrap gap-2">
-                            <Button type="button" onClick={() => void analyzeBulkMcqs()} disabled={bulkProcessing}>
+                            <Button type="button" variant="outline" onClick={() => bulkDocumentInputRef.current?.click()}>
+                              Upload Document
+                            </Button>
+                            <Button type="button" onClick={() => void analyzeBulkMcqs()} disabled={bulkProcessing || !bulkFile}>
                               {bulkProcessing ? (
                                 <>
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                  Parsing...
+                                  Analysing MCQs...
                                 </>
-                              ) : 'Parse / Analyze Document'}
+                              ) : 'Analyse by AI'}
                             </Button>
-                            <Button
-                              type="button"
-                              variant="outline"
-                              onClick={() => {
-                                setBulkInput('');
-                                setBulkFile(null);
-                                setBulkParsed([]);
-                                setBulkParseErrors([]);
-                              }}
-                            >
-                              Clear Parser
+                            <Button type="button" variant="outline" onClick={() => setShowParsedPreview(true)} disabled={!bulkParsed.length}>
+                              Parse MCQs
                             </Button>
                           </div>
 
@@ -4838,7 +4923,7 @@ export default function AdminApp() {
                             </div>
                           ) : null}
 
-                          {bulkParsed.length ? (
+                          {showParsedPreview && bulkParsed.length ? (
                             <div className="space-y-3">
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <p className="text-xs font-medium text-indigo-800 dark:text-indigo-200">
@@ -4848,9 +4933,9 @@ export default function AdminApp() {
                                   {bulkUploading ? (
                                     <>
                                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                      Uploading MCQs...
+                                      Uploading...
                                     </>
-                                  ) : `Upload MCQs (${bulkParsed.length})`}
+                                  ) : 'Upload All MCQs'}
                                 </Button>
                               </div>
 
@@ -4963,55 +5048,89 @@ export default function AdminApp() {
                             </div>
                           ) : null}
                         </div>
+                        ) : null}
 
-                        {selectedHierarchy?.kind === 'flat-topic' ? (
-                          <div className="grid gap-3 md:grid-cols-2">
-                            <div className="space-y-1.5">
-                              <Label>Subject</Label>
-                              <Input value={form.subject} readOnly />
-                            </div>
-                            <div className="space-y-1.5">
-                              <Label>Topic</Label>
-                              <Input value={form.topic || form.section} readOnly />
-                            </div>
-                          </div>
-                        ) : (
+                        {uploadMode === 'manual' ? (
                           <>
-                            <div className="grid gap-3 md:grid-cols-2">
+                            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                               <div className="space-y-1.5">
                                 <Label>Subject</Label>
-                                <Input value={form.subject} readOnly />
+                                <Select value={form.subject} onValueChange={(value) => setForm((prev) => ({ ...prev, subject: value, chapter: '', section: '', topic: '' }))}>
+                                  <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
+                                  <SelectContent>
+                                    {manualSubjectOptions.map((item) => (
+                                      <SelectItem key={`manual-subject-${item}`} value={item}>{item}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
                               </div>
-                              <div className="space-y-1.5">
-                                <Label>Part</Label>
-                                <Input value={form.part} readOnly />
-                              </div>
-                            </div>
-
-                            <div className="grid gap-3 md:grid-cols-2">
                               <div className="space-y-1.5">
                                 <Label>Chapter</Label>
-                                <Input value={form.chapter} readOnly />
+                                <Select value={form.chapter} onValueChange={(value) => setForm((prev) => ({ ...prev, chapter: value, section: '', topic: '' }))}>
+                                  <SelectTrigger><SelectValue placeholder="Select chapter" /></SelectTrigger>
+                                  <SelectContent>
+                                    {manualChapterOptions.map((item) => (
+                                      <SelectItem key={`manual-chapter-${item}`} value={item}>{item}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
                               </div>
                               <div className="space-y-1.5">
                                 <Label>Section</Label>
-                                <Input value={form.section} readOnly />
+                                <Select value={form.section} onValueChange={(value) => setForm((prev) => ({ ...prev, section: value, topic: prev.topic || value }))}>
+                                  <SelectTrigger><SelectValue placeholder="Select section" /></SelectTrigger>
+                                  <SelectContent>
+                                    {manualSectionOptions.map((item) => (
+                                      <SelectItem key={`manual-section-${item}`} value={item}>{item}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label>Topic</Label>
+                                <Select value={form.topic} onValueChange={(value) => setForm((prev) => ({ ...prev, topic: value }))}>
+                                  <SelectTrigger><SelectValue placeholder="Select topic" /></SelectTrigger>
+                                  <SelectContent>
+                                    {manualSectionOptions.map((item) => (
+                                      <SelectItem key={`manual-topic-${item}`} value={item}>{item}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
                               </div>
                             </div>
-                          </>
-                        )}
 
-                        <div className="space-y-1.5">
+                        <div className="space-y-2 rounded-md border border-indigo-200/70 bg-white/70 p-2">
                           <Label>Question</Label>
-                          <Textarea
-                            value={form.question}
-                            onChange={(e) => setForm((prev) => ({ ...prev, question: e.target.value }))}
-                            className="min-h-[95px]"
-                          />
+                          <div className="inline-flex overflow-hidden rounded-md border">
+                            <button
+                              type="button"
+                              onClick={() => setForm((prev) => ({ ...prev, questionType: 'text' }))}
+                              className={`px-3 py-1.5 text-xs ${form.questionType !== 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                            >
+                              Text
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setForm((prev) => ({ ...prev, questionType: 'image' }))}
+                              className={`px-3 py-1.5 text-xs ${form.questionType === 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                            >
+                              Image
+                            </button>
+                          </div>
+
+                          {form.questionType !== 'image' ? (
+                            <Textarea
+                              value={form.question}
+                              onChange={(e) => setForm((prev) => ({ ...prev, question: e.target.value }))}
+                              className="min-h-[95px]"
+                              placeholder="Question Text"
+                            />
+                          ) : null}
                         </div>
 
+                        {form.questionType === 'image' ? (
                         <div className="space-y-1.5">
-                          <Label htmlFor="mcq-question-image-upload">Question Image (optional)</Label>
+                          <Label htmlFor="mcq-question-image-upload">Upload Question Image</Label>
                           <Input
                             id="mcq-question-image-upload"
                             type="file"
@@ -5049,14 +5168,60 @@ export default function AdminApp() {
                             </div>
                           ) : null}
                         </div>
+                        ) : null}
 
                         <div className="space-y-2">
-                          <Label>Options (text and/or image)</Label>
+                          <div className="flex items-center justify-between gap-2">
+                            <Label>Options (A-D)</Label>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => setForm((prev) => {
+                                if (prev.optionMedia.length >= 8) return prev;
+                                const nextKey = String.fromCharCode(65 + prev.optionMedia.length);
+                                return {
+                                  ...prev,
+                                  optionMedia: [...prev.optionMedia, { key: nextKey, text: '', image: null }],
+                                  optionTypes: [...prev.optionTypes, 'text'],
+                                };
+                              })}
+                            >
+                              Add Option
+                            </Button>
+                          </div>
                           <div className="space-y-2">
                             {form.optionMedia.map((option, optionIdx) => (
                               <div key={`option-${option.key}`} className="space-y-2 rounded-md border p-2">
-                                <div className="grid gap-2 md:grid-cols-[80px_1fr] md:items-center">
+                                <div className="flex flex-wrap items-center justify-between gap-2">
                                   <Label>Option {option.key}</Label>
+                                  <div className="inline-flex overflow-hidden rounded-md border">
+                                    <button
+                                      type="button"
+                                      onClick={() => setForm((prev) => {
+                                        const optionTypes = [...prev.optionTypes];
+                                        optionTypes[optionIdx] = 'text';
+                                        return { ...prev, optionTypes };
+                                      })}
+                                      className={`px-3 py-1.5 text-xs ${(form.optionTypes[optionIdx] || 'text') !== 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                                    >
+                                      Text
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => setForm((prev) => {
+                                        const optionTypes = [...prev.optionTypes];
+                                        optionTypes[optionIdx] = 'image';
+                                        return { ...prev, optionTypes };
+                                      })}
+                                      className={`px-3 py-1.5 text-xs ${(form.optionTypes[optionIdx] || 'text') === 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                                    >
+                                      Image
+                                    </button>
+                                  </div>
+                                </div>
+
+                                {(form.optionTypes[optionIdx] || 'text') !== 'image' ? (
                                   <Input
                                     value={option.text}
                                     placeholder={`Option ${option.key} text`}
@@ -5069,7 +5234,9 @@ export default function AdminApp() {
                                       });
                                     }}
                                   />
-                                </div>
+                                ) : null}
+
+                                {(form.optionTypes[optionIdx] || 'text') === 'image' ? (
                                 <div className="space-y-1.5">
                                   <Input
                                     type="file"
@@ -5119,6 +5286,7 @@ export default function AdminApp() {
                                     </div>
                                   ) : null}
                                 </div>
+                                ) : null}
                               </div>
                             ))}
                           </div>
@@ -5127,7 +5295,14 @@ export default function AdminApp() {
                         <div className="grid gap-3 md:grid-cols-2">
                           <div className="space-y-1.5">
                             <Label>Correct Answer</Label>
-                            <Input value={form.answer} onChange={(e) => setForm((prev) => ({ ...prev, answer: e.target.value }))} />
+                            <Select value={form.answer} onValueChange={(value) => setForm((prev) => ({ ...prev, answer: value }))}>
+                              <SelectTrigger><SelectValue placeholder="Select correct answer" /></SelectTrigger>
+                              <SelectContent>
+                                {form.optionMedia.slice(0, 8).map((option) => (
+                                  <SelectItem key={`answer-${option.key}`} value={option.key}>{option.key}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </div>
                           <div className="space-y-1.5">
                             <Label>Difficulty</Label>
@@ -5219,13 +5394,17 @@ export default function AdminApp() {
                           </Button>
                           <Button variant="outline" onClick={resetForm}>Clear</Button>
                         </div>
+                          </>
+                        ) : null}
                       </div>
                     </div>
                   </div>
+                  ) : null}
                 </CardContent>
                 </div>
               </Card>
 
+              {mcqPanelOpen.bank ? (
               <Card className="min-w-0">
                 <CardHeader>
                   <CardTitle>Section MCQ Bank</CardTitle>
@@ -5256,6 +5435,7 @@ export default function AdminApp() {
                               chapter: item.chapter || '',
                               section: item.section || '',
                               topic: item.topic,
+                              questionType: item.questionImage ? 'image' : 'text',
                               question: item.question,
                               questionImage: item.questionImage || null,
                               optionMedia: Array.isArray(item.optionMedia) && item.optionMedia.length
@@ -5270,6 +5450,9 @@ export default function AdminApp() {
                                   { key: 'C', text: String(item.options?.[2] || ''), image: null },
                                   { key: 'D', text: String(item.options?.[3] || ''), image: null },
                                 ],
+                              optionTypes: Array.isArray(item.optionMedia) && item.optionMedia.length
+                                ? item.optionMedia.map((option) => (option.image ? 'image' : 'text'))
+                                : ['text', 'text', 'text', 'text'],
                               answer: item.answerKey || item.answer,
                               explanationText: item.explanationText || item.shortTrickText || item.tip || '',
                               explanationImage: item.explanationImage || item.shortTrickImage || null,
@@ -5302,6 +5485,7 @@ export default function AdminApp() {
                   </div>
                 </CardContent>
               </Card>
+              ) : null}
             </div>
           </div>
         </TabsContent>
