@@ -1257,7 +1257,7 @@ export default function AdminApp() {
     setOverview(overviewPayload);
     setUsers(usersPayload.users || []);
     setSignupRequests(requestPayload.requests || []);
-    setMcqs(mcqPayload.mcqs || []);
+    setMcqs((previous) => (selectedHierarchy ? previous : []));
     setPracticeQuestions(practicePayload.questions || []);
     setQuestionSubmissions(submissionPayload.submissions || []);
     setContributionPolicy(policyPayload.policy || {
@@ -1560,23 +1560,36 @@ export default function AdminApp() {
   }, [selectedHierarchy]);
 
   useEffect(() => {
-    if (!bankTree.length) return;
-    if (!bankSubjectKey || !bankTree.some((item) => item.key === bankSubjectKey)) {
-      setBankSubjectKey(bankTree[0].key);
+    if (!isQuestionBankView) return;
+
+    if (!bankTree.length) {
+      if (bankSubjectKey || bankChapterKey || bankSectionKey) {
+        setBankSubjectKey('');
+        setBankChapterKey('');
+        setBankSectionKey('');
+      }
       return;
     }
+
     const subject = bankTree.find((item) => item.key === bankSubjectKey);
-    if (!subject) return;
-    if (!bankChapterKey || !subject.chapters.some((item) => item.key === bankChapterKey)) {
-      setBankChapterKey(subject.chapters[0]?.key || '');
+    if (!subject) {
+      if (bankSubjectKey) setBankSubjectKey('');
+      if (bankChapterKey) setBankChapterKey('');
+      if (bankSectionKey) setBankSectionKey('');
       return;
     }
+
     const chapter = subject.chapters.find((item) => item.key === bankChapterKey);
-    if (!chapter) return;
-    if (!bankSectionKey || !chapter.sections.some((item) => item.key === bankSectionKey)) {
-      setBankSectionKey(chapter.sections[0]?.key || '');
+    if (!chapter) {
+      if (bankChapterKey) setBankChapterKey('');
+      if (bankSectionKey) setBankSectionKey('');
+      return;
     }
-  }, [bankTree, bankSubjectKey, bankChapterKey, bankSectionKey]);
+
+    if (bankSectionKey && !chapter.sections.some((item) => item.key === bankSectionKey)) {
+      setBankSectionKey('');
+    }
+  }, [isQuestionBankView, bankTree, bankSubjectKey, bankChapterKey, bankSectionKey]);
 
   useEffect(() => {
     if (!isQuestionBankView || !authToken || !activeBankSubject || !activeBankChapter || !activeBankSection) return;
@@ -2785,7 +2798,12 @@ export default function AdminApp() {
                   <button
                     type="button"
                     key={subject.key}
-                    onClick={() => setBankSubjectKey(subject.key)}
+                    onClick={() => {
+                      setBankSubjectKey(subject.key);
+                      setBankChapterKey('');
+                      setBankSectionKey('');
+                      setBankMcqs([]);
+                    }}
                     className={`w-full rounded-md border px-3 py-2 text-left text-sm ${bankSubjectKey === subject.key ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-muted'}`}
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -2794,6 +2812,11 @@ export default function AdminApp() {
                     </div>
                   </button>
                 ))}
+                {!bankTree.length ? (
+                  <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                    No subjects available yet.
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
 
@@ -2802,11 +2825,20 @@ export default function AdminApp() {
                 <CardTitle>Chapters</CardTitle>
               </CardHeader>
               <CardContent className="max-h-[70vh] space-y-2 overflow-auto">
+                {!activeBankSubject ? (
+                  <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                    Select a subject first.
+                  </div>
+                ) : null}
                 {(activeBankSubject?.chapters || []).map((chapter) => (
                   <button
                     type="button"
                     key={chapter.key}
-                    onClick={() => setBankChapterKey(chapter.key)}
+                    onClick={() => {
+                      setBankChapterKey(chapter.key);
+                      setBankSectionKey('');
+                      setBankMcqs([]);
+                    }}
                     className={`w-full rounded-md border px-3 py-2 text-left text-sm ${bankChapterKey === chapter.key ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-muted'}`}
                   >
                     <div className="flex items-center justify-between gap-2">
@@ -2823,6 +2855,16 @@ export default function AdminApp() {
                 <CardTitle>Sections / Topics</CardTitle>
               </CardHeader>
               <CardContent className="max-h-[70vh] space-y-2 overflow-auto">
+                {!activeBankSubject ? (
+                  <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                    Select a subject first.
+                  </div>
+                ) : null}
+                {activeBankSubject && !activeBankChapter ? (
+                  <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+                    Select a chapter first.
+                  </div>
+                ) : null}
                 {(activeBankChapter?.sections || []).map((section) => (
                   <button
                     type="button"
@@ -2847,8 +2889,13 @@ export default function AdminApp() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3 max-h-[70vh] overflow-auto">
+                {!activeBankSection ? (
+                  <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
+                    Select a section/topic to load MCQs.
+                  </div>
+                ) : null}
                 {bankLoading ? <p className="text-sm text-muted-foreground">Loading MCQs...</p> : null}
-                {!bankLoading && !bankMcqs.length ? (
+                {!bankLoading && activeBankSection && !bankMcqs.length ? (
                   <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
                     No MCQs found for this section/topic.
                   </div>
@@ -3808,6 +3855,10 @@ export default function AdminApp() {
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-3 text-xs text-indigo-800">
+                    Step 1: choose subject/chapter/section from the syllabus browser. Step 2: edit or add MCQs here. Step 3: manage the selected section in the bank below.
+                  </div>
+
                   <div className="space-y-3 rounded-lg border border-rose-200 bg-rose-50/40 p-3">
                     <p className="text-sm font-medium text-rose-800">Bulk Delete MCQs (Admin Only)</p>
 
@@ -4144,103 +4195,6 @@ export default function AdminApp() {
                     ) : null}
                   </div>
 
-                  <div className="space-y-2 rounded-lg border border-indigo-100 bg-indigo-50/30 p-3">
-                    <Label>Bulk Import (Paste / PDF / Word, 1-50 questions)</Label>
-                    <Textarea
-                      value={bulkInput}
-                      onChange={(e) => setBulkInput(e.target.value)}
-                      className="min-h-[180px]"
-                      placeholder={[
-                        '1. Question text here',
-                        'Image: https://example.com/q1.png',
-                        'A) Option A',
-                        'B) Option B',
-                        'C) Option C',
-                        'D) Option D',
-                        'Answer: B',
-                        'Explanation: Why option B is correct',
-                        '',
-                        '2) Next question...',
-                      ].join('\n')}
-                    />
-                    <div className="space-y-1.5">
-                      <Label htmlFor="admin-mcq-upload-file">Or upload PDF / DOC / DOCX</Label>
-                      <Input
-                        id="admin-mcq-upload-file"
-                        type="file"
-                        accept=".pdf,.doc,.docx,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                        onChange={(e) => {
-                          const file = e.target.files?.[0] || null;
-                          setBulkFile(file);
-                        }}
-                      />
-                      {bulkFile ? (
-                        <p className="text-xs text-muted-foreground">
-                          Selected file: {bulkFile.name} ({Math.max(1, Math.round(bulkFile.size / 1024))} KB)
-                        </p>
-                      ) : null}
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        variant="outline"
-                        onClick={() => void analyzeBulkMcqs()}
-                        disabled={bulkProcessing || bulkUploading}
-                      >
-                        {bulkProcessing ? 'Analyzing...' : 'Analyze Content'}
-                      </Button>
-                      <Button
-                        onClick={() => void uploadBulkMcqs()}
-                        disabled={!selectedHierarchy || !bulkParsed.length || bulkUploading || bulkProcessing}
-                      >
-                        {bulkUploading ? 'Saving...' : 'Save Parsed MCQs'}
-                      </Button>
-                    </div>
-
-                    <p className="text-xs text-muted-foreground">
-                      Save target: {hierarchyLabel(selectedHierarchy)}
-                    </p>
-
-                    {bulkParseErrors.length ? (
-                      <div className="rounded-md border border-amber-200 bg-amber-50 p-2 text-xs text-amber-800">
-                        {bulkParseErrors[0]}
-                      </div>
-                    ) : null}
-
-                    {bulkParsed.length ? (
-                      <div className="space-y-2 rounded-md border bg-background p-2">
-                        <p className="text-xs font-medium">Parsed Preview ({bulkParsed.length})</p>
-                        <div className="max-h-[320px] space-y-2 overflow-auto pr-1">
-                          {bulkParsed.map((item, idx) => (
-                            <div key={`${idx}-${item.question.slice(0, 30)}`} className="rounded-md border p-2 text-xs">
-                              <p className="font-medium">Q{idx + 1}. Question</p>
-                              <p className="mt-1">{item.question}</p>
-
-                              <p className="mt-2 font-medium">Options:</p>
-                              <div className="mt-1 space-y-0.5">
-                                {item.options.map((option, optionIdx) => (
-                                  <p key={`${idx}-opt-${optionIdx}`}>
-                                    {String.fromCharCode(65 + optionIdx)}) {option}
-                                  </p>
-                                ))}
-                              </div>
-
-                              <p className="mt-2 font-medium">Correct Answer:</p>
-                              <p>{resolveAnswerLabel(item.options, item.answer)}</p>
-
-                              {item.tip ? (
-                                <>
-                                  <p className="mt-2 font-medium">Explanation:</p>
-                                  <p className="whitespace-pre-wrap text-muted-foreground">{item.tip}</p>
-                                </>
-                              ) : null}
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ) : null}
-                  </div>
-
                   <div className="flex flex-wrap gap-2">
                     <Button onClick={() => void saveMcq()} disabled={!selectedHierarchy}>{form.id ? 'Update' : 'Add'} MCQ</Button>
                     <Button variant="outline" onClick={resetForm}>Clear</Button>
@@ -4251,12 +4205,21 @@ export default function AdminApp() {
               <Card className="min-w-0">
                 <CardHeader>
                   <CardTitle>Section MCQ Bank</CardTitle>
-                  <CardDescription>Edit or remove questions for the selected section.</CardDescription>
+                  <CardDescription>
+                    {selectedHierarchy
+                      ? 'Edit or remove questions for the selected section/topic.'
+                      : 'Select a section/topic in the Section MCQ Editor above to load MCQs.'}
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <Input placeholder="Search MCQs in this view" value={query} onChange={(e) => setQuery(e.target.value)} />
+                  <Input
+                    placeholder="Search MCQs in this view"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    disabled={!selectedHierarchy}
+                  />
                   <div className="space-y-2 max-h-[460px] overflow-auto">
-                    {filteredMcqs.map((item) => (
+                    {selectedHierarchy ? filteredMcqs.map((item) => (
                       <div key={item.id} className="rounded-lg border p-3">
                         <button
                           type="button"
@@ -4301,8 +4264,13 @@ export default function AdminApp() {
                           <Button variant="destructive" size="sm" onClick={() => void deleteMcq(item.id)}>Delete</Button>
                         </div>
                       </div>
-                    ))}
-                    {!filteredMcqs.length ? (
+                    )) : null}
+                    {!selectedHierarchy ? (
+                      <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
+                        Section/topic not selected yet. Use the Section MCQ Editor above first.
+                      </div>
+                    ) : null}
+                    {selectedHierarchy && !filteredMcqs.length ? (
                       <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
                         No MCQs in this section yet.
                       </div>
