@@ -1726,8 +1726,17 @@ export default function AdminApp() {
       localStorage.setItem(REFRESH_TOKEN_KEY, payload.refreshToken);
       setToken(payload.token);
       setRefreshToken(payload.refreshToken);
-      await loadAdminData(payload.token);
       toast.success('Admin login successful.');
+
+      void loadAdminData(payload.token).catch((error) => {
+        const status = Number((error as { status?: number } | null)?.status || 0);
+        if (status === 401 || status === 403) {
+          clearAdminSession();
+          toast.error('Session expired after login. Please sign in again.');
+          return;
+        }
+        toast.error('Login succeeded, but admin data failed to load. Please click Refresh Data.');
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Admin login failed.');
     } finally {
