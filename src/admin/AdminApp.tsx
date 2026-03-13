@@ -673,8 +673,8 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-const MCQ_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp']);
-const MCQ_IMAGE_NAME_PATTERN = /\.(jpe?g|png|webp)$/i;
+const MCQ_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif']);
+const MCQ_IMAGE_NAME_PATTERN = /\.(jpe?g|png|webp|svg|gif)$/i;
 const MCQ_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
 
 function isSupportedMcqImage(file: File) {
@@ -873,6 +873,7 @@ export default function AdminApp() {
   const [isSupportThreadLoading, setIsSupportThreadLoading] = useState(false);
   const [isSendingSupportReply, setIsSendingSupportReply] = useState(false);
   const supportReplyFileInputRef = useRef<HTMLInputElement | null>(null);
+  const explanationImageInputRef = useRef<HTMLInputElement | null>(null);
   const didHydrateSupportRef = useRef(false);
   const lastUnreadTotalRef = useRef(0);
   const lastUserMessageInThreadRef = useRef('');
@@ -2173,8 +2174,8 @@ export default function AdminApp() {
       tip: form.explanationText,
       explanationText: form.explanationText,
       explanationImage: form.explanationImage,
-      shortTrickText: form.shortTrickText,
-      shortTrickImage: form.shortTrickImage,
+      shortTrickText: '',
+      shortTrickImage: null,
       difficulty: form.difficulty,
     };
 
@@ -4099,100 +4100,70 @@ export default function AdminApp() {
                     </div>
                   </div>
 
-                  <div className="space-y-1.5">
-                    <Label>Explanation Text (optional)</Label>
-                    <Textarea
-                      value={form.explanationText}
-                      onChange={(e) => setForm((prev) => ({ ...prev, explanationText: e.target.value }))}
-                      className="min-h-[90px]"
-                    />
-                  </div>
+                  <div className="space-y-3 rounded-lg border border-indigo-200 bg-indigo-50/30 p-3">
+                    <p className="text-sm font-medium text-indigo-900">Explanation / Short Trick (optional)</p>
 
-                  <div className="space-y-1.5">
-                    <Label>Explanation Image (optional)</Label>
-                    <Input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0] || null;
-                        if (!file) return;
-                        if (!isSupportedMcqImage(file)) {
-                          toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
-                          e.currentTarget.value = '';
-                          return;
-                        }
-                        if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                          toast.error('Image is too large. Maximum size is 5 MB.');
-                          e.currentTarget.value = '';
-                          return;
-                        }
-                        void fileToMcqImage(file)
-                          .then((image) => setForm((prev) => ({ ...prev, explanationImage: image })))
-                          .catch(() => toast.error('Could not read selected image.'));
-                        e.currentTarget.value = '';
-                      }}
-                    />
-                    {form.explanationImage ? (
-                      <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
-                        <span>{form.explanationImage.name}</span>
+                    <div className="space-y-1.5">
+                      <Label>Text</Label>
+                      <Textarea
+                        value={form.explanationText}
+                        onChange={(e) => setForm((prev) => ({ ...prev, explanationText: e.target.value, shortTrickText: '' }))}
+                        className="min-h-[110px]"
+                        placeholder="Write explanation, short trick, formula, steps, or reasoning"
+                      />
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label>Image</Label>
+                      <div className="flex flex-wrap items-center gap-2">
                         <Button
                           type="button"
                           variant="outline"
-                          size="sm"
-                          onClick={() => setForm((prev) => ({ ...prev, explanationImage: null }))}
+                          onClick={() => explanationImageInputRef.current?.click()}
                         >
-                          Remove
+                          Upload Image
                         </Button>
+                        <Input
+                          ref={explanationImageInputRef}
+                          type="file"
+                          className="hidden"
+                          accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0] || null;
+                            if (!file) return;
+                            if (!isSupportedMcqImage(file)) {
+                              toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                              e.currentTarget.value = '';
+                              return;
+                            }
+                            if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                              toast.error('Image is too large. Maximum size is 5 MB.');
+                              e.currentTarget.value = '';
+                              return;
+                            }
+                            void fileToMcqImage(file)
+                              .then((image) => setForm((prev) => ({ ...prev, explanationImage: image, shortTrickImage: null })))
+                              .catch(() => toast.error('Could not read selected image.'));
+                            e.currentTarget.value = '';
+                          }}
+                        />
+                        <p className="text-xs text-muted-foreground">Supported: JPG, PNG, WEBP, SVG, GIF</p>
                       </div>
-                    ) : null}
-                  </div>
 
-                  <div className="space-y-1.5">
-                    <Label>Short Trick Text (optional)</Label>
-                    <Textarea
-                      value={form.shortTrickText}
-                      onChange={(e) => setForm((prev) => ({ ...prev, shortTrickText: e.target.value }))}
-                      className="min-h-[90px]"
-                    />
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <Label>Short Trick Image (optional)</Label>
-                    <Input
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-                      onChange={(e) => {
-                        const file = e.target.files?.[0] || null;
-                        if (!file) return;
-                        if (!isSupportedMcqImage(file)) {
-                          toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
-                          e.currentTarget.value = '';
-                          return;
-                        }
-                        if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                          toast.error('Image is too large. Maximum size is 5 MB.');
-                          e.currentTarget.value = '';
-                          return;
-                        }
-                        void fileToMcqImage(file)
-                          .then((image) => setForm((prev) => ({ ...prev, shortTrickImage: image })))
-                          .catch(() => toast.error('Could not read selected image.'));
-                        e.currentTarget.value = '';
-                      }}
-                    />
-                    {form.shortTrickImage ? (
-                      <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
-                        <span>{form.shortTrickImage.name}</span>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={() => setForm((prev) => ({ ...prev, shortTrickImage: null }))}
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    ) : null}
+                      {form.explanationImage ? (
+                        <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
+                          <span>{form.explanationImage.name}</span>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setForm((prev) => ({ ...prev, explanationImage: null }))}
+                          >
+                            Remove
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
                   </div>
 
                   <div className="flex flex-wrap gap-2">
@@ -4247,10 +4218,10 @@ export default function AdminApp() {
                                   { key: 'D', text: String(item.options?.[3] || ''), image: null },
                                 ],
                               answer: item.answerKey || item.answer,
-                              explanationText: item.explanationText || item.tip || '',
-                              explanationImage: item.explanationImage || null,
-                              shortTrickText: item.shortTrickText || '',
-                              shortTrickImage: item.shortTrickImage || null,
+                              explanationText: item.explanationText || item.shortTrickText || item.tip || '',
+                              explanationImage: item.explanationImage || item.shortTrickImage || null,
+                              shortTrickText: '',
+                              shortTrickImage: null,
                               difficulty: item.difficulty,
                             });
                           }}

@@ -907,14 +907,28 @@ export function TestInterfacePage() {
                     <p className={`mt-2 font-medium ${row.isCorrect ? 'text-emerald-700' : 'text-rose-700'}`}>
                       {row.isCorrect ? 'Correct' : 'Incorrect'} • Your answer: {row.selectedKey || 'Not answered'} • Correct: {row.correctKey || '-'}
                     </p>
-                    {row.explanationText ? <p className="mt-1 whitespace-pre-wrap">Explanation: {row.explanationText}</p> : null}
-                    {row.explanationImage?.dataUrl ? (
-                      <img src={row.explanationImage.dataUrl} alt={`Explanation ${idx + 1}`} className="mt-2 max-h-40 w-full rounded border object-contain" />
-                    ) : null}
-                    {row.shortTrickText ? <p className="mt-1 whitespace-pre-wrap text-blue-700">Short Trick: {row.shortTrickText}</p> : null}
-                    {row.shortTrickImage?.dataUrl ? (
-                      <img src={row.shortTrickImage.dataUrl} alt={`Short trick ${idx + 1}`} className="mt-2 max-h-40 w-full rounded border object-contain" />
-                    ) : null}
+                    {(() => {
+                      const explanationOrShortTrickText = String(row.explanationText || row.shortTrickText || '').trim();
+                      const explanationOrShortTrickImage = row.explanationImage || row.shortTrickImage || null;
+                      if (!explanationOrShortTrickText && !explanationOrShortTrickImage?.dataUrl) return null;
+
+                      return (
+                        <div className="mt-2 rounded border border-indigo-100 bg-indigo-50/40 p-2">
+                          <p className="text-xs font-semibold text-indigo-900 sm:text-sm">Explanation / Short Trick</p>
+                          <div className="mt-1 h-px w-full bg-indigo-200" />
+                          {explanationOrShortTrickText ? (
+                            <p className="mt-2 whitespace-pre-wrap text-slate-700">{explanationOrShortTrickText}</p>
+                          ) : null}
+                          {explanationOrShortTrickImage?.dataUrl ? (
+                            <img
+                              src={explanationOrShortTrickImage.dataUrl}
+                              alt={`Explanation or short trick ${idx + 1}`}
+                              className="mt-2 max-h-40 w-full rounded border object-contain"
+                            />
+                          ) : null}
+                        </div>
+                      );
+                    })()}
                   </div>
                 ))}
               </div>
