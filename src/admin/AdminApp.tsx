@@ -1138,9 +1138,7 @@ export default function AdminApp() {
   const [query, setQuery] = useState('');
   const [form, setForm] = useState(emptyForm());
   const [selectedHierarchy, setSelectedHierarchy] = useState<SelectedHierarchy | null>(null);
-  const [isSectionEditorOpen, setIsSectionEditorOpen] = useState(false);
-  const [isUploadMcqsOpen, setIsUploadMcqsOpen] = useState(false);
-  const [activeMcqPanel, setActiveMcqPanel] = useState<'upload' | 'deleter' | 'bank'>('upload');
+  const [activeMcqPanel, setActiveMcqPanel] = useState<'upload' | 'deleter' | 'bank' | null>(null);
   const [uploadMode, setUploadMode] = useState<'manual' | 'document'>('manual');
   const [subscriptionOverview, setSubscriptionOverview] = useState<AdminSubscriptionOverview | null>(null);
   const [subscriptionUsers, setSubscriptionUsers] = useState<AdminSubscriptionUser[]>([]);
@@ -4798,56 +4796,25 @@ export default function AdminApp() {
             </Card>
 
             <div className="min-w-0 space-y-4">
-              <Card className="min-w-0">
-                <CardHeader>
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <CardTitle>Section MCQ Editor</CardTitle>
-                      <CardDescription>
-                        {selectedHierarchy
-                          ? selectedHierarchy.kind === 'section'
-                            ? `${selectedHierarchy.subject} / ${selectedHierarchy.part} / ${selectedHierarchy.chapterTitle} / ${selectedHierarchy.sectionTitle}`
-                            : `${selectedHierarchy.subject} / ${selectedHierarchy.sectionTitle}`
-                          : 'Pick a section from the syllabus browser first.'}
-                      </CardDescription>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setIsSectionEditorOpen((prev) => !prev)}
-                      aria-expanded={isSectionEditorOpen}
-                    >
-                      {isSectionEditorOpen ? 'Close Section MCQ Editor' : 'Open Section MCQ Editor'}
-                    </Button>
-                  </div>
-                </CardHeader>
-                <div
-                  className={`overflow-hidden transition-all duration-300 ease-in-out ${isSectionEditorOpen ? 'max-h-[2600px] opacity-100' : 'max-h-0 opacity-0'}`}
-                >
-                <CardContent className="space-y-3 border-t border-slate-200/60 pt-4 dark:border-white/10">
-                  <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-3 text-xs text-indigo-800">
-                    Step 1: choose subject/chapter/section from the syllabus browser. Step 2: edit or add MCQs here. Step 3: manage the selected section in the bank below.
-                  </div>
-
+              <div className="space-y-3">
                   <div className="grid gap-2 md:grid-cols-3">
                     <button
                       type="button"
-                      onClick={() => setActiveMcqPanel('upload')}
+                      onClick={() => setActiveMcqPanel((prev) => (prev === 'upload' ? null : 'upload'))}
                       className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${activeMcqPanel === 'upload' ? 'border-indigo-400 bg-indigo-100/70 text-indigo-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
                     >
                       Upload MCQs
                     </button>
                     <button
                       type="button"
-                      onClick={() => setActiveMcqPanel('deleter')}
+                      onClick={() => setActiveMcqPanel((prev) => (prev === 'deleter' ? null : 'deleter'))}
                       className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${activeMcqPanel === 'deleter' ? 'border-rose-400 bg-rose-100/70 text-rose-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
                     >
                       MCQs Deleter
                     </button>
                     <button
                       type="button"
-                      onClick={() => setActiveMcqPanel('bank')}
+                      onClick={() => setActiveMcqPanel((prev) => (prev === 'bank' ? null : 'bank'))}
                       className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${activeMcqPanel === 'bank' ? 'border-cyan-400 bg-cyan-100/70 text-cyan-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
                     >
                       MCQs Bank
@@ -4949,26 +4916,7 @@ export default function AdminApp() {
 
                   {activeMcqPanel === 'upload' ? (
                   <div className="space-y-3 rounded-lg border border-indigo-200/70 bg-indigo-50/25 p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-medium text-indigo-900">Upload MCQs</p>
-                        <p className="text-xs text-muted-foreground">Subject, question, options, media, answer, and explanation controls.</p>
-                      </div>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setIsUploadMcqsOpen((prev) => !prev)}
-                        aria-expanded={isUploadMcqsOpen}
-                      >
-                        {isUploadMcqsOpen ? 'Close Upload MCQs' : 'Open Upload MCQs'}
-                      </Button>
-                    </div>
-
-                    <div
-                      className={`overflow-hidden transition-all duration-300 ease-in-out ${isUploadMcqsOpen ? 'max-h-[2200px] opacity-100' : 'max-h-0 opacity-0'}`}
-                    >
-                      <div className="space-y-3 border-t border-indigo-200/70 pt-3 dark:border-indigo-300/20">
+                      <div className="space-y-3">
                         <div className="grid gap-2 sm:grid-cols-2">
                           <Button
                             type="button"
@@ -5522,12 +5470,9 @@ export default function AdminApp() {
                           </>
                         ) : null}
                       </div>
-                    </div>
                   </div>
                   ) : null}
-                </CardContent>
-                </div>
-              </Card>
+              </div>
 
               {activeMcqPanel === 'bank' ? (
               <Card className="min-w-0">
@@ -5536,7 +5481,7 @@ export default function AdminApp() {
                   <CardDescription>
                     {selectedHierarchy
                       ? 'Edit or remove questions for the selected section/topic.'
-                      : 'Select a section/topic in the Section MCQ Editor above to load MCQs.'}
+                      : 'Select subject, chapter, and section/topic to load MCQs.'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
@@ -5666,7 +5611,7 @@ export default function AdminApp() {
                     )) : null}
                     {!selectedHierarchy ? (
                       <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
-                        Section/topic not selected yet. Use the Section MCQ Editor above first.
+                        Section/topic not selected yet. Use the filters above first.
                       </div>
                     ) : null}
                     {selectedHierarchy && !filteredMcqs.length ? (
