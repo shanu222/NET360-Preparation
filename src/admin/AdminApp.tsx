@@ -65,6 +65,7 @@ const ADMIN_SIDEBAR_EXPANDED_KEY = 'net360-admin-sidebar-expanded';
 const ADMIN_DESKTOP_MIN_WIDTH = 1024;
 const ADMIN_TABLET_COLLAPSE_MAX_WIDTH = 1280;
 const ADMIN_BRAND_LOGO_SRC = '/net360-logo.png';
+const GENERAL_CHAPTER_VALUE = '__general_chapter__';
 
 function readStoredAdminSidebarPreference() {
   try {
@@ -1472,30 +1473,72 @@ export default function AdminApp() {
     [mcqStructure],
   );
 
-  const manualChapterOptions = useMemo(
-    () => Array.from(
-      new Set(
-        mcqStructure
-          .filter((item) => String(item.subject || '').trim().toLowerCase() === String(form.subject || '').trim().toLowerCase())
-          .map((item) => String(item.chapter || '').trim())
-          .filter(Boolean),
-      ),
-    ).sort((a, b) => a.localeCompare(b)),
-    [mcqStructure, form.subject],
-  );
+  const manualChapterOptions = useMemo(() => {
+    const options = new Map<string, string>();
+    mcqStructure
+      .filter((item) => String(item.subject || '').trim().toLowerCase() === String(form.subject || '').trim().toLowerCase())
+      .forEach((item) => {
+        const chapter = String(item.chapter || '').trim();
+        if (!chapter) {
+          options.set(GENERAL_CHAPTER_VALUE, 'General Topics');
+        } else {
+          options.set(chapter, chapter);
+        }
+      });
+    return Array.from(options.entries()).map(([value, label]) => ({ value, label }));
+  }, [mcqStructure, form.subject]);
 
-  const manualSectionOptions = useMemo(
-    () => Array.from(
-      new Set(
-        mcqStructure
-          .filter((item) => String(item.subject || '').trim().toLowerCase() === String(form.subject || '').trim().toLowerCase())
-          .filter((item) => !form.chapter || String(item.chapter || '').trim() === String(form.chapter || '').trim())
-          .map((item) => String(item.section || '').trim())
-          .filter(Boolean),
-      ),
-    ).sort((a, b) => a.localeCompare(b)),
-    [mcqStructure, form.subject, form.chapter],
-  );
+  const manualSectionOptions = useMemo(() => {
+    const options = new Set<string>();
+    const selectedChapterRaw = String(form.chapter || '').trim();
+    const selectedChapter = selectedChapterRaw === GENERAL_CHAPTER_VALUE ? '' : selectedChapterRaw;
+    mcqStructure
+      .filter((item) => String(item.subject || '').trim().toLowerCase() === String(form.subject || '').trim().toLowerCase())
+      .filter((item) => {
+        if (!selectedChapterRaw) return false;
+        const chapter = String(item.chapter || '').trim();
+        return chapter === selectedChapter;
+      })
+      .forEach((item) => {
+        const section = String(item.section || '').trim();
+        if (section) options.add(section);
+      });
+    return Array.from(options).sort((a, b) => a.localeCompare(b));
+  }, [mcqStructure, form.subject, form.chapter]);
+
+  const deleteSubjectOptions = manualSubjectOptions;
+
+  const deleteChapterOptions = useMemo(() => {
+    const options = new Map<string, string>();
+    mcqStructure
+      .filter((item) => String(item.subject || '').trim().toLowerCase() === String(bulkDeleteSubject || '').trim().toLowerCase())
+      .forEach((item) => {
+        const chapter = String(item.chapter || '').trim();
+        if (!chapter) {
+          options.set(GENERAL_CHAPTER_VALUE, 'General Topics');
+        } else {
+          options.set(chapter, chapter);
+        }
+      });
+    return Array.from(options.entries()).map(([value, label]) => ({ value, label }));
+  }, [mcqStructure, bulkDeleteSubject]);
+
+  const deleteSectionOptions = useMemo(() => {
+    const options = new Set<string>();
+    const selectedChapterRaw = String(bulkDeleteChapter || '').trim();
+    if (!selectedChapterRaw) return [];
+    const selectedChapter = selectedChapterRaw === GENERAL_CHAPTER_VALUE ? '' : selectedChapterRaw;
+
+    mcqStructure
+      .filter((item) => String(item.subject || '').trim().toLowerCase() === String(bulkDeleteSubject || '').trim().toLowerCase())
+      .filter((item) => String(item.chapter || '').trim() === selectedChapter)
+      .forEach((item) => {
+        const section = String(item.section || '').trim();
+        if (section) options.add(section);
+      });
+
+    return Array.from(options).sort((a, b) => a.localeCompare(b));
+  }, [mcqStructure, bulkDeleteSubject, bulkDeleteChapter]);
 
   const authToken = token;
 
@@ -2669,40 +2712,27 @@ export default function AdminApp() {
       return;
     }
 
-    const selectedContext = selectedHierarchy
-      ? selectedHierarchy.kind === 'section'
-        ? {
-            subject: selectedHierarchy.subject,
-            part: selectedHierarchy.part,
-            chapter: selectedHierarchy.chapterTitle,
-            section: selectedHierarchy.sectionTitle,
-            topic: String(form.topic || '').trim() || `${selectedHierarchy.chapterTitle} - ${selectedHierarchy.sectionTitle}`,
-          }
-        : {
-            subject: selectedHierarchy.subject,
-            part: '',
-            chapter: String(form.chapter || '').trim() || 'General',
-            section: selectedHierarchy.sectionTitle,
-            topic: String(form.topic || '').trim() || selectedHierarchy.sectionTitle,
-          }
-      : {
-          subject: String(form.subject || '').trim().toLowerCase(),
-          part: String(form.part || '').trim().toLowerCase() || 'part1',
-          chapter: String(form.chapter || '').trim(),
-          section: String(form.section || '').trim(),
-          topic: String(form.topic || '').trim(),
-        };
+    const selectedContext = {
+      subject: String(form.subject || selectedHierarchy?.subject || '').trim().toLowerCase(),
+      part: String(
+        form.part
+          || (selectedHierarchy?.kind === 'section' ? selectedHierarchy.part : ''),
+      ).trim().toLowerCase() || 'part1',
+      chapter: String(
+        form.chapter === GENERAL_CHAPTER_VALUE
+          ? ''
+          : form.chapter
+          || (selectedHierarchy?.kind === 'section' ? selectedHierarchy.chapterTitle : ''),
+      ).trim(),
+      section: String(form.section || selectedHierarchy?.sectionTitle || '').trim(),
+      topic: String(form.topic || form.section || selectedHierarchy?.sectionTitle || '').trim(),
+    };
 
     const normalizedSubject = String(selectedContext.subject || '').toLowerCase().trim();
     const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizedSubject);
 
     if (!normalizedSubject) {
       toast.error('Subject is required before adding MCQs.');
-      return;
-    }
-
-    if (!String(selectedContext.chapter || '').trim()) {
-      toast.error('Chapter is required.');
       return;
     }
 
@@ -2718,6 +2748,11 @@ export default function AdminApp() {
 
     if (!isFlatTopicSubject && !String(selectedContext.part || '').trim()) {
       toast.error('Part is required.');
+      return;
+    }
+
+    if (!isFlatTopicSubject && !String(selectedContext.chapter || '').trim()) {
+      toast.error('Chapter is required.');
       return;
     }
 
@@ -3083,7 +3118,7 @@ export default function AdminApp() {
     if (!authToken) return;
 
     const subject = String(bulkDeleteSubject || '').trim().toLowerCase();
-    const chapter = String(bulkDeleteChapter || '').trim();
+    const chapter = String(bulkDeleteChapter === GENERAL_CHAPTER_VALUE ? '' : bulkDeleteChapter || '').trim();
     const sectionOrTopic = String(bulkDeleteSectionOrTopic || '').trim();
 
     if (bulkDeleteMode === 'subject' && !subject) {
@@ -4804,34 +4839,59 @@ export default function AdminApp() {
                       {bulkDeleteMode !== 'all' ? (
                         <div className="space-y-1.5">
                           <Label>Subject</Label>
-                          <Input
+                          <Select
                             value={bulkDeleteSubject}
-                            readOnly
-                            placeholder="Auto-filled from Syllabus Browser"
-                          />
+                            onValueChange={(value) => {
+                              setBulkDeleteSubject(value);
+                              setBulkDeleteChapter('');
+                              setBulkDeleteSectionOrTopic('');
+                            }}
+                          >
+                            <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
+                            <SelectContent>
+                              {deleteSubjectOptions.map((item) => (
+                                <SelectItem key={`delete-subject-${item}`} value={item}>{item}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </div>
                       ) : null}
                     </div>
 
-                    {bulkDeleteMode === 'chapter' || bulkDeleteMode === 'section-topic' ? (
+                    {(bulkDeleteMode === 'chapter' || bulkDeleteMode === 'section-topic') && bulkDeleteSubject ? (
                       <div className="space-y-1.5">
                         <Label>Chapter</Label>
-                        <Input
+                        <Select
                           value={bulkDeleteChapter}
-                          readOnly
-                          placeholder="Auto-filled from Syllabus Browser"
-                        />
+                          onValueChange={(value) => {
+                            setBulkDeleteChapter(value);
+                            setBulkDeleteSectionOrTopic('');
+                          }}
+                        >
+                          <SelectTrigger><SelectValue placeholder="Select chapter" /></SelectTrigger>
+                          <SelectContent>
+                            {deleteChapterOptions.map((item) => (
+                              <SelectItem key={`delete-chapter-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                     ) : null}
 
-                    {bulkDeleteMode === 'section-topic' ? (
+                    {bulkDeleteMode === 'section-topic' && bulkDeleteSubject && bulkDeleteChapter ? (
                       <div className="space-y-1.5">
                         <Label>Section / Topic</Label>
-                        <Input
+                        <Select
                           value={bulkDeleteSectionOrTopic}
-                          readOnly
-                          placeholder="Auto-filled from Syllabus Browser"
-                        />
+                          onValueChange={setBulkDeleteSectionOrTopic}
+                        >
+                          <SelectTrigger><SelectValue placeholder="Select section/topic" /></SelectTrigger>
+                          <SelectContent>
+                            {deleteSectionOptions.map((item) => (
+                              <SelectItem key={`delete-section-${item}`} value={item}>{item}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                     ) : null}
 
@@ -5063,20 +5123,55 @@ export default function AdminApp() {
                             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                               <div className="space-y-1.5">
                                 <Label>Subject</Label>
-                                <Input value={form.subject} readOnly placeholder="Auto-filled from Syllabus Browser" />
+                                <Select
+                                  value={form.subject}
+                                  onValueChange={(value) => setForm((prev) => ({ ...prev, subject: value, chapter: '', section: '', topic: '' }))}
+                                >
+                                  <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
+                                  <SelectContent>
+                                    {manualSubjectOptions.map((item) => (
+                                      <SelectItem key={`manual-subject-${item}`} value={item}>{item}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
                               </div>
-                              <div className="space-y-1.5">
-                                <Label>Chapter</Label>
-                                <Input value={form.chapter} readOnly placeholder="Auto-filled from Syllabus Browser" />
-                              </div>
-                              <div className="space-y-1.5">
-                                <Label>Section</Label>
-                                <Input value={form.section} readOnly placeholder="Auto-filled from Syllabus Browser" />
-                              </div>
-                              <div className="space-y-1.5">
-                                <Label>Topic</Label>
-                                <Input value={form.topic} readOnly placeholder="Auto-filled from Syllabus Browser" />
-                              </div>
+                              {form.subject ? (
+                                <div className="space-y-1.5">
+                                  <Label>Chapter</Label>
+                                  <Select
+                                    value={form.chapter}
+                                    onValueChange={(value) => setForm((prev) => ({
+                                      ...prev,
+                                      chapter: value,
+                                      section: '',
+                                      topic: '',
+                                    }))}
+                                  >
+                                    <SelectTrigger><SelectValue placeholder="Select chapter" /></SelectTrigger>
+                                    <SelectContent>
+                                      {manualChapterOptions.map((item) => (
+                                        <SelectItem key={`manual-chapter-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              ) : null}
+                              {form.subject && form.chapter ? (
+                                <div className="space-y-1.5">
+                                  <Label>Section / Topic</Label>
+                                  <Select
+                                    value={form.section}
+                                    onValueChange={(value) => setForm((prev) => ({ ...prev, section: value, topic: value }))}
+                                  >
+                                    <SelectTrigger><SelectValue placeholder="Select section/topic" /></SelectTrigger>
+                                    <SelectContent>
+                                      {manualSectionOptions.map((item) => (
+                                        <SelectItem key={`manual-section-${item}`} value={item}>{item}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              ) : null}
                             </div>
 
                         <div className="space-y-2 rounded-md border border-indigo-200/70 bg-white/70 p-2">
