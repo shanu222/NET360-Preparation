@@ -567,15 +567,7 @@ export function Profile({ onNavigate }: ProfileProps) {
   if (!user) {
     return (
       <div className="space-y-5">
-        <div className="flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-xl border border-indigo-100 bg-transparent shadow-sm">
-            <img src={BRAND_LOGO_SRC} alt="NET360 logo" className="h-full w-full scale-[1.3] object-contain" loading="lazy" />
-          </div>
-          <div>
-          <h1>Account Access</h1>
-          <p className="text-slate-600">Login or register to enable server-backed sessions, auth, and report export</p>
-          </div>
-        </div>
+        <h1>Account Access</h1>
 
         <div className="grid gap-4 lg:grid-cols-[1fr_1.5fr] xl:grid-cols-[1fr_1.65fr]">
           <Card className="rounded-2xl border-indigo-100 bg-white/92 shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
