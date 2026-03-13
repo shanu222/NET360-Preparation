@@ -1290,6 +1290,14 @@ export default function AdminApp() {
     return Array.from(new Set(questionSubmissions.map((item) => item.subject).filter(Boolean))).sort((a, b) => a.localeCompare(b));
   }, [questionSubmissions]);
 
+  const pendingSignupRequests = useMemo(() => {
+    return signupRequests.filter((item) => item.status === 'pending');
+  }, [signupRequests]);
+
+  const completedSignupRequests = useMemo(() => {
+    return signupRequests.filter((item) => item.status === 'completed' || (item.status === 'approved' && item.codeDeliveryStatus === 'sent'));
+  }, [signupRequests]);
+
   const bankTree = useMemo(() => {
     const subjectMap = new Map<string, {
       key: string;
@@ -2102,6 +2110,15 @@ export default function AdminApp() {
 
   const approveSignupRequest = async (request: SignupRequest) => {
     if (!authToken) return;
+    setSignupRequests((prev) => prev.map((item) => (item.id === request.id
+      ? {
+          ...item,
+          status: 'completed',
+          codeDeliveryStatus: 'sent',
+          codeSentAt: new Date().toISOString(),
+        }
+      : item)));
+
     try {
       const payload = await apiRequest<{ requestId: string; token: { code: string; expiresAt: string } }>(
         `/api/admin/signup-requests/${request.id}/approve`,
@@ -2115,6 +2132,7 @@ export default function AdminApp() {
       toast.success(`Approved. Token: ${payload.token.code}`);
       await loadAdminData(authToken);
     } catch (error) {
+      setSignupRequests((prev) => prev.map((item) => (item.id === request.id ? request : item)));
       toast.error(error instanceof Error ? error.message : 'Could not approve request.');
     }
   };
@@ -4077,97 +4095,117 @@ export default function AdminApp() {
               <CardTitle>Payment Approval Requests</CardTitle>
               <CardDescription>Verify transaction details + proof, approve to generate code, then send it in-app.</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-2 max-h-[520px] overflow-auto">
-              {signupRequests.map((request) => (
-                <div key={request.id} className="rounded-lg border p-3 space-y-2">
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <p className="text-sm">User: {[request.firstName, request.lastName].filter(Boolean).join(' ').trim() || 'N/A'}</p>
-                      <p className="text-xs text-muted-foreground">Email: {request.email}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Mobile: {request.mobileNumber || 'N/A'}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Payment Method: {request.paymentMethod.toUpperCase()}
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        Transaction ID: {request.paymentTransactionId}
-                      </p>
-                      <p className="text-xs text-muted-foreground">Mobile: {request.mobileNumber || 'N/A'}</p>
-                      <div className="mt-1">
-                        <Badge
-                          variant="outline"
-                          className={request.codeDeliveryStatus === 'sent' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-amber-300 bg-amber-50 text-amber-700'}
-                        >
-                          {request.codeDeliveryStatus === 'sent'
-                            ? `Sent In-App${request.codeSentAt ? ` • ${new Date(request.codeSentAt).toLocaleString()}` : ''}`
-                            : 'Pending Send'}
-                        </Badge>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        {request.createdAt ? new Date(request.createdAt).toLocaleString() : 'Unknown time'}
-                      </p>
-                    </div>
-                    <Badge variant={request.status === 'pending' ? 'default' : 'outline'}>{request.status}</Badge>
+            <CardContent className="space-y-4">
+              <div className="grid gap-4 lg:grid-cols-2">
+                <section className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-sm font-semibold">New / Pending Requests</h4>
+                    <Badge variant="outline">{pendingSignupRequests.length}</Badge>
                   </div>
+                  <div className="space-y-2 max-h-[520px] overflow-auto">
+                    {pendingSignupRequests.map((request) => (
+                      <div key={request.id} className="rounded-lg border p-3 space-y-2 transition-all duration-300 ease-out">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm">User: {[request.firstName, request.lastName].filter(Boolean).join(' ').trim() || 'N/A'}</p>
+                            <p className="text-xs text-muted-foreground">Email: {request.email}</p>
+                            <p className="text-xs text-muted-foreground">Mobile: {request.mobileNumber || 'N/A'}</p>
+                            <p className="text-xs text-muted-foreground">Payment Method: {request.paymentMethod.toUpperCase()}</p>
+                            <p className="text-xs text-muted-foreground">Transaction ID: {request.paymentTransactionId}</p>
+                            <p className="text-xs text-muted-foreground">{request.createdAt ? new Date(request.createdAt).toLocaleString() : 'Unknown time'}</p>
+                          </div>
+                          <Badge variant="default">Pending</Badge>
+                        </div>
 
-                  {request.paymentProof ? (
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-[11px]"
-                        onClick={() => void openPaymentProof(`/api/admin/signup-requests/${request.id}/payment-proof`, request.paymentProof?.name || `signup-proof-${request.id}.dat`, request.paymentProof?.dataUrl, false)}
-                      >
-                        View Proof
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-[11px]"
-                        onClick={() => void openPaymentProof(`/api/admin/signup-requests/${request.id}/payment-proof?download=1`, request.paymentProof?.name || `signup-proof-${request.id}.dat`, request.paymentProof?.dataUrl, true)}
-                      >
-                        Download Proof
-                      </Button>
-                    </div>
-                  ) : null}
+                        {request.paymentProof ? (
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={() => void openPaymentProof(`/api/admin/signup-requests/${request.id}/payment-proof`, request.paymentProof?.name || `signup-proof-${request.id}.dat`, request.paymentProof?.dataUrl, false)}
+                            >
+                              View Proof
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={() => void openPaymentProof(`/api/admin/signup-requests/${request.id}/payment-proof?download=1`, request.paymentProof?.name || `signup-proof-${request.id}.dat`, request.paymentProof?.dataUrl, true)}
+                            >
+                              Download Proof
+                            </Button>
+                          </div>
+                        ) : null}
 
-                  {issuedTokens[request.id] ? (
-                    <div className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-1 text-xs text-emerald-700 flex items-center justify-between gap-2">
-                      <span>
-                        Generated token: <strong>{issuedTokens[request.id]}</strong>
-                      </span>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-6 px-2 text-[11px]"
-                        onClick={() => void copyToken(issuedTokens[request.id])}
-                      >
-                        Copy Code
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        className="h-6 px-2 text-[11px]"
-                        onClick={() => void sendCodeInApp(request.id, 'signup')}
-                      >
-                        Send Code
-                      </Button>
-                    </div>
-                  ) : null}
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={() => void approveSignupRequest(request)}>Approve</Button>
+                        </div>
+                      </div>
+                    ))}
+                    {!pendingSignupRequests.length ? (
+                      <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
+                        No pending payment requests.
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
 
-                  {request.status === 'pending' ? (
-                    <div className="flex gap-2">
-                      <Button size="sm" onClick={() => void approveSignupRequest(request)}>Approve + Generate Token</Button>
-                      <Button size="sm" variant="outline" onClick={() => void rejectSignupRequest(request)}>Reject</Button>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
+                <section className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <h4 className="text-sm font-semibold">Completed Requests</h4>
+                    <Badge variant="outline">{completedSignupRequests.length}</Badge>
+                  </div>
+                  <div className="space-y-2 max-h-[520px] overflow-auto">
+                    {completedSignupRequests.map((request) => (
+                      <div key={request.id} className="rounded-lg border p-3 space-y-2 transition-all duration-300 ease-out">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-sm">User: {[request.firstName, request.lastName].filter(Boolean).join(' ').trim() || 'N/A'}</p>
+                            <p className="text-xs text-muted-foreground">Email: {request.email}</p>
+                            <p className="text-xs text-muted-foreground">Mobile: {request.mobileNumber || 'N/A'}</p>
+                            <p className="text-xs text-muted-foreground">Payment Method: {request.paymentMethod.toUpperCase()}</p>
+                            <p className="text-xs text-muted-foreground">Transaction ID: {request.paymentTransactionId}</p>
+                            <p className="text-xs text-muted-foreground">{request.createdAt ? new Date(request.createdAt).toLocaleString() : 'Unknown time'}</p>
+                            {request.codeSentAt ? <p className="text-xs text-muted-foreground">Completed: {new Date(request.codeSentAt).toLocaleString()}</p> : null}
+                          </div>
+                          <Badge className="bg-emerald-600 text-white">Completed</Badge>
+                        </div>
+
+                        {request.paymentProof ? (
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={() => void openPaymentProof(`/api/admin/signup-requests/${request.id}/payment-proof`, request.paymentProof?.name || `signup-proof-${request.id}.dat`, request.paymentProof?.dataUrl, false)}
+                            >
+                              View Proof
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={() => void openPaymentProof(`/api/admin/signup-requests/${request.id}/payment-proof?download=1`, request.paymentProof?.name || `signup-proof-${request.id}.dat`, request.paymentProof?.dataUrl, true)}
+                            >
+                              Download Proof
+                            </Button>
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                    {!completedSignupRequests.length ? (
+                      <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
+                        No completed requests yet.
+                      </div>
+                    ) : null}
+                  </div>
+                </section>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
