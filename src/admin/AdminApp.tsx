@@ -1,5 +1,25 @@
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, RefreshCw } from 'lucide-react';
+import {
+  Activity,
+  BarChart3,
+  BookCheck,
+  Boxes,
+  ClipboardList,
+  CreditCard,
+  FileCheck2,
+  FileQuestion,
+  Gauge,
+  LayoutDashboard,
+  Loader2,
+  MessageSquare,
+  RefreshCw,
+  Settings,
+  ShieldAlert,
+  Sparkles,
+  UserCog,
+  Users,
+  type LucideIcon,
+} from 'lucide-react';
 import { apiRequest, buildApiUrl } from '../app/lib/api';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
 import { Button } from '../app/components/ui/button';
@@ -79,6 +99,21 @@ const ADMIN_SECTION_ROUTES: Record<AdminSection, string> = {
   subscriptions: '/admin/subscriptions',
   'system-config': '/admin/system-config',
 };
+
+const ADMIN_SECTION_META: Array<{ section: AdminSection; label: string; icon: LucideIcon }> = [
+  { section: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { section: 'users', label: 'Users', icon: Users },
+  { section: 'mcqs', label: 'MCQs', icon: FileQuestion },
+  { section: 'practice-board', label: 'Practice Board', icon: BookCheck },
+  { section: 'submissions', label: 'Submissions', icon: FileCheck2 },
+  { section: 'community-moderation', label: 'Community', icon: ShieldAlert },
+  { section: 'subscriptions', label: 'Subscriptions', icon: CreditCard },
+  { section: 'support-chat', label: 'Support Chat', icon: MessageSquare },
+  { section: 'requests', label: 'Signup Requests', icon: ClipboardList },
+  { section: 'premium-requests', label: 'Premium Requests', icon: Sparkles },
+  { section: 'password-recovery', label: 'Recovery', icon: Activity },
+  { section: 'system-config', label: 'Settings', icon: Settings },
+];
 
 function getSectionFromPath(pathname: string): AdminSection {
   const normalized = String(pathname || '').toLowerCase();
@@ -3272,112 +3307,152 @@ export default function AdminApp() {
   }
 
   return (
-    <div className="min-h-screen p-3 sm:p-5">
-      <div className="mx-auto w-full max-w-[1700px] space-y-4 sm:space-y-5">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1>NET360 Admin Management</h1>
-          <p className="text-sm text-muted-foreground">Manage users and MCQs from this separate panel</p>
+    <div className="min-h-screen bg-gradient-to-br from-[#08122d] via-[#2a1c59] to-[#06393f] text-slate-100">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_15%_20%,rgba(56,189,248,0.18),transparent_38%),radial-gradient(circle_at_80%_10%,rgba(168,85,247,0.26),transparent_36%),radial-gradient(circle_at_75%_78%,rgba(45,212,191,0.22),transparent_42%)]" />
+
+      <aside className="fixed inset-y-0 left-0 z-20 hidden w-72 border-r border-white/15 bg-slate-950/45 p-5 backdrop-blur-xl lg:block">
+        <div className="mb-6">
+          <h1 className="text-2xl font-semibold tracking-tight">NET360 Admin</h1>
+          <p className="mt-1 text-sm text-slate-300">Professional control center</p>
         </div>
-        <Button variant="outline" onClick={logout}>Logout</Button>
-      </header>
 
-      {activeSection === 'dashboard' ? (
-        <>
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <Metric title="Registered Users" value={String(overview?.usersCount || 0)} />
-            <Metric title="Question Bank" value={String(overview?.mcqCount || 0)} onClick={openQuestionBankWindow} />
-            <Metric title="Practice Board Question Bank" value={String(practiceQuestions.length)} onClick={openPracticeBoardBankWindow} />
-            <Metric title="Attempts" value={String(overview?.attemptsCount || 0)} />
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <Metric title="Average Score" value={`${overview?.averageScore || 0}%`} />
-            <Metric title="Pending Signup Requests" value={String(overview?.pendingSignupRequests || 0)} />
-            <Metric title="Approved Requests" value={String(signupRequests.filter((item) => item.status === 'approved').length)} />
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <Metric title="Completed Signups" value={String(signupRequests.filter((item) => item.status === 'completed').length)} />
-            <Metric title="Pending User Submissions" value={String(overview?.pendingQuestionSubmissions || 0)} />
-            <Metric title="Pending Premium Requests" value={String(overview?.pendingPremiumRequests || 0)} />
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <Metric title="Recovery Requests" value={String(overview?.recoveryRequestCount || 0)} />
-            <Metric title="Approved Submissions" value={String(questionSubmissions.filter((item) => item.status === 'approved').length)} />
-            <Metric title="Rejected Submissions" value={String(questionSubmissions.filter((item) => item.status === 'rejected').length)} />
-            <Metric title="Active Subscriptions" value={String(subscriptionOverview?.activeUsers || 0)} />
-            <Metric title="Expired/Inactive" value={String(subscriptionOverview?.expiredUsers || 0)} />
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            <Metric title="Tracked Users" value={String(subscriptionOverview?.totalUsers || 0)} />
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Password Recovery Snapshot</CardTitle>
-              <CardDescription>Quick delivery status overview for recent recovery activity.</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-wrap gap-2">
-              <Badge className="bg-emerald-600 text-white">sent: {overview?.recoveryStatusCounts?.sent || 0}</Badge>
-              <Badge className="bg-amber-500 text-white">partial: {overview?.recoveryStatusCounts?.partial || 0}</Badge>
-              <Badge className="bg-rose-600 text-white">failed: {overview?.recoveryStatusCounts?.failed || 0}</Badge>
-              <Badge variant="outline">not_found: {overview?.recoveryStatusCounts?.not_found || 0}</Badge>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <CardTitle>System Status</CardTitle>
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  className="h-8"
-                  onClick={() => void refreshSystemStatus()}
-                  disabled={isRefreshingSystemStatus}
+        <Tabs value={activeSection} onValueChange={(value) => navigateToSection(value as AdminSection)} className="space-y-3">
+          <TabsList className="grid h-auto w-full grid-cols-1 gap-2 bg-transparent p-0">
+            {ADMIN_SECTION_META.map((item) => {
+              const Icon = item.icon;
+              return (
+                <TabsTrigger
+                  key={item.section}
+                  value={item.section}
+                  className="h-11 justify-start rounded-xl border border-white/10 bg-white/5 px-3 text-slate-200 transition-all data-[state=active]:border-cyan-300/40 data-[state=active]:bg-gradient-to-r data-[state=active]:from-cyan-500/35 data-[state=active]:to-violet-500/35"
                 >
-                  {isRefreshingSystemStatus ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
-                  {isRefreshingSystemStatus ? 'Refreshing...' : 'Refresh'}
-                </Button>
-              </div>
-              <CardDescription>Live backend connectivity check for AI mentor services.</CardDescription>
-            </CardHeader>
-            <CardContent className="flex flex-wrap items-center gap-2">
-              <Badge className={systemStatus?.openai?.configured ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}>
-                OpenAI: {systemStatus?.openai?.configured ? 'Configured' : 'Missing key'}
-              </Badge>
-              <Badge variant="outline">Model: {systemStatus?.openai?.model || 'unknown'}</Badge>
-              <Badge variant="outline">Key source: {systemStatus?.openai?.keySource || 'missing'}</Badge>
-            </CardContent>
-          </Card>
-        </>
-      ) : null}
-
-      <Tabs
-        value={activeSection}
-        onValueChange={(value) => navigateToSection(value as AdminSection)}
-        className="w-full min-w-0 space-y-4"
-      >
-        <div className="overflow-x-auto pb-1">
-          <TabsList className="inline-flex h-auto min-w-max gap-1">
-            <TabsTrigger className="min-w-[160px]" value="dashboard">Dashboard</TabsTrigger>
-            <TabsTrigger className="min-w-[150px]" value="users">Users</TabsTrigger>
-            <TabsTrigger className="min-w-[170px]" value="requests">Signup Requests</TabsTrigger>
-            <TabsTrigger className="min-w-[190px]" value="premium-requests">Premium Requests</TabsTrigger>
-            <TabsTrigger className="min-w-[150px]" value="support-chat">Support Chat</TabsTrigger>
-            <TabsTrigger className="min-w-[220px]" value="password-recovery">Password Recovery</TabsTrigger>
-            <TabsTrigger className="min-w-[120px]" value="mcqs">MCQs</TabsTrigger>
-            <TabsTrigger className="min-w-[150px]" value="practice-board">Practice Board</TabsTrigger>
-            <TabsTrigger className="min-w-[140px]" value="submissions">Submissions</TabsTrigger>
-            <TabsTrigger className="min-w-[190px]" value="community-moderation">Community Moderation</TabsTrigger>
-            <TabsTrigger className="min-w-[150px]" value="subscriptions">Subscriptions</TabsTrigger>
-            <TabsTrigger className="min-w-[170px]" value="system-config">System Config</TabsTrigger>
+                  <Icon className="mr-2 h-4 w-4" />
+                  {item.label}
+                </TabsTrigger>
+              );
+            })}
           </TabsList>
-        </div>
+        </Tabs>
+      </aside>
+
+      <main className="relative z-10 px-3 py-4 sm:px-5 lg:ml-72 lg:px-8 lg:py-6">
+        <div className="mx-auto w-full max-w-[1700px] space-y-5">
+          <header className="rounded-2xl border border-white/15 bg-white/10 p-4 shadow-[0_20px_50px_rgba(8,20,46,0.45)] backdrop-blur-md">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-semibold tracking-tight">NET360 Admin Management</h2>
+                <p className="text-sm text-slate-300">Manage users and MCQs from this separate panel</p>
+              </div>
+              <Button variant="outline" className="border-white/25 bg-white/10 text-slate-100 hover:bg-white/20" onClick={logout}>Logout</Button>
+            </div>
+
+            <div className="mt-4 overflow-x-auto pb-1 lg:hidden">
+              <Tabs value={activeSection} onValueChange={(value) => navigateToSection(value as AdminSection)} className="w-full">
+                <TabsList className="inline-flex h-auto min-w-max gap-1 rounded-xl border border-white/15 bg-slate-950/25 p-1">
+                  {ADMIN_SECTION_META.map((item) => {
+                    const Icon = item.icon;
+                    return (
+                      <TabsTrigger key={item.section} value={item.section} className="rounded-lg text-xs sm:text-sm">
+                        <Icon className="mr-1.5 h-3.5 w-3.5" />
+                        {item.label}
+                      </TabsTrigger>
+                    );
+                  })}
+                </TabsList>
+              </Tabs>
+            </div>
+          </header>
+
+          {activeSection === 'dashboard' ? (
+            <>
+              <section className="space-y-3">
+                <h3 className="inline-flex items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-cyan-200"><Gauge className="h-4 w-4" />System Overview</h3>
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <Metric title="Registered Users" value={String(overview?.usersCount || 0)} icon={Users} tone="from-cyan-500/30 to-blue-500/20" />
+                  <Metric title="Question Bank" value={String(overview?.mcqCount || 0)} icon={Boxes} tone="from-violet-500/35 to-fuchsia-500/20" onClick={openQuestionBankWindow} />
+                  <Metric title="Practice Board Question Bank" value={String(practiceQuestions.length)} icon={BookCheck} tone="from-indigo-500/35 to-cyan-500/20" onClick={openPracticeBoardBankWindow} />
+                  <Metric title="Attempts" value={String(overview?.attemptsCount || 0)} icon={BarChart3} tone="from-pink-500/35 to-rose-500/20" />
+                </div>
+              </section>
+
+              <section className="space-y-3">
+                <h3 className="inline-flex items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-violet-200"><UserCog className="h-4 w-4" />User Management</h3>
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  <Metric title="Average Score" value={`${overview?.averageScore || 0}%`} icon={Activity} tone="from-blue-500/30 to-cyan-500/20" />
+                  <Metric title="Pending Signup Requests" value={String(overview?.pendingSignupRequests || 0)} icon={ClipboardList} tone="from-amber-500/30 to-orange-500/20" />
+                  <Metric title="Approved Requests" value={String(signupRequests.filter((item) => item.status === 'approved').length)} icon={FileCheck2} tone="from-emerald-500/30 to-teal-500/20" />
+                  <Metric title="Completed Signups" value={String(signupRequests.filter((item) => item.status === 'completed').length)} icon={Users} tone="from-violet-500/25 to-blue-500/20" />
+                  <Metric title="Recovery Requests" value={String(overview?.recoveryRequestCount || 0)} icon={ShieldAlert} tone="from-pink-500/25 to-red-500/20" />
+                  <Metric title="Tracked Users" value={String(subscriptionOverview?.totalUsers || 0)} icon={UserCog} tone="from-cyan-500/25 to-indigo-500/20" />
+                </div>
+              </section>
+
+              <section className="space-y-3">
+                <h3 className="inline-flex items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-fuchsia-200"><FileQuestion className="h-4 w-4" />Content Management</h3>
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  <Metric title="Pending User Submissions" value={String(overview?.pendingQuestionSubmissions || 0)} icon={ClipboardList} tone="from-amber-500/30 to-yellow-500/20" />
+                  <Metric title="Pending Premium Requests" value={String(overview?.pendingPremiumRequests || 0)} icon={Sparkles} tone="from-fuchsia-500/30 to-violet-500/20" />
+                  <Metric title="Approved Submissions" value={String(questionSubmissions.filter((item) => item.status === 'approved').length)} icon={FileCheck2} tone="from-emerald-500/30 to-cyan-500/20" />
+                  <Metric title="Rejected Submissions" value={String(questionSubmissions.filter((item) => item.status === 'rejected').length)} icon={ShieldAlert} tone="from-rose-500/30 to-red-500/20" />
+                </div>
+              </section>
+
+              <section className="space-y-3">
+                <h3 className="inline-flex items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-teal-200"><CreditCard className="h-4 w-4" />Analytics</h3>
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  <Metric title="Active Subscriptions" value={String(subscriptionOverview?.activeUsers || 0)} icon={CreditCard} tone="from-emerald-500/30 to-cyan-500/20" />
+                  <Metric title="Expired/Inactive" value={String(subscriptionOverview?.expiredUsers || 0)} icon={Activity} tone="from-rose-500/30 to-orange-500/20" />
+                </div>
+              </section>
+
+              <Card className="rounded-2xl border border-white/20 bg-white/10 shadow-[0_20px_45px_rgba(6,10,40,0.45)] backdrop-blur-xl">
+                <CardHeader>
+                  <CardTitle>Password Recovery Snapshot</CardTitle>
+                  <CardDescription className="text-slate-300">Quick delivery status overview for recent recovery activity.</CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-wrap gap-2">
+                  <Badge className="bg-emerald-500 text-white">sent: {overview?.recoveryStatusCounts?.sent || 0}</Badge>
+                  <Badge className="bg-amber-500 text-white">partial: {overview?.recoveryStatusCounts?.partial || 0}</Badge>
+                  <Badge className="bg-rose-500 text-white">failed: {overview?.recoveryStatusCounts?.failed || 0}</Badge>
+                  <Badge className="border border-white/20 bg-slate-900/30 text-slate-100">not_found: {overview?.recoveryStatusCounts?.not_found || 0}</Badge>
+                </CardContent>
+              </Card>
+
+              <Card className="rounded-2xl border border-white/20 bg-white/10 shadow-[0_20px_45px_rgba(6,10,40,0.45)] backdrop-blur-xl">
+                <CardHeader>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <CardTitle>System Status</CardTitle>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-9 border-white/25 bg-white/10 text-slate-100 hover:bg-white/20"
+                      onClick={() => void refreshSystemStatus()}
+                      disabled={isRefreshingSystemStatus}
+                    >
+                      {isRefreshingSystemStatus ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+                      {isRefreshingSystemStatus ? 'Refreshing...' : 'Refresh'}
+                    </Button>
+                  </div>
+                  <CardDescription className="text-slate-300">Live backend connectivity check for AI mentor services.</CardDescription>
+                </CardHeader>
+                <CardContent className="flex flex-wrap items-center gap-2">
+                  <Badge className={systemStatus?.openai?.configured ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}>
+                    OpenAI: {systemStatus?.openai?.configured ? 'Configured' : 'Missing key'}
+                  </Badge>
+                  <Badge className="border border-white/20 bg-slate-900/30 text-slate-100">Model: {systemStatus?.openai?.model || 'unknown'}</Badge>
+                  <Badge className="border border-white/20 bg-slate-900/30 text-slate-100">Key source: {systemStatus?.openai?.keySource || 'missing'}</Badge>
+                </CardContent>
+              </Card>
+            </>
+          ) : null}
+
+          <Tabs
+            value={activeSection}
+            onValueChange={(value) => navigateToSection(value as AdminSection)}
+            className="w-full min-w-0 space-y-4"
+          >
+            <div className="hidden" />
 
         <TabsContent value="dashboard" className="hidden" />
 
@@ -5187,8 +5262,9 @@ export default function AdminApp() {
             </CardContent>
           </Card>
         </TabsContent>
-      </Tabs>
-      </div>
+          </Tabs>
+        </div>
+      </main>
     </div>
   );
 }
@@ -5196,17 +5272,31 @@ export default function AdminApp() {
 function Metric({
   title,
   value,
+  icon: Icon,
+  tone,
   onClick,
 }: {
   title: string;
   value: string;
+  icon: LucideIcon;
+  tone: string;
   onClick?: () => void;
 }) {
   return (
-    <Card>
-      <CardContent className={`pt-5 ${onClick ? 'cursor-pointer hover:bg-muted/40 transition-colors rounded-md' : ''}`} onClick={onClick}>
-        <p className="text-sm text-muted-foreground">{title}</p>
-        <p className="text-2xl">{value}</p>
+    <Card
+      className={`group relative overflow-hidden rounded-2xl border border-white/20 bg-gradient-to-br ${tone} shadow-[0_18px_40px_rgba(4,10,38,0.5)] backdrop-blur-xl transition-all duration-300 ${onClick ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-[0_26px_50px_rgba(2,8,32,0.62)]' : ''}`}
+      onClick={onClick}
+    >
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_70%_20%,rgba(255,255,255,0.2),transparent_45%)] opacity-80" />
+      <CardContent className="relative pt-4">
+        <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/25 bg-white/15">
+          <Icon className="h-4 w-4 text-white" />
+        </div>
+        <p className="text-sm text-slate-100/90">{title}</p>
+        <p className="text-4xl font-semibold tracking-tight text-white">{value}</p>
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/20">
+          <div className="h-full w-2/3 rounded-full bg-gradient-to-r from-cyan-300 via-violet-300 to-pink-300 transition-all duration-500 group-hover:w-[82%]" />
+        </div>
       </CardContent>
     </Card>
   );
