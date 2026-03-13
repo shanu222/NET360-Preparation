@@ -15,7 +15,7 @@ import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
 import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK, PAYMENT_METHODS } from '../lib/paymentMethods';
-import { NET_ENGINEERING_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
+import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 
 const ADVERTISEMENT_PREVIEW_SRC = '/advertisement-page.webp';
 const BRAND_LOGO_SRC = '/net360-logo.png';
@@ -87,7 +87,7 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
   const [isTargetProgramOpen, setIsTargetProgramOpen] = useState(false);
 
-  const targetProgramOptions = useMemo(() => NET_ENGINEERING_TARGET_PROGRAM_OPTIONS, []);
+  const targetProgramOptions = useMemo(() => NET_TARGET_PROGRAM_OPTIONS, []);
   const selectedTargetProgramLabel =
     targetProgramOptions.find((option) => option.value === localProfile.targetProgram)?.label ||
     LEGACY_TARGET_PROGRAM_LABELS[String(localProfile.targetProgram || '').toLowerCase()] ||
@@ -1150,7 +1150,7 @@ export function Profile({ onNavigate }: ProfileProps) {
         <CardContent className="space-y-4">
           {!isPreparationExpanded ? (
             <div className="grid gap-2 rounded-lg border bg-slate-50/70 p-3 text-sm md:grid-cols-2">
-              <p><span className="text-muted-foreground">Target Program:</span> {localProfile.targetProgram || 'Not set'}</p>
+              <p><span className="text-muted-foreground">Target Program:</span> {selectedTargetProgramLabel || 'Not set'}</p>
               <p><span className="text-muted-foreground">Test Series:</span> {localProfile.testSeries || 'Not set'}</p>
               <p><span className="text-muted-foreground">SSC %:</span> {localProfile.sscPercentage || 'Not set'}</p>
               <p><span className="text-muted-foreground">HSSC %:</span> {localProfile.hsscPercentage || 'Not set'}</p>
@@ -1182,7 +1182,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                     <CommandInput placeholder="Search programs..." />
                     <CommandList>
                       <CommandEmpty>No program found.</CommandEmpty>
-                      <CommandGroup heading="All Engineering Programs">
+                      <CommandGroup heading="All NET Programs">
                         {targetProgramOptions.map((option) => (
                           <CommandItem
                             key={`${option.category}-${option.value}`}
