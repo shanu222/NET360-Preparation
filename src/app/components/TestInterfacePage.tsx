@@ -905,7 +905,10 @@ export function TestInterfacePage() {
                       <img src={row.questionImage.dataUrl} alt={`Review question ${idx + 1}`} className="mt-2 max-h-48 w-full rounded border object-contain" />
                     ) : null}
                     <p className={`mt-2 font-medium ${row.isCorrect ? 'text-emerald-700' : 'text-rose-700'}`}>
-                      {row.isCorrect ? 'Correct' : 'Incorrect'} • Your answer: {row.selectedKey || 'Not answered'} • Correct: {row.correctKey || '-'}
+                      {row.isCorrect ? 'Correct' : 'Incorrect'} • Your answer: {row.selectedKey || 'Not answered'}
+                    </p>
+                    <p className="mt-1 text-sm font-semibold text-slate-800">
+                      Correct Answer: {row.correctKey || '-'}
                     </p>
                     {(() => {
                       const explanationOrShortTrickText = String(row.explanationText || row.shortTrickText || '').trim();
