@@ -13,12 +13,14 @@ import {
   Loader2,
   Menu,
   MessageSquare,
+  Moon,
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
   Settings,
   ShieldAlert,
   Sparkles,
+  Sun,
   UserCog,
   Users,
   X,
@@ -531,6 +533,16 @@ interface ParsedBulkResponse {
 
 const TOKEN_KEY = 'net360-admin-access-token';
 const REFRESH_TOKEN_KEY = 'net360-admin-refresh-token';
+const THEME_STORAGE_KEY = 'net360-theme-mode';
+
+type ThemeMode = 'light' | 'dark';
+
+function resolveInitialThemeMode(): ThemeMode {
+  if (typeof window === 'undefined') return 'light';
+  const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
+  if (stored === 'light' || stored === 'dark') return stored;
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
 
 function emptyForm() {
   return {
@@ -990,6 +1002,7 @@ export default function AdminApp() {
     return readStoredAdminSidebarPreference() ?? true;
   });
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [themeMode, setThemeMode] = useState<ThemeMode>(resolveInitialThemeMode);
 
   const [authForm, setAuthForm] = useState({ email: '', password: '' });
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -1210,6 +1223,13 @@ export default function AdminApp() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('dark', themeMode === 'dark');
+    root.style.colorScheme = themeMode;
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+  }, [themeMode]);
 
   const practiceBankVisibleQuestions = useMemo(() => {
     const source = activePracticeBankSubject?.questions || [];
@@ -3478,7 +3498,20 @@ export default function AdminApp() {
                   <p className="text-sm text-slate-600 dark:text-slate-300">Manage users and MCQs from this separate panel</p>
                 </div>
               </div>
-              <Button variant="outline" className="border-slate-300/70 bg-white/70 text-slate-800 hover:bg-white dark:border-white/25 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20" onClick={logout}>Logout</Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="rounded-xl px-2 text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-white/10"
+                  onClick={() => setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+                  aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                  title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                >
+                  {themeMode === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                  <span className="ml-1 hidden text-xs font-medium sm:inline">{themeMode === 'dark' ? 'Light' : 'Dark'}</span>
+                </Button>
+                <Button variant="outline" className="border-slate-300/70 bg-white/70 text-slate-800 hover:bg-white dark:border-white/25 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20" onClick={logout}>Logout</Button>
+              </div>
             </div>
           </header>
 
