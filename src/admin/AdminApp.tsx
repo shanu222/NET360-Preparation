@@ -513,6 +513,11 @@ interface LoginUser {
 }
 
 interface ParsedBulkMcq {
+  subject?: string;
+  part?: string;
+  chapter?: string;
+  section?: string;
+  topic?: string;
   question: string;
   questionImageUrl: string;
   questionImageDataUrl?: string;
@@ -682,10 +687,78 @@ function splitQuestionBlocks(text: string): Array<{ number: string; content: str
   });
 }
 
+function normalizeParsedHierarchyContext(context: Partial<Pick<ParsedBulkMcq, 'subject' | 'part' | 'chapter' | 'section' | 'topic'>>) {
+  const subjectRaw = String(context.subject || '').trim().toLowerCase();
+  const partRaw = String(context.part || '').trim().toLowerCase();
+  const chapterRaw = String(context.chapter || '').trim();
+  const sectionRaw = String(context.section || '').trim();
+  const topicRaw = String(context.topic || '').trim();
+
+  const normalizedPart = partRaw === 'part 1' || partRaw === 'part1'
+    ? 'part1'
+    : partRaw === 'part 2' || partRaw === 'part2'
+      ? 'part2'
+      : '';
+
+  return {
+    subject: subjectRaw,
+    part: normalizedPart,
+    chapter: chapterRaw,
+    section: sectionRaw,
+    topic: topicRaw,
+  };
+}
+
+function parseHierarchyLine(line: string): { key: 'subject' | 'part' | 'chapter' | 'section' | 'topic'; value: string } | null {
+  const raw = String(line || '').trim();
+  if (!raw) return null;
+
+  const entries: Array<{ key: 'subject' | 'part' | 'chapter' | 'section' | 'topic'; re: RegExp }> = [
+    { key: 'subject', re: /^(?:subject|course)\s*[:=-]\s*(.+)$/i },
+    { key: 'part', re: /^part\s*[:=-]\s*(.+)$/i },
+    { key: 'chapter', re: /^chapter\s*[:=-]\s*(.+)$/i },
+    { key: 'section', re: /^section(?:\/topic)?\s*[:=-]\s*(.+)$/i },
+    { key: 'topic', re: /^topic\s*[:=-]\s*(.+)$/i },
+  ];
+
+  for (const entry of entries) {
+    const match = raw.match(entry.re);
+    if (match?.[1]) {
+      return {
+        key: entry.key,
+        value: String(match[1] || '').trim(),
+      };
+    }
+  }
+
+  return null;
+}
+
+function extractHierarchyContextFromText(text: string) {
+  const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const context: Pick<ParsedBulkMcq, 'subject' | 'part' | 'chapter' | 'section' | 'topic'> = {
+    subject: '',
+    part: '',
+    chapter: '',
+    section: '',
+    topic: '',
+  };
+
+  lines.slice(0, 120).forEach((line) => {
+    const parsed = parseHierarchyLine(line);
+    if (parsed?.key && parsed.value) {
+      context[parsed.key] = parsed.value;
+    }
+  });
+
+  return normalizeParsedHierarchyContext(context);
+}
+
 function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[] } {
   const text = normalizeBulkText(raw);
   if (!text) return { parsed: [], errors: ['Paste questions before uploading.'] };
 
+  const baseHierarchy = extractHierarchyContextFromText(text);
   const blocks = splitQuestionBlocks(text);
 
   const errors: string[] = [];
@@ -712,12 +785,21 @@ function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[]
     let difficulty: 'Easy' | 'Medium' | 'Hard' = 'Medium';
     const questionLines: string[] = [];
     const options: Array<{ text: string; imageDataUrl: string }> = [];
+    const blockHierarchy = {
+      ...baseHierarchy,
+    };
     let capturingExplanation = false;
     let activeOptionIndex = -1;
 
     for (const rawLine of lines) {
       const line = rawLine.trim();
       if (!line) continue;
+
+      const hierarchyLine = parseHierarchyLine(line);
+      if (hierarchyLine?.key) {
+        blockHierarchy[hierarchyLine.key] = hierarchyLine.value;
+        continue;
+      }
 
       const imageRef = extractImageReference(line);
       if (imageRef) {
@@ -812,6 +894,11 @@ function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[]
     }
 
     parsed.push({
+      subject: String(blockHierarchy.subject || '').trim().toLowerCase(),
+      part: String(blockHierarchy.part || '').trim().toLowerCase(),
+      chapter: String(blockHierarchy.chapter || '').trim(),
+      section: String(blockHierarchy.section || '').trim(),
+      topic: String(blockHierarchy.topic || '').trim(),
       question: question || 'Refer to attached image.',
       questionImageUrl,
       questionImageDataUrl,
@@ -2611,7 +2698,7 @@ export default function AdminApp() {
 
     const hasText = Boolean(bulkInput.trim());
     if (!hasText && !bulkFile) {
-      toast.error('Paste MCQs or upload a PDF/Word file first.');
+      toast.error('Paste MCQs or upload a PDF, DOC, DOCX, or TXT file first.');
       return;
     }
 
@@ -2683,10 +2770,6 @@ export default function AdminApp() {
 
   const uploadBulkMcqs = async () => {
     if (!authToken) return;
-    if (!selectedHierarchy) {
-      toast.error('Select subject/chapter/section/topic before saving parsed MCQs.');
-      return;
-    }
 
     if (!bulkParsed.length) {
       toast.error('Analyze content first, then save parsed MCQs.');
@@ -2698,31 +2781,79 @@ export default function AdminApp() {
       return;
     }
 
-    if (!window.confirm(`Save ${bulkParsed.length} MCQ(s) to:\n${hierarchyLabel(selectedHierarchy)}\n\nContinue?`)) {
-      return;
+    const resolveParsedContext = (item: ParsedBulkMcq) => {
+      const fallbackFromSelection = selectedHierarchy
+        ? selectedHierarchy.kind === 'section'
+          ? {
+              subject: selectedHierarchy.subject,
+              part: selectedHierarchy.part,
+              chapter: selectedHierarchy.chapterTitle,
+              section: selectedHierarchy.sectionTitle,
+              topic: `${selectedHierarchy.chapterTitle} - ${selectedHierarchy.sectionTitle}`,
+            }
+          : {
+              subject: selectedHierarchy.subject,
+              part: '',
+              chapter: '',
+              section: selectedHierarchy.sectionTitle,
+              topic: selectedHierarchy.sectionTitle,
+            }
+        : null;
+
+      const itemContext = normalizeParsedHierarchyContext({
+        subject: item.subject,
+        part: item.part,
+        chapter: item.chapter,
+        section: item.section,
+        topic: item.topic,
+      });
+
+      const resolvedSubject = String(itemContext.subject || fallbackFromSelection?.subject || form.subject || 'general')
+        .trim()
+        .toLowerCase();
+      const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(resolvedSubject);
+
+      if (isFlatTopicSubject) {
+        const resolvedTopic = String(itemContext.topic || itemContext.section || fallbackFromSelection?.topic || fallbackFromSelection?.section || form.topic || form.section || 'General Topic').trim();
+        return {
+          subject: resolvedSubject,
+          part: '',
+          chapter: '',
+          section: String(itemContext.section || fallbackFromSelection?.section || resolvedTopic).trim(),
+          topic: resolvedTopic,
+        };
+      }
+
+      const resolvedPart = String(itemContext.part || fallbackFromSelection?.part || form.part || 'part1').trim().toLowerCase();
+      const resolvedChapter = String(itemContext.chapter || fallbackFromSelection?.chapter || form.chapter || 'General').trim();
+      const resolvedSection = String(itemContext.section || itemContext.topic || fallbackFromSelection?.section || form.section || 'General').trim();
+      const resolvedTopic = String(itemContext.topic || fallbackFromSelection?.topic || `${resolvedChapter} - ${resolvedSection}`).trim();
+
+      return {
+        subject: resolvedSubject,
+        part: resolvedPart === 'part2' ? 'part2' : 'part1',
+        chapter: resolvedChapter,
+        section: resolvedSection,
+        topic: resolvedTopic,
+      };
+    };
+
+    let previewLabel = 'Mixed parsed hierarchy';
+    if (selectedHierarchy) {
+      previewLabel = hierarchyLabel(selectedHierarchy);
+    } else if (bulkParsed[0]?.subject) {
+      previewLabel = `${bulkParsed[0].subject}${bulkParsed.length > 1 ? ' (and others)' : ''}`;
     }
 
-    const contextPayload =
-      selectedHierarchy.kind === 'section'
-        ? {
-            subject: selectedHierarchy.subject,
-            part: selectedHierarchy.part,
-            chapter: selectedHierarchy.chapterTitle,
-            section: selectedHierarchy.sectionTitle,
-            topic: `${selectedHierarchy.chapterTitle} - ${selectedHierarchy.sectionTitle}`,
-          }
-        : {
-            subject: selectedHierarchy.subject,
-            part: '',
-            chapter: '',
-            section: selectedHierarchy.sectionTitle,
-            topic: selectedHierarchy.sectionTitle,
-          };
+    if (!window.confirm(`Save ${bulkParsed.length} MCQ(s)?\nTarget: ${previewLabel}\n\nContinue?`)) {
+      return;
+    }
 
     try {
       setBulkUploading(true);
 
       for (const item of bulkParsed) {
+        const contextPayload = resolveParsedContext(item);
         const optionMedia = item.options.map((text, idx) => ({
           key: String.fromCharCode(65 + idx),
           text,
@@ -2754,12 +2885,56 @@ export default function AdminApp() {
       setBulkFile(null);
       setBulkParsed([]);
       setBulkParseErrors([]);
-      await loadSectionMcqs(authToken, selectedHierarchy);
+      if (selectedHierarchy) {
+        await loadSectionMcqs(authToken, selectedHierarchy);
+      }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Bulk upload failed.');
     } finally {
       setBulkUploading(false);
     }
+  };
+
+  const updateParsedMcq = (index: number, updater: (item: ParsedBulkMcq) => ParsedBulkMcq) => {
+    setBulkParsed((previous) => previous.map((item, idx) => (idx === index ? updater(item) : item)));
+  };
+
+  const updateParsedOption = (mcqIndex: number, optionIndex: number, value: string) => {
+    updateParsedMcq(mcqIndex, (item) => {
+      const options = [...(item.options || [])];
+      options[optionIndex] = value;
+      return { ...item, options };
+    });
+  };
+
+  const addParsedOption = (mcqIndex: number) => {
+    updateParsedMcq(mcqIndex, (item) => {
+      const options = [...(item.options || [])];
+      if (options.length >= 5) return item;
+      options.push('');
+      return { ...item, options };
+    });
+  };
+
+  const removeParsedOption = (mcqIndex: number, optionIndex: number) => {
+    updateParsedMcq(mcqIndex, (item) => {
+      const options = [...(item.options || [])];
+      if (options.length <= 2) return item;
+      options.splice(optionIndex, 1);
+      const optionImageDataUrls = Array.isArray(item.optionImageDataUrls) ? [...item.optionImageDataUrls] : [];
+      if (optionImageDataUrls.length > optionIndex) {
+        optionImageDataUrls.splice(optionIndex, 1);
+      }
+      return {
+        ...item,
+        options,
+        optionImageDataUrls,
+      };
+    });
+  };
+
+  const removeParsedMcq = (mcqIndex: number) => {
+    setBulkParsed((previous) => previous.filter((_, idx) => idx !== mcqIndex));
   };
 
   const deleteMcq = async (mcqId: string) => {
@@ -4539,6 +4714,199 @@ export default function AdminApp() {
                       className={`overflow-hidden transition-all duration-300 ease-in-out ${isUploadMcqsOpen ? 'max-h-[2200px] opacity-100' : 'max-h-0 opacity-0'}`}
                     >
                       <div className="space-y-3 border-t border-indigo-200/70 pt-3 dark:border-indigo-300/20">
+                        <div className="space-y-3 rounded-lg border border-indigo-200 bg-white/70 p-3 dark:border-indigo-300/30 dark:bg-white/5">
+                          <div>
+                            <p className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">Document Parser</p>
+                            <p className="text-xs text-muted-foreground">
+                              Upload PDF/DOC/DOCX/TXT or paste MCQs, then click Parse / Analyze Document to auto-fill structured MCQ fields.
+                            </p>
+                          </div>
+
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="space-y-1.5">
+                              <Label htmlFor="mcq-bulk-document">Document Upload</Label>
+                              <Input
+                                id="mcq-bulk-document"
+                                type="file"
+                                accept=".pdf,.doc,.docx,.txt,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+                                onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
+                              />
+                              {bulkFile ? (
+                                <p className="text-xs text-muted-foreground">Selected: {bulkFile.name}</p>
+                              ) : (
+                                <p className="text-xs text-muted-foreground">No file selected.</p>
+                              )}
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <Label htmlFor="mcq-bulk-raw-text">Raw MCQ Text (optional)</Label>
+                              <Textarea
+                                id="mcq-bulk-raw-text"
+                                value={bulkInput}
+                                onChange={(e) => setBulkInput(e.target.value)}
+                                className="min-h-[96px]"
+                                placeholder="Paste MCQs here if you do not want to upload a file"
+                              />
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap gap-2">
+                            <Button type="button" onClick={() => void analyzeBulkMcqs()} disabled={bulkProcessing}>
+                              {bulkProcessing ? (
+                                <>
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  Parsing...
+                                </>
+                              ) : 'Parse / Analyze Document'}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => {
+                                setBulkInput('');
+                                setBulkFile(null);
+                                setBulkParsed([]);
+                                setBulkParseErrors([]);
+                              }}
+                            >
+                              Clear Parser
+                            </Button>
+                          </div>
+
+                          {bulkParseErrors.length ? (
+                            <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-200">
+                              {bulkParseErrors.map((error, idx) => (
+                                <p key={`bulk-parse-error-${idx}`}>• {error}</p>
+                              ))}
+                            </div>
+                          ) : null}
+
+                          {bulkParsed.length ? (
+                            <div className="space-y-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <p className="text-xs font-medium text-indigo-800 dark:text-indigo-200">
+                                  Parsed preview: {bulkParsed.length} MCQ(s). Review/edit before uploading.
+                                </p>
+                                <Button type="button" onClick={() => void uploadBulkMcqs()} disabled={bulkUploading}>
+                                  {bulkUploading ? (
+                                    <>
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      Uploading MCQs...
+                                    </>
+                                  ) : `Upload MCQs (${bulkParsed.length})`}
+                                </Button>
+                              </div>
+
+                              <div className="space-y-3 max-h-[620px] overflow-auto pr-1">
+                                {bulkParsed.map((item, mcqIndex) => (
+                                  <div key={`bulk-parsed-item-${mcqIndex}`} className="space-y-3 rounded-lg border border-indigo-200/80 bg-indigo-50/30 p-3 dark:border-indigo-300/30 dark:bg-indigo-500/10">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <p className="text-sm font-medium text-indigo-900 dark:text-indigo-100">Parsed MCQ #{mcqIndex + 1}</p>
+                                      <Button type="button" size="sm" variant="outline" onClick={() => removeParsedMcq(mcqIndex)}>
+                                        Remove
+                                      </Button>
+                                    </div>
+
+                                    <div className="grid gap-2 md:grid-cols-2">
+                                      <div className="space-y-1">
+                                        <Label>Subject</Label>
+                                        <Input value={item.subject || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, subject: e.target.value }))} placeholder="e.g. mathematics" />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label>Part</Label>
+                                        <Input value={item.part || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, part: e.target.value }))} placeholder="part1 or part2" />
+                                      </div>
+                                    </div>
+
+                                    <div className="grid gap-2 md:grid-cols-3">
+                                      <div className="space-y-1">
+                                        <Label>Chapter</Label>
+                                        <Input value={item.chapter || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, chapter: e.target.value }))} />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label>Section / Topic</Label>
+                                        <Input value={item.section || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, section: e.target.value }))} />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label>Topic (optional override)</Label>
+                                        <Input value={item.topic || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, topic: e.target.value }))} />
+                                      </div>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                      <Label>Question Text</Label>
+                                      <Textarea value={item.question} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, question: e.target.value }))} className="min-h-[84px]" />
+                                    </div>
+
+                                    <div className="space-y-1">
+                                      <Label>Question Image URL (if present)</Label>
+                                      <Input value={item.questionImageUrl || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, questionImageUrl: e.target.value }))} placeholder="https://..." />
+                                    </div>
+
+                                    <div className="space-y-2">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <Label>Options (A-E)</Label>
+                                        <Button type="button" size="sm" variant="outline" onClick={() => addParsedOption(mcqIndex)} disabled={(item.options || []).length >= 5}>
+                                          Add Option
+                                        </Button>
+                                      </div>
+                                      <div className="space-y-2">
+                                        {(item.options || []).map((option, optionIndex) => (
+                                          <div key={`bulk-option-${mcqIndex}-${optionIndex}`} className="grid gap-2 md:grid-cols-[80px_1fr_auto] md:items-center">
+                                            <Label>Option {String.fromCharCode(65 + optionIndex)}</Label>
+                                            <Input value={option} onChange={(e) => updateParsedOption(mcqIndex, optionIndex, e.target.value)} />
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="sm"
+                                              onClick={() => removeParsedOption(mcqIndex, optionIndex)}
+                                              disabled={(item.options || []).length <= 2}
+                                            >
+                                              Remove
+                                            </Button>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+
+                                    <div className="grid gap-2 md:grid-cols-2">
+                                      <div className="space-y-1">
+                                        <Label>Correct Answer</Label>
+                                        <Input value={item.answer} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, answer: e.target.value }))} placeholder="A / 1 / exact option text" />
+                                      </div>
+                                      <div className="space-y-1">
+                                        <Label>Difficulty</Label>
+                                        <Select value={item.difficulty || 'Medium'} onValueChange={(value: 'Easy' | 'Medium' | 'Hard') => updateParsedMcq(mcqIndex, (current) => ({ ...current, difficulty: value }))}>
+                                          <SelectTrigger><SelectValue /></SelectTrigger>
+                                          <SelectContent>
+                                            <SelectItem value="Easy">Easy</SelectItem>
+                                            <SelectItem value="Medium">Medium</SelectItem>
+                                            <SelectItem value="Hard">Hard</SelectItem>
+                                          </SelectContent>
+                                        </Select>
+                                      </div>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                      <Label>Explanation / Short Trick</Label>
+                                      <Textarea value={item.tip || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, tip: e.target.value }))} className="min-h-[80px]" />
+                                    </div>
+
+                                    <div className="grid gap-2 md:grid-cols-2">
+                                      <div className="rounded-md border border-dashed border-indigo-300/70 px-2 py-1.5 text-xs text-muted-foreground">
+                                        Question Image: {item.questionImageDataUrl ? 'Detected (embedded image data)' : item.questionImageUrl ? 'Detected (URL reference)' : 'Not detected'}
+                                      </div>
+                                      <div className="rounded-md border border-dashed border-indigo-300/70 px-2 py-1.5 text-xs text-muted-foreground">
+                                        Explanation Image: {item.explanationImageDataUrl ? 'Detected' : 'Not detected'}
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+
                         {selectedHierarchy?.kind === 'flat-topic' ? (
                           <div className="grid gap-3 md:grid-cols-2">
                             <div className="space-y-1.5">

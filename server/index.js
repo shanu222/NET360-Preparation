@@ -1147,6 +1147,73 @@ function extractJsonObject(text) {
 
 const BULK_PARSE_LIMIT = 15;
 
+function normalizeParsedHierarchyContext(context) {
+  const subjectRaw = String(context?.subject || '').trim().toLowerCase();
+  const partRaw = String(context?.part || '').trim().toLowerCase();
+  const chapterRaw = String(context?.chapter || '').trim();
+  const sectionRaw = String(context?.section || '').trim();
+  const topicRaw = String(context?.topic || '').trim();
+
+  const normalizedPart = partRaw === 'part 1' || partRaw === 'part1'
+    ? 'part1'
+    : partRaw === 'part 2' || partRaw === 'part2'
+      ? 'part2'
+      : '';
+
+  return {
+    subject: subjectRaw,
+    part: normalizedPart,
+    chapter: chapterRaw,
+    section: sectionRaw,
+    topic: topicRaw,
+  };
+}
+
+function parseHierarchyLine(line) {
+  const raw = String(line || '').trim();
+  if (!raw) return null;
+
+  const entries = [
+    { key: 'subject', re: /^(?:subject|course)\s*[:=-]\s*(.+)$/i },
+    { key: 'part', re: /^part\s*[:=-]\s*(.+)$/i },
+    { key: 'chapter', re: /^chapter\s*[:=-]\s*(.+)$/i },
+    { key: 'section', re: /^section(?:\/topic)?\s*[:=-]\s*(.+)$/i },
+    { key: 'topic', re: /^topic\s*[:=-]\s*(.+)$/i },
+  ];
+
+  for (const entry of entries) {
+    const match = raw.match(entry.re);
+    if (match?.[1]) {
+      return {
+        key: entry.key,
+        value: String(match[1] || '').trim(),
+      };
+    }
+  }
+
+  return null;
+}
+
+function extractHierarchyContextFromText(text) {
+  const lines = String(text || '').split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const context = {
+    subject: '',
+    part: '',
+    chapter: '',
+    section: '',
+    topic: '',
+  };
+
+  lines.slice(0, 120).forEach((line) => {
+    const parsed = parseHierarchyLine(line);
+    if (parsed?.key && parsed.value) {
+      context[parsed.key] = parsed.value;
+    }
+  });
+
+  return normalizeParsedHierarchyContext(context);
+}
+
 function extractImageReference(line) {
   const raw = String(line || '').trim();
   if (!raw) return '';
@@ -1198,6 +1265,8 @@ async function parseBulkMcqsWithAi(rawText) {
     return { parsed: [], errors: ['No content found to parse.'] };
   }
 
+  const baseHierarchy = extractHierarchyContextFromText(inputText);
+
   const clippedText = inputText.length > 120000 ? inputText.slice(0, 120000) : inputText;
 
   try {
@@ -1211,7 +1280,7 @@ async function parseBulkMcqsWithAi(rawText) {
           content: [
             'You extract ALL MCQs from messy educational documents.',
             'Return strict JSON only in this schema:',
-            '{"mcqs":[{"question":"...","questionImage":"","options":["..."],"optionImages":[""],"answer":"...","explanation":"...","explanationImage":"","difficulty":"Easy|Medium|Hard"}]}',
+            '{"mcqs":[{"subject":"","part":"part1|part2|","chapter":"","section":"","topic":"","question":"...","questionImage":"","options":["..."],"optionImages":[""],"answer":"...","explanation":"...","explanationImage":"","difficulty":"Easy|Medium|Hard"}]}',
             'Rules:',
             '- Detect all question boundaries (1., 1), Q1, Question 1, etc.).',
             '- Support mixed option formats: A) A. A, Option 1, 1) and inline options in one line.',
@@ -1247,6 +1316,13 @@ async function parseBulkMcqsWithAi(rawText) {
       const optionImageRefs = Array.isArray(row?.optionImages)
         ? row.optionImages.map((item) => String(item || '').trim())
         : [];
+      const rowHierarchy = normalizeParsedHierarchyContext({
+        subject: row?.subject || baseHierarchy.subject,
+        part: row?.part || baseHierarchy.part,
+        chapter: row?.chapter || baseHierarchy.chapter,
+        section: row?.section || baseHierarchy.section,
+        topic: row?.topic || baseHierarchy.topic,
+      });
 
       if (!question) {
         errors.push(`Q${idx + 1}: question text is missing.`);
@@ -1262,6 +1338,11 @@ async function parseBulkMcqsWithAi(rawText) {
       }
 
       parsed.push({
+        subject: rowHierarchy.subject,
+        part: rowHierarchy.part,
+        chapter: rowHierarchy.chapter,
+        section: rowHierarchy.section,
+        topic: rowHierarchy.topic,
         question,
         questionImageUrl: /^https?:\/\//i.test(questionImageRef) ? questionImageRef : '',
         questionImageDataUrl: /^data:image\//i.test(questionImageRef) ? questionImageRef : '',
@@ -1287,6 +1368,8 @@ async function parseBulkMcqsWithAi(rawText) {
 function parseBulkMcqsFromText(raw) {
   const text = normalizePlainText(raw);
   if (!text) return { parsed: [], errors: ['No content found to parse.'] };
+
+  const baseHierarchy = extractHierarchyContextFromText(text);
 
   const blocks = splitQuestionBlocks(text);
 
@@ -1314,12 +1397,21 @@ function parseBulkMcqsFromText(raw) {
     let difficulty = 'Medium';
     const questionLines = [];
     const options = [];
+    const blockHierarchy = {
+      ...baseHierarchy,
+    };
     let capturingExplanation = false;
     let activeOptionIndex = -1;
 
     for (const rawLine of lines) {
       const line = rawLine.trim();
       if (!line) continue;
+
+      const hierarchyLine = parseHierarchyLine(line);
+      if (hierarchyLine?.key) {
+        blockHierarchy[hierarchyLine.key] = hierarchyLine.value;
+        continue;
+      }
 
       const imageRef = extractImageReference(line);
       if (imageRef) {
@@ -1414,6 +1506,11 @@ function parseBulkMcqsFromText(raw) {
     }
 
     parsed.push({
+      subject: String(blockHierarchy.subject || '').trim().toLowerCase(),
+      part: String(blockHierarchy.part || '').trim().toLowerCase(),
+      chapter: String(blockHierarchy.chapter || '').trim(),
+      section: String(blockHierarchy.section || '').trim(),
+      topic: String(blockHierarchy.topic || '').trim(),
       question: question || 'Refer to attached image.',
       questionImageUrl,
       questionImageDataUrl,
@@ -1472,7 +1569,11 @@ async function extractTextFromUpload(filePayload) {
     return text;
   }
 
-  throw new Error('Unsupported file type. Upload PDF, DOC, or DOCX.');
+  if (mimeType.includes('text/plain') || extension === '.txt') {
+    return normalizePlainText(fileMeta.buffer.toString('utf8'));
+  }
+
+  throw new Error('Unsupported file type. Upload PDF, DOC, DOCX, or TXT.');
 }
 
 async function checkSubmissionRestriction(actorKey) {
