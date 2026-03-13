@@ -2564,7 +2564,11 @@ export default function AdminApp() {
   };
 
   const saveMcq = async () => {
-    if (!authToken || !selectedHierarchy || isSavingMcq) return;
+    if (isSavingMcq) return;
+    if (!authToken) {
+      toast.error('Failed to add MCQ');
+      return;
+    }
 
     const normalizedOptionMedia = form.optionMedia
       .map((item, idx) => ({
@@ -2576,13 +2580,24 @@ export default function AdminApp() {
 
     const options = normalizedOptionMedia.map((item) => item.text || `[${item.key}]`);
 
-    if (!form.question.trim() && !form.questionImage) {
-      toast.error('Question text or question image is required.');
+    if (!form.question.trim()) {
+      toast.error('Question is required.');
       return;
     }
 
-    if (normalizedOptionMedia.length < 2) {
-      toast.error('At least 2 options are required (text, image, or both).');
+    const requiredOptionTexts = form.optionMedia.slice(0, 4).map((item) => String(item.text || '').trim());
+    if (requiredOptionTexts.some((value) => !value)) {
+      toast.error('Options A, B, C, and D are required.');
+      return;
+    }
+
+    if (normalizedOptionMedia.length < 4) {
+      toast.error('Options A, B, C, and D are required.');
+      return;
+    }
+
+    if (!String(form.answer || '').trim()) {
+      toast.error('Correct Answer is required.');
       return;
     }
 
@@ -2592,8 +2607,8 @@ export default function AdminApp() {
       return;
     }
 
-    const selectedContext =
-      selectedHierarchy.kind === 'section'
+    const selectedContext = selectedHierarchy
+      ? selectedHierarchy.kind === 'section'
         ? {
             subject: selectedHierarchy.subject,
             part: selectedHierarchy.part,
@@ -2604,10 +2619,17 @@ export default function AdminApp() {
         : {
             subject: selectedHierarchy.subject,
             part: '',
-            chapter: '',
+            chapter: String(form.chapter || '').trim() || 'General',
             section: selectedHierarchy.sectionTitle,
             topic: String(form.topic || '').trim() || selectedHierarchy.sectionTitle,
-          };
+          }
+      : {
+          subject: String(form.subject || '').trim().toLowerCase(),
+          part: String(form.part || '').trim().toLowerCase() || 'part1',
+          chapter: String(form.chapter || '').trim(),
+          section: String(form.section || '').trim(),
+          topic: String(form.topic || '').trim(),
+        };
 
     const normalizedSubject = String(selectedContext.subject || '').toLowerCase().trim();
     const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizedSubject);
@@ -2617,13 +2639,23 @@ export default function AdminApp() {
       return;
     }
 
-    if (!isFlatTopicSubject && (!selectedContext.part || !selectedContext.chapter.trim() || !selectedContext.section.trim())) {
-      toast.error('Select subject, part, chapter, and section before adding MCQs.');
+    if (!String(selectedContext.chapter || '').trim()) {
+      toast.error('Chapter is required.');
       return;
     }
 
-    if (isFlatTopicSubject && !selectedContext.topic.trim()) {
-      toast.error('Topic is required for this subject.');
+    if (!String(selectedContext.section || '').trim()) {
+      toast.error('Section is required.');
+      return;
+    }
+
+    if (!String(selectedContext.topic || '').trim()) {
+      toast.error('Topic is required.');
+      return;
+    }
+
+    if (!isFlatTopicSubject && !String(selectedContext.part || '').trim()) {
+      toast.error('Part is required.');
       return;
     }
 
@@ -2633,6 +2665,10 @@ export default function AdminApp() {
       chapter: isFlatTopicSubject ? '' : selectedContext.chapter,
       section: isFlatTopicSubject ? (selectedContext.section || selectedContext.topic) : selectedContext.section,
       topic: selectedContext.topic,
+      subject_id: normalizedSubject,
+      chapter_id: String(selectedContext.chapter || '').trim(),
+      section_id: String(selectedContext.section || selectedContext.topic || '').trim(),
+      topic_id: String(selectedContext.topic || '').trim(),
       question: form.question,
       questionImage: form.questionImage,
       options,
@@ -2666,28 +2702,36 @@ export default function AdminApp() {
           body: JSON.stringify(payload),
         }, authToken);
 
-        if (createResult?.mcq?.id) {
-          setMcqs((previous) => {
-            const next = [createResult.mcq!, ...previous.filter((item) => item.id !== createResult.mcq!.id)];
-            return next;
-          });
+        if (!createResult?.mcq?.id) {
+          throw new Error('MCQ was not saved.');
         }
 
-        toast.success('MCQ added and saved to database.');
+        setMcqs((previous) => {
+          const next = [createResult.mcq!, ...previous.filter((item) => item.id !== createResult.mcq!.id)];
+          return next;
+        });
+
+        toast.success('MCQ added successfully');
       }
 
       resetForm();
       setQuery('');
 
-      void loadSectionMcqs(authToken, selectedHierarchy).catch((error) => {
-        toast.error(error instanceof Error ? error.message : 'MCQ saved, but section refresh failed. Use Refresh Data.');
-      });
+      if (selectedHierarchy) {
+        void loadSectionMcqs(authToken, selectedHierarchy).catch((error) => {
+          toast.error(error instanceof Error ? error.message : 'MCQ saved, but section refresh failed. Use Refresh Data.');
+        });
+      }
 
       void apiRequest<{ structure: AdminMcqBankStructureItem[] }>('/api/admin/mcq-bank/structure', {}, authToken)
         .then((payload) => setMcqStructure(payload.structure || []))
         .catch(() => undefined);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not save MCQ.');
+      if (!form.id) {
+        toast.error('Failed to add MCQ');
+      } else {
+        toast.error(error instanceof Error ? error.message : 'Could not save MCQ.');
+      }
     } finally {
       setIsSavingMcq(false);
     }
@@ -5155,11 +5199,11 @@ export default function AdminApp() {
                         </div>
 
                         <div className="flex flex-wrap gap-2">
-                          <Button onClick={() => void saveMcq()} disabled={!selectedHierarchy || isSavingMcq}>
+                          <Button onClick={() => void saveMcq()} disabled={isSavingMcq}>
                             {isSavingMcq ? (
                               <>
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                Saving...
+                                {form.id ? 'Updating...' : 'Adding...'}
                               </>
                             ) : form.id ? 'Update MCQ' : 'Add MCQs'}
                           </Button>
