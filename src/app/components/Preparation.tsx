@@ -247,19 +247,18 @@ export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
   },
   english: {
     part1: {
-      label: 'English Part 1 (FSc 1st Year)',
+      label: 'English Part 1',
       chapters: [
-        { id: 'e1-c1', title: 'Chapter 1 - Button Button', sections: ['1.1 Story Theme', '1.2 Characters', '1.3 Vocabulary'] },
-        { id: 'e1-c2', title: 'Chapter 2 - Clearing in the Sky', sections: ['2.1 Theme', '2.2 Character Study'] },
-        { id: 'e1-c3', title: 'Chapter 3 - Dark They Were and Golden Eyed', sections: ['3.1 Plot Analysis'] },
+        { id: 'en-c1', title: 'Chapter 1 - Vocabulary', sections: ['Synonyms', 'Antonyms', 'Contextual Vocabulary'] },
+        { id: 'en-c2', title: 'Chapter 2 - Grammar and Sentence Structure', sections: ['Sentence Completion', 'Tenses', 'Prepositions', 'Sentence Structure'] },
+        { id: 'en-c3', title: 'Chapter 3 - Analogies', sections: ['Word Relationships', 'Meaning-Based Analogies'] },
       ],
     },
     part2: {
-      label: 'English Part 2 (FSc 2nd Year)',
+      label: 'English Part 2',
       chapters: [
-        { id: 'e2-c1', title: 'Chapter 1 - The Dying Sun', sections: ['1.1 Theme', '1.2 Vocabulary'] },
-        { id: 'e2-c2', title: 'Chapter 2 - Using the Scientific Method', sections: ['2.1 Scientific Thinking'] },
-        { id: 'e2-c3', title: 'Chapter 3 - Why Boys Fail in College', sections: ['3.1 Study Habits'] },
+        { id: 'en-c4', title: 'Chapter 4 - Reading Comprehension', sections: ['Passage Understanding', 'Critical Analysis', 'Inference Questions'] },
+        { id: 'en-c5', title: 'Chapter 5 - Spelling', sections: ['Spelling Correction', 'Commonly Confused Words'] },
       ],
     },
   },
