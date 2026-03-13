@@ -3190,7 +3190,9 @@ export default function AdminApp() {
 
   if (isQuestionBankView) {
     return (
-      <div className="min-h-screen p-3 sm:p-5">
+      <div className="admin-shell min-h-screen bg-gradient-to-br from-slate-100 via-cyan-50 to-indigo-100 text-slate-900 transition-colors dark:from-[#060b1b] dark:via-[#1b1642] dark:to-[#062a33] dark:text-slate-100">
+        <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_16%_18%,rgba(56,189,248,0.16),transparent_40%),radial-gradient(circle_at_80%_10%,rgba(99,102,241,0.18),transparent_35%),radial-gradient(circle_at_78%_80%,rgba(20,184,166,0.14),transparent_40%)] dark:bg-[radial-gradient(circle_at_15%_20%,rgba(56,189,248,0.18),transparent_38%),radial-gradient(circle_at_80%_10%,rgba(168,85,247,0.26),transparent_36%),radial-gradient(circle_at_75%_78%,rgba(45,212,191,0.22),transparent_42%)]" />
+        <div className="relative z-10 min-h-screen p-3 sm:p-5">
         <div className="mx-auto w-full max-w-[1700px] space-y-4 sm:space-y-5">
           <header className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -3334,13 +3336,16 @@ export default function AdminApp() {
             </Card>
           </div>
         </div>
+        </div>
       </div>
     );
   }
 
   if (isPracticeBoardBankView) {
     return (
-      <div className="min-h-screen p-3 sm:p-5">
+      <div className="admin-shell min-h-screen bg-gradient-to-br from-slate-100 via-cyan-50 to-indigo-100 text-slate-900 transition-colors dark:from-[#060b1b] dark:via-[#1b1642] dark:to-[#062a33] dark:text-slate-100">
+        <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_16%_18%,rgba(56,189,248,0.16),transparent_40%),radial-gradient(circle_at_80%_10%,rgba(99,102,241,0.18),transparent_35%),radial-gradient(circle_at_78%_80%,rgba(20,184,166,0.14),transparent_40%)] dark:bg-[radial-gradient(circle_at_15%_20%,rgba(56,189,248,0.18),transparent_38%),radial-gradient(circle_at_80%_10%,rgba(168,85,247,0.26),transparent_36%),radial-gradient(circle_at_75%_78%,rgba(45,212,191,0.22),transparent_42%)]" />
+        <div className="relative z-10 min-h-screen p-3 sm:p-5">
         <div className="mx-auto w-full max-w-[1700px] space-y-4 sm:space-y-5">
           <header className="flex flex-wrap items-center justify-between gap-3">
             <div>
@@ -3437,6 +3442,7 @@ export default function AdminApp() {
               </CardContent>
             </Card>
           </div>
+        </div>
         </div>
       </div>
     );
