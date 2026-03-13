@@ -96,30 +96,50 @@ function filterBlockedImportantNotices(items: NustImportantNoticeRow[]): NustImp
 function statusToCardTone(status: NustImportantDateRow['status']) {
   switch (status) {
     case 'completed':
-      return 'border-blue-500 bg-blue-50';
+      return 'border-blue-500 bg-blue-50 text-slate-900 shadow-sm hover:bg-blue-100 dark:border-blue-400 dark:bg-[#1e2a4a] dark:text-indigo-100 dark:shadow-[0_10px_20px_rgba(15,23,42,0.35)] dark:hover:bg-[#23335a]';
     case 'open':
-      return 'border-green-500 bg-green-50';
+      return 'border-emerald-500 bg-emerald-50 text-slate-900 shadow-sm hover:bg-emerald-100 dark:border-emerald-400 dark:bg-[#1e2a4a] dark:text-indigo-100 dark:shadow-[0_10px_20px_rgba(15,23,42,0.35)] dark:hover:bg-[#23335a]';
     case 'closed':
-      return 'border-rose-500 bg-rose-50';
+      return 'border-rose-500 bg-rose-50 text-slate-900 shadow-sm hover:bg-rose-100 dark:border-rose-400 dark:bg-[#1e2a4a] dark:text-indigo-100 dark:shadow-[0_10px_20px_rgba(15,23,42,0.35)] dark:hover:bg-[#23335a]';
     case 'upcoming':
-      return 'border-purple-500 bg-purple-50';
+      return 'border-violet-500 bg-violet-50 text-slate-900 shadow-sm hover:bg-violet-100 dark:border-violet-400 dark:bg-[#1e2a4a] dark:text-indigo-100 dark:shadow-[0_10px_20px_rgba(15,23,42,0.35)] dark:hover:bg-[#23335a]';
     default:
-      return 'border-orange-500 bg-orange-50';
+      return 'border-amber-500 bg-amber-50 text-slate-900 shadow-sm hover:bg-amber-100 dark:border-amber-400 dark:bg-[#1e2a4a] dark:text-indigo-100 dark:shadow-[0_10px_20px_rgba(15,23,42,0.35)] dark:hover:bg-[#23335a]';
   }
 }
 
 function statusToBadge(status: NustImportantDateRow['status']) {
   switch (status) {
     case 'completed':
-      return { label: 'Completed', className: '', variant: 'secondary' as const };
+      return {
+        label: 'Completed',
+        className: 'border border-blue-200 bg-blue-100 text-blue-800 dark:border-blue-300/30 dark:bg-blue-500/25 dark:text-blue-100',
+        variant: 'secondary' as const,
+      };
     case 'open':
-      return { label: 'Open', className: 'bg-green-500', variant: 'default' as const };
+      return {
+        label: 'Open',
+        className: 'bg-emerald-500 text-white dark:bg-emerald-400 dark:text-emerald-950',
+        variant: 'default' as const,
+      };
     case 'closed':
-      return { label: 'Closed', className: 'bg-rose-500', variant: 'default' as const };
+      return {
+        label: 'Closed',
+        className: 'bg-rose-500 text-white dark:bg-rose-400 dark:text-rose-950',
+        variant: 'default' as const,
+      };
     case 'upcoming':
-      return { label: 'Upcoming', className: '', variant: 'outline' as const };
+      return {
+        label: 'Upcoming',
+        className: 'border border-violet-200 bg-violet-100 text-violet-800 dark:border-violet-300/30 dark:bg-violet-500/25 dark:text-violet-100',
+        variant: 'outline' as const,
+      };
     default:
-      return { label: 'Info', className: '', variant: 'outline' as const };
+      return {
+        label: 'Info',
+        className: 'border border-amber-200 bg-amber-100 text-amber-800 dark:border-amber-300/30 dark:bg-amber-500/25 dark:text-amber-100',
+        variant: 'outline' as const,
+      };
   }
 }
 
@@ -505,13 +525,13 @@ export function NUSTGuide() {
                 {importantDates.map((item) => {
                   const badge = statusToBadge(item.status);
                   return (
-                    <div key={item.key} className={`p-4 border-l-4 rounded-r-lg ${statusToCardTone(item.status)}`}>
+                    <div key={item.key} className={`rounded-r-lg border-l-4 p-4 transition-colors duration-200 ${statusToCardTone(item.status)}`}>
                       <div className="flex items-center justify-between mb-2">
-                        <h4>{item.title}</h4>
+                        <h4 className="text-foreground">{item.title}</h4>
                         <Badge variant={badge.variant} className={badge.className}>{badge.label}</Badge>
                       </div>
-                      <p className="text-sm">{item.registration}</p>
-                      <p className="text-sm text-muted-foreground">{item.testDate}</p>
+                      <p className="text-sm text-foreground/90">{item.registration}</p>
+                      <p className="text-sm text-muted-foreground dark:text-indigo-200/80">{item.testDate}</p>
                     </div>
                   );
                 })}
@@ -529,12 +549,12 @@ export function NUSTGuide() {
                 {filterBlockedImportantNotices(importantNotices).map((item) => {
                   const badge = statusToBadge(item.status);
                   return (
-                    <div key={item.key} className={`p-4 border-l-4 rounded-r-lg ${statusToCardTone(item.status)}`}>
+                    <div key={item.key} className={`rounded-r-lg border-l-4 p-4 transition-colors duration-200 ${statusToCardTone(item.status)}`}>
                       <div className="flex items-center justify-between gap-2 mb-2">
-                        <h4 className="leading-tight">{item.title}</h4>
+                        <h4 className="leading-tight text-foreground">{item.title}</h4>
                         <Badge variant={badge.variant} className={badge.className}>{badge.label}</Badge>
                       </div>
-                      <p className="text-sm text-muted-foreground">{item.subtitle}</p>
+                      <p className="text-sm text-muted-foreground dark:text-indigo-200/80">{item.subtitle}</p>
                     </div>
                   );
                 })}
