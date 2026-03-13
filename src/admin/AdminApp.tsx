@@ -11,7 +11,6 @@ import {
   Gauge,
   LayoutDashboard,
   Loader2,
-  Menu,
   MessageSquare,
   Moon,
   PanelLeftClose,
@@ -65,6 +64,7 @@ const ADMIN_SUPPORT_REACTIONS = ['😀', '🙏', '👍', '❤️', '✅'];
 const ADMIN_SIDEBAR_EXPANDED_KEY = 'net360-admin-sidebar-expanded';
 const ADMIN_DESKTOP_MIN_WIDTH = 1024;
 const ADMIN_TABLET_COLLAPSE_MAX_WIDTH = 1280;
+const ADMIN_BRAND_LOGO_SRC = '/net360-logo.png';
 
 function readStoredAdminSidebarPreference() {
   try {
@@ -3736,14 +3736,17 @@ export default function AdminApp() {
           <header className="admin-header-panel rounded-2xl border border-slate-300/70 bg-white/75 p-4 shadow-[0_16px_40px_rgba(15,23,42,0.12)] backdrop-blur-md dark:border-white/15 dark:bg-white/10 dark:shadow-[0_20px_50px_rgba(8,20,46,0.45)]">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={toggleSidebar}
+                <div
                   className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 transition hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20"
-                  aria-label={isMobileSidebarOpen ? 'Close sidebar' : 'Open sidebar'}
+                  aria-hidden="true"
                 >
-                  <Menu className="h-4.5 w-4.5" />
-                </button>
+                  <img
+                    src={ADMIN_BRAND_LOGO_SRC}
+                    alt=""
+                    className="h-6 w-6 rounded-full object-cover"
+                    loading="lazy"
+                  />
+                </div>
                 <div>
                   <h2 className="text-2xl font-semibold tracking-tight">NET360 Admin Management</h2>
                   <p className="text-sm text-slate-600 dark:text-slate-300">Manage users and MCQs from this separate panel</p>
