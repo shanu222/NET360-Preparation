@@ -51,6 +51,56 @@ type SelectedHierarchy =
       sectionTitle: string;
     };
 
+type AdminSection =
+  | 'dashboard'
+  | 'users'
+  | 'requests'
+  | 'premium-requests'
+  | 'support-chat'
+  | 'password-recovery'
+  | 'mcqs'
+  | 'practice-board'
+  | 'submissions'
+  | 'community-moderation'
+  | 'subscriptions'
+  | 'system-config';
+
+const ADMIN_SECTION_ROUTES: Record<AdminSection, string> = {
+  dashboard: '/admin/dashboard',
+  users: '/admin/users',
+  requests: '/admin/signup-requests',
+  'premium-requests': '/admin/premium-requests',
+  'support-chat': '/admin/support-chat',
+  'password-recovery': '/admin/password-recovery',
+  mcqs: '/admin/mcqs',
+  'practice-board': '/admin/practice-board',
+  submissions: '/admin/submissions',
+  'community-moderation': '/admin/community-moderation',
+  subscriptions: '/admin/subscriptions',
+  'system-config': '/admin/system-config',
+};
+
+function getSectionFromPath(pathname: string): AdminSection {
+  const normalized = String(pathname || '').toLowerCase();
+
+  if (!normalized.startsWith('/admin')) return 'dashboard';
+  if (normalized === '/admin' || normalized === '/admin/') return 'dashboard';
+  if (normalized.startsWith('/admin/dashboard')) return 'dashboard';
+  if (normalized.startsWith('/admin/users')) return 'users';
+  if (normalized.startsWith('/admin/signup-requests')) return 'requests';
+  if (normalized.startsWith('/admin/premium-requests')) return 'premium-requests';
+  if (normalized.startsWith('/admin/support-chat')) return 'support-chat';
+  if (normalized.startsWith('/admin/password-recovery')) return 'password-recovery';
+  if (normalized.startsWith('/admin/mcqs')) return 'mcqs';
+  if (normalized.startsWith('/admin/practice-board')) return 'practice-board';
+  if (normalized.startsWith('/admin/submissions')) return 'submissions';
+  if (normalized.startsWith('/admin/community-moderation')) return 'community-moderation';
+  if (normalized.startsWith('/admin/subscriptions')) return 'subscriptions';
+  if (normalized.startsWith('/admin/system-config')) return 'system-config';
+
+  return 'dashboard';
+}
+
 interface AdminUser {
   id: string;
   email: string;
@@ -870,11 +920,12 @@ export default function AdminApp() {
   const activeView = new URLSearchParams(window.location.search).get('view');
   const isQuestionBankView = activeView === 'question-bank';
   const isPracticeBoardBankView = activeView === 'practice-board-bank';
+  const initialSection = getSectionFromPath(window.location.pathname);
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_KEY));
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
-  const [activeTab, setActiveTab] = useState('users');
+  const [activeSection, setActiveSection] = useState<AdminSection>(initialSection);
 
   const [authForm, setAuthForm] = useState({ email: '', password: '' });
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -1043,6 +1094,17 @@ export default function AdminApp() {
     if (!practiceQuestionsBySubject.length) return null;
     return practiceQuestionsBySubject.find((item) => item.subject === practiceBankSubjectKey) || practiceQuestionsBySubject[0];
   }, [practiceQuestionsBySubject, practiceBankSubjectKey]);
+
+  useEffect(() => {
+    const syncSection = () => {
+      setActiveSection(getSectionFromPath(window.location.pathname));
+    };
+
+    window.addEventListener('popstate', syncSection);
+    return () => {
+      window.removeEventListener('popstate', syncSection);
+    };
+  }, []);
 
   const practiceBankVisibleQuestions = useMemo(() => {
     const source = activePracticeBankSubject?.questions || [];
@@ -1259,6 +1321,26 @@ export default function AdminApp() {
     localStorage.removeItem(REFRESH_TOKEN_KEY);
   };
 
+  const navigateToSection = (section: AdminSection, replace = false) => {
+    const nextPath = ADMIN_SECTION_ROUTES[section] || ADMIN_SECTION_ROUTES.dashboard;
+    const nextUrl = `${nextPath}${window.location.search || ''}${window.location.hash || ''}`;
+
+    if (replace) {
+      window.history.replaceState({}, '', nextUrl);
+    } else {
+      window.history.pushState({}, '', nextUrl);
+    }
+
+    setActiveSection(section);
+  };
+
+  useEffect(() => {
+    const pathname = String(window.location.pathname || '').toLowerCase();
+    if (pathname === '/admin' || pathname === '/admin/') {
+      navigateToSection('dashboard', true);
+    }
+  }, []);
+
   const openQuestionBankWindow = () => {
     const url = new URL(window.location.href);
     url.searchParams.set('view', 'question-bank');
@@ -1469,7 +1551,7 @@ export default function AdminApp() {
 
       setConfigForm({ key: '', value: '', description: '', isSecret: true });
       await refreshConfigVariables();
-      if (activeTab !== 'system-config') {
+      if (activeSection !== 'system-config') {
         await refreshSystemStatus();
       }
       toast.success('Configuration saved securely.');
@@ -1493,7 +1575,7 @@ export default function AdminApp() {
     try {
       await apiRequest(`/api/admin/configurations/${encodeURIComponent(key)}`, { method: 'DELETE' }, authToken);
       await refreshConfigVariables();
-      if (activeTab !== 'system-config') {
+      if (activeSection !== 'system-config') {
         await refreshSystemStatus();
       }
       toast.success(`Deleted configuration ${key}.`);
@@ -1727,6 +1809,7 @@ export default function AdminApp() {
       localStorage.setItem(REFRESH_TOKEN_KEY, payload.refreshToken);
       setToken(payload.token);
       setRefreshToken(payload.refreshToken);
+      navigateToSection('dashboard');
       toast.success('Admin login successful.');
 
       void loadAdminData(payload.token).catch((error) => {
@@ -3199,80 +3282,89 @@ export default function AdminApp() {
         <Button variant="outline" onClick={logout}>Logout</Button>
       </header>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <Metric title="Registered Users" value={String(overview?.usersCount || 0)} />
-        <Metric title="Question Bank" value={String(overview?.mcqCount || 0)} onClick={openQuestionBankWindow} />
-        <Metric title="Practice Board Question Bank" value={String(practiceQuestions.length)} onClick={openPracticeBoardBankWindow} />
-        <Metric title="Attempts" value={String(overview?.attemptsCount || 0)} />
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <Metric title="Average Score" value={`${overview?.averageScore || 0}%`} />
-        <Metric title="Pending Signup Requests" value={String(overview?.pendingSignupRequests || 0)} />
-        <Metric title="Approved Requests" value={String(signupRequests.filter((item) => item.status === 'approved').length)} />
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <Metric title="Completed Signups" value={String(signupRequests.filter((item) => item.status === 'completed').length)} />
-        <Metric title="Pending User Submissions" value={String(overview?.pendingQuestionSubmissions || 0)} />
-        <Metric title="Pending Premium Requests" value={String(overview?.pendingPremiumRequests || 0)} />
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <Metric title="Recovery Requests" value={String(overview?.recoveryRequestCount || 0)} />
-        <Metric title="Approved Submissions" value={String(questionSubmissions.filter((item) => item.status === 'approved').length)} />
-        <Metric title="Rejected Submissions" value={String(questionSubmissions.filter((item) => item.status === 'rejected').length)} />
-        <Metric title="Active Subscriptions" value={String(subscriptionOverview?.activeUsers || 0)} />
-        <Metric title="Expired/Inactive" value={String(subscriptionOverview?.expiredUsers || 0)} />
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <Metric title="Tracked Users" value={String(subscriptionOverview?.totalUsers || 0)} />
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Password Recovery Snapshot</CardTitle>
-          <CardDescription>Quick delivery status overview for recent recovery activity.</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap gap-2">
-          <Badge className="bg-emerald-600 text-white">sent: {overview?.recoveryStatusCounts?.sent || 0}</Badge>
-          <Badge className="bg-amber-500 text-white">partial: {overview?.recoveryStatusCounts?.partial || 0}</Badge>
-          <Badge className="bg-rose-600 text-white">failed: {overview?.recoveryStatusCounts?.failed || 0}</Badge>
-          <Badge variant="outline">not_found: {overview?.recoveryStatusCounts?.not_found || 0}</Badge>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle>System Status</CardTitle>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-8"
-              onClick={() => void refreshSystemStatus()}
-              disabled={isRefreshingSystemStatus}
-            >
-              {isRefreshingSystemStatus ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
-              {isRefreshingSystemStatus ? 'Refreshing...' : 'Refresh'}
-            </Button>
+      {activeSection === 'dashboard' ? (
+        <>
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric title="Registered Users" value={String(overview?.usersCount || 0)} />
+            <Metric title="Question Bank" value={String(overview?.mcqCount || 0)} onClick={openQuestionBankWindow} />
+            <Metric title="Practice Board Question Bank" value={String(practiceQuestions.length)} onClick={openPracticeBoardBankWindow} />
+            <Metric title="Attempts" value={String(overview?.attemptsCount || 0)} />
           </div>
-          <CardDescription>Live backend connectivity check for AI mentor services.</CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-2">
-          <Badge className={systemStatus?.openai?.configured ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}>
-            OpenAI: {systemStatus?.openai?.configured ? 'Configured' : 'Missing key'}
-          </Badge>
-          <Badge variant="outline">Model: {systemStatus?.openai?.model || 'unknown'}</Badge>
-          <Badge variant="outline">Key source: {systemStatus?.openai?.keySource || 'missing'}</Badge>
-        </CardContent>
-      </Card>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full min-w-0 space-y-4">
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <Metric title="Average Score" value={`${overview?.averageScore || 0}%`} />
+            <Metric title="Pending Signup Requests" value={String(overview?.pendingSignupRequests || 0)} />
+            <Metric title="Approved Requests" value={String(signupRequests.filter((item) => item.status === 'approved').length)} />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <Metric title="Completed Signups" value={String(signupRequests.filter((item) => item.status === 'completed').length)} />
+            <Metric title="Pending User Submissions" value={String(overview?.pendingQuestionSubmissions || 0)} />
+            <Metric title="Pending Premium Requests" value={String(overview?.pendingPremiumRequests || 0)} />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <Metric title="Recovery Requests" value={String(overview?.recoveryRequestCount || 0)} />
+            <Metric title="Approved Submissions" value={String(questionSubmissions.filter((item) => item.status === 'approved').length)} />
+            <Metric title="Rejected Submissions" value={String(questionSubmissions.filter((item) => item.status === 'rejected').length)} />
+            <Metric title="Active Subscriptions" value={String(subscriptionOverview?.activeUsers || 0)} />
+            <Metric title="Expired/Inactive" value={String(subscriptionOverview?.expiredUsers || 0)} />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            <Metric title="Tracked Users" value={String(subscriptionOverview?.totalUsers || 0)} />
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Password Recovery Snapshot</CardTitle>
+              <CardDescription>Quick delivery status overview for recent recovery activity.</CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              <Badge className="bg-emerald-600 text-white">sent: {overview?.recoveryStatusCounts?.sent || 0}</Badge>
+              <Badge className="bg-amber-500 text-white">partial: {overview?.recoveryStatusCounts?.partial || 0}</Badge>
+              <Badge className="bg-rose-600 text-white">failed: {overview?.recoveryStatusCounts?.failed || 0}</Badge>
+              <Badge variant="outline">not_found: {overview?.recoveryStatusCounts?.not_found || 0}</Badge>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <CardTitle>System Status</CardTitle>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-8"
+                  onClick={() => void refreshSystemStatus()}
+                  disabled={isRefreshingSystemStatus}
+                >
+                  {isRefreshingSystemStatus ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 h-3.5 w-3.5" />}
+                  {isRefreshingSystemStatus ? 'Refreshing...' : 'Refresh'}
+                </Button>
+              </div>
+              <CardDescription>Live backend connectivity check for AI mentor services.</CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-wrap items-center gap-2">
+              <Badge className={systemStatus?.openai?.configured ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'}>
+                OpenAI: {systemStatus?.openai?.configured ? 'Configured' : 'Missing key'}
+              </Badge>
+              <Badge variant="outline">Model: {systemStatus?.openai?.model || 'unknown'}</Badge>
+              <Badge variant="outline">Key source: {systemStatus?.openai?.keySource || 'missing'}</Badge>
+            </CardContent>
+          </Card>
+        </>
+      ) : null}
+
+      <Tabs
+        value={activeSection}
+        onValueChange={(value) => navigateToSection(value as AdminSection)}
+        className="w-full min-w-0 space-y-4"
+      >
         <div className="overflow-x-auto pb-1">
           <TabsList className="inline-flex h-auto min-w-max gap-1">
+            <TabsTrigger className="min-w-[160px]" value="dashboard">Dashboard</TabsTrigger>
             <TabsTrigger className="min-w-[150px]" value="users">Users</TabsTrigger>
             <TabsTrigger className="min-w-[170px]" value="requests">Signup Requests</TabsTrigger>
             <TabsTrigger className="min-w-[190px]" value="premium-requests">Premium Requests</TabsTrigger>
@@ -3286,6 +3378,8 @@ export default function AdminApp() {
             <TabsTrigger className="min-w-[170px]" value="system-config">System Config</TabsTrigger>
           </TabsList>
         </div>
+
+        <TabsContent value="dashboard" className="hidden" />
 
         <TabsContent value="system-config" className="space-y-4">
           <Card>
