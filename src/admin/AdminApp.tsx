@@ -2334,10 +2334,15 @@ export default function AdminApp() {
       }
 
       resetForm();
+      setQuery('');
 
       void loadSectionMcqs(authToken, selectedHierarchy).catch((error) => {
         toast.error(error instanceof Error ? error.message : 'MCQ saved, but section refresh failed. Use Refresh Data.');
       });
+
+      void apiRequest<{ structure: AdminMcqBankStructureItem[] }>('/api/admin/mcq-bank/structure', {}, authToken)
+        .then((payload) => setMcqStructure(payload.structure || []))
+        .catch(() => undefined);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not save MCQ.');
     } finally {
