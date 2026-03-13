@@ -942,6 +942,7 @@ export default function AdminApp() {
   const [bulkParseErrors, setBulkParseErrors] = useState<string[]>([]);
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
+  const [isSavingMcq, setIsSavingMcq] = useState(false);
   const [bulkDeleteMode, setBulkDeleteMode] = useState<BulkDeleteMode>('section-topic');
   const [bulkDeleteSubject, setBulkDeleteSubject] = useState('mathematics');
   const [bulkDeleteChapter, setBulkDeleteChapter] = useState('');
@@ -2220,7 +2221,7 @@ export default function AdminApp() {
   };
 
   const saveMcq = async () => {
-    if (!authToken) return;
+    if (!authToken || !selectedHierarchy || isSavingMcq) return;
 
     const normalizedOptionMedia = form.optionMedia
       .map((item, idx) => ({
@@ -2248,7 +2249,24 @@ export default function AdminApp() {
       return;
     }
 
-    const normalizedSubject = String(form.subject || '').toLowerCase().trim();
+    const selectedContext =
+      selectedHierarchy.kind === 'section'
+        ? {
+            subject: selectedHierarchy.subject,
+            part: selectedHierarchy.part,
+            chapter: selectedHierarchy.chapterTitle,
+            section: selectedHierarchy.sectionTitle,
+            topic: String(form.topic || '').trim() || `${selectedHierarchy.chapterTitle} - ${selectedHierarchy.sectionTitle}`,
+          }
+        : {
+            subject: selectedHierarchy.subject,
+            part: '',
+            chapter: '',
+            section: selectedHierarchy.sectionTitle,
+            topic: String(form.topic || '').trim() || selectedHierarchy.sectionTitle,
+          };
+
+    const normalizedSubject = String(selectedContext.subject || '').toLowerCase().trim();
     const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizedSubject);
 
     if (!normalizedSubject) {
@@ -2256,22 +2274,22 @@ export default function AdminApp() {
       return;
     }
 
-    if (!isFlatTopicSubject && (!form.part || !form.chapter.trim() || !form.section.trim())) {
+    if (!isFlatTopicSubject && (!selectedContext.part || !selectedContext.chapter.trim() || !selectedContext.section.trim())) {
       toast.error('Select subject, part, chapter, and section before adding MCQs.');
       return;
     }
 
-    if (isFlatTopicSubject && !form.topic.trim()) {
+    if (isFlatTopicSubject && !selectedContext.topic.trim()) {
       toast.error('Topic is required for this subject.');
       return;
     }
 
     const payload = {
       subject: normalizedSubject,
-      part: isFlatTopicSubject ? '' : form.part,
-      chapter: isFlatTopicSubject ? '' : form.chapter,
-      section: isFlatTopicSubject ? (form.section || form.topic) : form.section,
-      topic: form.topic,
+      part: isFlatTopicSubject ? '' : selectedContext.part,
+      chapter: isFlatTopicSubject ? '' : selectedContext.chapter,
+      section: isFlatTopicSubject ? (selectedContext.section || selectedContext.topic) : selectedContext.section,
+      topic: selectedContext.topic,
       question: form.question,
       questionImage: form.questionImage,
       options,
@@ -2287,28 +2305,43 @@ export default function AdminApp() {
     };
 
     try {
+      setIsSavingMcq(true);
       if (form.id) {
-        await apiRequest(`/api/admin/mcqs/${form.id}`, {
+        const updateResult = await apiRequest<{ mcq?: AdminMCQ }>(`/api/admin/mcqs/${form.id}`, {
           method: 'PUT',
           body: JSON.stringify(payload),
         }, authToken);
+
+        if (updateResult?.mcq?.id) {
+          setMcqs((previous) => previous.map((item) => (item.id === updateResult.mcq!.id ? updateResult.mcq! : item)));
+        }
+
         toast.success('MCQ updated.');
       } else {
-        await apiRequest('/api/admin/mcqs', {
+        const createResult = await apiRequest<{ mcq?: AdminMCQ }>('/api/admin/mcqs', {
           method: 'POST',
           body: JSON.stringify(payload),
         }, authToken);
-        toast.success('MCQ added.');
+
+        if (createResult?.mcq?.id) {
+          setMcqs((previous) => {
+            const next = [createResult.mcq!, ...previous.filter((item) => item.id !== createResult.mcq!.id)];
+            return next;
+          });
+        }
+
+        toast.success('MCQ added and saved to database.');
       }
 
       resetForm();
-      if (selectedHierarchy) {
-        await loadSectionMcqs(authToken, selectedHierarchy);
-      } else {
-        await loadAdminData(authToken);
-      }
+
+      void loadSectionMcqs(authToken, selectedHierarchy).catch((error) => {
+        toast.error(error instanceof Error ? error.message : 'MCQ saved, but section refresh failed. Use Refresh Data.');
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not save MCQ.');
+    } finally {
+      setIsSavingMcq(false);
     }
   };
 
@@ -4292,7 +4325,14 @@ export default function AdminApp() {
                   </div>
 
                   <div className="flex flex-wrap gap-2">
-                    <Button onClick={() => void saveMcq()} disabled={!selectedHierarchy}>{form.id ? 'Update' : 'Add'} MCQ</Button>
+                    <Button onClick={() => void saveMcq()} disabled={!selectedHierarchy || isSavingMcq}>
+                      {isSavingMcq ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Saving...
+                        </>
+                      ) : form.id ? 'Update MCQ' : 'Add MCQs'}
+                    </Button>
                     <Button variant="outline" onClick={resetForm}>Clear</Button>
                   </div>
                 </CardContent>
