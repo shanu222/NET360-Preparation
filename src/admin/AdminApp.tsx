@@ -3537,7 +3537,7 @@ export default function AdminApp() {
           {activeSection === 'dashboard' ? (
             <>
               <section className="space-y-3">
-                <h3 className="inline-flex items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-cyan-200"><Gauge className="h-4 w-4" />System Overview</h3>
+                <h3 className="inline-flex items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-slate-700 dark:text-cyan-200"><Gauge className="h-4 w-4" />System Overview</h3>
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <Metric title="Registered Users" value={String(overview?.usersCount || 0)} icon={Users} tone="from-cyan-500/30 to-blue-500/20" />
                   <Metric title="Question Bank" value={String(overview?.mcqCount || 0)} icon={Boxes} tone="from-violet-500/35 to-fuchsia-500/20" onClick={openQuestionBankWindow} />
@@ -3547,7 +3547,7 @@ export default function AdminApp() {
               </section>
 
               <section className="space-y-3">
-                <h3 className="inline-flex items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-violet-200"><UserCog className="h-4 w-4" />User Management</h3>
+                <h3 className="inline-flex items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-slate-700 dark:text-violet-200"><UserCog className="h-4 w-4" />User Management</h3>
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   <Metric title="Average Score" value={`${overview?.averageScore || 0}%`} icon={Activity} tone="from-blue-500/30 to-cyan-500/20" />
                   <Metric title="Pending Signup Requests" value={String(overview?.pendingSignupRequests || 0)} icon={ClipboardList} tone="from-amber-500/30 to-orange-500/20" />
@@ -3559,7 +3559,7 @@ export default function AdminApp() {
               </section>
 
               <section className="space-y-3">
-                <h3 className="inline-flex items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-fuchsia-200"><FileQuestion className="h-4 w-4" />Content Management</h3>
+                <h3 className="inline-flex items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-slate-700 dark:text-fuchsia-200"><FileQuestion className="h-4 w-4" />Content Management</h3>
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   <Metric title="Pending User Submissions" value={String(overview?.pendingQuestionSubmissions || 0)} icon={ClipboardList} tone="from-amber-500/30 to-yellow-500/20" />
                   <Metric title="Pending Premium Requests" value={String(overview?.pendingPremiumRequests || 0)} icon={Sparkles} tone="from-fuchsia-500/30 to-violet-500/20" />
@@ -3569,7 +3569,7 @@ export default function AdminApp() {
               </section>
 
               <section className="space-y-3">
-                <h3 className="inline-flex items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-teal-200"><CreditCard className="h-4 w-4" />Analytics</h3>
+                <h3 className="inline-flex items-center gap-2 text-sm font-medium uppercase tracking-[0.16em] text-slate-700 dark:text-teal-200"><CreditCard className="h-4 w-4" />Analytics</h3>
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   <Metric title="Active Subscriptions" value={String(subscriptionOverview?.activeUsers || 0)} icon={CreditCard} tone="from-emerald-500/30 to-cyan-500/20" />
                   <Metric title="Expired/Inactive" value={String(subscriptionOverview?.expiredUsers || 0)} icon={Activity} tone="from-rose-500/30 to-orange-500/20" />
@@ -5455,18 +5455,18 @@ function Metric({
 }) {
   return (
     <Card
-      className={`group relative overflow-hidden rounded-2xl border border-white/20 bg-gradient-to-br ${tone} shadow-[0_18px_40px_rgba(4,10,38,0.5)] backdrop-blur-xl transition-all duration-300 ${onClick ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-[0_26px_50px_rgba(2,8,32,0.62)]' : ''}`}
+      className={`group relative overflow-hidden rounded-2xl border border-slate-200/80 bg-gradient-to-br ${tone} shadow-[0_18px_40px_rgba(15,23,42,0.12)] backdrop-blur-xl transition-all duration-300 dark:border-white/20 dark:shadow-[0_18px_40px_rgba(4,10,38,0.5)] ${onClick ? 'cursor-pointer hover:-translate-y-0.5 hover:shadow-[0_24px_44px_rgba(15,23,42,0.16)] dark:hover:shadow-[0_26px_50px_rgba(2,8,32,0.62)]' : ''}`}
       onClick={onClick}
     >
-      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_70%_20%,rgba(255,255,255,0.2),transparent_45%)] opacity-80" />
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_70%_20%,rgba(255,255,255,0.42),transparent_45%)] opacity-90 dark:bg-[radial-gradient(circle_at_70%_20%,rgba(255,255,255,0.2),transparent_45%)] dark:opacity-80" />
       <CardContent className="relative pt-4">
-        <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/25 bg-white/15">
-          <Icon className="h-4 w-4 text-white" />
+        <div className="mb-3 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300/70 bg-white/70 dark:border-white/25 dark:bg-white/15">
+          <Icon className="h-4 w-4 text-slate-800 dark:text-white" />
         </div>
-        <p className="text-sm text-slate-100/90">{title}</p>
-        <p className="text-4xl font-semibold tracking-tight text-white">{value}</p>
-        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/20">
-          <div className="h-full w-2/3 rounded-full bg-gradient-to-r from-cyan-300 via-violet-300 to-pink-300 transition-all duration-500 group-hover:w-[82%]" />
+        <p className="text-sm font-medium text-slate-700 dark:text-slate-100/90">{title}</p>
+        <p className="text-4xl font-semibold tracking-tight text-slate-950 dark:text-white">{value}</p>
+        <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-300/55 dark:bg-white/20">
+          <div className="h-full w-2/3 rounded-full bg-gradient-to-r from-cyan-500 via-violet-500 to-pink-500 dark:from-cyan-300 dark:via-violet-300 dark:to-pink-300 transition-all duration-500 group-hover:w-[82%]" />
         </div>
       </CardContent>
     </Card>
