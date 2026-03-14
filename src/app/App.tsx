@@ -63,11 +63,18 @@ const ProgramExplorer = lazy(async () => {
     const module = await import('./components/ProgramExplorer');
     return { default: module.ProgramExplorer };
   } catch (error) {
-    console.error('Failed to load Programs section bundle:', error);
+    // Enhanced logging for debugging dynamic import failures
+    if (error && error.stack) {
+      console.error('Failed to load Programs section bundle:', error.stack);
+    } else {
+      console.error('Failed to load Programs section bundle:', error);
+    }
+    // Optionally, display the error message in the UI for debugging
     return {
       default: () => (
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
-          Could not load Programs right now. Please try again.
+          Could not load Programs right now. Please try again.<br />
+          <span style={{ color: 'red', fontSize: '0.9em' }}>{String(error && error.message ? error.message : error)}</span>
         </div>
       ),
     };
@@ -79,11 +86,16 @@ const NETTypes = lazy(async () => {
     const module = await import('./components/NETTypes');
     return { default: module.NETTypes };
   } catch (error) {
-    console.error('Failed to load NET Types section bundle:', error);
+    if (error && error.stack) {
+      console.error('Failed to load NET Types section bundle:', error.stack);
+    } else {
+      console.error('Failed to load NET Types section bundle:', error);
+    }
     return {
       default: () => (
         <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
-          Could not load NET Types right now. Please try again.
+          Could not load NET Types right now. Please try again.<br />
+          <span style={{ color: 'red', fontSize: '0.9em' }}>{String(error && error.message ? error.message : error)}</span>
         </div>
       ),
     };
