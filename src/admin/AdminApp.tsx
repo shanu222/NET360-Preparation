@@ -57,6 +57,7 @@ import {
 import '../styles/admin-theme.css';
 
 const FLAT_TOPIC_SUBJECTS = new Set(['quantitative-mathematics', 'design-aptitude']);
+const PART_SELECTION_SUBJECTS = new Set(['mathematics', 'physics', 'chemistry', 'biology']);
 const ADMIN_SUPPORT_DESKTOP_ALERTS_KEY = 'net360-support-desktop-alerts-admin';
 const ADMIN_SUPPORT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
 const ADMIN_SUPPORT_ATTACHMENT_ACCEPT = '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp,.svg';
@@ -72,6 +73,14 @@ function toTitleLabel(value: string) {
     .filter(Boolean)
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ');
+}
+
+function normalizeSubjectKey(value: string) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function isPartSelectionRequiredSubject(value: string) {
+  return PART_SELECTION_SUBJECTS.has(normalizeSubjectKey(value));
 }
 
 function readStoredAdminSidebarPreference() {
@@ -562,7 +571,7 @@ function emptyForm() {
   return {
     id: '',
     subject: 'mathematics',
-    part: 'part1',
+    part: '',
     chapter: '',
     section: '',
     topic: 'General',
@@ -1176,12 +1185,14 @@ export default function AdminApp() {
   const [isSavingMcq, setIsSavingMcq] = useState(false);
   const [bulkDeleteMode, setBulkDeleteMode] = useState<BulkDeleteMode>('section-topic');
   const [bulkDeleteSubject, setBulkDeleteSubject] = useState('mathematics');
+  const [bulkDeletePart, setBulkDeletePart] = useState('');
   const [bulkDeleteChapter, setBulkDeleteChapter] = useState('');
   const [bulkDeleteChapterKey, setBulkDeleteChapterKey] = useState('');
   const [bulkDeleteSectionOrTopic, setBulkDeleteSectionOrTopic] = useState('');
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [uploadChapterKey, setUploadChapterKey] = useState('');
   const [bankFilterSubject, setBankFilterSubject] = useState('');
+  const [bankFilterPart, setBankFilterPart] = useState('');
   const [bankFilterChapterKey, setBankFilterChapterKey] = useState('');
   const [bankFilterSection, setBankFilterSection] = useState('');
   const [questionSubmissions, setQuestionSubmissions] = useState<AdminQuestionSubmission[]>([]);
@@ -1598,19 +1609,29 @@ export default function AdminApp() {
     [syllabusTree],
   );
 
-  const isManualFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(String(form.subject || '').trim().toLowerCase());
-  const isBulkDeleteFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(String(bulkDeleteSubject || '').trim().toLowerCase());
-  const isBankFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(String(bankFilterSubject || '').trim().toLowerCase());
+  const isManualFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizeSubjectKey(form.subject));
+  const isBulkDeleteFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizeSubjectKey(bulkDeleteSubject));
+  const isBankFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizeSubjectKey(bankFilterSubject));
+  const isManualPartSelectionSubject = !isManualFlatTopicSubject && isPartSelectionRequiredSubject(form.subject);
+  const isBulkDeletePartSelectionSubject = !isBulkDeleteFlatTopicSubject && isPartSelectionRequiredSubject(bulkDeleteSubject);
+  const isBankPartSelectionSubject = !isBankFlatTopicSubject && isPartSelectionRequiredSubject(bankFilterSubject);
+
+  const partOptions: Array<{ value: 'part1' | 'part2'; label: string }> = [
+    { value: 'part1', label: 'Part 1' },
+    { value: 'part2', label: 'Part 2' },
+  ];
 
   const manualChapterOptions = useMemo(() => {
     const activeSubject = syllabusTree.find((item) => item.subject === form.subject);
-    return (activeSubject?.chapters || []).map((chapter) => ({
+    return (activeSubject?.chapters || [])
+      .filter((chapter) => (isManualPartSelectionSubject ? chapter.part === form.part : true))
+      .map((chapter) => ({
       value: chapter.key,
       label: chapter.title,
       chapterTitle: chapter.title,
       part: chapter.part,
-    }));
-  }, [syllabusTree, form.subject]);
+      }));
+  }, [syllabusTree, form.subject, form.part, isManualPartSelectionSubject]);
 
   const manualSectionOptions = useMemo(() => {
     const activeSubject = syllabusTree.find((item) => item.subject === form.subject);
@@ -1630,13 +1651,15 @@ export default function AdminApp() {
 
   const deleteChapterOptions = useMemo(() => {
     const activeSubject = syllabusTree.find((item) => item.subject === bulkDeleteSubject);
-    return (activeSubject?.chapters || []).map((chapter) => ({
+    return (activeSubject?.chapters || [])
+      .filter((chapter) => (isBulkDeletePartSelectionSubject ? chapter.part === bulkDeletePart : true))
+      .map((chapter) => ({
       value: chapter.key,
       label: chapter.title,
       chapterTitle: chapter.title,
       part: chapter.part,
-    }));
-  }, [syllabusTree, bulkDeleteSubject]);
+      }));
+  }, [syllabusTree, bulkDeleteSubject, bulkDeletePart, isBulkDeletePartSelectionSubject]);
 
   const deleteSectionOptions = useMemo(() => {
     const activeSubject = syllabusTree.find((item) => item.subject === bulkDeleteSubject);
@@ -1653,13 +1676,15 @@ export default function AdminApp() {
 
   const bankChapterOptions = useMemo(() => {
     const activeSubject = syllabusTree.find((item) => item.subject === bankFilterSubject);
-    return (activeSubject?.chapters || []).map((chapter) => ({
+    return (activeSubject?.chapters || [])
+      .filter((chapter) => (isBankPartSelectionSubject ? chapter.part === bankFilterPart : true))
+      .map((chapter) => ({
       value: chapter.key,
       label: chapter.title,
       chapterTitle: chapter.title,
       part: chapter.part,
-    }));
-  }, [syllabusTree, bankFilterSubject]);
+      }));
+  }, [syllabusTree, bankFilterSubject, bankFilterPart, isBankPartSelectionSubject]);
 
   const bankSectionOptions = useMemo(() => {
     const activeSubject = syllabusTree.find((item) => item.subject === bankFilterSubject);
@@ -2228,16 +2253,19 @@ export default function AdminApp() {
 
     setBulkDeleteSubject(selectedHierarchy.subject);
     if (selectedHierarchy.kind === 'section') {
+      setBulkDeletePart(selectedHierarchy.part);
       setBulkDeleteChapter(selectedHierarchy.chapterTitle);
       setBulkDeleteChapterKey(matchedChapterKey);
       setBulkDeleteSectionOrTopic(selectedHierarchy.sectionTitle);
     } else {
+      setBulkDeletePart('');
       setBulkDeleteChapter('');
       setBulkDeleteChapterKey('');
       setBulkDeleteSectionOrTopic(selectedHierarchy.sectionTitle);
     }
 
     setBankFilterSubject(selectedHierarchy.subject);
+    setBankFilterPart(selectedHierarchy.kind === 'section' ? selectedHierarchy.part : '');
     setBankFilterChapterKey(matchedChapterKey);
     setBankFilterSection(selectedHierarchy.sectionTitle);
   }, [selectedHierarchy, syllabusTree]);
@@ -2881,7 +2909,7 @@ export default function AdminApp() {
       part: String(
         form.part
           || (selectedHierarchy?.kind === 'section' ? selectedHierarchy.part : ''),
-      ).trim().toLowerCase() || 'part1',
+      ).trim().toLowerCase(),
       chapter: String(
         form.chapter
           || (selectedHierarchy?.kind === 'section' ? selectedHierarchy.chapterTitle : ''),
@@ -2892,6 +2920,7 @@ export default function AdminApp() {
 
     const normalizedSubject = String(selectedContext.subject || '').toLowerCase().trim();
     const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizedSubject);
+    const requiresPartSelection = isPartSelectionRequiredSubject(normalizedSubject);
 
     if (!normalizedSubject) {
       toast.error('Subject is required before adding MCQs.');
@@ -2908,7 +2937,7 @@ export default function AdminApp() {
       return;
     }
 
-    if (!isFlatTopicSubject && !String(selectedContext.part || '').trim()) {
+    if (!isFlatTopicSubject && requiresPartSelection && !String(selectedContext.part || '').trim()) {
       toast.error('Part is required.');
       return;
     }
@@ -2936,7 +2965,7 @@ export default function AdminApp() {
       correct_answer: answerKey,
       explanation: form.explanationText,
       subject: normalizedSubject,
-      part: isFlatTopicSubject ? '' : selectedContext.part,
+      part: isFlatTopicSubject ? '' : (requiresPartSelection ? selectedContext.part : ''),
       chapter: isFlatTopicSubject ? '' : selectedContext.chapter,
       section: isFlatTopicSubject ? (selectedContext.section || selectedContext.topic) : selectedContext.section,
       topic: selectedContext.topic,
@@ -3133,6 +3162,7 @@ export default function AdminApp() {
         .trim()
         .toLowerCase();
       const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(resolvedSubject);
+      const requiresPartSelection = isPartSelectionRequiredSubject(resolvedSubject);
 
       if (isFlatTopicSubject) {
         const resolvedTopic = String(itemContext.topic || itemContext.section || fallbackFromSelection?.topic || fallbackFromSelection?.section || form.topic || form.section || 'General Topic').trim();
@@ -3145,14 +3175,14 @@ export default function AdminApp() {
         };
       }
 
-      const resolvedPart = String(itemContext.part || fallbackFromSelection?.part || form.part || 'part1').trim().toLowerCase();
+      const resolvedPart = String(itemContext.part || fallbackFromSelection?.part || form.part || '').trim().toLowerCase();
       const resolvedChapter = String(itemContext.chapter || fallbackFromSelection?.chapter || form.chapter || 'General').trim();
       const resolvedSection = String(itemContext.section || itemContext.topic || fallbackFromSelection?.section || form.section || 'General').trim();
       const resolvedTopic = String(itemContext.topic || fallbackFromSelection?.topic || `${resolvedChapter} - ${resolvedSection}`).trim();
 
       return {
         subject: resolvedSubject,
-        part: resolvedPart === 'part2' ? 'part2' : 'part1',
+        part: requiresPartSelection ? (resolvedPart === 'part2' ? 'part2' : resolvedPart === 'part1' ? 'part1' : '') : '',
         chapter: resolvedChapter,
         section: resolvedSection,
         topic: resolvedTopic,
@@ -3175,6 +3205,9 @@ export default function AdminApp() {
 
       for (const item of bulkParsed) {
         const contextPayload = resolveParsedContext(item);
+        if (!FLAT_TOPIC_SUBJECTS.has(contextPayload.subject) && isPartSelectionRequiredSubject(contextPayload.subject) && !contextPayload.part) {
+          throw new Error(`Part is required for subject "${contextPayload.subject}" before uploading.`);
+        }
         const optionMedia = item.options.map((text, idx) => ({
           key: String.fromCharCode(65 + idx),
           text,
@@ -3281,6 +3314,8 @@ export default function AdminApp() {
 
     const subject = String(bulkDeleteSubject || '').trim().toLowerCase();
     const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(subject);
+    const requiresPartSelection = isPartSelectionRequiredSubject(subject);
+    const part = String(bulkDeletePart || '').trim().toLowerCase();
     const chapter = String(bulkDeleteChapter || '').trim();
     const sectionOrTopic = String(bulkDeleteSectionOrTopic || '').trim();
 
@@ -3291,6 +3326,11 @@ export default function AdminApp() {
 
     if (bulkDeleteMode === 'chapter' && !isFlatTopicSubject && (!subject || !chapter)) {
       toast.error('Subject and chapter are required for chapter-level deletion.');
+      return;
+    }
+
+    if ((bulkDeleteMode === 'chapter' || bulkDeleteMode === 'section-topic') && !isFlatTopicSubject && requiresPartSelection && !part) {
+      toast.error('Select Part 1 or Part 2 before deleting for this subject.');
       return;
     }
 
@@ -3305,7 +3345,7 @@ export default function AdminApp() {
         : bulkDeleteMode === 'subject'
           ? `all MCQs in subject "${subject}"`
           : bulkDeleteMode === 'chapter' && !isFlatTopicSubject
-            ? `all MCQs in chapter "${chapter}" under subject "${subject}"`
+            ? `all MCQs in chapter "${chapter}"${part ? ` (${part.toUpperCase()})` : ''} under subject "${subject}"`
             : `all MCQs in section/topic "${sectionOrTopic}"${chapter ? ` under chapter "${chapter}"` : ''} and subject "${subject}"`;
 
     const confirmed = window.confirm(`Are you sure you want to permanently delete ${summary}? This action cannot be undone.`);
@@ -3320,6 +3360,7 @@ export default function AdminApp() {
           body: JSON.stringify({
             mode: bulkDeleteMode === 'chapter' && isFlatTopicSubject ? 'section-topic' : bulkDeleteMode,
             subject,
+            part: isFlatTopicSubject ? '' : (requiresPartSelection ? part : ''),
             chapter: isFlatTopicSubject ? '' : chapter,
             sectionOrTopic,
           }),
@@ -4972,6 +5013,7 @@ export default function AdminApp() {
                               const normalized = String(value || '').trim().toLowerCase();
                               const isFlatTopic = FLAT_TOPIC_SUBJECTS.has(normalized);
                               setBulkDeleteSubject(value);
+                              setBulkDeletePart('');
                               setBulkDeleteChapterKey('');
                               setBulkDeleteChapter('');
                               setBulkDeleteSectionOrTopic('');
@@ -4989,6 +5031,29 @@ export default function AdminApp() {
                           </Select>
                         </div>
                       ) : null}
+
+                      {bulkDeleteMode !== 'all' && bulkDeleteMode !== 'subject' && bulkDeleteSubject && !isBulkDeleteFlatTopicSubject && isBulkDeletePartSelectionSubject ? (
+                        <div className="space-y-1.5">
+                          <Label>Part</Label>
+                          <Select
+                            value={bulkDeletePart}
+                            disabled={!bulkDeleteSubject}
+                            onValueChange={(value) => {
+                              setBulkDeletePart(value);
+                              setBulkDeleteChapterKey('');
+                              setBulkDeleteChapter('');
+                              setBulkDeleteSectionOrTopic('');
+                            }}
+                          >
+                            <SelectTrigger><SelectValue placeholder="Select part" /></SelectTrigger>
+                            <SelectContent>
+                              {partOptions.map((item) => (
+                                <SelectItem key={`delete-part-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      ) : null}
                     </div>
 
                     {(bulkDeleteMode === 'chapter' || bulkDeleteMode === 'section-topic') && bulkDeleteSubject && !isBulkDeleteFlatTopicSubject ? (
@@ -4996,7 +5061,7 @@ export default function AdminApp() {
                         <Label>Chapter</Label>
                         <Select
                           value={bulkDeleteChapterKey}
-                          disabled={!bulkDeleteSubject}
+                          disabled={!bulkDeleteSubject || (isBulkDeletePartSelectionSubject && !bulkDeletePart)}
                           onValueChange={(value) => {
                             setBulkDeleteChapterKey(value);
                             const selectedChapter = deleteChapterOptions.find((item) => item.value === value);
@@ -5066,6 +5131,107 @@ export default function AdminApp() {
 
                         {uploadMode === 'document' ? (
                         <div className="space-y-3 rounded-lg border border-indigo-200 bg-white/70 p-3 dark:border-indigo-300/30 dark:bg-white/5">
+                          <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                            <div className="space-y-1.5">
+                              <Label>Subject</Label>
+                              <Select
+                                value={form.subject}
+                                onValueChange={(value) => {
+                                  setUploadChapterKey('');
+                                  setForm((prev) => ({
+                                    ...prev,
+                                    subject: value,
+                                    part: '',
+                                    chapter: '',
+                                    section: '',
+                                    topic: '',
+                                  }));
+                                }}
+                              >
+                                <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
+                                <SelectContent>
+                                  {manualSubjectOptions.map((item) => (
+                                    <SelectItem key={`document-subject-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+
+                            {form.subject && !isManualFlatTopicSubject && isManualPartSelectionSubject ? (
+                              <div className="space-y-1.5">
+                                <Label>Part</Label>
+                                <Select
+                                  value={form.part}
+                                  onValueChange={(value) => {
+                                    setUploadChapterKey('');
+                                    setForm((prev) => ({
+                                      ...prev,
+                                      part: value,
+                                      chapter: '',
+                                      section: '',
+                                      topic: '',
+                                    }));
+                                  }}
+                                >
+                                  <SelectTrigger><SelectValue placeholder="Select part" /></SelectTrigger>
+                                  <SelectContent>
+                                    {partOptions.map((item) => (
+                                      <SelectItem key={`document-part-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ) : null}
+
+                            {form.subject && !isManualFlatTopicSubject ? (
+                              <div className="space-y-1.5">
+                                <Label>Chapter</Label>
+                                <Select
+                                  value={uploadChapterKey}
+                                  disabled={!form.subject || (isManualPartSelectionSubject && !form.part)}
+                                  onValueChange={(value) => {
+                                    setUploadChapterKey(value);
+                                    const selectedChapter = manualChapterOptions.find((item) => item.value === value);
+                                    setForm((prev) => ({
+                                      ...prev,
+                                      part: isManualPartSelectionSubject
+                                        ? (selectedChapter?.part || prev.part || '')
+                                        : '',
+                                      chapter: selectedChapter?.chapterTitle || '',
+                                      section: '',
+                                      topic: '',
+                                    }));
+                                  }}
+                                >
+                                  <SelectTrigger><SelectValue placeholder="Select chapter" /></SelectTrigger>
+                                  <SelectContent>
+                                    {manualChapterOptions.map((item) => (
+                                      <SelectItem key={`document-chapter-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ) : null}
+
+                            {form.subject && (isManualFlatTopicSubject || form.chapter) ? (
+                              <div className="space-y-1.5">
+                                <Label>Section / Topic</Label>
+                                <Select
+                                  value={form.section}
+                                  disabled={isManualFlatTopicSubject ? !form.subject : !uploadChapterKey}
+                                  onValueChange={(value) => setForm((prev) => ({ ...prev, section: value, topic: value }))}
+                                >
+                                  <SelectTrigger><SelectValue placeholder="Select section/topic" /></SelectTrigger>
+                                  <SelectContent>
+                                    {manualSectionOptions.map((item) => (
+                                      <SelectItem key={`document-section-${item}`} value={item}>{item}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            ) : null}
+                          </div>
+
                           <div>
                             <p className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">Document Parser</p>
                             <p className="text-xs text-muted-foreground">
@@ -5263,18 +5429,45 @@ export default function AdminApp() {
                                   </SelectContent>
                                 </Select>
                               </div>
+                              {form.subject && !isManualFlatTopicSubject && isManualPartSelectionSubject ? (
+                                <div className="space-y-1.5">
+                                  <Label>Part</Label>
+                                  <Select
+                                    value={form.part}
+                                    onValueChange={(value) => {
+                                      setUploadChapterKey('');
+                                      setForm((prev) => ({
+                                        ...prev,
+                                        part: value,
+                                        chapter: '',
+                                        section: '',
+                                        topic: '',
+                                      }));
+                                    }}
+                                  >
+                                    <SelectTrigger><SelectValue placeholder="Select part" /></SelectTrigger>
+                                    <SelectContent>
+                                      {partOptions.map((item) => (
+                                        <SelectItem key={`manual-part-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              ) : null}
                               {form.subject && !isManualFlatTopicSubject ? (
                                 <div className="space-y-1.5">
                                   <Label>Chapter</Label>
                                   <Select
                                     value={uploadChapterKey}
-                                    disabled={!form.subject}
+                                    disabled={!form.subject || (isManualPartSelectionSubject && !form.part)}
                                     onValueChange={(value) => {
                                       setUploadChapterKey(value);
                                       const selectedChapter = manualChapterOptions.find((item) => item.value === value);
                                       setForm((prev) => ({
                                         ...prev,
-                                        part: selectedChapter?.part || '',
+                                        part: isManualPartSelectionSubject
+                                          ? (selectedChapter?.part || prev.part || '')
+                                          : '',
                                         chapter: selectedChapter?.chapterTitle || '',
                                         section: '',
                                         topic: '',
@@ -5618,17 +5811,18 @@ export default function AdminApp() {
                   <CardDescription>
                     {selectedHierarchy
                       ? 'Edit or remove questions for the selected section/topic.'
-                      : 'Select subject, chapter, and section/topic to load MCQs.'}
+                      : 'Select subject, part (where required), chapter, and section/topic to load MCQs.'}
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <div className="grid gap-2 md:grid-cols-3">
+                  <div className="grid gap-2 md:grid-cols-4">
                     <div className="space-y-1.5">
                       <Label>Subject</Label>
                       <Select
                         value={bankFilterSubject}
                         onValueChange={(value) => {
                           setBankFilterSubject(value);
+                          setBankFilterPart('');
                           setBankFilterChapterKey('');
                           setBankFilterSection('');
                           setSelectedHierarchy(null);
@@ -5643,12 +5837,35 @@ export default function AdminApp() {
                         </SelectContent>
                       </Select>
                     </div>
+                    {!isBankFlatTopicSubject && isBankPartSelectionSubject ? (
+                      <div className="space-y-1.5">
+                        <Label>Part</Label>
+                        <Select
+                          value={bankFilterPart}
+                          disabled={!bankFilterSubject}
+                          onValueChange={(value) => {
+                            setBankFilterPart(value);
+                            setBankFilterChapterKey('');
+                            setBankFilterSection('');
+                            setSelectedHierarchy(null);
+                            setMcqs([]);
+                          }}
+                        >
+                          <SelectTrigger><SelectValue placeholder="Select part" /></SelectTrigger>
+                          <SelectContent>
+                            {partOptions.map((item) => (
+                              <SelectItem key={`bank-part-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
                     {!isBankFlatTopicSubject ? (
                       <div className="space-y-1.5">
                         <Label>Chapter</Label>
                         <Select
                           value={bankFilterChapterKey}
-                          disabled={!bankFilterSubject}
+                          disabled={!bankFilterSubject || (isBankPartSelectionSubject && !bankFilterPart)}
                           onValueChange={(value) => {
                             setBankFilterChapterKey(value);
                             setBankFilterSection('');
@@ -5685,7 +5902,9 @@ export default function AdminApp() {
                           if (!selectedChapter || !authToken) return;
                           const selectedPart = selectedChapter.part === 'part1' || selectedChapter.part === 'part2'
                             ? selectedChapter.part
-                            : 'part1';
+                            : isBankPartSelectionSubject
+                              ? (bankFilterPart === 'part2' ? 'part2' : bankFilterPart === 'part1' ? 'part1' : 'part1')
+                              : 'part1';
                           void handleSectionSelection({
                             subject: bankFilterSubject as SubjectKey,
                             part: selectedPart,

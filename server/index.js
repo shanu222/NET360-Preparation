@@ -10134,11 +10134,17 @@ app.get('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
 app.post('/api/admin/mcqs/bulk-delete', authMiddleware, requireAdmin, async (req, res) => {
   const mode = String(req.body?.mode || '').trim().toLowerCase();
   const subject = String(req.body?.subject || '').trim().toLowerCase();
+  const part = String(req.body?.part || '').trim().toLowerCase();
   const chapter = String(req.body?.chapter || '').trim();
   const sectionOrTopic = String(req.body?.sectionOrTopic || '').trim();
 
   if (!['all', 'subject', 'chapter', 'section-topic'].includes(mode)) {
     res.status(400).json({ error: 'mode must be one of: all, subject, chapter, section-topic.' });
+    return;
+  }
+
+  if (part && part !== 'part1' && part !== 'part2') {
+    res.status(400).json({ error: 'part must be one of: part1, part2, or empty.' });
     return;
   }
 
@@ -10150,6 +10156,9 @@ app.post('/api/admin/mcqs/bulk-delete', authMiddleware, requireAdmin, async (req
       return;
     }
     filter.subject = subject;
+    if (part) {
+      filter.part = part;
+    }
   }
 
   if (mode === 'chapter') {
@@ -10158,6 +10167,9 @@ app.post('/api/admin/mcqs/bulk-delete', authMiddleware, requireAdmin, async (req
       return;
     }
     filter.subject = subject;
+    if (part) {
+      filter.part = part;
+    }
     filter.chapter = { $regex: `^${chapter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' };
   }
 
@@ -10167,6 +10179,9 @@ app.post('/api/admin/mcqs/bulk-delete', authMiddleware, requireAdmin, async (req
       return;
     }
     filter.subject = subject;
+    if (part) {
+      filter.part = part;
+    }
     if (chapter) {
       filter.chapter = { $regex: `^${chapter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' };
     }
