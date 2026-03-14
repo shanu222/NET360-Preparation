@@ -15,6 +15,7 @@ import PDFDocument from 'pdfkit';
 import { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } from 'docx';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import mammoth from 'mammoth';
+import multer from 'multer';
 import { connectMongo } from './lib/mongo.js';
 import { UserModel } from './models/User.js';
 import { MCQModel } from './models/MCQ.js';
@@ -157,6 +158,10 @@ const SUBSCRIPTION_PLANS = {
 };
 
 const app = express();
+const aiParseUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 },
+});
 
 const sseClients = {
   student: new Map(),
@@ -10223,6 +10228,64 @@ app.delete('/api/admin/mcqs/purge-all', authMiddleware, requireAdmin, async (_re
   });
 });
 
+async function parseMcqsFromSourceText(sourceText) {
+  const heuristicResult = parseBulkMcqsFromText(sourceText);
+  let finalResult = heuristicResult;
+
+  if (openai) {
+    const aiResult = await parseBulkMcqsWithAi(sourceText);
+    const heuristicScore = (heuristicResult.parsed?.length || 0) - (heuristicResult.errors?.length || 0);
+    const aiScore = (aiResult.parsed?.length || 0) - (aiResult.errors?.length || 0);
+
+    if (aiResult.parsed.length > 0 && aiScore >= heuristicScore) {
+      finalResult = aiResult;
+    }
+  }
+
+  const parsed = Array.isArray(finalResult.parsed) ? finalResult.parsed.slice(0, BULK_PARSE_LIMIT) : [];
+  const errors = Array.isArray(finalResult.errors) ? [...finalResult.errors] : [];
+  if ((finalResult.parsed?.length || 0) > BULK_PARSE_LIMIT && !errors.some((item) => /first 15 mcqs/i.test(String(item)))) {
+    errors.unshift(`Only the first ${BULK_PARSE_LIMIT} MCQs were kept from this import.`);
+  }
+
+  return { parsed, errors };
+}
+
+app.post('/api/ai/parse-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
+  try {
+    const sourceType = String(req.body?.sourceType || 'file').trim().toLowerCase();
+    let sourceText = '';
+
+    if (sourceType === 'file') {
+      const upload = req.file;
+      if (!upload?.buffer?.length) {
+        res.status(400).json({ parsed: [], errors: ['Upload a PDF, DOC, DOCX, or TXT file before running AI analysis.'] });
+        return;
+      }
+
+      const filePayload = {
+        name: String(upload.originalname || 'upload.bin').trim(),
+        mimeType: String(upload.mimetype || 'application/octet-stream').toLowerCase().trim(),
+        size: Number(upload.size || upload.buffer.length || 0),
+        dataUrl: `data:${String(upload.mimetype || 'application/octet-stream').toLowerCase()};base64,${upload.buffer.toString('base64')}`,
+      };
+
+      sourceText = await extractTextFromUpload(filePayload);
+    } else {
+      sourceText = String(req.body?.rawText || '').trim();
+    }
+
+    const result = await parseMcqsFromSourceText(sourceText);
+    res.json(result);
+  } catch (error) {
+    console.error('AI MCQ parse failed:', error);
+    res.status(400).json({
+      parsed: [],
+      errors: [error instanceof Error ? error.message : 'Could not parse content via AI.'],
+    });
+  }
+});
+
 app.post('/api/admin/mcqs/parse', authMiddleware, requireAdmin, async (req, res) => {
   const sourceType = String(req.body?.sourceType || 'text').trim().toLowerCase();
 
@@ -10234,27 +10297,10 @@ app.post('/api/admin/mcqs/parse', authMiddleware, requireAdmin, async (req, res)
       sourceText = String(req.body?.rawText || '').trim();
     }
 
-    const heuristicResult = parseBulkMcqsFromText(sourceText);
-    let finalResult = heuristicResult;
-
-    if (openai) {
-      const aiResult = await parseBulkMcqsWithAi(sourceText);
-      const heuristicScore = (heuristicResult.parsed?.length || 0) - (heuristicResult.errors?.length || 0);
-      const aiScore = (aiResult.parsed?.length || 0) - (aiResult.errors?.length || 0);
-
-      if (aiResult.parsed.length > 0 && aiScore >= heuristicScore) {
-        finalResult = aiResult;
-      }
-    }
-
-    const parsed = Array.isArray(finalResult.parsed) ? finalResult.parsed.slice(0, BULK_PARSE_LIMIT) : [];
-    const errors = Array.isArray(finalResult.errors) ? [...finalResult.errors] : [];
-    if ((finalResult.parsed?.length || 0) > BULK_PARSE_LIMIT && !errors.some((item) => /first 15 mcqs/i.test(String(item)))) {
-      errors.unshift(`Only the first ${BULK_PARSE_LIMIT} MCQs were kept from this import.`);
-    }
-
-    res.json({ parsed, errors });
+    const result = await parseMcqsFromSourceText(sourceText);
+    res.json(result);
   } catch (error) {
+    console.error('Admin MCQ parse failed:', error);
     res.status(400).json({
       parsed: [],
       errors: [error instanceof Error ? error.message : 'Could not parse content.'],

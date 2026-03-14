@@ -3139,28 +3139,33 @@ export default function AdminApp() {
       return;
     }
 
+    const hierarchyContext = resolveDocumentHierarchyContext(true);
+    if (!hierarchyContext) return;
+
     try {
       setBulkProcessing(true);
+      console.info('Admin Analyse by AI started', {
+        hasFile: Boolean(bulkFile),
+        sourceType: bulkFile ? 'file' : 'text',
+        subject: hierarchyContext.subject,
+        part: hierarchyContext.part,
+        chapter: hierarchyContext.chapter,
+        section: hierarchyContext.section,
+      });
 
       let payload: ParsedBulkResponse;
 
       if (bulkFile) {
-        const dataUrl = await fileToDataUrl(bulkFile);
-        payload = await apiRequest<ParsedBulkResponse>('/api/admin/mcqs/parse', {
+        const formData = new FormData();
+        formData.append('sourceType', 'file');
+        formData.append('file', bulkFile);
+        payload = await apiRequest<ParsedBulkResponse>('/api/ai/parse-mcqs', {
           method: 'POST',
-          body: JSON.stringify({
-            sourceType: 'file',
-            file: {
-              name: bulkFile.name,
-              mimeType: bulkFile.type,
-              size: bulkFile.size,
-              dataUrl,
-            },
-          }),
+          body: formData,
         }, authToken);
       } else {
         try {
-          payload = await apiRequest<ParsedBulkResponse>('/api/admin/mcqs/parse', {
+          payload = await apiRequest<ParsedBulkResponse>('/api/ai/parse-mcqs', {
             method: 'POST',
             body: JSON.stringify({
               sourceType: 'text',
@@ -3173,17 +3178,26 @@ export default function AdminApp() {
         }
       }
 
-      setBulkParsed(payload.parsed || []);
-      setBulkParseErrors(payload.errors || []);
-      setShowParsedPreview(false);
+      const withSelectedHierarchy = (payload.parsed || []).map((item) => ({
+        ...item,
+        subject: hierarchyContext.subject,
+        part: hierarchyContext.part,
+        chapter: hierarchyContext.chapter,
+        section: hierarchyContext.section,
+        topic: hierarchyContext.topic,
+      }));
 
-      if (!payload.parsed?.length) {
+      setBulkParsed(withSelectedHierarchy);
+      setBulkParseErrors(payload.errors || []);
+      setShowParsedPreview(true);
+
+      if (!withSelectedHierarchy.length) {
         toast.error(payload.errors?.[0] || 'No questions were parsed.');
         return;
       }
 
-      const limitedParsed = (payload.parsed || []).slice(0, 15);
-      const didTrim = (payload.parsed || []).length > limitedParsed.length;
+      const limitedParsed = withSelectedHierarchy.slice(0, 15);
+      const didTrim = withSelectedHierarchy.length > limitedParsed.length;
       if (didTrim) {
         const nextErrors = [...(payload.errors || [])];
         if (!nextErrors.some((error) => /first 15 mcqs/i.test(error))) {
@@ -3192,11 +3206,22 @@ export default function AdminApp() {
         setBulkParseErrors(nextErrors);
       }
       setBulkParsed(limitedParsed);
-      setShowParsedPreview(false);
+      setShowParsedPreview(true);
+
+      console.info('Admin Analyse by AI completed', {
+        parsedCount: limitedParsed.length,
+        errors: payload.errors || [],
+      });
 
       toast.success(`Parsed ${limitedParsed.length} MCQ(s). Review and confirm target before saving.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not parse uploaded content.');
+      console.error('Admin Analyse by AI failed', error);
+      const status = Number((error as { status?: number } | null)?.status || 0);
+      if (status === 401 || status === 403) {
+        toast.error('Admin session expired. Please log in again to continue AI analysis.');
+      } else {
+        toast.error(error instanceof Error ? error.message : 'AI analysis failed. Please try again.');
+      }
     } finally {
       setBulkProcessing(false);
     }

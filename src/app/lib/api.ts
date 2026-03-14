@@ -13,6 +13,8 @@ const API_BASE_URL = env.VITE_API_BASE_URL || '';
 const MOBILE_API_BASE_URL = env.VITE_MOBILE_API_BASE_URL || '';
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
+const ADMIN_TOKEN_STORAGE_KEY = 'net360-admin-access-token';
+const ADMIN_REFRESH_TOKEN_STORAGE_KEY = 'net360-admin-refresh-token';
 
 function isNativeCapacitorRuntime() {
   const runtime = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
@@ -56,6 +58,23 @@ export function buildApiUrl(path: string) {
 
 function shouldUseForcedLocalMode() {
   return env.VITE_FORCE_LOCAL_API === 'true' && canFallbackToLocalMode();
+}
+
+function readStoredAccessToken() {
+  return localStorage.getItem(TOKEN_STORAGE_KEY) || localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY);
+}
+
+function readStoredRefreshCandidates() {
+  const seen = new Set<string>();
+  const candidates: Array<{ key: string; value: string }> = [];
+  [REFRESH_TOKEN_STORAGE_KEY, ADMIN_REFRESH_TOKEN_STORAGE_KEY].forEach((key) => {
+    const value = localStorage.getItem(key);
+    if (!value) return;
+    if (seen.has(value)) return;
+    seen.add(value);
+    candidates.push({ key, value });
+  });
+  return candidates;
 }
 
 function isPremiumSensitivePath(path: string) {
@@ -150,7 +169,9 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
 
   const buildHeaders = (authToken?: string | null) => {
     const headers = new Headers(options.headers || {});
-    if (!headers.has('Content-Type') && options.body) {
+    const hasBody = options.body != null;
+    const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData;
+    if (!headers.has('Content-Type') && hasBody && !isFormDataBody) {
       headers.set('Content-Type', 'application/json');
     }
     if (authToken) {
@@ -161,41 +182,52 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
 
   const tryRefreshAccessToken = async () => {
     if (path.startsWith('/api/auth/refresh')) return null;
-    const refreshToken = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
-    if (!refreshToken) return null;
+    const refreshCandidates = readStoredRefreshCandidates();
+    if (!refreshCandidates.length) return null;
 
-    try {
-      const response = await fetch(resolveApiPath('/api/auth/refresh'), {
-        method: 'POST',
-        headers: new Headers({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ refreshToken }),
-      });
-      if (!response.ok) return null;
-
-      let payload: { token?: string; refreshToken?: string };
+    for (const candidate of refreshCandidates) {
       try {
-        payload = await response.json() as { token?: string; refreshToken?: string };
-      } catch {
-        const bodyText = await response.text().catch(() => '');
-        if (isLikelyHtmlResponse(response, bodyText)) {
-          throw buildHtmlInsteadOfJsonError('/api/auth/refresh');
+        const response = await fetch(resolveApiPath('/api/auth/refresh'), {
+          method: 'POST',
+          headers: new Headers({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ refreshToken: candidate.value }),
+        });
+        if (!response.ok) continue;
+
+        let payload: { token?: string; refreshToken?: string };
+        try {
+          payload = await response.json() as { token?: string; refreshToken?: string };
+        } catch {
+          const bodyText = await response.text().catch(() => '');
+          if (isLikelyHtmlResponse(response, bodyText)) {
+            throw buildHtmlInsteadOfJsonError('/api/auth/refresh');
+          }
+          continue;
         }
-        return null;
-      }
-      if (!payload?.token) return null;
+        if (!payload?.token) continue;
 
-      localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
-      if (payload.refreshToken) {
-        localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
-      }
+        if (candidate.key === ADMIN_REFRESH_TOKEN_STORAGE_KEY) {
+          localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, payload.token);
+          if (payload.refreshToken) {
+            localStorage.setItem(ADMIN_REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
+          }
+        } else {
+          localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
+          if (payload.refreshToken) {
+            localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
+          }
+        }
 
-      return payload.token;
-    } catch {
-      return null;
+        return payload.token;
+      } catch {
+        // Try next refresh token candidate.
+      }
     }
+
+    return null;
   };
 
-  const initialToken = token || localStorage.getItem(TOKEN_STORAGE_KEY);
+  const initialToken = token || readStoredAccessToken();
   const hasAuthToken = Boolean(initialToken);
 
   let response: Response;
@@ -321,7 +353,7 @@ export async function downloadReport(path: string, token?: string | null): Promi
   if (token) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const hasAuthToken = Boolean(token || localStorage.getItem(TOKEN_STORAGE_KEY));
+  const hasAuthToken = Boolean(token || readStoredAccessToken());
 
   let response: Response;
   try {
@@ -363,7 +395,9 @@ export async function downloadBinary(path: string, options: RequestInit = {}, to
   }
 
   const headers = new Headers(options.headers || {});
-  if (!headers.has('Content-Type') && options.body) {
+  const hasBody = options.body != null;
+  const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  if (!headers.has('Content-Type') && hasBody && !isFormDataBody) {
     headers.set('Content-Type', 'application/json');
   }
   if (token) {
