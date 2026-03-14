@@ -397,6 +397,26 @@ interface AdminMcqOptionMedia {
   image?: AdminMcqImageFile | null;
 }
 
+interface EditableBankMcq {
+  id: string;
+  subject: string;
+  part: string;
+  chapter: string;
+  section: string;
+  topic: string;
+  questionType: 'text' | 'image';
+  question: string;
+  questionImage: AdminMcqImageFile | null;
+  optionMedia: AdminMcqOptionMedia[];
+  optionTypes: Array<'text' | 'image'>;
+  answer: string;
+  difficulty: 'Easy' | 'Medium' | 'Hard';
+  explanationText: string;
+  explanationImage: AdminMcqImageFile | null;
+  shortTrickText: string;
+  shortTrickImage: AdminMcqImageFile | null;
+}
+
 interface AdminMcqBankStructureItem {
   subject: string;
   part?: string;
@@ -543,6 +563,7 @@ interface ParsedBulkMcq {
   optionImageDataUrls?: string[];
   answer: string;
   tip: string;
+  shortTrick?: string;
   explanationImageDataUrl?: string;
   difficulty: 'Easy' | 'Medium' | 'Hard';
 }
@@ -1019,7 +1040,7 @@ function resolveAnswerKeyFromInput(options: AdminMcqOptionMedia[], answerInput: 
   const normalized = String(answerInput || '').trim().toLowerCase();
   if (!normalized) return '';
 
-  const direct = normalized.match(/^(?:option\s*)?([a-d]|\d{1,2})(?:\b|\)|\.|:)?/i);
+  const direct = normalized.match(/^(?:option\s*)?([a-h]|\d{1,2})(?:\b|\)|\.|:)?/i);
   if (direct) {
     const token = direct[1];
     const idx = /^\d+$/.test(token)
@@ -1035,6 +1056,52 @@ function resolveAnswerKeyFromInput(options: AdminMcqOptionMedia[], answerInput: 
 
   const byKey = options.find((item) => String(item.key || '').trim().toLowerCase() === normalized);
   return byKey ? String(byKey.key || '').toUpperCase() : '';
+}
+
+function createEditableBankMcq(item: AdminMCQ): EditableBankMcq {
+  const optionMedia = Array.isArray(item.optionMedia) && item.optionMedia.length
+    ? item.optionMedia.map((option, index) => ({
+      key: String(option.key || String.fromCharCode(65 + index)).toUpperCase(),
+      text: String(option.text || ''),
+      image: option.image || null,
+    }))
+    : [
+      { key: 'A', text: String(item.options?.[0] || ''), image: null },
+      { key: 'B', text: String(item.options?.[1] || ''), image: null },
+      { key: 'C', text: String(item.options?.[2] || ''), image: null },
+      { key: 'D', text: String(item.options?.[3] || ''), image: null },
+    ];
+
+  const normalizedOptions = optionMedia.map((option, index) => ({
+    key: String(option.key || String.fromCharCode(65 + index)).toUpperCase(),
+    text: String(option.text || ''),
+    image: option.image || null,
+  }));
+
+  const resolvedDifficulty = String(item.difficulty || 'Medium').trim();
+  const difficulty: 'Easy' | 'Medium' | 'Hard' = resolvedDifficulty === 'Easy' || resolvedDifficulty === 'Hard'
+    ? resolvedDifficulty
+    : 'Medium';
+
+  return {
+    id: item.id,
+    subject: String(item.subject || '').trim().toLowerCase(),
+    part: String(item.part || '').trim().toLowerCase(),
+    chapter: String(item.chapter || '').trim(),
+    section: String(item.section || '').trim(),
+    topic: String(item.topic || '').trim(),
+    questionType: item.questionImage ? 'image' : 'text',
+    question: String(item.question || ''),
+    questionImage: item.questionImage || null,
+    optionMedia: normalizedOptions,
+    optionTypes: normalizedOptions.map((option) => (option.image ? 'image' : 'text')),
+    answer: String(item.answerKey || item.answer || ''),
+    difficulty,
+    explanationText: String(item.explanationText || item.tip || ''),
+    explanationImage: item.explanationImage || null,
+    shortTrickText: String(item.shortTrickText || ''),
+    shortTrickImage: item.shortTrickImage || null,
+  };
 }
 
 const PRACTICE_FILE_MIME_TYPES = new Set([
@@ -1195,6 +1262,8 @@ export default function AdminApp() {
   const [bankFilterPart, setBankFilterPart] = useState('');
   const [bankFilterChapterKey, setBankFilterChapterKey] = useState('');
   const [bankFilterSection, setBankFilterSection] = useState('');
+  const [bankEditDrafts, setBankEditDrafts] = useState<Record<string, EditableBankMcq>>({});
+  const [bankSavingIds, setBankSavingIds] = useState<Record<string, boolean>>({});
   const [questionSubmissions, setQuestionSubmissions] = useState<AdminQuestionSubmission[]>([]);
   const [submissionStatusFilter, setSubmissionStatusFilter] = useState('all');
   const [submissionSubjectFilter, setSubmissionSubjectFilter] = useState('all');
@@ -2271,6 +2340,21 @@ export default function AdminApp() {
   }, [selectedHierarchy, syllabusTree]);
 
   useEffect(() => {
+    if (!selectedHierarchy) {
+      setBankEditDrafts({});
+      setBankSavingIds({});
+      return;
+    }
+
+    const nextDrafts: Record<string, EditableBankMcq> = {};
+    mcqs.forEach((item) => {
+      nextDrafts[item.id] = createEditableBankMcq(item);
+    });
+    setBankEditDrafts(nextDrafts);
+    setBankSavingIds({});
+  }, [selectedHierarchy, mcqs]);
+
+  useEffect(() => {
     if (!isQuestionBankView) return;
 
     if (!bankTree.length) {
@@ -3118,6 +3202,50 @@ export default function AdminApp() {
     }
   };
 
+  const resolveDocumentHierarchyContext = (showToast = true) => {
+    const subject = String(form.subject || '').trim().toLowerCase();
+    const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(subject);
+    const requiresPartSelection = isPartSelectionRequiredSubject(subject);
+    const part = isFlatTopicSubject ? '' : (requiresPartSelection ? String(form.part || '').trim().toLowerCase() : '');
+    const chapter = isFlatTopicSubject ? '' : String(form.chapter || '').trim();
+    const section = String(form.section || '').trim();
+    const topic = String(form.topic || form.section || '').trim();
+
+    if (!subject) {
+      if (showToast) toast.error('Select Subject before parsing or uploading document MCQs.');
+      return null;
+    }
+
+    if (requiresPartSelection && !part) {
+      if (showToast) toast.error('Select Part before parsing or uploading document MCQs.');
+      return null;
+    }
+
+    if (!isFlatTopicSubject && !chapter) {
+      if (showToast) toast.error('Select Chapter before parsing or uploading document MCQs.');
+      return null;
+    }
+
+    if (!section) {
+      if (showToast) toast.error('Select Section/Topic before parsing or uploading document MCQs.');
+      return null;
+    }
+
+    const labelParts = [toTitleLabel(subject)];
+    if (part) labelParts.push(part === 'part2' ? 'Part 2' : 'Part 1');
+    if (chapter) labelParts.push(chapter);
+    labelParts.push(section);
+
+    return {
+      subject,
+      part,
+      chapter,
+      section,
+      topic: topic || section,
+      label: labelParts.join(' -> '),
+    };
+  };
+
   const uploadBulkMcqs = async () => {
     if (!authToken) return;
 
@@ -3131,70 +3259,10 @@ export default function AdminApp() {
       return;
     }
 
-    const resolveParsedContext = (item: ParsedBulkMcq) => {
-      const fallbackFromSelection = selectedHierarchy
-        ? selectedHierarchy.kind === 'section'
-          ? {
-              subject: selectedHierarchy.subject,
-              part: selectedHierarchy.part,
-              chapter: selectedHierarchy.chapterTitle,
-              section: selectedHierarchy.sectionTitle,
-              topic: `${selectedHierarchy.chapterTitle} - ${selectedHierarchy.sectionTitle}`,
-            }
-          : {
-              subject: selectedHierarchy.subject,
-              part: '',
-              chapter: '',
-              section: selectedHierarchy.sectionTitle,
-              topic: selectedHierarchy.sectionTitle,
-            }
-        : null;
+    const hierarchyContext = resolveDocumentHierarchyContext(true);
+    if (!hierarchyContext) return;
 
-      const itemContext = normalizeParsedHierarchyContext({
-        subject: item.subject,
-        part: item.part,
-        chapter: item.chapter,
-        section: item.section,
-        topic: item.topic,
-      });
-
-      const resolvedSubject = String(itemContext.subject || fallbackFromSelection?.subject || form.subject || 'general')
-        .trim()
-        .toLowerCase();
-      const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(resolvedSubject);
-      const requiresPartSelection = isPartSelectionRequiredSubject(resolvedSubject);
-
-      if (isFlatTopicSubject) {
-        const resolvedTopic = String(itemContext.topic || itemContext.section || fallbackFromSelection?.topic || fallbackFromSelection?.section || form.topic || form.section || 'General Topic').trim();
-        return {
-          subject: resolvedSubject,
-          part: '',
-          chapter: '',
-          section: String(itemContext.section || fallbackFromSelection?.section || resolvedTopic).trim(),
-          topic: resolvedTopic,
-        };
-      }
-
-      const resolvedPart = String(itemContext.part || fallbackFromSelection?.part || form.part || '').trim().toLowerCase();
-      const resolvedChapter = String(itemContext.chapter || fallbackFromSelection?.chapter || form.chapter || 'General').trim();
-      const resolvedSection = String(itemContext.section || itemContext.topic || fallbackFromSelection?.section || form.section || 'General').trim();
-      const resolvedTopic = String(itemContext.topic || fallbackFromSelection?.topic || `${resolvedChapter} - ${resolvedSection}`).trim();
-
-      return {
-        subject: resolvedSubject,
-        part: requiresPartSelection ? (resolvedPart === 'part2' ? 'part2' : resolvedPart === 'part1' ? 'part1' : '') : '',
-        chapter: resolvedChapter,
-        section: resolvedSection,
-        topic: resolvedTopic,
-      };
-    };
-
-    let previewLabel = 'Mixed parsed hierarchy';
-    if (selectedHierarchy) {
-      previewLabel = hierarchyLabel(selectedHierarchy);
-    } else if (bulkParsed[0]?.subject) {
-      previewLabel = `${bulkParsed[0].subject}${bulkParsed.length > 1 ? ' (and others)' : ''}`;
-    }
+    const previewLabel = hierarchyContext.label;
 
     if (!window.confirm(`Save ${bulkParsed.length} MCQ(s)?\nTarget: ${previewLabel}\n\nContinue?`)) {
       return;
@@ -3204,10 +3272,6 @@ export default function AdminApp() {
       setBulkUploading(true);
 
       for (const item of bulkParsed) {
-        const contextPayload = resolveParsedContext(item);
-        if (!FLAT_TOPIC_SUBJECTS.has(contextPayload.subject) && isPartSelectionRequiredSubject(contextPayload.subject) && !contextPayload.part) {
-          throw new Error(`Part is required for subject "${contextPayload.subject}" before uploading.`);
-        }
         const optionMedia = item.options.map((text, idx) => ({
           key: String.fromCharCode(65 + idx),
           text,
@@ -3217,7 +3281,11 @@ export default function AdminApp() {
         await apiRequest('/api/admin/mcqs', {
           method: 'POST',
           body: JSON.stringify({
-            ...contextPayload,
+            subject: hierarchyContext.subject,
+            part: hierarchyContext.part,
+            chapter: hierarchyContext.chapter,
+            section: hierarchyContext.section,
+            topic: hierarchyContext.topic,
             question: item.question,
             questionImageUrl: item.questionImageUrl,
             questionImage: parsedDataUrlToImage(item.questionImageDataUrl, 'question-image'),
@@ -3227,7 +3295,7 @@ export default function AdminApp() {
             tip: item.tip,
             explanationText: item.tip,
             explanationImage: parsedDataUrlToImage(item.explanationImageDataUrl, 'explanation-image'),
-            shortTrickText: '',
+            shortTrickText: String(item.shortTrick || '').trim(),
             shortTrickImage: null,
             difficulty: item.difficulty,
           }),
@@ -3306,6 +3374,140 @@ export default function AdminApp() {
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not delete MCQ.');
+    }
+  };
+
+  const updateBankEditDraft = (mcqId: string, updater: (draft: EditableBankMcq) => EditableBankMcq) => {
+    setBankEditDrafts((previous) => {
+      const current = previous[mcqId];
+      if (!current) return previous;
+      return {
+        ...previous,
+        [mcqId]: updater(current),
+      };
+    });
+  };
+
+  const saveBankMcqChanges = async (mcqId: string) => {
+    if (!authToken) return;
+    if (!selectedHierarchy) {
+      toast.error('Select a section/topic first.');
+      return;
+    }
+
+    const draft = bankEditDrafts[mcqId];
+    if (!draft) {
+      toast.error('Could not find editable MCQ data.');
+      return;
+    }
+
+    const normalizedOptionMedia = draft.optionMedia
+      .map((option, index) => ({
+        key: String(option.key || String.fromCharCode(65 + index)).trim().toUpperCase(),
+        text: String(option.text || '').trim(),
+        image: option.image || null,
+      }))
+      .filter((option) => option.text || option.image);
+
+    if (!normalizedOptionMedia.length || normalizedOptionMedia.length < 4) {
+      toast.error('At least options A, B, C, and D are required.');
+      return;
+    }
+
+    const requiredKeys = ['A', 'B', 'C', 'D'];
+    const missingRequired = requiredKeys.find((key, idx) => {
+      const option = normalizedOptionMedia[idx];
+      if (!option) return true;
+      return !option.text && !option.image;
+    });
+    if (missingRequired) {
+      toast.error('Options A, B, C, and D are required.');
+      return;
+    }
+
+    if (draft.questionType === 'text' && !String(draft.question || '').trim()) {
+      toast.error('Question text is required.');
+      return;
+    }
+
+    if (draft.questionType === 'image' && !draft.questionImage) {
+      toast.error('Question image is required when question type is image.');
+      return;
+    }
+
+    const answerKey = resolveAnswerKeyFromInput(normalizedOptionMedia, draft.answer);
+    if (!answerKey) {
+      toast.error('Choose a valid correct answer (A-E, number, or exact option text).');
+      return;
+    }
+
+    const sectionContext = selectedHierarchy.kind === 'section'
+      ? {
+        subject: selectedHierarchy.subject,
+        part: selectedHierarchy.part,
+        chapter: selectedHierarchy.chapterTitle,
+        section: selectedHierarchy.sectionTitle,
+      }
+      : {
+        subject: selectedHierarchy.subject,
+        part: '',
+        chapter: '',
+        section: selectedHierarchy.sectionTitle,
+      };
+
+    const payload = {
+      question_type: draft.questionType,
+      question_text: String(draft.question || '').trim(),
+      question_image: draft.questionImage || null,
+      question: String(draft.question || '').trim(),
+      option_a: normalizedOptionMedia[0]?.text || '[A]',
+      option_b: normalizedOptionMedia[1]?.text || '[B]',
+      option_c: normalizedOptionMedia[2]?.text || '[C]',
+      option_d: normalizedOptionMedia[3]?.text || '[D]',
+      correct_answer: answerKey,
+      explanation: String(draft.explanationText || '').trim(),
+      subject: sectionContext.subject,
+      part: sectionContext.part,
+      chapter: sectionContext.chapter,
+      section: sectionContext.section,
+      topic: String(draft.topic || sectionContext.section || '').trim(),
+      subject_id: sectionContext.subject,
+      chapter_id: String(sectionContext.chapter || '').trim(),
+      section_id: String(sectionContext.section || '').trim(),
+      topic_id: String(draft.topic || sectionContext.section || '').trim(),
+      questionImage: draft.questionImage || null,
+      options: normalizedOptionMedia.map((option) => option.text || `[${option.key}]`),
+      optionMedia: normalizedOptionMedia,
+      answer: answerKey,
+      answerKey,
+      tip: String(draft.explanationText || '').trim(),
+      explanationText: String(draft.explanationText || '').trim(),
+      explanationImage: draft.explanationImage || null,
+      shortTrickText: String(draft.shortTrickText || '').trim(),
+      shortTrickImage: draft.shortTrickImage || null,
+      difficulty: draft.difficulty,
+    };
+
+    try {
+      setBankSavingIds((previous) => ({ ...previous, [mcqId]: true }));
+      const result = await apiRequest<{ mcq?: AdminMCQ }>(`/api/admin/mcqs/${mcqId}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      }, authToken);
+
+      if (result?.mcq?.id) {
+        setMcqs((previous) => previous.map((item) => (item.id === result.mcq!.id ? result.mcq! : item)));
+        setBankEditDrafts((previous) => ({
+          ...previous,
+          [mcqId]: createEditableBankMcq(result.mcq!),
+        }));
+      }
+
+      toast.success('MCQ updated successfully.');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not update this MCQ.');
+    } finally {
+      setBankSavingIds((previous) => ({ ...previous, [mcqId]: false }));
     }
   };
 
@@ -4982,7 +5184,7 @@ export default function AdminApp() {
                       onClick={() => setActiveMcqPanel((prev) => (prev === 'bank' ? null : 'bank'))}
                       className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${activeMcqPanel === 'bank' ? 'border-cyan-400 bg-cyan-100/70 text-cyan-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
                     >
-                      MCQs Bank
+                      Update / Edit MCQs
                     </button>
                   </div>
 
@@ -5262,7 +5464,24 @@ export default function AdminApp() {
                                 </>
                               ) : 'Analyse by AI'}
                             </Button>
-                            <Button type="button" variant="outline" onClick={() => setShowParsedPreview(true)} disabled={!bulkParsed.length}>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => {
+                                const hierarchyContext = resolveDocumentHierarchyContext();
+                                if (!hierarchyContext) return;
+                                setBulkParsed((previous) => previous.map((item) => ({
+                                  ...item,
+                                  subject: hierarchyContext.subject,
+                                  part: hierarchyContext.part,
+                                  chapter: hierarchyContext.chapter,
+                                  section: hierarchyContext.section,
+                                  topic: hierarchyContext.topic,
+                                })));
+                                setShowParsedPreview(true);
+                              }}
+                              disabled={!bulkParsed.length}
+                            >
                               Parse MCQs
                             </Button>
                           </div>
@@ -5291,6 +5510,16 @@ export default function AdminApp() {
                                 </Button>
                               </div>
 
+                              {(() => {
+                                const hierarchyContext = resolveDocumentHierarchyContext(false);
+                                if (!hierarchyContext) return null;
+                                return (
+                                  <div className="rounded-md border border-indigo-300/70 bg-indigo-50/60 px-3 py-2 text-xs text-indigo-900 dark:border-indigo-300/40 dark:bg-indigo-500/10 dark:text-indigo-100">
+                                    Upload target: {hierarchyContext.label}
+                                  </div>
+                                );
+                              })()}
+
                               <div className="space-y-3 max-h-[620px] overflow-auto pr-1">
                                 {bulkParsed.map((item, mcqIndex) => (
                                   <div key={`bulk-parsed-item-${mcqIndex}`} className="space-y-3 rounded-lg border border-indigo-200/80 bg-indigo-50/30 p-3 dark:border-indigo-300/30 dark:bg-indigo-500/10">
@@ -5299,32 +5528,6 @@ export default function AdminApp() {
                                       <Button type="button" size="sm" variant="outline" onClick={() => removeParsedMcq(mcqIndex)}>
                                         Remove
                                       </Button>
-                                    </div>
-
-                                    <div className="grid gap-2 md:grid-cols-2">
-                                      <div className="space-y-1">
-                                        <Label>Subject</Label>
-                                        <Input value={item.subject || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, subject: e.target.value }))} placeholder="e.g. mathematics" />
-                                      </div>
-                                      <div className="space-y-1">
-                                        <Label>Part</Label>
-                                        <Input value={item.part || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, part: e.target.value }))} placeholder="part1 or part2" />
-                                      </div>
-                                    </div>
-
-                                    <div className="grid gap-2 md:grid-cols-3">
-                                      <div className="space-y-1">
-                                        <Label>Chapter</Label>
-                                        <Input value={item.chapter || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, chapter: e.target.value }))} />
-                                      </div>
-                                      <div className="space-y-1">
-                                        <Label>Section / Topic</Label>
-                                        <Input value={item.section || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, section: e.target.value }))} />
-                                      </div>
-                                      <div className="space-y-1">
-                                        <Label>Topic (optional override)</Label>
-                                        <Input value={item.topic || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, topic: e.target.value }))} />
-                                      </div>
                                     </div>
 
                                     <div className="space-y-1">
@@ -5382,8 +5585,13 @@ export default function AdminApp() {
                                     </div>
 
                                     <div className="space-y-1">
-                                      <Label>Explanation / Short Trick</Label>
+                                      <Label>Explanation</Label>
                                       <Textarea value={item.tip || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, tip: e.target.value }))} className="min-h-[80px]" />
+                                    </div>
+
+                                    <div className="space-y-1">
+                                      <Label>Short Trick</Label>
+                                      <Textarea value={item.shortTrick || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, shortTrick: e.target.value }))} className="min-h-[70px]" />
                                     </div>
 
                                     <div className="grid gap-2 md:grid-cols-2">
@@ -5807,7 +6015,7 @@ export default function AdminApp() {
               {activeMcqPanel === 'bank' ? (
               <Card className="min-w-0">
                 <CardHeader>
-                  <CardTitle>Section MCQ Bank</CardTitle>
+                  <CardTitle>Update / Edit MCQs</CardTitle>
                   <CardDescription>
                     {selectedHierarchy
                       ? 'Edit or remove questions for the selected section/topic.'
@@ -5929,56 +6137,373 @@ export default function AdminApp() {
                     disabled={!selectedHierarchy}
                   />
                   <div className="space-y-2 max-h-[460px] overflow-auto">
-                    {selectedHierarchy ? filteredMcqs.map((item) => (
-                      <div key={item.id} className="rounded-lg border p-3">
-                        <button
-                          type="button"
-                          className="w-full text-left"
-                          onClick={() => {
-                            setForm({
-                              id: item.id,
-                              subject: item.subject,
-                              part: item.part || form.part,
-                              chapter: item.chapter || '',
-                              section: item.section || '',
-                              topic: item.topic,
-                              questionType: item.questionImage ? 'image' : 'text',
-                              question: item.question,
-                              questionImage: item.questionImage || null,
-                              optionMedia: Array.isArray(item.optionMedia) && item.optionMedia.length
-                                ? item.optionMedia.map((option, optionIdx) => ({
-                                  key: String(option.key || String.fromCharCode(65 + optionIdx)).toUpperCase(),
-                                  text: String(option.text || ''),
-                                  image: option.image || null,
-                                }))
-                                : [
-                                  { key: 'A', text: String(item.options?.[0] || ''), image: null },
-                                  { key: 'B', text: String(item.options?.[1] || ''), image: null },
-                                  { key: 'C', text: String(item.options?.[2] || ''), image: null },
-                                  { key: 'D', text: String(item.options?.[3] || ''), image: null },
-                                ],
-                              optionTypes: Array.isArray(item.optionMedia) && item.optionMedia.length
-                                ? item.optionMedia.map((option) => (option.image ? 'image' : 'text'))
-                                : ['text', 'text', 'text', 'text'],
-                              answer: item.answerKey || item.answer,
-                              explanationText: item.explanationText || item.shortTrickText || item.tip || '',
-                              explanationImage: item.explanationImage || item.shortTrickImage || null,
-                              shortTrickText: '',
-                              shortTrickImage: null,
-                              difficulty: item.difficulty,
-                            });
-                          }}
-                        >
-                          <p className="line-clamp-2 text-sm">{item.question}</p>
-                          <p className="mt-1 text-xs text-muted-foreground">
-                            {item.subject} • {item.part || '-'} • {item.chapter || '-'} • {item.section || item.topic}
-                          </p>
-                        </button>
-                        <div className="mt-2 flex justify-end">
-                          <Button variant="destructive" size="sm" onClick={() => void deleteMcq(item.id)}>Delete</Button>
+                    {selectedHierarchy ? filteredMcqs.map((item, index) => {
+                      const draft = bankEditDrafts[item.id] || createEditableBankMcq(item);
+                      const isSaving = Boolean(bankSavingIds[item.id]);
+
+                      return (
+                        <div key={item.id} className="space-y-3 rounded-lg border p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <p className="text-sm font-medium">MCQ #{index + 1}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {item.subject} • {item.part || '-'} • {item.chapter || '-'} • {item.section || item.topic}
+                            </p>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <Label>Question Type</Label>
+                            <div className="inline-flex overflow-hidden rounded-md border">
+                              <button
+                                type="button"
+                                onClick={() => updateBankEditDraft(item.id, (current) => ({ ...current, questionType: 'text' }))}
+                                className={`px-3 py-1.5 text-xs ${draft.questionType !== 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                              >
+                                Text
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => updateBankEditDraft(item.id, (current) => ({ ...current, questionType: 'image' }))}
+                                className={`px-3 py-1.5 text-xs ${draft.questionType === 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                              >
+                                Image
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <Label>Question Text</Label>
+                            <Textarea
+                              value={draft.question}
+                              onChange={(e) => updateBankEditDraft(item.id, (current) => ({ ...current, question: e.target.value }))}
+                              className="min-h-[84px]"
+                              placeholder="Question text"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <Label>Question Image</Label>
+                            <Input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0] || null;
+                                if (!file) return;
+                                if (!isSupportedMcqImage(file)) {
+                                  toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                  toast.error('Image is too large. Maximum size is 5 MB.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                void fileToMcqImage(file)
+                                  .then((image) => updateBankEditDraft(item.id, (current) => ({ ...current, questionImage: image })))
+                                  .catch(() => toast.error('Could not read selected image.'));
+                                e.currentTarget.value = '';
+                              }}
+                            />
+                            {draft.questionImage ? (
+                              <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
+                                <span>{draft.questionImage.name}</span>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => updateBankEditDraft(item.id, (current) => ({ ...current, questionImage: null }))}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between gap-2">
+                              <Label>Options (A-E)</Label>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => updateBankEditDraft(item.id, (current) => {
+                                  if (current.optionMedia.length >= 5) return current;
+                                  const nextKey = String.fromCharCode(65 + current.optionMedia.length);
+                                  return {
+                                    ...current,
+                                    optionMedia: [...current.optionMedia, { key: nextKey, text: '', image: null }],
+                                    optionTypes: [...current.optionTypes, 'text'],
+                                  };
+                                })}
+                                disabled={draft.optionMedia.length >= 5}
+                              >
+                                Add Option
+                              </Button>
+                            </div>
+
+                            <div className="space-y-2">
+                              {draft.optionMedia.map((option, optionIdx) => (
+                                <div key={`${item.id}-option-${option.key}-${optionIdx}`} className="space-y-1.5 rounded-md border p-2">
+                                  <div className="flex flex-wrap items-center justify-between gap-2">
+                                    <Label>Option {option.key}</Label>
+                                    <div className="inline-flex overflow-hidden rounded-md border">
+                                      <button
+                                        type="button"
+                                        onClick={() => updateBankEditDraft(item.id, (current) => {
+                                          const optionTypes = [...current.optionTypes];
+                                          optionTypes[optionIdx] = 'text';
+                                          return { ...current, optionTypes };
+                                        })}
+                                        className={`px-3 py-1.5 text-xs ${(draft.optionTypes[optionIdx] || 'text') !== 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                                      >
+                                        Text
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => updateBankEditDraft(item.id, (current) => {
+                                          const optionTypes = [...current.optionTypes];
+                                          optionTypes[optionIdx] = 'image';
+                                          return { ...current, optionTypes };
+                                        })}
+                                        className={`px-3 py-1.5 text-xs ${(draft.optionTypes[optionIdx] || 'text') === 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                                      >
+                                        Image
+                                      </button>
+                                    </div>
+                                  </div>
+
+                                  <Input
+                                    value={option.text}
+                                    placeholder={`Option ${option.key} text`}
+                                    onChange={(e) => {
+                                      const next = e.target.value;
+                                      updateBankEditDraft(item.id, (current) => {
+                                        const optionMedia = [...current.optionMedia];
+                                        optionMedia[optionIdx] = { ...optionMedia[optionIdx], text: next };
+                                        return { ...current, optionMedia };
+                                      });
+                                    }}
+                                  />
+
+                                  <Input
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
+                                    onChange={(e) => {
+                                      const file = e.target.files?.[0] || null;
+                                      if (!file) return;
+                                      if (!isSupportedMcqImage(file)) {
+                                        toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                        e.currentTarget.value = '';
+                                        return;
+                                      }
+                                      if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                        toast.error('Image is too large. Maximum size is 5 MB.');
+                                        e.currentTarget.value = '';
+                                        return;
+                                      }
+                                      void fileToMcqImage(file)
+                                        .then((image) => {
+                                          updateBankEditDraft(item.id, (current) => {
+                                            const optionMedia = [...current.optionMedia];
+                                            optionMedia[optionIdx] = { ...optionMedia[optionIdx], image };
+                                            return { ...current, optionMedia };
+                                          });
+                                        })
+                                        .catch(() => toast.error('Could not read selected image.'));
+                                      e.currentTarget.value = '';
+                                    }}
+                                  />
+
+                                  <div className="flex items-center justify-between gap-2">
+                                    {option.image ? (
+                                      <div className="rounded border bg-muted/20 px-2 py-1 text-xs">Image: {option.image.name}</div>
+                                    ) : <div className="text-xs text-muted-foreground">No option image selected</div>}
+                                    <div className="flex gap-2">
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => updateBankEditDraft(item.id, (current) => {
+                                          const optionMedia = [...current.optionMedia];
+                                          optionMedia[optionIdx] = { ...optionMedia[optionIdx], image: null };
+                                          return { ...current, optionMedia };
+                                        })}
+                                        disabled={!option.image}
+                                      >
+                                        Remove Image
+                                      </Button>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => updateBankEditDraft(item.id, (current) => {
+                                          if (current.optionMedia.length <= 4) return current;
+                                          const optionMedia = [...current.optionMedia];
+                                          const optionTypes = [...current.optionTypes];
+                                          optionMedia.splice(optionIdx, 1);
+                                          optionTypes.splice(optionIdx, 1);
+                                          return {
+                                            ...current,
+                                            optionMedia: optionMedia.map((entry, idx) => ({ ...entry, key: String.fromCharCode(65 + idx) })),
+                                            optionTypes,
+                                          };
+                                        })}
+                                        disabled={draft.optionMedia.length <= 4}
+                                      >
+                                        Remove Option
+                                      </Button>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="grid gap-3 md:grid-cols-2">
+                            <div className="space-y-1.5">
+                              <Label>Correct Answer</Label>
+                              <Select
+                                value={draft.answer}
+                                onValueChange={(value) => updateBankEditDraft(item.id, (current) => ({ ...current, answer: value }))}
+                              >
+                                <SelectTrigger><SelectValue placeholder="Select correct answer" /></SelectTrigger>
+                                <SelectContent>
+                                  {draft.optionMedia.map((option) => (
+                                    <SelectItem key={`${item.id}-answer-${option.key}`} value={option.key}>{option.key}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-1.5">
+                              <Label>Difficulty</Label>
+                              <Select
+                                value={draft.difficulty}
+                                onValueChange={(value: 'Easy' | 'Medium' | 'Hard') => updateBankEditDraft(item.id, (current) => ({ ...current, difficulty: value }))}
+                              >
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="Easy">Easy</SelectItem>
+                                  <SelectItem value="Medium">Medium</SelectItem>
+                                  <SelectItem value="Hard">Hard</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <Label>Explanation</Label>
+                            <Textarea
+                              value={draft.explanationText}
+                              onChange={(e) => updateBankEditDraft(item.id, (current) => ({ ...current, explanationText: e.target.value }))}
+                              className="min-h-[90px]"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <Label>Explanation Image</Label>
+                            <Input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0] || null;
+                                if (!file) return;
+                                if (!isSupportedMcqImage(file)) {
+                                  toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                  toast.error('Image is too large. Maximum size is 5 MB.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                void fileToMcqImage(file)
+                                  .then((image) => updateBankEditDraft(item.id, (current) => ({ ...current, explanationImage: image })))
+                                  .catch(() => toast.error('Could not read selected image.'));
+                                e.currentTarget.value = '';
+                              }}
+                            />
+                            {draft.explanationImage ? (
+                              <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
+                                <span>{draft.explanationImage.name}</span>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => updateBankEditDraft(item.id, (current) => ({ ...current, explanationImage: null }))}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <Label>Short Trick</Label>
+                            <Textarea
+                              value={draft.shortTrickText}
+                              onChange={(e) => updateBankEditDraft(item.id, (current) => ({ ...current, shortTrickText: e.target.value }))}
+                              className="min-h-[80px]"
+                            />
+                          </div>
+
+                          <div className="space-y-1.5">
+                            <Label>Short Trick Image</Label>
+                            <Input
+                              type="file"
+                              accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0] || null;
+                                if (!file) return;
+                                if (!isSupportedMcqImage(file)) {
+                                  toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                  toast.error('Image is too large. Maximum size is 5 MB.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                void fileToMcqImage(file)
+                                  .then((image) => updateBankEditDraft(item.id, (current) => ({ ...current, shortTrickImage: image })))
+                                  .catch(() => toast.error('Could not read selected image.'));
+                                e.currentTarget.value = '';
+                              }}
+                            />
+                            {draft.shortTrickImage ? (
+                              <div className="flex items-center justify-between rounded border bg-muted/20 px-2 py-1 text-xs">
+                                <span>{draft.shortTrickImage.name}</span>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => updateBankEditDraft(item.id, (current) => ({ ...current, shortTrickImage: null }))}
+                                >
+                                  Remove
+                                </Button>
+                              </div>
+                            ) : null}
+                          </div>
+
+                          <div className="flex flex-wrap justify-end gap-2">
+                            <Button
+                              type="button"
+                              onClick={() => void saveBankMcqChanges(item.id)}
+                              disabled={isSaving}
+                            >
+                              {isSaving ? (
+                                <>
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                  Saving...
+                                </>
+                              ) : 'Save Changes'}
+                            </Button>
+                            <Button variant="destructive" size="sm" onClick={() => void deleteMcq(item.id)}>Delete</Button>
+                          </div>
                         </div>
-                      </div>
-                    )) : null}
+                      );
+                    }) : null}
                     {!selectedHierarchy ? (
                       <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
                         Section/topic not selected yet. Use the filters above first.
