@@ -46,7 +46,7 @@ import {
   AlertDialogTrigger,
 } from '../app/components/ui/alert-dialog';
 import { toast } from 'sonner';
-import { SYLLABUS } from '../app/components/Preparation';
+import { FLAT_TOPIC_TABS, SYLLABUS } from '../app/components/Preparation';
 import type { SubjectKey } from '../app/lib/mcq';
 import {
   downloadBlobFile,
@@ -1548,7 +1548,19 @@ export default function AdminApp() {
     });
 
     FLAT_TOPIC_SUBJECTS.forEach((subject) => {
-      ensureSubject(subject, specialLabels[subject] || toTitleLabel(subject));
+      const subjectNode = ensureSubject(subject, specialLabels[subject] || toTitleLabel(subject));
+      if (!subjectNode) return;
+
+      const configuredFlatTopics = Array.from(new Set((FLAT_TOPIC_TABS[subject as 'quantitative-mathematics' | 'design-aptitude']?.topics || []).filter(Boolean)));
+      if (!configuredFlatTopics.length) return;
+
+      ensureChapter(
+        subjectNode,
+        `flat::${subject}::topics`,
+        `${FLAT_TOPIC_TABS[subject as 'quantitative-mathematics' | 'design-aptitude']?.title || toTitleLabel(subject)} Topics`,
+        '',
+        configuredFlatTopics,
+      );
     });
 
     mcqStructure.forEach((row) => {

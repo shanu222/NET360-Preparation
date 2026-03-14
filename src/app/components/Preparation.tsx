@@ -162,7 +162,7 @@ const syllabusToneBySubject: Record<
   },
 };
 
-const FLAT_TOPIC_TABS: Record<'quantitative-mathematics' | 'design-aptitude', { title: string; topics: string[] }> = {
+export const FLAT_TOPIC_TABS: Record<'quantitative-mathematics' | 'design-aptitude', { title: string; topics: string[] }> = {
   'quantitative-mathematics': {
     title: 'Computer Science',
     topics: ['Algebra', 'Ratios & proportions', 'Arithmetic', 'Graphs', 'Functions'],
