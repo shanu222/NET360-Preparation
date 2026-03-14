@@ -5565,6 +5565,21 @@ export default function AdminApp() {
                                       <Input value={item.questionImageUrl || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, questionImageUrl: e.target.value }))} placeholder="https://..." />
                                     </div>
 
+                                    <div className="space-y-1">
+                                      <Label>Detected Question Image</Label>
+                                      {item.questionImageDataUrl || item.questionImageUrl ? (
+                                        <img
+                                          src={item.questionImageDataUrl || item.questionImageUrl}
+                                          alt={`Parsed question image ${mcqIndex + 1}`}
+                                          className="max-h-44 w-auto rounded border border-indigo-300/60 bg-white/70 object-contain p-1"
+                                        />
+                                      ) : (
+                                        <div className="rounded-md border border-dashed border-indigo-300/70 px-2 py-1.5 text-xs text-muted-foreground">
+                                          No image detected
+                                        </div>
+                                      )}
+                                    </div>
+
                                     <div className="space-y-2">
                                       <div className="flex items-center justify-between gap-2">
                                         <Label>Options (A-E)</Label>
@@ -5574,18 +5589,34 @@ export default function AdminApp() {
                                       </div>
                                       <div className="space-y-2">
                                         {(item.options || []).map((option, optionIndex) => (
-                                          <div key={`bulk-option-${mcqIndex}-${optionIndex}`} className="grid gap-2 md:grid-cols-[80px_1fr_auto] md:items-center">
-                                            <Label>Option {String.fromCharCode(65 + optionIndex)}</Label>
-                                            <Input value={option} onChange={(e) => updateParsedOption(mcqIndex, optionIndex, e.target.value)} />
-                                            <Button
-                                              type="button"
-                                              variant="outline"
-                                              size="sm"
-                                              onClick={() => removeParsedOption(mcqIndex, optionIndex)}
-                                              disabled={(item.options || []).length <= 2}
-                                            >
-                                              Remove
-                                            </Button>
+                                          <div key={`bulk-option-${mcqIndex}-${optionIndex}`} className="space-y-1 rounded-md border border-indigo-300/40 p-2">
+                                            <div className="grid gap-2 md:grid-cols-[80px_1fr_auto] md:items-center">
+                                              <Label>Option {String.fromCharCode(65 + optionIndex)}</Label>
+                                              <Input value={option} onChange={(e) => updateParsedOption(mcqIndex, optionIndex, e.target.value)} />
+                                              <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => removeParsedOption(mcqIndex, optionIndex)}
+                                                disabled={(item.options || []).length <= 2}
+                                              >
+                                                Remove
+                                              </Button>
+                                            </div>
+                                            <div className="space-y-1">
+                                              <Label className="text-xs text-muted-foreground">Detected Option Image</Label>
+                                              {item.optionImageDataUrls?.[optionIndex] ? (
+                                                <img
+                                                  src={item.optionImageDataUrls[optionIndex]}
+                                                  alt={`Parsed option image ${mcqIndex + 1}-${String.fromCharCode(65 + optionIndex)}`}
+                                                  className="max-h-32 w-auto rounded border border-indigo-300/60 bg-white/70 object-contain p-1"
+                                                />
+                                              ) : (
+                                                <div className="rounded-md border border-dashed border-indigo-300/70 px-2 py-1.5 text-xs text-muted-foreground">
+                                                  No image detected
+                                                </div>
+                                              )}
+                                            </div>
                                           </div>
                                         ))}
                                       </div>
@@ -5623,8 +5654,21 @@ export default function AdminApp() {
                                       <div className="rounded-md border border-dashed border-indigo-300/70 px-2 py-1.5 text-xs text-muted-foreground">
                                         Question Image: {item.questionImageDataUrl ? 'Detected (embedded image data)' : item.questionImageUrl ? 'Detected (URL reference)' : 'Not detected'}
                                       </div>
-                                      <div className="rounded-md border border-dashed border-indigo-300/70 px-2 py-1.5 text-xs text-muted-foreground">
-                                        Explanation Image: {item.explanationImageDataUrl ? 'Detected' : 'Not detected'}
+                                      <div className="space-y-1">
+                                        <div className="rounded-md border border-dashed border-indigo-300/70 px-2 py-1.5 text-xs text-muted-foreground">
+                                          Explanation Image: {item.explanationImageDataUrl ? 'Detected' : 'Not detected'}
+                                        </div>
+                                        {item.explanationImageDataUrl ? (
+                                          <img
+                                            src={item.explanationImageDataUrl}
+                                            alt={`Parsed explanation image ${mcqIndex + 1}`}
+                                            className="max-h-32 w-auto rounded border border-indigo-300/60 bg-white/70 object-contain p-1"
+                                          />
+                                        ) : (
+                                          <div className="rounded-md border border-dashed border-indigo-300/70 px-2 py-1.5 text-xs text-muted-foreground">
+                                            No image detected
+                                          </div>
+                                        )}
                                       </div>
                                     </div>
                                   </div>

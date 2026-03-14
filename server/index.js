@@ -16,6 +16,7 @@ import { AlignmentType, Document, HeadingLevel, Packer, Paragraph, TextRun } fro
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import mammoth from 'mammoth';
 import multer from 'multer';
+import * as cheerio from 'cheerio';
 import { connectMongo } from './lib/mongo.js';
 import { UserModel } from './models/User.js';
 import { MCQModel } from './models/MCQ.js';
@@ -1561,8 +1562,76 @@ async function extractTextFromUpload(filePayload) {
     mimeType.includes('officedocument.wordprocessingml.document')
     || extension === '.docx'
   ) {
-    const result = await mammoth.extractRawText({ buffer: fileMeta.buffer });
-    return normalizePlainText(result?.value || '');
+    const result = await mammoth.convertToHtml(
+      { buffer: fileMeta.buffer },
+      {
+        convertImage: mammoth.images.inline(async (image) => {
+          try {
+            const base64 = await image.read('base64');
+            const contentType = String(image.contentType || 'image/png').toLowerCase();
+            return {
+              src: `data:${contentType};base64,${base64}`,
+            };
+          } catch {
+            return { src: '' };
+          }
+        }),
+      },
+    );
+
+    const $ = cheerio.load(String(result?.value || ''));
+    const chunks = [];
+    const inlineTextTags = new Set(['span', 'strong', 'b', 'em', 'i', 'u', 'sup', 'sub', 'a']);
+    const blockTags = new Set(['p', 'div', 'li', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'tr', 'td']);
+
+    const pushChunk = (value) => {
+      const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+      if (!normalized) return;
+      chunks.push(normalized);
+    };
+
+    const traverse = (node) => {
+      if (!node) return;
+
+      if (node.type === 'text') {
+        pushChunk(node.data);
+        return;
+      }
+
+      if (node.type !== 'tag') return;
+
+      const tag = String(node.name || '').toLowerCase();
+      if (tag === 'img') {
+        const src = String($(node).attr('src') || '').trim();
+        if (/^data:image\//i.test(src)) {
+          chunks.push(`image: ${src}`);
+        }
+        return;
+      }
+
+      if (tag === 'br') {
+        chunks.push('\n');
+        return;
+      }
+
+      if (blockTags.has(tag)) chunks.push('\n');
+
+      const children = node.children || [];
+      for (const child of children) {
+        traverse(child);
+      }
+
+      if (blockTags.has(tag) || !inlineTextTags.has(tag)) chunks.push('\n');
+    };
+
+    const rootNodes = $('body').length ? $('body').contents().toArray() : $.root().contents().toArray();
+    rootNodes.forEach((node) => traverse(node));
+
+    const assembled = chunks
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n');
+
+    return normalizePlainText(assembled);
   }
 
   if (mimeType.includes('msword') || extension === '.doc') {
@@ -10232,12 +10301,28 @@ async function parseMcqsFromSourceText(sourceText) {
   const heuristicResult = parseBulkMcqsFromText(sourceText);
   let finalResult = heuristicResult;
 
+  const countDetectedImages = (result) => {
+    const rows = Array.isArray(result?.parsed) ? result.parsed : [];
+    return rows.reduce((total, row) => {
+      const questionImage = /^data:image\//i.test(String(row?.questionImageDataUrl || '')) ? 1 : 0;
+      const optionImages = Array.isArray(row?.optionImageDataUrls)
+        ? row.optionImageDataUrls.filter((item) => /^data:image\//i.test(String(item || ''))).length
+        : 0;
+      const explanationImage = /^data:image\//i.test(String(row?.explanationImageDataUrl || '')) ? 1 : 0;
+      return total + questionImage + optionImages + explanationImage;
+    }, 0);
+  };
+
   if (openai) {
     const aiResult = await parseBulkMcqsWithAi(sourceText);
     const heuristicScore = (heuristicResult.parsed?.length || 0) - (heuristicResult.errors?.length || 0);
     const aiScore = (aiResult.parsed?.length || 0) - (aiResult.errors?.length || 0);
+    const heuristicImageScore = countDetectedImages(heuristicResult);
+    const aiImageScore = countDetectedImages(aiResult);
 
-    if (aiResult.parsed.length > 0 && aiScore >= heuristicScore) {
+    const preferHeuristicForImages = heuristicImageScore > 0 && aiImageScore < heuristicImageScore;
+
+    if (aiResult.parsed.length > 0 && aiScore >= heuristicScore && !preferHeuristicForImages) {
       finalResult = aiResult;
     }
   }
