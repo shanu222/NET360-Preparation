@@ -6704,7 +6704,7 @@ export default function AdminApp() {
               <div className="flex flex-wrap items-center gap-2">
                 <Label htmlFor="subscription-status-filter">Status</Label>
                 <Select value={subscriptionFilter} onValueChange={setSubscriptionFilter}>
-                  <SelectTrigger id="subscription-status-filter" className="w-[220px]">
+                  <SelectTrigger id="subscription-status-filter" className="w-full sm:w-[220px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

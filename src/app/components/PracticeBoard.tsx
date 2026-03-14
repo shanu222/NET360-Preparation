@@ -316,7 +316,7 @@ export function PracticeBoard() {
 
   if (isQuestionBankView) {
     return (
-      <div className="space-y-4">
+      <div className="min-w-0 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
             <h1>Practice Board Question Bank</h1>
@@ -334,12 +334,12 @@ export function PracticeBoard() {
           </Button>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[260px_minmax(0,1fr)]">
-          <Card>
+        <div className="grid gap-4 xl:grid-cols-[260px_minmax(0,1fr)]">
+          <Card className="min-w-0">
             <CardHeader>
               <CardTitle>Subjects</CardTitle>
             </CardHeader>
-            <CardContent className="max-h-[68vh] space-y-2 overflow-auto">
+            <CardContent className="max-h-[62vh] space-y-2 overflow-auto sm:max-h-[68vh]">
               {questionBankBySubject.map((group) => (
                 <button
                   type="button"
@@ -366,7 +366,7 @@ export function PracticeBoard() {
               <CardTitle>Questions</CardTitle>
               <CardDescription>{formatSubjectLabel(activeQuestionBankSubject?.subject || 'general')}</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3 max-h-[68vh] overflow-auto">
+            <CardContent className="space-y-3 max-h-[62vh] overflow-auto sm:max-h-[68vh]">
               <Input
                 value={questionBankQuery}
                 onChange={(event) => setQuestionBankQuery(event.target.value)}
@@ -382,9 +382,9 @@ export function PracticeBoard() {
                   {item.questionFile ? (
                     <div className="rounded-md bg-slate-50 p-2 text-xs">
                       <p>Question file: {item.questionFile.name}</p>
-                      <div className="mt-1 flex gap-2">
-                        <Button size="sm" variant="outline" onClick={() => openDataUrlFile(item.questionFile)}>View</Button>
-                        <Button size="sm" variant="outline" onClick={() => downloadDataUrlFile(item.questionFile)}>Download</Button>
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => openDataUrlFile(item.questionFile)}>View</Button>
+                        <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => downloadDataUrlFile(item.questionFile)}>Download</Button>
                       </div>
                     </div>
                   ) : null}
@@ -397,9 +397,9 @@ export function PracticeBoard() {
                   {item.solutionFile ? (
                     <div className="rounded-md bg-slate-50 p-2 text-xs">
                       <p>Solution file: {item.solutionFile.name}</p>
-                      <div className="mt-1 flex gap-2">
-                        <Button size="sm" variant="outline" onClick={() => openDataUrlFile(item.solutionFile)}>View</Button>
-                        <Button size="sm" variant="outline" onClick={() => downloadDataUrlFile(item.solutionFile)}>Download</Button>
+                      <div className="mt-1 flex flex-wrap gap-2">
+                        <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => openDataUrlFile(item.solutionFile)}>View</Button>
+                        <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => downloadDataUrlFile(item.solutionFile)}>Download</Button>
                       </div>
                     </div>
                   ) : null}
@@ -419,7 +419,7 @@ export function PracticeBoard() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <div>
         <h1>Practice Board</h1>
         <p className="text-muted-foreground">Solve one random question at a time on a full digital whiteboard.</p>
@@ -462,13 +462,13 @@ export function PracticeBoard() {
             </p>
             {questionFile ? (
               isImageMimeType(questionFile.mimeType) ? (
-                <img src={questionFile.dataUrl} alt="Question diagram" className="mt-3 max-h-56 w-auto rounded-lg border border-indigo-100 bg-white object-contain" />
+                <img src={questionFile.dataUrl} alt="Question diagram" className="mt-3 max-h-48 w-auto rounded-lg border border-indigo-100 bg-white object-contain sm:max-h-56" />
               ) : (
                 <div className="mt-3 rounded-md border border-indigo-100 bg-white p-2 text-xs text-slate-600">
                   <p>Question file: {questionFile.name}</p>
-                  <div className="mt-1 flex gap-2">
-                    <Button size="sm" variant="outline" onClick={() => openDataUrlFile(questionFile)}>View</Button>
-                    <Button size="sm" variant="outline" onClick={() => downloadDataUrlFile(questionFile)}>Download</Button>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => openDataUrlFile(questionFile)}>View</Button>
+                    <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => downloadDataUrlFile(questionFile)}>Download</Button>
                   </div>
                 </div>
               )
@@ -486,14 +486,14 @@ export function PracticeBoard() {
                   <img
                     src={solutionFile.dataUrl}
                     alt="Solution diagram"
-                    className="mt-3 max-h-56 w-auto rounded-lg border border-emerald-200 bg-white object-contain"
+                    className="mt-3 max-h-48 w-auto rounded-lg border border-emerald-200 bg-white object-contain sm:max-h-56"
                   />
                 ) : (
                   <div className="mt-3 rounded-md border border-emerald-200 bg-white p-2 text-xs text-slate-600">
                     <p>Solution file: {solutionFile.name}</p>
-                    <div className="mt-1 flex gap-2">
-                      <Button size="sm" variant="outline" onClick={() => openDataUrlFile(solutionFile)}>View</Button>
-                      <Button size="sm" variant="outline" onClick={() => downloadDataUrlFile(solutionFile)}>Download</Button>
+                    <div className="mt-1 flex flex-wrap gap-2">
+                      <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => openDataUrlFile(solutionFile)}>View</Button>
+                      <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => downloadDataUrlFile(solutionFile)}>Download</Button>
                     </div>
                   </div>
                 )
@@ -550,7 +550,7 @@ export function PracticeBoard() {
         <CardContent>
           <div
             ref={containerRef}
-            className="relative h-[48vh] min-h-[250px] w-full overflow-hidden rounded-xl border border-slate-200 bg-white sm:h-[52vh] sm:min-h-[300px] lg:h-[58vh] lg:min-h-[360px]"
+            className="relative h-[44vh] min-h-[230px] w-full overflow-hidden rounded-xl border border-slate-200 bg-white sm:h-[52vh] sm:min-h-[300px] lg:h-[58vh] lg:min-h-[360px]"
           >
             <canvas
               ref={canvasRef}

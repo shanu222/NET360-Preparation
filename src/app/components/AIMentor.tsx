@@ -418,7 +418,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       return {
         subscription: normalizedSubscription,
         activationRequest: mePayload.activationRequest || null,
-        usage: mePayload.usage || null,
+        usage: mePayload.usage ?? undefined,
       };
     } catch {
       // Keep current state on transient errors so a freshly activated plan does not appear locked.

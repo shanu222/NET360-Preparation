@@ -388,11 +388,11 @@ export default function App() {
   return (
     <AuthProvider>
       <AppDataProvider>
-      <div className="min-h-dvh p-1 sm:p-3 md:p-5 xl:p-6">
+      <div className="net360-viewport min-h-dvh p-1 sm:p-3 md:p-5 xl:p-6">
         <div className="net360-shell mx-auto flex w-full max-w-[1600px] flex-col gap-2 rounded-[20px] border border-white/70 bg-white/65 p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl sm:gap-3 sm:rounded-[24px] sm:p-2 xl:rounded-[28px]">
           <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white/85 to-[#f2f4ff]/80 backdrop-blur sm:rounded-3xl">
             {/* Header */}
-            <header className="sticky top-0 z-40 flex min-h-14 flex-wrap items-center justify-between gap-2 rounded-t-2xl border-b border-indigo-100/70 bg-white/65 px-2 py-1.5 backdrop-blur-xl sm:min-h-16 sm:flex-nowrap sm:px-5 sm:py-0 sm:rounded-t-3xl">
+            <header className="net360-header sticky top-0 z-40 flex min-h-14 flex-wrap items-center justify-between gap-2 rounded-t-2xl border-b border-indigo-100/70 bg-white/65 px-2 py-1.5 backdrop-blur-xl sm:min-h-16 sm:flex-nowrap sm:px-5 sm:py-0 sm:rounded-t-3xl">
               <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
                 <Sheet open={sidebarMenuOpen} onOpenChange={setSidebarMenuOpen}>
                   <SheetTrigger asChild>
@@ -466,7 +466,7 @@ export default function App() {
             </header>
 
             {/* Main Content */}
-            <main className="min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip px-2 py-2.5 sm:px-5 sm:py-5">
+            <main className="net360-main min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip px-2 py-2.5 sm:px-5 sm:py-5">
               {activeTab === 'home' ? (
                 <div className="mt-0 net360-page">
                   <Dashboard onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} />

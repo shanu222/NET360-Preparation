@@ -1178,7 +1178,9 @@ export function Community() {
       return;
     }
 
-    examWindow.location.href = url;
+    if (examWindow) {
+      examWindow.location.href = url;
+    }
   };
 
   const startChallengeAttempt = (challengeId: string) => {
@@ -1228,15 +1230,15 @@ export function Community() {
   }
 
   const sectionTabTriggerClassName =
-    'rounded-xl border border-slate-200/90 bg-white/90 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:scale-[1.02] hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 hover:shadow-[0_10px_20px_rgba(34,211,238,0.2)] active:scale-[0.98] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!via-violet-500 data-[state=active]:!to-fuchsia-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_14px_26px_rgba(109,40,217,0.34)]';
+    'shrink-0 whitespace-nowrap rounded-xl border border-slate-200/90 bg-white/90 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:scale-[1.02] hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 hover:shadow-[0_10px_20px_rgba(34,211,238,0.2)] active:scale-[0.98] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!via-violet-500 data-[state=active]:!to-fuchsia-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_14px_26px_rgba(109,40,217,0.34)]';
   const viewProfileButtonClassName =
     'border-cyan-300 bg-gradient-to-r from-white to-cyan-50 text-cyan-700 transition-all duration-250 ease-out hover:-translate-y-0.5 hover:scale-[1.03] hover:border-cyan-400 hover:from-cyan-50 hover:to-blue-50 hover:text-cyan-800 hover:shadow-[0_10px_16px_rgba(34,211,238,0.22)] active:scale-[0.98]';
 
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-4">
-        <div className="overflow-x-auto">
-          <TabsList className="inline-flex h-auto min-w-max gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 via-indigo-50 to-fuchsia-50 p-1.5 shadow-[0_10px_20px_rgba(99,102,241,0.12)]">
+        <div className="overflow-x-auto pb-1 [scrollbar-gutter:stable]">
+          <TabsList className="inline-flex h-auto w-max min-w-max gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 via-indigo-50 to-fuchsia-50 p-1.5 shadow-[0_10px_20px_rgba(99,102,241,0.12)]">
             <TabsTrigger value="discover-students" className={sectionTabTriggerClassName}>Discover Students</TabsTrigger>
             <TabsTrigger value="study-partners" className={sectionTabTriggerClassName}>Study Partners</TabsTrigger>
             <TabsTrigger value="discussion-rooms" className={sectionTabTriggerClassName}>Discussion Rooms</TabsTrigger>
@@ -1390,15 +1392,15 @@ export function Community() {
           </Card>
 
           <div className="grid gap-4 xl:grid-cols-3">
-            <Card className="xl:col-span-1">
+            <Card className="min-w-0 xl:col-span-1">
               <CardHeader>
                 <CardTitle>Find Students</CardTitle>
                 <CardDescription>Search users, send connection requests, and build your study network.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="flex gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row">
                   <Input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search by username" />
-                  <Button variant="outline" onClick={() => void searchUsers()}>Search</Button>
+                  <Button variant="outline" className="w-full sm:w-auto" onClick={() => void searchUsers()}>Search</Button>
                 </div>
                 <div className="space-y-2 max-h-[320px] overflow-auto">
                   {searchResults.map((result) => (
@@ -1410,13 +1412,13 @@ export function Community() {
                           <p className="text-xs text-muted-foreground">{result.targetProgram || 'Program not set'}{result.city ? `  ${result.city}` : ''}</p>
                         </div>
                       </div>
-                      <div className="mt-2 flex items-center justify-between gap-2">
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
                         <Badge variant="outline">{result.connectionStatus || 'none'}</Badge>
-                        <div className="flex gap-1">
+                        <div className="flex w-full flex-wrap gap-1 sm:w-auto">
                           {canSendConnectionRequest(result.connectionStatus) ? (
-                            <Button size="sm" onClick={() => void sendConnectionRequest(result.id)}>Connect</Button>
+                            <Button size="sm" className="w-full sm:w-auto" onClick={() => void sendConnectionRequest(result.id)}>Connect</Button>
                           ) : (
-                            <Button size="sm" variant="secondary" disabled>
+                            <Button size="sm" variant="secondary" className="w-full sm:w-auto" disabled>
                               {result.connectionStatus === 'connected'
                                 ? 'Connected'
                                 : result.connectionStatus === 'pending-received'
@@ -1427,7 +1429,7 @@ export function Community() {
                           <Button
                             size="sm"
                             variant="outline"
-                            className={viewProfileButtonClassName}
+                            className={`${viewProfileButtonClassName} w-full sm:w-auto`}
                             onClick={() => setProfilePreview(result)}
                           >
                             View Profile
@@ -1441,7 +1443,7 @@ export function Community() {
               </CardContent>
             </Card>
 
-            <Card className="xl:col-span-2">
+            <Card className="min-w-0 xl:col-span-2">
               <CardHeader>
                 <CardTitle>Connection Requests</CardTitle>
                 <CardDescription>Accept genuine requests and reject unknown users.</CardDescription>
@@ -1456,9 +1458,9 @@ export function Community() {
                           <CommunityAvatar userLike={item.user} />
                           <p className="text-sm">{displayName(item.user)}</p>
                         </div>
-                        <div className="flex gap-2">
-                          <Button size="sm" onClick={() => void respondToRequest(item.id, 'accept')}>Accept</Button>
-                          <Button size="sm" variant="outline" onClick={() => void respondToRequest(item.id, 'reject')}>Reject</Button>
+                        <div className="flex flex-wrap gap-2">
+                          <Button size="sm" className="w-full sm:w-auto" onClick={() => void respondToRequest(item.id, 'accept')}>Accept</Button>
+                          <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => void respondToRequest(item.id, 'reject')}>Reject</Button>
                         </div>
                       </div>
                     ))}
@@ -1506,7 +1508,7 @@ export function Community() {
         </TabsContent>
 
         <TabsContent value="study-partners" className="mt-0 space-y-4">
-          <Card>
+          <Card className="min-w-0">
             <CardHeader>
               <CardTitle>Smart Study Partner Matching</CardTitle>
               <CardDescription>Find best-fit partners based on NET goals, level, timing, and score range.</CardDescription>
@@ -1527,11 +1529,11 @@ export function Community() {
                     </div>
                     <Badge>{Math.round(item.compatibility)}% match</Badge>
                   </div>
-                  <div className="mt-2 flex gap-2">
+                  <div className="mt-2 flex flex-wrap gap-2">
                     {canSendConnectionRequest(item.user.connectionStatus) ? (
-                      <Button size="sm" onClick={() => void sendConnectionRequest(item.user.id)}>Connect</Button>
+                      <Button size="sm" className="w-full sm:w-auto" onClick={() => void sendConnectionRequest(item.user.id)}>Connect</Button>
                     ) : (
-                      <Button size="sm" variant="secondary" disabled>
+                      <Button size="sm" variant="secondary" className="w-full sm:w-auto" disabled>
                         {item.user.connectionStatus === 'connected'
                           ? 'Connected'
                           : item.user.connectionStatus === 'pending-received'
@@ -1542,7 +1544,7 @@ export function Community() {
                     <Button
                       size="sm"
                       variant="outline"
-                      className={viewProfileButtonClassName}
+                      className={`${viewProfileButtonClassName} w-full sm:w-auto`}
                       onClick={() => setStudyPartnersProfilePreview(item.user)}
                     >
                       View Profile
@@ -1577,7 +1579,7 @@ export function Community() {
 
         <TabsContent value="discussion-rooms" className="mt-0 space-y-4">
           <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
-            <Card>
+            <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>Topic Discussion Rooms</CardTitle>
                 <CardDescription>Join subject rooms and solve doubts together.</CardDescription>
@@ -1597,7 +1599,7 @@ export function Community() {
               </CardContent>
             </Card>
 
-            <Card>
+            <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>Room Feed</CardTitle>
                 <CardDescription>Ask concepts, discuss MCQs, and use doubt exchange with upvotes.</CardDescription>
@@ -1641,13 +1643,13 @@ export function Community() {
                             </div>
                           </div>
                         ))}
-                        <div className="flex gap-2">
+                        <div className="flex flex-col gap-2 sm:flex-row">
                           <Input
                             value={answerTextByPostId[post.id] || ''}
                             onChange={(e) => setAnswerTextByPostId((prev) => ({ ...prev, [post.id]: e.target.value }))}
                             placeholder="Add answer"
                           />
-                          <Button size="sm" onClick={() => void addAnswer(post.id)}>Reply</Button>
+                          <Button size="sm" className="w-full sm:w-auto" onClick={() => void addAnswer(post.id)}>Reply</Button>
                         </div>
                       </div>
                     </div>
@@ -1661,7 +1663,7 @@ export function Community() {
 
         <TabsContent value="quiz-battles" className="mt-0 space-y-4">
           <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
-            <Card>
+            <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>Create Quiz Challenge</CardTitle>
                 <CardDescription>Challenge any student in async or live timed MCQ battle mode.</CardDescription>
@@ -1766,7 +1768,7 @@ export function Community() {
               </CardContent>
             </Card>
 
-            <div className="space-y-4">
+            <div className="min-w-0 space-y-4">
               <Card>
                 <CardHeader>
                   <CardTitle>Challenge Inbox & History</CardTitle>
@@ -1941,13 +1943,13 @@ export function Community() {
 
         <TabsContent value="messages" className="mt-0 space-y-4">
           <div className="grid gap-4 xl:grid-cols-3">
-            <Card className="xl:col-span-1">
+            <Card className="min-w-0 xl:col-span-1">
               <CardHeader>
                 <CardTitle>Connected Students</CardTitle>
                 <CardDescription>Choose a connection to open private chat.</CardDescription>
               </CardHeader>
               <CardContent>
-                <ScrollArea className="h-[500px] pr-2">
+                <ScrollArea className="h-[420px] pr-2 sm:h-[500px]">
                   <div className="space-y-2">
                     {connections.map((item) => (
                       <button
@@ -1972,7 +1974,7 @@ export function Community() {
               </CardContent>
             </Card>
 
-            <Card className="xl:col-span-2">
+            <Card className="min-w-0 xl:col-span-2">
               <CardHeader>
                 <CardTitle>Private Chat</CardTitle>
                 <CardDescription>
@@ -2036,7 +2038,7 @@ export function Community() {
                   </div>
                 ) : null}
 
-                <div className="max-h-[330px] overflow-auto rounded-lg border p-3 space-y-2">
+                <div className="max-h-[300px] overflow-auto rounded-lg border p-3 space-y-2 sm:max-h-[330px]">
                   {messages.map((item) => (
                     <div key={item.id} className={`max-w-[85%] rounded-md p-2 text-sm ${item.senderUserId === user.id ? 'ml-auto bg-indigo-100 text-indigo-900' : 'bg-slate-100'}`}>
                       {item.messageType === 'call-invite' && item.callInvite?.roomUrl ? (
@@ -2081,7 +2083,7 @@ export function Community() {
                   {!messages.length ? <p className="text-xs text-muted-foreground">No messages yet.</p> : null}
                 </div>
                 <form
-                  className="flex gap-2"
+                  className="flex flex-col gap-2 sm:flex-row"
                   onSubmit={(event) => {
                     event.preventDefault();
                     void sendMessage();
@@ -2093,7 +2095,7 @@ export function Community() {
                     placeholder={activeConnection ? 'Type a respectful message...' : 'Select connection first'}
                     disabled={!activeConnection || isSendingMessage || activeConnection.canMessage === false}
                   />
-                  <Button type="submit" disabled={!activeConnection || isSendingMessage || !messageInput.trim() || activeConnection.canMessage === false}>
+                  <Button type="submit" className="w-full sm:w-auto" disabled={!activeConnection || isSendingMessage || !messageInput.trim() || activeConnection.canMessage === false}>
                     {isSendingMessage ? 'Sending...' : 'Send'}
                   </Button>
                 </form>

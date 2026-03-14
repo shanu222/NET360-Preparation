@@ -4542,6 +4542,10 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       refreshTokens: [],
       resetPasswordToken: null,
       resetPasswordExpiresAt: null,
+      securityQuestion: '',
+      securityAnswerHash: '',
+      securityChallengeToken: null,
+      securityChallengeExpiresAt: null,
     };
 
     db.users.unshift(newUser);

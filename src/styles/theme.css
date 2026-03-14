@@ -145,6 +145,8 @@
     background-attachment: fixed;
     padding-top: env(safe-area-inset-top, 0px);
     padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+    padding-right: env(safe-area-inset-right, 0px);
     transition: background-color 260ms ease, background-image 320ms ease, color 220ms ease;
   }
 
@@ -235,6 +237,21 @@
   .net360-shell {
     animation: net360-fade-in 420ms ease-out;
     transition: background-color 260ms ease, border-color 260ms ease, box-shadow 260ms ease;
+  }
+
+  .net360-viewport {
+    min-width: 0;
+    padding-left: max(0.25rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.25rem, env(safe-area-inset-right, 0px));
+  }
+
+  .net360-header {
+    top: env(safe-area-inset-top, 0px);
+  }
+
+  .net360-main {
+    scrollbar-gutter: stable both-edges;
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
   }
 
   .net360-page {
@@ -723,5 +740,21 @@
       box-shadow: 0 8px 16px rgba(98, 113, 202, 0.1);
     }
 
+  }
+
+  @media (max-width: 640px) {
+    .net360-shell {
+      border-radius: 1rem;
+      box-shadow: 0 18px 40px rgba(59, 67, 146, 0.14);
+    }
+
+    .net360-main {
+      padding-left: 0.625rem;
+      padding-right: 0.625rem;
+    }
+
+    .net360-page {
+      padding-bottom: 0.25rem;
+    }
   }
 }

@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Difficulty, MCQ, McqImageFile, McqOptionMedia, SubjectKey } from '../lib/mcq';
 import { apiRequest, buildApiUrl } from '../lib/api';
 import { useAuth } from './AuthContext';
@@ -163,6 +163,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [attempts, setAttempts] = useState<TestAttempt[]>([]);
   const [profile, setProfile] = useState<ProfileState>(defaultProfile);
   const [preferences, setPreferences] = useState<PreferencesState>(defaultPreferences);
+  const syncInFlightRef = useRef(false);
+  const syncQueuedRef = useRef(false);
 
   const applyUserPayload = useCallback((userData: ProfileState & { preferences: PreferencesState }) => {
     setProfile({
@@ -210,6 +212,28 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
   }, [applyUserPayload]);
 
+  const runForegroundSync = useCallback(async (authToken: string) => {
+    if (!authToken) return;
+    if (syncInFlightRef.current) {
+      syncQueuedRef.current = true;
+      return;
+    }
+
+    syncInFlightRef.current = true;
+    try {
+      await loadMcqData().catch(() => undefined);
+      if (user) {
+        await loadUserData(authToken, true).catch(() => undefined);
+      }
+    } finally {
+      syncInFlightRef.current = false;
+      if (syncQueuedRef.current) {
+        syncQueuedRef.current = false;
+        void runForegroundSync(authToken);
+      }
+    }
+  }, [loadMcqData, loadUserData, user]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -245,6 +269,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     let closed = false;
     let reconnectTimer: number | null = null;
     let source: EventSource | null = null;
+    let reconnectDelay = 1500;
 
     const closeCurrent = () => {
       if (source) {
@@ -259,12 +284,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
       source = new EventSource(`${buildApiUrl('/api/stream')}?token=${encodeURIComponent(authToken)}`);
 
+      source.onopen = () => {
+        reconnectDelay = 1500;
+      };
+
       const runSync = () => {
         if (document.hidden) return;
-        void loadMcqData().catch(() => undefined);
-        if (user) {
-          void loadUserData(authToken, true).catch(() => undefined);
-        }
+        void runForegroundSync(authToken);
       };
 
       source.addEventListener('sync', runSync);
@@ -278,7 +304,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         if (closed) return;
         reconnectTimer = window.setTimeout(() => {
           connect();
-        }, 3000);
+        }, reconnectDelay);
+        reconnectDelay = Math.min(Math.round(reconnectDelay * 1.65), 15000);
       };
     };
 
@@ -291,7 +318,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }
       closeCurrent();
     };
-  }, [token, user, loadMcqData, loadUserData]);
+  }, [token, runForegroundSync]);
 
   useEffect(() => {
     if (!user) return;
@@ -300,16 +327,28 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
     const onVisibility = () => {
       if (document.hidden) return;
-      void loadUserData(authToken, true).catch(() => undefined);
-      void loadMcqData().catch(() => undefined);
+      void runForegroundSync(authToken);
+    };
+
+    const onOnline = () => {
+      void runForegroundSync(authToken);
+    };
+
+    const onFocus = () => {
+      if (document.hidden) return;
+      void runForegroundSync(authToken);
     };
 
     document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('focus', onFocus);
 
     return () => {
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('focus', onFocus);
     };
-  }, [token, user, loadUserData, loadMcqData]);
+  }, [token, user, runForegroundSync]);
 
   const mcqsBySubject = useMemo(() => {
     const grouped: Record<SubjectKey, MCQ[]> = {

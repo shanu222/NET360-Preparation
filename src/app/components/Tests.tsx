@@ -419,7 +419,7 @@ export function Tests({ onNavigate }: TestsProps) {
   }, [adaptiveRecommendation]);
 
   return (
-    <div className="space-y-5">
+    <div className="min-w-0 space-y-5">
       <div>
         <h1>Practice & Mock Tests</h1>
         <p className="text-muted-foreground">A step-based professional simulator for NUST NET preparation</p>
@@ -482,7 +482,7 @@ export function Tests({ onNavigate }: TestsProps) {
             })}
           </div>
         ) : (
-          <Card className="max-w-xl rounded-2xl border-indigo-200 bg-indigo-50/40 shadow-[0_12px_26px_rgba(93,109,201,0.12)]">
+          <Card className="w-full max-w-2xl rounded-2xl border-indigo-200 bg-indigo-50/40 shadow-[0_12px_26px_rgba(93,109,201,0.12)]">
             <CardHeader>
               <div className="flex items-center justify-between">
                 <CardTitle className="text-indigo-950">{selectedNetType.name}</CardTitle>
@@ -617,7 +617,7 @@ export function Tests({ onNavigate }: TestsProps) {
               return (
                 <Card
                   key={card.id}
-                  className={`rounded-2xl border transition-all duration-200 hover:-translate-y-0.5 ${selected ? 'border-indigo-300 bg-indigo-50/40 shadow-[0_14px_26px_rgba(93,109,201,0.14)]' : 'border-indigo-100 bg-white/95 hover:shadow-[0_14px_26px_rgba(93,109,201,0.10)]'}`}
+                  className={`min-w-0 rounded-2xl border transition-all duration-200 hover:-translate-y-0.5 ${selected ? 'border-indigo-300 bg-indigo-50/40 shadow-[0_14px_26px_rgba(93,109,201,0.14)]' : 'border-indigo-100 bg-white/95 hover:shadow-[0_14px_26px_rgba(93,109,201,0.10)]'}`}
                 >
                   <CardHeader className="pb-2">
                     <div className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-r from-indigo-500 to-violet-500 text-white">
@@ -659,7 +659,7 @@ export function Tests({ onNavigate }: TestsProps) {
       ) : null}
 
       <Dialog open={subjectPickerOpen} onOpenChange={setSubjectPickerOpen}>
-        <DialogContent className="max-w-md rounded-2xl border-indigo-100 bg-white/98 p-0 sm:max-w-lg">
+        <DialogContent className="w-[95vw] max-w-md rounded-2xl border-indigo-100 bg-white/98 p-0 sm:max-w-lg">
           <DialogHeader className="border-b border-indigo-100 px-5 py-4">
             <DialogTitle className="text-indigo-950">Choose Subject</DialogTitle>
             <DialogDescription>
