@@ -12,7 +12,7 @@
     "start:server": "node server/index.js",
     "brand:assets": "node scripts/generate-brand-assets.mjs",
     "purge:students": "node scripts/purge-student-accounts.mjs",
-    "mobile:build": "vite build --mode android && npx cap sync android",
+    "mobile:build": "node scripts/validate-mobile-env.mjs && vite build --mode android && npx cap sync android",
     "android:sync": "npx cap sync android",
     "android:open": "npx cap open android",
     "android:run": "npx cap run android"

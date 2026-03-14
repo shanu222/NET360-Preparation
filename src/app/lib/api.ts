@@ -21,6 +21,30 @@ function isNativeCapacitorRuntime() {
   return Boolean(runtime?.isNativePlatform?.());
 }
 
+function logApiConfigurationIssue(level: 'warn' | 'error', message: string, details: Record<string, unknown> = {}) {
+  const payload = {
+    ...details,
+    apiBaseUrl: API_BASE_URL || '(empty)',
+    mobileApiBaseUrl: MOBILE_API_BASE_URL || '(empty)',
+    effectiveApiBaseUrl: getEffectiveApiBaseUrl() || '(empty)',
+    isNative: isNativeCapacitorRuntime(),
+  };
+
+  if (level === 'error') {
+    console.error(message, payload);
+    return;
+  }
+
+  console.warn(message, payload);
+}
+
+function isSecureNativeApiBaseUrl(apiBaseUrl: string) {
+  if (!apiBaseUrl) return false;
+  if (/^https:\/\//i.test(apiBaseUrl)) return true;
+  // Allow local cleartext hosts for local debugging only.
+  return /^http:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2|10\.0\.3\.2)(:\d+)?/i.test(apiBaseUrl);
+}
+
 function getEffectiveApiBaseUrl() {
   // Native Android should call a real backend URL to keep data in sync.
   if (isNativeCapacitorRuntime()) {
@@ -150,12 +174,31 @@ function buildMissingNativeApiBaseUrlError(path: string) {
 }
 
 export async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
+  const effectiveBaseUrl = getEffectiveApiBaseUrl();
+
   if (
     isNativeCapacitorRuntime()
-    && !getEffectiveApiBaseUrl()
+    && Boolean((import.meta as ImportMeta & { env?: { PROD?: boolean } }).env?.PROD)
+    && effectiveBaseUrl
+    && !isSecureNativeApiBaseUrl(effectiveBaseUrl)
+  ) {
+    const message =
+      `API configuration error: ${path} is using an insecure mobile API URL (${effectiveBaseUrl}). ` +
+      'Use an HTTPS backend URL for native production builds.';
+    logApiConfigurationIssue('error', message, { path, phase: 'native-url-validation' });
+    throw new Error(message);
+  }
+
+  if (
+    isNativeCapacitorRuntime()
+    && !effectiveBaseUrl
     && path.startsWith('/api/')
     && env.VITE_FORCE_LOCAL_API !== 'true'
   ) {
+    logApiConfigurationIssue('error', 'Native API request attempted without configured backend URL.', {
+      path,
+      phase: 'missing-native-base-url',
+    });
     throw buildMissingNativeApiBaseUrlError(path);
   }
 
@@ -239,8 +282,18 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
   } catch (error) {
     // If backend is unreachable, transparently fall back to browser-local mode.
     if (canFallbackToLocalMode() && !(hasAuthToken && (isPremiumSensitivePath(path) || isAdminSensitivePath(path)))) {
+      logApiConfigurationIssue('warn', 'Remote API request failed; switching to local fallback mode.', {
+        path,
+        error: error instanceof Error ? error.message : String(error),
+        phase: 'network-fallback',
+      });
       return localApiRequest<T>(path, options, token);
     }
+    logApiConfigurationIssue('error', 'Remote API request failed with no local fallback available.', {
+      path,
+      error: error instanceof Error ? error.message : String(error),
+      phase: 'network-failure',
+    });
     throw error;
   }
 

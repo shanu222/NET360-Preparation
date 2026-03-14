@@ -72,6 +72,13 @@ const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || '')
   .map((item) => item.trim())
   .filter(Boolean);
 
+const MOBILE_RUNTIME_ORIGINS = new Set([
+  'capacitor://localhost',
+  'http://localhost',
+  'https://localhost',
+  'ionic://localhost',
+]);
+
 const MODEL_PROVIDER_KEY = process.env.MODEL_PROVIDER_API_KEY || process.env.OPENAI_API_KEY || '';
 const SMTP_HOST = String(process.env.SMTP_HOST || 'smtp.gmail.com').trim();
 const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
@@ -308,6 +315,7 @@ function sanitizePayload(value) {
 
 function isAllowedOrigin(origin) {
   if (!origin) return true;
+  if (MOBILE_RUNTIME_ORIGINS.has(origin)) return true;
   if (!IS_PRODUCTION) return true;
   if (CORS_ALLOWED_ORIGINS.length === 0) return true;
   return CORS_ALLOWED_ORIGINS.includes(origin);
