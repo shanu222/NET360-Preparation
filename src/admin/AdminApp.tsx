@@ -79,6 +79,13 @@ function normalizeSubjectKey(value: string) {
   return String(value || '').trim().toLowerCase();
 }
 
+function normalizeSyllabusChapterKey(value: string) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
 function isPartSelectionRequiredSubject(value: string) {
   return PART_SELECTION_SUBJECTS.has(normalizeSubjectKey(value));
 }
@@ -1586,15 +1593,16 @@ export default function AdminApp() {
 
     const ensureChapter = (
       subjectNode: { subject: string; label: string; chapters: Map<string, ChapterNode> },
-      key: string,
       title: string,
       part: 'part1' | 'part2' | '',
       sections: string[],
     ) => {
+      const chapterTitle = String(title || '').trim() || 'General Topics';
+      const key = `${part || 'none'}::${normalizeSyllabusChapterKey(chapterTitle)}`;
       if (!subjectNode.chapters.has(key)) {
         subjectNode.chapters.set(key, {
           key,
-          title,
+          title: chapterTitle,
           part,
           sections: [],
         });
@@ -1619,7 +1627,6 @@ export default function AdminApp() {
         (partData?.chapters || []).forEach((chapter) => {
           ensureChapter(
             subjectNode,
-            `syllabus::${part}::${chapter.id}`,
             chapter.title,
             part,
             Array.isArray(chapter.sections) ? chapter.sections : [],
@@ -1633,7 +1640,6 @@ export default function AdminApp() {
       COMPUTER_SCIENCE_SYLLABUS.forEach((chapter) => {
         ensureChapter(
           computerScienceNode,
-          `cs::${chapter.id}`,
           chapter.title,
           '',
           Array.isArray(chapter.sections) ? chapter.sections : [],
@@ -1646,7 +1652,6 @@ export default function AdminApp() {
       INTELLIGENCE_SYLLABUS.forEach((chapter) => {
         ensureChapter(
           intelligenceNode,
-          `intelligence::${chapter.id}`,
           chapter.title,
           '',
           Array.isArray(chapter.sections) ? chapter.sections : [],
@@ -1663,7 +1668,6 @@ export default function AdminApp() {
 
       ensureChapter(
         subjectNode,
-        `flat::${subject}::topics`,
         `${FLAT_TOPIC_TABS[subject as 'quantitative-mathematics' | 'design-aptitude']?.title || toTitleLabel(subject)} Topics`,
         '',
         configuredFlatTopics,
@@ -1684,10 +1688,9 @@ export default function AdminApp() {
 
       const part: 'part1' | 'part2' | '' = partRaw === 'part1' || partRaw === 'part2' ? partRaw : '';
       const chapterTitle = chapterRaw || 'General Topics';
-      const chapterKey = `db::${part || 'none'}::${chapterTitle.toLowerCase()}`;
       const sectionFallback = chapterTitle;
 
-      ensureChapter(subjectNode, chapterKey, chapterTitle, part, [sectionRaw || sectionFallback]);
+      ensureChapter(subjectNode, chapterTitle, part, [sectionRaw || sectionFallback]);
     });
 
     return Array.from(subjectMap.values())

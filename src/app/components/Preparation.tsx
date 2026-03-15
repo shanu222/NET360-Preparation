@@ -22,6 +22,68 @@ export interface PartItem {
   chapters: ChapterItem[];
 }
 
+function normalizeSyllabusTitleKey(value: string) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function uniqueSections(sections: string[]) {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+  (sections || []).forEach((section) => {
+    const label = String(section || '').trim();
+    if (!label) return;
+    const key = normalizeSyllabusTitleKey(label);
+    if (seen.has(key)) return;
+    seen.add(key);
+    normalized.push(label);
+  });
+  return normalized;
+}
+
+function dedupeChaptersByTitle(chapters: ChapterItem[]) {
+  const chapterMap = new Map<string, ChapterItem>();
+
+  (chapters || []).forEach((chapter) => {
+    const title = String(chapter?.title || '').trim();
+    if (!title) return;
+    const titleKey = normalizeSyllabusTitleKey(title);
+    const currentSections = uniqueSections(Array.isArray(chapter?.sections) ? chapter.sections : []);
+
+    if (!chapterMap.has(titleKey)) {
+      chapterMap.set(titleKey, {
+        id: String(chapter?.id || titleKey),
+        title,
+        sections: currentSections,
+      });
+      return;
+    }
+
+    const existing = chapterMap.get(titleKey)!;
+    const existingSections = uniqueSections(existing.sections);
+    const mergedSections = uniqueSections([...existingSections, ...currentSections]);
+
+    // Keep the chapter record that already contains the fuller section list.
+    const preferIncoming = currentSections.length > existingSections.length;
+    chapterMap.set(titleKey, {
+      id: preferIncoming ? String(chapter?.id || existing.id) : existing.id,
+      title: preferIncoming ? title : existing.title,
+      sections: mergedSections,
+    });
+  });
+
+  return Array.from(chapterMap.values());
+}
+
+function normalizePartItem(partItem: PartItem): PartItem {
+  return {
+    label: partItem.label,
+    chapters: dedupeChaptersByTitle(Array.isArray(partItem.chapters) ? partItem.chapters : []),
+  };
+}
+
 const subjectTabs: SubjectKey[] = ['mathematics', 'physics', 'english', 'biology', 'chemistry', 'computer-science', 'intelligence'];
 const PART_STRUCTURED_SUBJECTS: PartStructuredSubjectKey[] = ['mathematics', 'physics', 'english', 'biology', 'chemistry'];
 const tabItems: Array<{ key: TabKey; label: string }> = [
@@ -248,7 +310,7 @@ const FLAT_TAB_SUBJECT_FALLBACKS: Record<'quantitative-mathematics' | 'design-ap
   'design-aptitude': ['english', 'physics', 'mathematics'],
 };
 
-export const COMPUTER_SCIENCE_SYLLABUS: ChapterItem[] = [
+const RAW_COMPUTER_SCIENCE_SYLLABUS: ChapterItem[] = [
   {
     id: 'cs-c1',
     title: 'Chapter 1 - Computer Fundamentals',
@@ -286,7 +348,7 @@ export const COMPUTER_SCIENCE_SYLLABUS: ChapterItem[] = [
   },
 ];
 
-export const INTELLIGENCE_SYLLABUS: ChapterItem[] = [
+const RAW_INTELLIGENCE_SYLLABUS: ChapterItem[] = [
   {
     id: 'iq-c1',
     title: 'Chapter 1 - Analytical Reasoning',
@@ -319,7 +381,7 @@ export const INTELLIGENCE_SYLLABUS: ChapterItem[] = [
   },
 ];
 
-export const SYLLABUS: Record<PartStructuredSubjectKey, Record<AcademicPart, PartItem>> = {
+const RAW_SYLLABUS: Record<PartStructuredSubjectKey, Record<AcademicPart, PartItem>> = {
   mathematics: {
     part1: {
       label: 'Mathematics Part 1 (FSc 1st Year)',
@@ -463,6 +525,31 @@ export const SYLLABUS: Record<PartStructuredSubjectKey, Record<AcademicPart, Par
         { id: 'c2-c14', title: 'Chapter 14 - Macromolecules', sections: ['14.1 Carbohydrates', '14.2 Proteins', '14.3 Lipids', '14.4 Nucleic Acids', '14.5 Polymers'] },
       ],
     },
+  },
+};
+
+export const COMPUTER_SCIENCE_SYLLABUS: ChapterItem[] = dedupeChaptersByTitle(RAW_COMPUTER_SCIENCE_SYLLABUS);
+export const INTELLIGENCE_SYLLABUS: ChapterItem[] = dedupeChaptersByTitle(RAW_INTELLIGENCE_SYLLABUS);
+export const SYLLABUS: Record<PartStructuredSubjectKey, Record<AcademicPart, PartItem>> = {
+  mathematics: {
+    part1: normalizePartItem(RAW_SYLLABUS.mathematics.part1),
+    part2: normalizePartItem(RAW_SYLLABUS.mathematics.part2),
+  },
+  physics: {
+    part1: normalizePartItem(RAW_SYLLABUS.physics.part1),
+    part2: normalizePartItem(RAW_SYLLABUS.physics.part2),
+  },
+  english: {
+    part1: normalizePartItem(RAW_SYLLABUS.english.part1),
+    part2: normalizePartItem(RAW_SYLLABUS.english.part2),
+  },
+  biology: {
+    part1: normalizePartItem(RAW_SYLLABUS.biology.part1),
+    part2: normalizePartItem(RAW_SYLLABUS.biology.part2),
+  },
+  chemistry: {
+    part1: normalizePartItem(RAW_SYLLABUS.chemistry.part1),
+    part2: normalizePartItem(RAW_SYLLABUS.chemistry.part2),
   },
 };
 
