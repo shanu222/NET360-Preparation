@@ -712,7 +712,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
         difficulty: 'Medium',
         topic: payload.sectionTitle,
         mode: 'topic',
-        questionCount: 20,
+        questionCount: 25,
           part: payload.part || '',
         chapter: payload.chapterTitle,
         section: payload.sectionTitle,
@@ -756,7 +756,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
             difficulty: 'Medium',
             topic: topicTitle,
             mode: 'topic',
-            questionCount: 20,
+            questionCount: 25,
           });
 
           openExamWindow({ sessionId: session.id, token: authToken, examWindow });

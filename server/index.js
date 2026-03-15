@@ -523,6 +523,12 @@ function containsRegex(value, maxLen = 80) {
   return { $regex: escaped, $options: 'i' };
 }
 
+function exactRegex(value, maxLen = 80) {
+  const escaped = escapeRegexLiteral(value, maxLen);
+  if (!escaped) return null;
+  return { $regex: `^${escaped}$`, $options: 'i' };
+}
+
 const COMMUNITY_PROFILE_SELECT = 'userId username shareProfilePicture profilePictureUrl favoriteSubjects targetNetType subjectsNeedHelp preparationLevel studyTimePreference testScoreRange bio quizStats createdAt';
 const COMMUNITY_USER_SELECT = 'firstName lastName targetProgram city progress.averageScore progress.weakTopics role';
 const COMMUNITY_CONNECTION_SELECT = 'participantA participantB createdAt blockedByUserIds';
@@ -8869,6 +8875,7 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
   const profile = NET_TEST_PROFILES[normalizedNetType] || NET_TEST_PROFILES['net-engineering'];
   const normalizedTestType = String(testType || '').toLowerCase();
   const desiredQuestions = clamp(Number(questionCount) || (normalizedMode === 'mock' ? profile.totalQuestions : 20), 1, 200);
+  const isPreparationTopicTest = normalizedMode === 'topic';
 
   let selected = [];
   const allInProfile = await MCQModel.find({
@@ -8903,21 +8910,53 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
       difficulty: normalizedDifficulty,
     };
 
+    const topicScopeFilter = {
+      subject: normalizedSubject,
+    };
+
     if (part) {
-      filter.part = String(part).toLowerCase().trim();
+      const normalizedPart = String(part).toLowerCase().trim();
+      filter.part = normalizedPart;
+      topicScopeFilter.part = normalizedPart;
     }
     if (chapter && chapter !== 'All Chapters') {
-      filter.chapter = { $regex: String(chapter), $options: 'i' };
+      const chapterExpr = exactRegex(String(chapter), 160);
+      if (chapterExpr) {
+        filter.chapter = chapterExpr;
+        topicScopeFilter.chapter = chapterExpr;
+      }
     }
     if (section && section !== 'All Sections') {
-      filter.section = { $regex: String(section), $options: 'i' };
+      const sectionExpr = exactRegex(String(section), 160);
+      if (sectionExpr) {
+        filter.section = sectionExpr;
+        topicScopeFilter.section = sectionExpr;
+      }
     }
     if (topic && topic !== 'All Topics') {
-      filter.topic = { $regex: String(topic), $options: 'i' };
+      const topicExpr = exactRegex(String(topic), 160);
+      if (topicExpr) {
+        filter.topic = topicExpr;
+        topicScopeFilter.topic = topicExpr;
+      }
     }
 
-    const pool = await MCQModel.find(filter).lean();
-    selected = shuffle(pool).slice(0, Math.min(desiredQuestions, pool.length));
+    if (isPreparationTopicTest) {
+      const sectionTestSize = 25;
+      const totalAvailable = await MCQModel.countDocuments(topicScopeFilter);
+
+      if (totalAvailable >= sectionTestSize) {
+        selected = await MCQModel.aggregate([
+          { $match: topicScopeFilter },
+          { $sample: { size: sectionTestSize } },
+        ]);
+      } else {
+        selected = await MCQModel.find(topicScopeFilter).lean();
+      }
+    } else {
+      const pool = await MCQModel.find(filter).lean();
+      selected = shuffle(pool).slice(0, Math.min(desiredQuestions, pool.length));
+    }
   }
 
   if (!selected.length) {
@@ -9005,7 +9044,11 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     selectedSubject: selectedSubject || null,
   };
 
-  res.status(201).json({ session: serialized });
+  res.status(201).json({
+    session: serialized,
+    totalQuestions: questions.length,
+    questions,
+  });
 });
 
 app.get('/api/tests/attempts', authMiddleware, async (req, res) => {
