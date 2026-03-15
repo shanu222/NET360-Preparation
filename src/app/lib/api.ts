@@ -432,7 +432,9 @@ export async function downloadReport(path: string, token?: string | null): Promi
 
   const disposition = response.headers.get('Content-Disposition') || '';
   const match = disposition.match(/filename=\"?([^\";]+)\"?/i);
-  const filename = match?.[1] || 'report.dat';
+  const contentType = response.headers.get('Content-Type') || '';
+  const defaultReportName = 'NET360_Performance_Report.pdf';
+  const filename = match?.[1] || (contentType.includes('pdf') || /format=pdf/i.test(path) ? defaultReportName : 'report.bin');
   const blob = await response.blob();
 
   return { blob, filename };

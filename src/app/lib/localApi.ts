@@ -5178,8 +5178,10 @@ export async function localDownloadReport(format: 'pdf', token?: string | null) 
   }
 
   const bytes = buildAnalyticsPdf(attempts, user);
+  const nameSeed = [user.firstName, user.lastName].filter(Boolean).join(' ').trim() || user.email || 'Student';
+  const safeName = nameSeed.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'Student';
   return {
-    filename: `net360-analytics-${new Date().toISOString().slice(0, 10)}.pdf`,
+    filename: `NET360_Performance_Report_${safeName}.pdf`,
     blob: new Blob([bytes], { type: 'application/pdf' }),
   };
 }

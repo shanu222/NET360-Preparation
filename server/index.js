@@ -4075,105 +4075,188 @@ async function refreshNustAdmissionsCache({ force = false } = {}) {
   }
 }
 
-function pdfEscape(value) {
+function formatReportSubjectName(value) {
   return String(value || '')
-    .replace(/\\/g, '\\\\')
-    .replace(/\(/g, '\\(')
-    .replace(/\)/g, '\\)');
+    .trim()
+    .replace(/[-_]+/g, ' ')
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
-function buildAnalyticsPdfBuffer({ attempts, user }) {
+function sanitizeReportName(value) {
+  const cleaned = String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return cleaned || 'Student';
+}
+
+function drawReportSectionHeader(doc, title) {
+  doc.moveDown(0.25);
+  const startX = doc.page.margins.left;
+  const sectionTop = doc.y;
+  const sectionWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+  doc.roundedRect(startX, sectionTop, sectionWidth, 24, 6).fill('#eef2ff');
+  doc.fillColor('#1e3a8a').font('Helvetica-Bold').fontSize(12).text(String(title || ''), startX + 10, sectionTop + 7, {
+    width: sectionWidth - 20,
+  });
+  doc.y = sectionTop + 30;
+}
+
+async function buildAnalyticsPdfBuffer({ attempts, user, questionBankTotal = 0 }) {
   const testsAttempted = attempts.length;
   const averageScore = testsAttempted
     ? Math.round(attempts.reduce((sum, item) => sum + (Number(item.score) || 0), 0) / testsAttempted)
     : 0;
   const totalQuestions = attempts.reduce((sum, item) => sum + (Number(item.totalQuestions) || 0), 0);
-  const studyHours = Number((attempts.reduce((sum, item) => sum + (Number(item.durationMinutes) || 0), 0) / 60).toFixed(1));
+  const totalMinutes = attempts.reduce((sum, item) => sum + (Number(item.durationMinutes) || 0), 0);
+  const studyHours = Number((totalMinutes / 60).toFixed(1));
+  const correctTotal = attempts.reduce((sum, item) => sum + (Number(item.correctAnswers) || Math.round((Number(item.score) || 0) * (Number(item.totalQuestions) || 0) / 100)), 0);
+  const accuracy = totalQuestions ? Math.round((correctTotal / totalQuestions) * 100) : 0;
+  const overallProgress = questionBankTotal > 0
+    ? Math.min(100, Math.round((totalQuestions / questionBankTotal) * 100))
+    : 0;
 
-  const bySubject = new Map();
+  const subjectMap = new Map();
   attempts.forEach((item) => {
-    const current = bySubject.get(item.subject) || { total: 0, count: 0 };
-    current.total += Number(item.score) || 0;
-    current.count += 1;
-    bySubject.set(item.subject, current);
+    const key = String(item.subject || '').trim().toLowerCase();
+    if (!key) return;
+    const current = subjectMap.get(key) || { attempts: 0, questions: 0, correct: 0, scoreTotal: 0 };
+    current.attempts += 1;
+    current.questions += Number(item.totalQuestions) || 0;
+    current.correct += Number(item.correctAnswers) || Math.round((Number(item.score) || 0) * (Number(item.totalQuestions) || 0) / 100);
+    current.scoreTotal += Number(item.score) || 0;
+    subjectMap.set(key, current);
   });
 
-  const lines = [];
-  lines.push({ text: 'NET360 Performance Analytics', size: 24, color: '1 1 1', gap: 18 });
-  lines.push({ text: `Student: ${user.firstName || ''} ${user.lastName || ''} (${user.email || ''})`, size: 11, color: '1 1 1' });
-  lines.push({ text: `Generated: ${new Date().toLocaleString()}`, size: 10, color: '1 1 1', gap: 20 });
-  lines.push({ text: 'Summary', size: 14, color: '0.2 0.24 0.55', gap: 16 });
-  lines.push({ text: `Tests Attempted: ${testsAttempted}`, size: 11 });
-  lines.push({ text: `Average Score: ${averageScore}%`, size: 11 });
-  lines.push({ text: `Study Hours: ${studyHours}`, size: 11 });
-  lines.push({ text: `Questions Solved: ${totalQuestions}`, size: 11, gap: 14 });
+  const subjectRows = Array.from(subjectMap.entries())
+    .map(([subject, stats]) => {
+      const avgScore = stats.attempts ? Math.round(stats.scoreTotal / stats.attempts) : 0;
+      const subjectAccuracy = stats.questions ? Math.round((stats.correct / stats.questions) * 100) : 0;
+      return {
+        subject: formatReportSubjectName(subject),
+        attempts: stats.attempts,
+        questions: stats.questions,
+        accuracy: subjectAccuracy,
+        avgScore,
+      };
+    })
+    .sort((a, b) => a.subject.localeCompare(b.subject));
 
-  lines.push({ text: 'Subject Performance', size: 14, color: '0.2 0.24 0.55', gap: 16 });
-  if (!bySubject.size) {
-    lines.push({ text: 'No attempts available yet.', size: 11, gap: 10 });
-  } else {
-    Array.from(bySubject.entries())
-      .sort((a, b) => String(a[0]).localeCompare(String(b[0])))
-      .forEach(([subject, aggregate]) => {
-        const avg = aggregate.count ? Math.round(aggregate.total / aggregate.count) : 0;
-        lines.push({ text: `${String(subject).toUpperCase()}: ${avg}% average across ${aggregate.count} attempt(s)`, size: 11 });
+  const weeklyMap = new Map();
+  attempts.forEach((item) => {
+    const when = new Date(item.attemptedAt);
+    const week = `${when.getFullYear()}-W${Math.ceil((when.getDate() + 6 - when.getDay()) / 7)}`;
+    const existing = weeklyMap.get(week) || [];
+    existing.push(Number(item.score) || 0);
+    weeklyMap.set(week, existing);
+  });
+
+  const weeklyTrend = Array.from(weeklyMap.entries())
+    .map(([week, scores]) => ({
+      week,
+      score: scores.length ? Math.round(scores.reduce((sum, value) => sum + value, 0) / scores.length) : 0,
+    }))
+    .sort((a, b) => a.week.localeCompare(b.week))
+    .slice(-8);
+
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', margins: { top: 48, bottom: 48, left: 46, right: 46 } });
+    const chunks = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    const logoPath = path.join(__dirname, '..', 'public', 'net360-logo.png');
+    try {
+      doc.image(logoPath, doc.page.margins.left, doc.page.margins.top - 4, { fit: [36, 36] });
+    } catch {
+      // Proceed without logo if the asset is unavailable.
+    }
+
+    doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(20).text('NET360 Performance Report', doc.page.margins.left + 48, doc.page.margins.top, {
+      align: 'left',
+    });
+    doc.fillColor('#475569').font('Helvetica').fontSize(10).text(`Exported on ${new Date().toLocaleString()}`, doc.page.margins.left + 48, doc.page.margins.top + 24);
+    doc.moveDown(1.4);
+
+    drawReportSectionHeader(doc, 'User Information');
+    const fullName = `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim() || String(user.email || 'Student');
+    const userInfoRows = [
+      ['Name', fullName],
+      ['Email', String(user.email || '-')],
+      ['Target Program', String(user.targetProgram || '-')],
+      ['Test Series', String(user.testSeries || '-')],
+    ];
+    userInfoRows.forEach(([label, value]) => {
+      doc.fillColor('#334155').font('Helvetica-Bold').fontSize(10).text(`${label}:`, { continued: true });
+      doc.fillColor('#0f172a').font('Helvetica').text(` ${value}`);
+    });
+
+    drawReportSectionHeader(doc, 'Test Summary');
+    const summaryRows = [
+      ['Number of Attempts', String(testsAttempted)],
+      ['Accuracy Percentage', `${accuracy}%`],
+      ['Average Score', `${averageScore}%`],
+      ['Questions Attempted', String(totalQuestions)],
+      ['Time Spent', `${studyHours} hour(s)`],
+      ['Overall Progress Summary', questionBankTotal > 0 ? `${overallProgress}% of question bank (${totalQuestions}/${questionBankTotal})` : `${overallProgress}%`],
+    ];
+    summaryRows.forEach(([label, value]) => {
+      doc.fillColor('#334155').font('Helvetica-Bold').fontSize(10).text(`${label}:`, { continued: true });
+      doc.fillColor('#0f172a').font('Helvetica').text(` ${value}`);
+    });
+
+    drawReportSectionHeader(doc, 'Subject-wise Performance');
+    if (!subjectRows.length) {
+      doc.fillColor('#64748b').font('Helvetica-Oblique').fontSize(10).text('No attempts available yet for subject-wise analysis.');
+    } else {
+      subjectRows.forEach((row) => {
+        doc.fillColor('#1e293b').font('Helvetica-Bold').fontSize(10).text(row.subject);
+        doc.fillColor('#475569').font('Helvetica').fontSize(9).text(`Attempts: ${row.attempts} | Questions: ${row.questions} | Accuracy: ${row.accuracy}% | Avg Score: ${row.avgScore}%`);
+        doc.moveDown(0.2);
       });
-    lines.push({ text: '', size: 10, gap: 6 });
-  }
+    }
 
-  lines.push({ text: 'Recent Attempts', size: 14, color: '0.2 0.24 0.55', gap: 16 });
-  attempts.slice(0, 10).forEach((item, index) => {
-    const row = `${index + 1}. ${String(item.subject || '').toUpperCase()} | ${item.topic || ''} | ${Number(item.score) || 0}% | ${new Date(item.attemptedAt).toLocaleDateString()}`;
-    lines.push({ text: row, size: 10 });
+    drawReportSectionHeader(doc, 'Analytics Charts');
+    if (!weeklyTrend.length) {
+      doc.fillColor('#64748b').font('Helvetica-Oblique').fontSize(10).text('Not enough trend data yet to render chart snapshots.');
+    } else {
+      doc.fillColor('#334155').font('Helvetica').fontSize(9).text('Weekly score trend snapshot:');
+      const chartX = doc.page.margins.left;
+      const chartY = doc.y + 8;
+      const chartHeight = 82;
+      const chartWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+      const barCount = weeklyTrend.length;
+      const gap = 8;
+      const barWidth = Math.max(14, Math.floor((chartWidth - gap * (barCount - 1)) / barCount));
+
+      doc.save();
+      doc.rect(chartX, chartY, chartWidth, chartHeight).stroke('#cbd5e1');
+      weeklyTrend.forEach((point, index) => {
+        const normalized = Math.max(0, Math.min(100, Number(point.score) || 0));
+        const h = Math.max(3, Math.round((normalized / 100) * (chartHeight - 20)));
+        const x = chartX + index * (barWidth + gap);
+        const y = chartY + chartHeight - h - 14;
+        doc.rect(x, y, barWidth, h).fill('#4f46e5');
+        doc.fillColor('#334155').font('Helvetica').fontSize(7).text(point.week.slice(-3), x, chartY + chartHeight - 12, { width: barWidth, align: 'center' });
+      });
+      doc.restore();
+      doc.y = chartY + chartHeight + 6;
+    }
+
+    drawReportSectionHeader(doc, 'Overall Progress Summary');
+    doc.fillColor('#0f172a').font('Helvetica').fontSize(10).text(
+      testsAttempted
+        ? `You completed ${testsAttempted} attempt(s) with ${accuracy}% overall accuracy and ${studyHours} study hour(s). Keep improving weak subjects and maintain consistency in weekly practice.`
+        : 'No attempts found yet. Start tests to generate meaningful analytics and subject-level insights.',
+      { lineGap: 3 },
+    );
+
+    doc.end();
   });
-
-  let y = 792 - 58;
-  const content = [];
-  content.push('q');
-  content.push('0.2 0.24 0.65 rg');
-  content.push('0 720 612 72 re f');
-  content.push('Q');
-
-  for (const line of lines) {
-    const size = line.size || 11;
-    const color = line.color || '0.12 0.14 0.2';
-    const drawY = line.color === '1 1 1' ? y : y - 2;
-    content.push('BT');
-    content.push(`/F1 ${size} Tf`);
-    content.push(`${color} rg`);
-    content.push(`40 ${Math.max(drawY, 42)} Td`);
-    content.push(`(${pdfEscape(line.text)}) Tj`);
-    content.push('ET');
-    y -= line.gap || (size + 6);
-    if (y < 48) break;
-  }
-
-  const stream = content.join('\n');
-
-  const objects = [
-    '1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n',
-    '2 0 obj\n<< /Type /Pages /Count 1 /Kids [3 0 R] >>\nendobj\n',
-    '3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>\nendobj\n',
-    '4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n',
-    `5 0 obj\n<< /Length ${stream.length} >>\nstream\n${stream}\nendstream\nendobj\n`,
-  ];
-
-  let pdf = '%PDF-1.4\n';
-  const offsets = [0];
-  for (const obj of objects) {
-    offsets.push(pdf.length);
-    pdf += obj;
-  }
-
-  const xrefOffset = pdf.length;
-  pdf += `xref\n0 ${objects.length + 1}\n`;
-  pdf += '0000000000 65535 f \n';
-  for (let i = 1; i < offsets.length; i += 1) {
-    pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
-  }
-  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
-
-  return Buffer.from(pdf, 'utf8');
 }
 
 async function issueAuthPayload(user, req) {
@@ -9252,10 +9335,12 @@ app.get('/api/reports/export', authMiddleware, async (req, res) => {
     return;
   }
 
-  const bytes = buildAnalyticsPdfBuffer({ attempts, user: req.user });
-  const dateTag = new Date().toISOString().slice(0, 10);
+  const questionBankTotal = await MCQModel.countDocuments();
+  const bytes = await buildAnalyticsPdfBuffer({ attempts, user: req.user, questionBankTotal });
+  const nameSeed = `${String(req.user.firstName || '').trim()} ${String(req.user.lastName || '').trim()}`.trim() || req.user.email || 'Student';
+  const reportFileName = `NET360_Performance_Report_${sanitizeReportName(nameSeed)}.pdf`;
   res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader('Content-Disposition', `attachment; filename="net360-analytics-${dateTag}.pdf"`);
+  res.setHeader('Content-Disposition', `attachment; filename="${reportFileName}"`);
   res.send(bytes);
 });
 
