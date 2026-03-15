@@ -10286,7 +10286,7 @@ app.get('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
 
   const filter = {};
   if (subject) filter.subject = subject;
-  if (part) filter.part = part;
+  if (part && isPartSelectionRequiredSubject(subject)) filter.part = part;
   if (chapter) {
     const expr = containsRegex(chapter, 100);
     if (expr) filter.chapter = expr;

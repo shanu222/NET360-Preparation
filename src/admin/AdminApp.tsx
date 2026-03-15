@@ -108,7 +108,7 @@ type SelectedHierarchy =
   | {
       kind: 'section';
       subject: SubjectKey;
-      part: 'part1' | 'part2';
+      part: 'part1' | 'part2' | '';
       chapterTitle: string;
       sectionTitle: string;
     }
@@ -972,7 +972,9 @@ function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[]
 function hierarchyLabel(selection: SelectedHierarchy | null): string {
   if (!selection) return 'No target selected';
   if (selection.kind === 'section') {
-    return `${selection.subject} / ${selection.part} / ${selection.chapterTitle} / ${selection.sectionTitle}`;
+    return selection.part
+      ? `${selection.subject} / ${selection.part} / ${selection.chapterTitle} / ${selection.sectionTitle}`
+      : `${selection.subject} / ${selection.chapterTitle} / ${selection.sectionTitle}`;
   }
   return `${selection.subject} / ${selection.sectionTitle}`;
 }
@@ -2177,7 +2179,9 @@ export default function AdminApp() {
   ) => {
     const params = new URLSearchParams({ subject: sectionPath.subject });
     if (sectionPath.kind === 'section') {
-      params.set('part', sectionPath.part);
+      if (isPartSelectionRequiredSubject(sectionPath.subject) && sectionPath.part) {
+        params.set('part', sectionPath.part);
+      }
       params.set('chapter', sectionPath.chapterTitle);
       params.set('section', sectionPath.sectionTitle);
     } else {
@@ -3906,7 +3910,7 @@ export default function AdminApp() {
 
   const handleSectionSelection = async (selection: {
     subject: SubjectKey;
-    part: 'part1' | 'part2';
+    part: 'part1' | 'part2' | '';
     chapterTitle: string;
     sectionTitle: string;
   }) => {
@@ -6207,7 +6211,7 @@ export default function AdminApp() {
                             ? selectedChapter.part
                             : isBankPartSelectionSubject
                               ? (bankFilterPart === 'part2' ? 'part2' : bankFilterPart === 'part1' ? 'part1' : 'part1')
-                              : 'part1';
+                              : '';
                           void handleSectionSelection({
                             subject: bankFilterSubject as SubjectKey,
                             part: selectedPart,
