@@ -15,7 +15,8 @@
     "mobile:build": "node scripts/validate-mobile-env.mjs && vite build --mode android && npx cap sync android",
     "android:sync": "npx cap sync android",
     "android:open": "npx cap open android",
-    "android:run": "npx cap run android"
+    "android:run": "npx cap run android",
+    "seed:synonyms": "node scripts/seed-synonyms-mcqs.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.2.0",

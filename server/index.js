@@ -10455,6 +10455,70 @@ function buildAdminMcqDocument(input = {}) {
   };
 }
 
+function normalizeBulkUploadMcqEntry(input = {}) {
+  const subject = String(input.subject || 'english').trim().toLowerCase();
+  const chapter = String(input.chapter || 'Vocabulary').trim();
+  const section = String(input.section || 'Synonyms').trim();
+  const topic = String(input.topic || section || 'Synonyms').trim();
+  const difficulty = normalizeDifficulty(input.difficulty || 'Medium');
+  const question = String(input.question || '').trim();
+  const explanation = String(input.explanation || input.tip || input.explanationText || '').trim();
+  const source = String(input.source || 'Bulk Upload').trim();
+  const requiresPart = isPartSelectionRequiredSubject(subject);
+  const part = requiresPart ? String(input.part || 'part1').trim().toLowerCase() : '';
+
+  const directOptions = Array.isArray(input.options)
+    ? input.options.map((item) => String(item || '').trim()).filter(Boolean)
+    : [];
+
+  const fieldOptions = [input.optionA, input.optionB, input.optionC, input.optionD]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean);
+
+  const options = directOptions.length ? directOptions : fieldOptions;
+
+  if (!question) {
+    throw new Error('question is required.');
+  }
+  if (options.length !== 4) {
+    throw new Error('Each MCQ must include exactly 4 options (A-D).');
+  }
+
+  const answerRaw = String(input.correctAnswer || input.answer || '').trim();
+  const answerKey = resolveAnswerToOptionKey(answerRaw, null, options);
+  if (!answerKey) {
+    throw new Error('correctAnswer must match one option (A-D, 1-4, or exact option text).');
+  }
+
+  const normalizedQuestion = question.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!normalizedQuestion) {
+    throw new Error('question is required.');
+  }
+
+  return {
+    doc: {
+      subject,
+      part,
+      chapter,
+      section,
+      topic,
+      question,
+      options,
+      optionMedia: options.map((text, index) => ({
+        key: String.fromCharCode(65 + index),
+        text,
+        image: null,
+      })),
+      answer: answerKey,
+      tip: explanation,
+      explanationText: explanation,
+      difficulty,
+      source,
+    },
+    signature: `${subject}|${part}|${chapter.toLowerCase()}|${section.toLowerCase()}|${normalizedQuestion}`,
+  };
+}
+
 app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   let payload;
   try {
@@ -10473,6 +10537,77 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
 
   res.status(201).json({
     mcq: serializeMcq(mcq),
+  });
+});
+
+app.post('/api/mcqs/bulk-upload', authMiddleware, requireAdmin, async (req, res) => {
+  const rows = Array.isArray(req.body?.mcqs) ? req.body.mcqs : [];
+  if (!rows.length) {
+    res.status(400).json({ error: 'mcqs array is required.' });
+    return;
+  }
+
+  if (rows.length > 100) {
+    res.status(400).json({ error: 'Bulk upload supports up to 100 MCQs per request.' });
+    return;
+  }
+
+  const seen = new Set();
+  const prepared = [];
+  const skippedDuplicates = [];
+
+  try {
+    rows.forEach((row, index) => {
+      const normalized = normalizeBulkUploadMcqEntry(row || {});
+      if (seen.has(normalized.signature)) {
+        skippedDuplicates.push({ index, reason: 'Duplicate in payload', question: normalized.doc.question });
+        return;
+      }
+      seen.add(normalized.signature);
+      prepared.push(normalized);
+    });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid MCQ payload.' });
+    return;
+  }
+
+  const existingByScope = await Promise.all(
+    prepared.map((item) => MCQModel.findOne({
+      subject: item.doc.subject,
+      part: item.doc.part,
+      chapter: item.doc.chapter,
+      section: item.doc.section,
+      question: { $regex: `^${escapeRegexLiteral(item.doc.question, 500)}$`, $options: 'i' },
+    }).select('question').lean()),
+  );
+
+  const docsToInsert = [];
+  prepared.forEach((item, index) => {
+    if (existingByScope[index]) {
+      skippedDuplicates.push({ index, reason: 'Duplicate in database', question: item.doc.question });
+      return;
+    }
+    docsToInsert.push(item.doc);
+  });
+
+  if (!docsToInsert.length) {
+    res.json({
+      insertedCount: 0,
+      skippedCount: skippedDuplicates.length,
+      skippedDuplicates,
+      mcqs: [],
+    });
+    return;
+  }
+
+  const inserted = await MCQModel.insertMany(docsToInsert, { ordered: true });
+  broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'bulk-upload' } });
+
+  res.status(201).json({
+    insertedCount: inserted.length,
+    skippedCount: skippedDuplicates.length,
+    skippedDuplicates,
+    mcqs: inserted.map((item) => serializeMcq(item)),
   });
 });
 
