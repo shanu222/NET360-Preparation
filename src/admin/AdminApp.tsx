@@ -3171,7 +3171,7 @@ export default function AdminApp() {
 
     try {
       setBulkProcessing(true);
-      console.info('Admin Analyse by AI started', {
+      console.info('Admin document extraction started', {
         hasFile: Boolean(bulkFile),
         sourceType: bulkFile ? 'file' : 'text',
         subject: hierarchyContext.subject,
@@ -3235,19 +3235,19 @@ export default function AdminApp() {
       setBulkParsed(limitedParsed);
       setShowParsedPreview(true);
 
-      console.info('Admin Analyse by AI completed', {
+      console.info('Admin document extraction completed', {
         parsedCount: limitedParsed.length,
         errors: payload.errors || [],
       });
 
-      toast.success(`Parsed ${limitedParsed.length} MCQ(s). Review and confirm target before saving.`);
+      toast.success(`Extracted ${limitedParsed.length} MCQ(s). Review and approve before uploading.`);
     } catch (error) {
-      console.error('Admin Analyse by AI failed', error);
+      console.error('Admin document extraction failed', error);
       const status = Number((error as { status?: number } | null)?.status || 0);
       if (status === 401 || status === 403) {
-        toast.error('Admin session expired. Please log in again to continue AI analysis.');
+        toast.error('Admin session expired. Please log in again to continue document extraction.');
       } else {
-        toast.error(error instanceof Error ? error.message : 'AI analysis failed. Please try again.');
+        toast.error(error instanceof Error ? error.message : 'Document extraction failed. Please try again.');
       }
     } finally {
       setBulkProcessing(false);
@@ -5533,7 +5533,7 @@ export default function AdminApp() {
                           <div>
                             <p className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">Document Parser</p>
                             <p className="text-xs text-muted-foreground">
-                              Upload PDF/DOC/DOCX/TXT or paste MCQs, then click Parse / Analyze Document to auto-fill structured MCQ fields.
+                              Upload PDF/DOC/DOCX/TXT or paste MCQs, then extract and review MCQs exactly from document text before uploading.
                             </p>
                           </div>
 
@@ -5556,9 +5556,9 @@ export default function AdminApp() {
                               {bulkProcessing ? (
                                 <>
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                  Analysing MCQs...
+                                  Extracting MCQs...
                                 </>
-                              ) : 'Analyse by AI'}
+                              ) : 'Extract MCQs'}
                             </Button>
                             <Button
                               type="button"

@@ -1047,12 +1047,12 @@ function serializeSupportMessage(item) {
 function normalizePlainText(value) {
   return String(value || '')
     .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
     .replace(/\u0000/g, ' ')
     .replace(/\t/g, ' ')
     .replace(/\u00a0/g, ' ')
-    .replace(/[ \f\v]+/g, ' ')
+    .replace(/[\f\v]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
-    .replace(/([^\n])\s+((?:q(?:uestion)?\s*)?\d{1,3}\s*[\).:-])/gi, '$1\n$2')
     .trim();
 }
 
@@ -1288,116 +1288,6 @@ function splitQuestionBlocks(text) {
   });
 }
 
-async function parseBulkMcqsWithAi(rawText) {
-  if (!openai) {
-    return { parsed: [], errors: ['AI parser is unavailable.'] };
-  }
-
-  const inputText = String(rawText || '').trim();
-  if (!inputText) {
-    return { parsed: [], errors: ['No content found to parse.'] };
-  }
-
-  const baseHierarchy = extractHierarchyContextFromText(inputText);
-
-  const clippedText = inputText.length > 120000 ? inputText.slice(0, 120000) : inputText;
-
-  try {
-    const completion = await openai.chat.completions.create({
-      model: OPENAI_MODEL,
-      temperature: 0,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: [
-            'You extract ALL MCQs from messy educational documents.',
-            'Return strict JSON only in this schema:',
-            '{"mcqs":[{"subject":"","part":"part1|part2|","chapter":"","section":"","topic":"","question":"...","questionImage":"","options":["..."],"optionImages":[""],"answer":"...","explanation":"...","explanationImage":"","difficulty":"Easy|Medium|Hard"}]}',
-            'Rules:',
-            '- Detect all question boundaries (1., 1), Q1, Question 1, etc.).',
-            '- Support mixed option formats: A) A. A, Option 1, 1) and inline options in one line.',
-            '- Keep options separated as array items.',
-            '- Capture image references (data URLs or http URLs) near question/options/explanation when available.',
-            '- answer may be letter/number/text; provide best available answer token from source.',
-            '- If explanation is not present, use empty string.',
-            `- Return at most ${BULK_PARSE_LIMIT} MCQs.`,
-          ].join('\n'),
-        },
-        {
-          role: 'user',
-          content: clippedText,
-        },
-      ],
-    });
-
-    const raw = completion.choices?.[0]?.message?.content || '';
-    const parsedJson = extractJsonObject(raw);
-    const rows = Array.isArray(parsedJson?.mcqs) ? parsedJson.mcqs : [];
-
-    const parsed = [];
-    const errors = [];
-
-    rows.slice(0, BULK_PARSE_LIMIT).forEach((row, idx) => {
-      const question = String(row?.question || '').replace(/\s+/g, ' ').trim();
-      const options = parseOptionsFromUnknown(row?.options);
-      const answer = resolveAnswerToOption(row?.answer, options);
-      const tip = String(row?.explanation || '').trim();
-      const difficulty = normalizeDifficulty(row?.difficulty);
-      const questionImageRef = String(row?.questionImage || '').trim();
-      const explanationImageRef = String(row?.explanationImage || '').trim();
-      const optionImageRefs = Array.isArray(row?.optionImages)
-        ? row.optionImages.map((item) => String(item || '').trim())
-        : [];
-      const rowHierarchy = normalizeParsedHierarchyContext({
-        subject: row?.subject || baseHierarchy.subject,
-        part: row?.part || baseHierarchy.part,
-        chapter: row?.chapter || baseHierarchy.chapter,
-        section: row?.section || baseHierarchy.section,
-        topic: row?.topic || baseHierarchy.topic,
-      });
-
-      if (!question) {
-        errors.push(`Q${idx + 1}: question text is missing.`);
-        return;
-      }
-      if (options.length < 2) {
-        errors.push(`Q${idx + 1}: at least 2 options are required.`);
-        return;
-      }
-      if (!answer) {
-        errors.push(`Q${idx + 1}: correct answer is missing.`);
-        return;
-      }
-
-      parsed.push({
-        subject: rowHierarchy.subject,
-        part: rowHierarchy.part,
-        chapter: rowHierarchy.chapter,
-        section: rowHierarchy.section,
-        topic: rowHierarchy.topic,
-        question,
-        questionImageUrl: /^https?:\/\//i.test(questionImageRef) ? questionImageRef : '',
-        questionImageDataUrl: /^data:image\//i.test(questionImageRef) ? questionImageRef : '',
-        options,
-        optionImageDataUrls: optionImageRefs.map((ref) => (/^data:image\//i.test(ref) ? ref : '')),
-        answer,
-        tip,
-        explanationImageDataUrl: /^data:image\//i.test(explanationImageRef) ? explanationImageRef : '',
-        difficulty,
-      });
-    });
-
-    if (!parsed.length) {
-      return { parsed: [], errors: ['AI parser could not extract valid MCQs.'] };
-    }
-
-    return { parsed, errors };
-  } catch {
-    return { parsed: [], errors: ['AI parser failed for this document.'] };
-  }
-}
-
 function parseBulkMcqsFromText(raw) {
   const text = normalizePlainText(raw);
   if (!text) return { parsed: [], errors: ['No content found to parse.'] };
@@ -1524,16 +1414,16 @@ function parseBulkMcqsFromText(raw) {
       if (capturingExplanation) {
         explanationLines.push(line);
       } else if (activeOptionIndex >= 0 && options[activeOptionIndex]) {
-        options[activeOptionIndex].text = `${options[activeOptionIndex].text} ${line}`.trim();
+        options[activeOptionIndex].text = `${options[activeOptionIndex].text}\n${line}`.trim();
       } else {
         questionLines.push(line);
       }
     }
 
-    const question = questionLines.join(' ').trim();
+    const question = questionLines.join('\n').trim();
     const normalizedOptions = options.map((option) => option.text.trim()).filter(Boolean);
-    const resolvedAnswer = resolveAnswerToOption(answer, normalizedOptions);
-    if ((!question && !questionImageUrl && !questionImageDataUrl) || normalizedOptions.length < 2 || !resolvedAnswer) {
+    const extractedAnswer = String(answer || '').trim();
+    if ((!question && !questionImageUrl && !questionImageDataUrl) || normalizedOptions.length < 2) {
       skipped += 1;
       return;
     }
@@ -1549,7 +1439,7 @@ function parseBulkMcqsFromText(raw) {
       questionImageDataUrl,
       options: normalizedOptions,
       optionImageDataUrls: options.map((option) => option.imageDataUrl || ''),
-      answer: resolvedAnswer,
+      answer: extractedAnswer,
       tip: explanationLines.join('\n').trim(),
       explanationImageDataUrl,
       difficulty,
@@ -10407,38 +10297,11 @@ app.delete('/api/admin/mcqs/purge-all', authMiddleware, requireAdmin, async (_re
 });
 
 async function parseMcqsFromSourceText(sourceText) {
-  const heuristicResult = parseBulkMcqsFromText(sourceText);
-  let finalResult = heuristicResult;
-
-  const countDetectedImages = (result) => {
-    const rows = Array.isArray(result?.parsed) ? result.parsed : [];
-    return rows.reduce((total, row) => {
-      const questionImage = /^data:image\//i.test(String(row?.questionImageDataUrl || '')) ? 1 : 0;
-      const optionImages = Array.isArray(row?.optionImageDataUrls)
-        ? row.optionImageDataUrls.filter((item) => /^data:image\//i.test(String(item || ''))).length
-        : 0;
-      const explanationImage = /^data:image\//i.test(String(row?.explanationImageDataUrl || '')) ? 1 : 0;
-      return total + questionImage + optionImages + explanationImage;
-    }, 0);
-  };
-
-  if (openai) {
-    const aiResult = await parseBulkMcqsWithAi(sourceText);
-    const heuristicScore = (heuristicResult.parsed?.length || 0) - (heuristicResult.errors?.length || 0);
-    const aiScore = (aiResult.parsed?.length || 0) - (aiResult.errors?.length || 0);
-    const heuristicImageScore = countDetectedImages(heuristicResult);
-    const aiImageScore = countDetectedImages(aiResult);
-
-    const preferHeuristicForImages = heuristicImageScore > 0 && aiImageScore < heuristicImageScore;
-
-    if (aiResult.parsed.length > 0 && aiScore >= heuristicScore && !preferHeuristicForImages) {
-      finalResult = aiResult;
-    }
-  }
-
-  const parsed = Array.isArray(finalResult.parsed) ? finalResult.parsed.slice(0, BULK_PARSE_LIMIT) : [];
-  const errors = Array.isArray(finalResult.errors) ? [...finalResult.errors] : [];
-  if ((finalResult.parsed?.length || 0) > BULK_PARSE_LIMIT && !errors.some((item) => /first 15 mcqs/i.test(String(item)))) {
+  // Strict extraction mode: parse only from extracted document text and do not use generative rewriting.
+  const extractedResult = parseBulkMcqsFromText(sourceText);
+  const parsed = Array.isArray(extractedResult.parsed) ? extractedResult.parsed.slice(0, BULK_PARSE_LIMIT) : [];
+  const errors = Array.isArray(extractedResult.errors) ? [...extractedResult.errors] : [];
+  if ((extractedResult.parsed?.length || 0) > BULK_PARSE_LIMIT && !errors.some((item) => /first 15 mcqs/i.test(String(item)))) {
     errors.unshift(`Only the first ${BULK_PARSE_LIMIT} MCQs were kept from this import.`);
   }
 
@@ -10472,10 +10335,10 @@ app.post('/api/ai/parse-mcqs', authMiddleware, requireAdmin, aiParseUpload.singl
     const result = await parseMcqsFromSourceText(sourceText);
     res.json(result);
   } catch (error) {
-    console.error('AI MCQ parse failed:', error);
+    console.error('Document MCQ parse failed:', error);
     res.status(400).json({
       parsed: [],
-      errors: [error instanceof Error ? error.message : 'Could not parse content via AI.'],
+      errors: [error instanceof Error ? error.message : 'Could not parse content from document text.'],
     });
   }
 });
