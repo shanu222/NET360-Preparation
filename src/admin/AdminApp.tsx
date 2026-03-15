@@ -1490,7 +1490,7 @@ export default function AdminApp() {
   }, [signupRequests]);
 
   const completedSignupRequests = useMemo(() => {
-    return signupRequests.filter((item) => item.status === 'completed' || (item.status === 'approved' && item.codeDeliveryStatus === 'sent'));
+    return signupRequests.filter((item) => item.status === 'approved' || item.status === 'completed');
   }, [signupRequests]);
 
   const bankTree = useMemo(() => {
@@ -2594,15 +2594,6 @@ export default function AdminApp() {
 
   const approveSignupRequest = async (request: SignupRequest) => {
     if (!authToken) return;
-    setSignupRequests((prev) => prev.map((item) => (item.id === request.id
-      ? {
-          ...item,
-          status: 'completed',
-          codeDeliveryStatus: 'sent',
-          codeSentAt: new Date().toISOString(),
-        }
-      : item)));
-
     try {
       const payload = await apiRequest<{ requestId: string; token: { code: string; expiresAt: string } }>(
         `/api/admin/signup-requests/${request.id}/approve`,
@@ -2613,10 +2604,16 @@ export default function AdminApp() {
         authToken,
       );
       setIssuedTokens((prev) => ({ ...prev, [request.id]: payload.token.code }));
-      toast.success(`Approved. Token: ${payload.token.code}`);
+      setSignupRequests((prev) => prev.map((item) => (item.id === request.id
+        ? {
+            ...item,
+            status: 'approved',
+            codeDeliveryStatus: 'pending_send',
+          }
+        : item)));
+      toast.success(`Approved. Activation code generated: ${payload.token.code}`);
       await loadAdminData(authToken);
     } catch (error) {
-      setSignupRequests((prev) => prev.map((item) => (item.id === request.id ? request : item)));
       toast.error(error instanceof Error ? error.message : 'Could not approve request.');
     }
   };
@@ -4980,8 +4977,18 @@ export default function AdminApp() {
                             <p className="text-xs text-muted-foreground">Transaction ID: {request.paymentTransactionId}</p>
                             <p className="text-xs text-muted-foreground">{request.createdAt ? new Date(request.createdAt).toLocaleString() : 'Unknown time'}</p>
                             {request.codeSentAt ? <p className="text-xs text-muted-foreground">Completed: {new Date(request.codeSentAt).toLocaleString()}</p> : null}
+                            <div className="mt-1">
+                              <Badge
+                                variant="outline"
+                                className={request.codeDeliveryStatus === 'sent' ? 'border-emerald-300 bg-emerald-50 text-emerald-700' : 'border-amber-300 bg-amber-50 text-amber-700'}
+                              >
+                                {request.codeDeliveryStatus === 'sent'
+                                  ? `Sent In-App${request.codeSentAt ? ` • ${new Date(request.codeSentAt).toLocaleString()}` : ''}`
+                                  : 'Pending Send'}
+                              </Badge>
+                            </div>
                           </div>
-                          <Badge className="bg-emerald-600 text-white">Completed</Badge>
+                          <Badge className="bg-emerald-600 text-white">{request.status === 'approved' ? 'Approved' : 'Completed'}</Badge>
                         </div>
 
                         {request.paymentProof ? (
@@ -5004,6 +5011,38 @@ export default function AdminApp() {
                             >
                               Download Proof
                             </Button>
+                          </div>
+                        ) : null}
+
+                        <div className="flex flex-wrap gap-2">
+                          {issuedTokens[request.id] ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={() => void copyToken(issuedTokens[request.id])}
+                            >
+                              Copy Code
+                            </Button>
+                          ) : null}
+
+                          {request.status === 'approved' && request.codeDeliveryStatus !== 'sent' ? (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="h-7 px-2 text-[11px]"
+                              onClick={() => void sendCodeInApp(request.id, 'signup')}
+                            >
+                              Send Code to User
+                            </Button>
+                          ) : null}
+                        </div>
+
+                        {issuedTokens[request.id] ? (
+                          <div className="rounded-md bg-emerald-50 border border-emerald-200 px-2 py-1 text-xs text-emerald-700">
+                            Generated code: <strong>{issuedTokens[request.id]}</strong>
                           </div>
                         ) : null}
                       </div>

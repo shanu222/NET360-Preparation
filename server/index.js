@@ -57,7 +57,11 @@ const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '15m';
 const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
 const AI_DAILY_LIMIT = Number(process.env.SMART_DAILY_LIMIT || process.env.AI_DAILY_LIMIT || 50);
 const OPENAI_MODEL = process.env.MODEL_PROVIDER_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
-const SIGNUP_TOKEN_TTL_HOURS = Number(process.env.SIGNUP_TOKEN_TTL_HOURS || 24);
+const SIGNUP_TOKEN_TTL_MINUTES = Number(
+  process.env.SIGNUP_TOKEN_TTL_MINUTES
+  || (Number(process.env.SIGNUP_TOKEN_TTL_HOURS || 0) > 0 ? Number(process.env.SIGNUP_TOKEN_TTL_HOURS) * 60 : 0)
+  || 15,
+);
 const PREMIUM_TOKEN_TTL_HOURS = Number(process.env.PREMIUM_TOKEN_TTL_HOURS || 24);
 const NUST_UPDATES_CACHE_MS = Number(process.env.NUST_UPDATES_CACHE_MS || 60 * 1000);
 const NUST_ADMISSIONS_REFRESH_MS = clamp(Number(process.env.NUST_ADMISSIONS_REFRESH_MS || 3 * 60 * 60 * 1000), 15 * 60 * 1000, 24 * 60 * 60 * 1000);
@@ -2292,15 +2296,11 @@ function sanitizeDeviceId(value) {
 
 function generateSignupTokenCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  const parts = [];
-  for (let block = 0; block < 3; block += 1) {
-    let token = '';
-    for (let i = 0; i < 4; i += 1) {
-      token += alphabet[Math.floor(Math.random() * alphabet.length)];
-    }
-    parts.push(token);
+  let token = '';
+  for (let i = 0; i < 8; i += 1) {
+    token += alphabet[crypto.randomInt(0, alphabet.length)];
   }
-  return `NET-${parts.join('-')}`;
+  return token;
 }
 
 function generatePremiumTokenCode() {
@@ -9932,7 +9932,7 @@ app.post('/api/admin/signup-requests/:requestId/approve', authMiddleware, requir
     return;
   }
 
-  const expiresAt = new Date(Date.now() + SIGNUP_TOKEN_TTL_HOURS * 60 * 60 * 1000);
+  const expiresAt = new Date(Date.now() + SIGNUP_TOKEN_TTL_MINUTES * 60 * 1000);
   const tokenDoc = await SignupTokenModel.create({
     code,
     email: request.email,
