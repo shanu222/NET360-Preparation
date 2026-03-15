@@ -488,9 +488,14 @@ const SUPPORTED_SUBJECTS = new Set([
   'chemistry',
   'biology',
   'english',
+  'computer-science',
   'quantitative mathematics',
+  'quantitative-mathematics',
   'design aptitude',
+  'design-aptitude',
 ]);
+const PART_SELECTION_SUBJECTS = new Set(['mathematics', 'physics', 'chemistry', 'biology', 'english']);
+const FLAT_TOPIC_SUBJECTS = new Set(['quantitative-mathematics', 'design-aptitude']);
 const DEFAULT_CONTRIBUTION_POLICY: LocalContributionPolicy = {
   maxSubmissionsPerDay: 5,
   maxFilesPerSubmission: 3,
@@ -751,6 +756,14 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(max, value));
 }
 
+function normalizeSubjectKey(value: unknown) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, '-');
+}
+
+function isPartSelectionRequiredSubject(value: unknown) {
+  return PART_SELECTION_SUBJECTS.has(normalizeSubjectKey(value));
+}
+
 function shuffle<T>(arr: T[]) {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i -= 1) {
@@ -850,21 +863,21 @@ const NET_TEST_PROFILES: Record<string, {
     durationMinutes: 180,
     totalQuestions: 200,
     distribution: [
-      { label: 'Quantitative Mathematics', percentage: 50, sourceSubjects: ['mathematics'] },
+      { label: 'Quantitative Mathematics', percentage: 50, sourceSubjects: ['quantitative-mathematics'] },
       { label: 'English', percentage: 50, sourceSubjects: ['english'] },
     ],
-    subjectWiseQuestions: { mathematics: 100, english: 100 },
+    subjectWiseQuestions: { 'quantitative-mathematics': 100, english: 100 },
   },
   'net-architecture': {
     label: 'NET Architecture',
     durationMinutes: 180,
     totalQuestions: 200,
     distribution: [
-      { label: 'Design Aptitude', percentage: 50, sourceSubjects: ['english', 'physics', 'mathematics'] },
+      { label: 'Design Aptitude', percentage: 50, sourceSubjects: ['design-aptitude'] },
       { label: 'Mathematics', percentage: 30, sourceSubjects: ['mathematics'] },
       { label: 'English', percentage: 20, sourceSubjects: ['english'] },
     ],
-    subjectWiseQuestions: { mathematics: 100, english: 60, physics: 40 },
+    subjectWiseQuestions: { 'design-aptitude': 100, mathematics: 60, english: 40 },
   },
   'net-natural-sciences': {
     label: 'NET Natural Sciences',
@@ -1466,8 +1479,9 @@ function moderateQuestionSubmission(params: {
   attachments: Array<{ name: string; mimeType: string }>;
 }) {
   const subject = String(params.subject || '').trim().toLowerCase();
+  const normalizedSubject = normalizeSubjectKey(subject);
   const blob = [
-    subject,
+    normalizedSubject,
     String(params.questionText || '').trim(),
     String(params.questionDescription || '').trim(),
     String(params.questionSource || '').trim(),
@@ -1480,7 +1494,7 @@ function moderateQuestionSubmission(params: {
   const reasons: string[] = [];
   let score = 0;
 
-  if (!SUPPORTED_SUBJECTS.has(subject)) {
+  if (!SUPPORTED_SUBJECTS.has(normalizedSubject)) {
     reasons.push('Subject is not part of supported academic categories.');
     score += 50;
   }
@@ -4761,7 +4775,9 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     requireAdmin(token);
     const mcqs = await loadMcqs();
     const normalizedSubject = String(body.subject || 'mathematics').toLowerCase().trim();
-    const isFlatTopicSubject = normalizedSubject === 'quantitative-mathematics' || normalizedSubject === 'design-aptitude';
+    const normalizedSubjectKey = normalizeSubjectKey(normalizedSubject);
+    const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizedSubjectKey);
+    const requiresPartSelection = !isFlatTopicSubject && isPartSelectionRequiredSubject(normalizedSubjectKey);
     const normalizedPart = String(body.part || '').toLowerCase().trim();
     const normalizedChapter = String(body.chapter || '').trim();
     const normalizedSection = String(body.section || '').trim();
@@ -4769,7 +4785,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const payload = {
       id: `admin-${Date.now()}`,
       subject: normalizedSubject as SubjectKey,
-      part: isFlatTopicSubject ? '' : normalizedPart,
+      part: isFlatTopicSubject ? '' : (requiresPartSelection ? normalizedPart : ''),
       chapter: isFlatTopicSubject ? '' : normalizedChapter,
       section: isFlatTopicSubject ? (normalizedSection || normalizedTopic) : normalizedSection,
       topic: isFlatTopicSubject ? (normalizedTopic || normalizedSection) : normalizedTopic,
@@ -4785,8 +4801,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       throw new Error('question, options (min 2), answer, and subject are required.');
     }
 
-    if (!isFlatTopicSubject && (!payload.part || !payload.chapter || !payload.section)) {
-      throw new Error('part, chapter, and section are required for this subject.');
+    if (!isFlatTopicSubject && (!payload.chapter || !payload.section || (requiresPartSelection && !payload.part))) {
+      throw new Error(requiresPartSelection ? 'part, chapter, and section are required for this subject.' : 'chapter and section are required for this subject.');
     }
 
     if (isFlatTopicSubject && !payload.topic && !payload.section) {

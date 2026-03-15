@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Difficulty, MCQ, McqImageFile, McqOptionMedia, SubjectKey } from '../lib/mcq';
+import { Difficulty, MCQ, McqImageFile, McqOptionMedia, SubjectKey, SUBJECT_KEYS } from '../lib/mcq';
 import { apiRequest, buildApiUrl } from '../lib/api';
 import { useAuth } from './AuthContext';
 
@@ -351,15 +351,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [token, user, runForegroundSync]);
 
   const mcqsBySubject = useMemo(() => {
-    const grouped: Record<SubjectKey, MCQ[]> = {
-      mathematics: [],
-      physics: [],
-      english: [],
-      biology: [],
-      chemistry: [],
-    };
+    const grouped = Object.fromEntries(SUBJECT_KEYS.map((subject) => [subject, [] as MCQ[]])) as Record<SubjectKey, MCQ[]>;
 
     mcqs.forEach((question) => {
+      if (!Object.prototype.hasOwnProperty.call(grouped, question.subject)) return;
       grouped[question.subject].push(question);
     });
 
@@ -367,15 +362,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [mcqs]);
 
   const mcqsBySubjectAndDifficulty = useMemo(() => {
-    const grouped: Record<SubjectKey, Record<Difficulty, MCQ[]>> = {
-      mathematics: { Easy: [], Medium: [], Hard: [] },
-      physics: { Easy: [], Medium: [], Hard: [] },
-      english: { Easy: [], Medium: [], Hard: [] },
-      biology: { Easy: [], Medium: [], Hard: [] },
-      chemistry: { Easy: [], Medium: [], Hard: [] },
-    };
+    const grouped = Object.fromEntries(
+      SUBJECT_KEYS.map((subject) => [subject, { Easy: [] as MCQ[], Medium: [] as MCQ[], Hard: [] as MCQ[] }]),
+    ) as Record<SubjectKey, Record<Difficulty, MCQ[]>>;
 
     mcqs.forEach((question) => {
+      if (!Object.prototype.hasOwnProperty.call(grouped, question.subject)) return;
       grouped[question.subject][question.difficulty].push(question);
     });
 

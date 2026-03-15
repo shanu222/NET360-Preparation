@@ -46,7 +46,7 @@ import {
   AlertDialogTrigger,
 } from '../app/components/ui/alert-dialog';
 import { toast } from 'sonner';
-import { FLAT_TOPIC_TABS, SYLLABUS } from '../app/components/Preparation';
+import { COMPUTER_SCIENCE_SYLLABUS, FLAT_TOPIC_TABS, SYLLABUS } from '../app/components/Preparation';
 import type { SubjectKey } from '../app/lib/mcq';
 import {
   downloadBlobFile,
@@ -57,7 +57,7 @@ import {
 import '../styles/admin-theme.css';
 
 const FLAT_TOPIC_SUBJECTS = new Set(['quantitative-mathematics', 'design-aptitude']);
-const PART_SELECTION_SUBJECTS = new Set(['mathematics', 'physics', 'chemistry', 'biology']);
+const PART_SELECTION_SUBJECTS = new Set(['mathematics', 'physics', 'chemistry', 'biology', 'english']);
 const ADMIN_SUPPORT_DESKTOP_ALERTS_KEY = 'net360-support-desktop-alerts-admin';
 const ADMIN_SUPPORT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
 const ADMIN_SUPPORT_ATTACHMENT_ACCEPT = '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp,.svg';
@@ -1610,11 +1610,11 @@ export default function AdminApp() {
       'computer-science': 'Computer Science',
     };
 
-    (Object.keys(SYLLABUS) as SubjectKey[]).forEach((subject) => {
+    Object.entries(SYLLABUS).forEach(([subject, subjectParts]) => {
       const subjectNode = ensureSubject(subject, toTitleLabel(subject));
       if (!subjectNode) return;
       (['part1', 'part2'] as const).forEach((part) => {
-        const partData = SYLLABUS[subject]?.[part];
+        const partData = subjectParts?.[part];
         (partData?.chapters || []).forEach((chapter) => {
           ensureChapter(
             subjectNode,
@@ -1626,6 +1626,19 @@ export default function AdminApp() {
         });
       });
     });
+
+    const computerScienceNode = ensureSubject('computer-science', specialLabels['computer-science']);
+    if (computerScienceNode) {
+      COMPUTER_SCIENCE_SYLLABUS.forEach((chapter) => {
+        ensureChapter(
+          computerScienceNode,
+          `cs::${chapter.id}`,
+          chapter.title,
+          '',
+          Array.isArray(chapter.sections) ? chapter.sections : [],
+        );
+      });
+    }
 
     FLAT_TOPIC_SUBJECTS.forEach((subject) => {
       const subjectNode = ensureSubject(subject, specialLabels[subject] || toTitleLabel(subject));

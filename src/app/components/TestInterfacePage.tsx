@@ -4,9 +4,9 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
+import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
 
 type Difficulty = 'Easy' | 'Medium' | 'Hard';
-type SubjectKey = 'mathematics' | 'physics' | 'english' | 'biology' | 'chemistry';
 
 interface SessionQuestion {
   id: string;
@@ -148,7 +148,7 @@ function buildOptionMedia(question: SessionQuestion) {
 }
 
 function formatSubject(value: SubjectKey) {
-  return value.charAt(0).toUpperCase() + value.slice(1);
+  return getSubjectLabel(value);
 }
 
 function formatTime(totalSeconds: number) {
@@ -674,23 +674,23 @@ export function TestInterfacePage() {
   const optionRows = buildOptionMedia(question);
 
   return (
-    <div className="min-h-screen bg-[#f2f6fb] p-2 text-[#0d2c5a] sm:p-3">
+    <div className="min-h-screen bg-[#f2f6fb] p-1.5 text-[#0d2c5a] sm:p-2.5">
       <div className="mx-auto max-w-[1900px] rounded border-2 border-[#2b5f9f] bg-[#eef4fb] shadow-[0_12px_30px_rgba(5,32,71,0.15)]">
-        <header className="grid gap-1 border-b border-[#2b5f9f] bg-white px-2 py-1.5 text-xs sm:grid-cols-[1fr_auto_1fr] sm:items-center sm:gap-2 sm:py-1 sm:text-sm">
+        <header className="grid gap-1 border-b border-[#2b5f9f] bg-white px-2 py-1.5 text-xs md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-2 md:py-1 md:text-sm">
           <div className="font-semibold text-[#1f6b1f]">{formatSubject(question.subject)}</div>
-          <div className="text-left text-base text-[#a11c12] sm:text-center sm:text-xl">{session.topic}</div>
-          <div className="text-left text-lg text-[#b31212] sm:text-right sm:text-2xl">NUST05 <span className="text-xs sm:text-sm text-[#1f6b1f]">[{question.topic}]</span></div>
+          <div className="break-words text-left text-sm leading-snug text-[#a11c12] md:text-center md:text-xl">{session.topic}</div>
+          <div className="text-left text-base text-[#b31212] md:text-right md:text-2xl">NUST05 <span className="text-xs text-[#1f6b1f] md:text-sm">[{question.topic}]</span></div>
         </header>
 
-        <div className="grid border-b border-[#2b5f9f] bg-[#d6e5f4] text-sm sm:grid-cols-[1fr_160px]">
+        <div className="grid border-b border-[#2b5f9f] bg-[#d6e5f4] text-sm md:grid-cols-[1fr_160px]">
           <div className="px-2 py-1">Question No : <span className="text-blue-700">{questionNumber} of {session.questionCount}</span></div>
-          <div className="border-t border-[#2b5f9f] px-2 py-1 text-left sm:border-l sm:border-t-0 sm:text-right">Marks: <span className="text-blue-700">1</span></div>
+          <div className="border-t border-[#2b5f9f] px-2 py-1 text-left md:border-l md:border-t-0 md:text-right">Marks: <span className="text-blue-700">1</span></div>
         </div>
 
-        <main className="grid gap-0 border-b border-[#2b5f9f] bg-[#c8d3df] sm:grid-cols-[1fr_160px]">
-          <section className="order-2 border-b border-[#2b5f9f] p-2 sm:order-1 sm:border-b-0 sm:border-r">
+        <main className="grid gap-0 border-b border-[#2b5f9f] bg-[#c8d3df] md:grid-cols-[1fr_160px]">
+          <section className="order-2 border-b border-[#2b5f9f] p-2 md:order-1 md:border-b-0 md:border-r">
             <p className="mb-2 font-semibold text-black">Question</p>
-            <div className="min-h-[120px] rounded border border-[#1e3f6e] bg-white p-3 text-sm text-black sm:text-base">
+            <div className="min-h-[104px] rounded border border-[#1e3f6e] bg-white p-2.5 text-sm text-black sm:min-h-[120px] sm:p-3 sm:text-base">
               {question.question}
               {question.questionImage?.dataUrl ? (
                 <img
@@ -702,7 +702,7 @@ export function TestInterfacePage() {
             </div>
           </section>
 
-          <aside className="order-1 grid grid-cols-1 gap-2 border-b border-[#2b5f9f] p-2 sm:order-2 sm:block sm:border-b-0">
+          <aside className="order-1 grid grid-cols-1 gap-2 border-b border-[#2b5f9f] p-2 md:order-2 md:block md:border-b-0">
             <p className="mb-1 text-xs text-black">Candidate</p>
             <div className="mb-2 rounded border border-[#d25555] bg-white p-2 text-center text-[13px] text-black">
               {user?.firstName || 'Candidate'} {user?.lastName || ''}
@@ -795,7 +795,7 @@ export function TestInterfacePage() {
             <p className="mt-1 text-lg text-blue-700">{formatTime(remainingSeconds)}</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-1 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
+          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
             <ExamButton label="Save" icon={Save} onClick={() => toast.success('Answer saved for this question.')} />
             <ExamButton label="Next" icon={ArrowRight} onClick={() => setCurrentIndex((prev) => Math.min(session.questionCount - 1, prev + 1))} />
             <ExamButton label="Prev" icon={ArrowLeft} onClick={() => setCurrentIndex((prev) => Math.max(0, prev - 1))} />

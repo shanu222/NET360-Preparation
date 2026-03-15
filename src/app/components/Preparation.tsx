@@ -8,7 +8,8 @@ import { apiRequest } from '../lib/api';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 
 type AcademicPart = 'part1' | 'part2';
-type TabKey = SubjectKey | 'quantitative-mathematics' | 'design-aptitude';
+type TabKey = SubjectKey;
+type PartStructuredSubjectKey = 'mathematics' | 'physics' | 'english' | 'biology' | 'chemistry';
 
 export interface ChapterItem {
   id: string;
@@ -21,14 +22,16 @@ export interface PartItem {
   chapters: ChapterItem[];
 }
 
-const subjectTabs: SubjectKey[] = ['mathematics', 'physics', 'english', 'biology', 'chemistry'];
+const subjectTabs: SubjectKey[] = ['mathematics', 'physics', 'english', 'biology', 'chemistry', 'computer-science'];
+const PART_STRUCTURED_SUBJECTS: PartStructuredSubjectKey[] = ['mathematics', 'physics', 'english', 'biology', 'chemistry'];
 const tabItems: Array<{ key: TabKey; label: string }> = [
   { key: 'mathematics', label: 'Mathematics' },
   { key: 'physics', label: 'Physics' },
   { key: 'english', label: 'English' },
   { key: 'biology', label: 'Biology' },
   { key: 'chemistry', label: 'Chemistry' },
-  { key: 'quantitative-mathematics', label: 'Computer Science' },
+  { key: 'computer-science', label: 'Computer Science' },
+  { key: 'quantitative-mathematics', label: 'Quantitative Mathematics' },
   { key: 'design-aptitude', label: 'Design Aptitude' },
 ];
 
@@ -53,6 +56,10 @@ const tabTriggerToneByKey: Record<TabKey, { idle: string; active: string }> = {
     idle: 'border-amber-200 bg-amber-50/80 text-amber-700 hover:bg-amber-100',
     active: 'data-[state=active]:from-amber-500 data-[state=active]:to-orange-500 data-[state=active]:shadow-[0_12px_24px_rgba(245,158,11,0.34)]',
   },
+  'computer-science': {
+    idle: 'border-sky-200 bg-sky-50/80 text-sky-700 hover:bg-sky-100',
+    active: 'data-[state=active]:from-sky-600 data-[state=active]:to-indigo-500 data-[state=active]:shadow-[0_12px_24px_rgba(14,116,144,0.34)]',
+  },
   'quantitative-mathematics': {
     idle: 'border-fuchsia-200 bg-fuchsia-50/80 text-fuchsia-700 hover:bg-fuchsia-100',
     active: 'data-[state=active]:from-fuchsia-600 data-[state=active]:to-violet-500 data-[state=active]:shadow-[0_12px_24px_rgba(192,38,211,0.34)]',
@@ -64,13 +71,14 @@ const tabTriggerToneByKey: Record<TabKey, { idle: string; active: string }> = {
 };
 
 const tabWidthPresetByKey: Record<TabKey, string> = {
-  mathematics: 'min-w-[152px] max-w-[186px] sm:min-w-[164px] sm:max-w-[194px]',
-  physics: 'min-w-[132px] max-w-[164px] sm:min-w-[144px] sm:max-w-[172px]',
-  english: 'min-w-[132px] max-w-[164px] sm:min-w-[142px] sm:max-w-[172px]',
-  biology: 'min-w-[132px] max-w-[164px] sm:min-w-[144px] sm:max-w-[172px]',
-  chemistry: 'min-w-[144px] max-w-[174px] sm:min-w-[154px] sm:max-w-[182px]',
-  'quantitative-mathematics': 'min-w-[208px] max-w-[246px] sm:min-w-[228px] sm:max-w-[262px]',
-  'design-aptitude': 'min-w-[176px] max-w-[212px] sm:min-w-[190px] sm:max-w-[224px]',
+  mathematics: 'min-w-[128px] max-w-[166px] sm:min-w-[164px] sm:max-w-[194px]',
+  physics: 'min-w-[112px] max-w-[144px] sm:min-w-[144px] sm:max-w-[172px]',
+  english: 'min-w-[112px] max-w-[144px] sm:min-w-[142px] sm:max-w-[172px]',
+  biology: 'min-w-[112px] max-w-[144px] sm:min-w-[144px] sm:max-w-[172px]',
+  chemistry: 'min-w-[124px] max-w-[156px] sm:min-w-[154px] sm:max-w-[182px]',
+  'computer-science': 'min-w-[146px] max-w-[186px] sm:min-w-[190px] sm:max-w-[226px]',
+  'quantitative-mathematics': 'min-w-[176px] max-w-[214px] sm:min-w-[228px] sm:max-w-[262px]',
+  'design-aptitude': 'min-w-[146px] max-w-[184px] sm:min-w-[190px] sm:max-w-[224px]',
 };
 
 const syllabusToneBySubject: Record<
@@ -160,11 +168,53 @@ const syllabusToneBySubject: Record<
     sectionShadow: 'shadow-[0_10px_18px_rgba(245,158,11,0.26)]',
     panelSurface: 'border-amber-200 bg-amber-50/35',
   },
+  'computer-science': {
+    partIdle: 'border-sky-200/80 bg-sky-50/45',
+    partHover: 'hover:border-sky-300 hover:bg-sky-50/85',
+    partActive: 'from-sky-600 to-indigo-500',
+    partShadow: 'shadow-[0_14px_24px_rgba(14,116,144,0.3)]',
+    chapterIdle: 'border-sky-100 bg-white',
+    chapterHover: 'hover:border-sky-200 hover:bg-sky-50/35',
+    chapterActive: 'border-sky-300/80 bg-sky-50/75 shadow-[0_10px_18px_rgba(14,116,144,0.15)]',
+    chapterAccent: 'text-sky-700',
+    sectionHover: 'hover:border-sky-300 hover:bg-sky-50 hover:text-sky-900',
+    sectionActive: 'from-sky-600 to-indigo-500',
+    sectionShadow: 'shadow-[0_10px_18px_rgba(14,116,144,0.26)]',
+    panelSurface: 'border-sky-200 bg-sky-50/35',
+  },
+  'quantitative-mathematics': {
+    partIdle: 'border-fuchsia-200/80 bg-fuchsia-50/45',
+    partHover: 'hover:border-fuchsia-300 hover:bg-fuchsia-50/85',
+    partActive: 'from-fuchsia-600 to-violet-500',
+    partShadow: 'shadow-[0_14px_24px_rgba(192,38,211,0.3)]',
+    chapterIdle: 'border-fuchsia-100 bg-white',
+    chapterHover: 'hover:border-fuchsia-200 hover:bg-fuchsia-50/35',
+    chapterActive: 'border-fuchsia-300/80 bg-fuchsia-50/75 shadow-[0_10px_18px_rgba(192,38,211,0.15)]',
+    chapterAccent: 'text-fuchsia-700',
+    sectionHover: 'hover:border-fuchsia-300 hover:bg-fuchsia-50 hover:text-fuchsia-900',
+    sectionActive: 'from-fuchsia-600 to-violet-500',
+    sectionShadow: 'shadow-[0_10px_18px_rgba(192,38,211,0.26)]',
+    panelSurface: 'border-fuchsia-200 bg-fuchsia-50/35',
+  },
+  'design-aptitude': {
+    partIdle: 'border-purple-200/80 bg-purple-50/45',
+    partHover: 'hover:border-purple-300 hover:bg-purple-50/85',
+    partActive: 'from-purple-600 to-indigo-500',
+    partShadow: 'shadow-[0_14px_24px_rgba(124,58,237,0.3)]',
+    chapterIdle: 'border-purple-100 bg-white',
+    chapterHover: 'hover:border-purple-200 hover:bg-purple-50/35',
+    chapterActive: 'border-purple-300/80 bg-purple-50/75 shadow-[0_10px_18px_rgba(124,58,237,0.15)]',
+    chapterAccent: 'text-purple-700',
+    sectionHover: 'hover:border-purple-300 hover:bg-purple-50 hover:text-purple-900',
+    sectionActive: 'from-purple-600 to-indigo-500',
+    sectionShadow: 'shadow-[0_10px_18px_rgba(124,58,237,0.26)]',
+    panelSurface: 'border-purple-200 bg-purple-50/35',
+  },
 };
 
 export const FLAT_TOPIC_TABS: Record<'quantitative-mathematics' | 'design-aptitude', { title: string; topics: string[] }> = {
   'quantitative-mathematics': {
-    title: 'Computer Science',
+    title: 'Quantitative Mathematics',
     topics: ['Algebra', 'Ratios & proportions', 'Arithmetic', 'Graphs', 'Functions'],
   },
   'design-aptitude': {
@@ -178,7 +228,45 @@ const FLAT_TAB_SUBJECT_FALLBACKS: Record<'quantitative-mathematics' | 'design-ap
   'design-aptitude': ['english', 'physics', 'mathematics'],
 };
 
-export const SYLLABUS: Record<SubjectKey, Record<AcademicPart, PartItem>> = {
+export const COMPUTER_SCIENCE_SYLLABUS: ChapterItem[] = [
+  {
+    id: 'cs-c1',
+    title: 'Chapter 1 - Computer Fundamentals',
+    sections: ['Introduction to Computers', 'Computer Architecture', 'Basic Terminology'],
+  },
+  {
+    id: 'cs-c2',
+    title: 'Chapter 2 - Programming in C++',
+    sections: ['Elements of C++', 'Decision Constructs', 'Loops', 'Functions', 'File Handling'],
+  },
+  {
+    id: 'cs-c3',
+    title: 'Chapter 3 - Object-Oriented Programming (OOP)',
+    sections: ['Classes', 'Objects', 'Encapsulation', 'Polymorphism', 'Inheritance'],
+  },
+  {
+    id: 'cs-c4',
+    title: 'Chapter 4 - Data Structures & Algorithms',
+    sections: ['Arrays', 'Data Structures', 'Performance Analysis of Algorithms'],
+  },
+  {
+    id: 'cs-c5',
+    title: 'Chapter 5 - Database Management System',
+    sections: ['Basics of Microsoft Access', 'Database Design Processes', 'Normalization', 'Data Integrity'],
+  },
+  {
+    id: 'cs-c6',
+    title: 'Chapter 6 - Operating Systems & Networks',
+    sections: ['Basics of Operating Systems', 'Data Communications', 'Networking Fundamentals'],
+  },
+  {
+    id: 'cs-c7',
+    title: 'Chapter 7 - Additional Topics',
+    sections: ['Artificial Intelligence', 'Software Engineering', 'Web Engineering', 'Digital Logic Design'],
+  },
+];
+
+export const SYLLABUS: Record<PartStructuredSubjectKey, Record<AcademicPart, PartItem>> = {
   mathematics: {
     part1: {
       label: 'Mathematics Part 1 (FSc 1st Year)',
@@ -329,7 +417,7 @@ interface PreparationProps {
   showStartTestButton?: boolean;
   onSelectSection?: (payload: {
     subject: SubjectKey;
-    part: AcademicPart;
+    part?: AcademicPart;
     chapterTitle: string;
     sectionTitle: string;
   }) => void;
@@ -341,29 +429,28 @@ interface PreparationProps {
 }
 
 export function Preparation({ showStartTestButton = true, onSelectSection, onSelectFlatTopic }: PreparationProps = {}) {
-  const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<SubjectKey, AcademicPart | null>>({
-    mathematics: null,
-    physics: null,
-    english: null,
-    biology: null,
-    chemistry: null,
-  });
+  const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<PartStructuredSubjectKey, AcademicPart | null>>(() => (
+    PART_STRUCTURED_SUBJECTS.reduce((acc, subject) => {
+      acc[subject] = null;
+      return acc;
+    }, {} as Record<PartStructuredSubjectKey, AcademicPart | null>)
+  ));
 
-  const [selectedChapterBySubject, setSelectedChapterBySubject] = useState<Record<SubjectKey, string | null>>({
-    mathematics: null,
-    physics: null,
-    english: null,
-    biology: null,
-    chemistry: null,
-  });
+  const [selectedChapterBySubject, setSelectedChapterBySubject] = useState<Record<PartStructuredSubjectKey, string | null>>(() => (
+    PART_STRUCTURED_SUBJECTS.reduce((acc, subject) => {
+      acc[subject] = null;
+      return acc;
+    }, {} as Record<PartStructuredSubjectKey, string | null>)
+  ));
 
-  const [selectedSectionBySubject, setSelectedSectionBySubject] = useState<Record<SubjectKey, string | null>>({
-    mathematics: null,
-    physics: null,
-    english: null,
-    biology: null,
-    chemistry: null,
-  });
+  const [selectedSectionBySubject, setSelectedSectionBySubject] = useState<Record<PartStructuredSubjectKey, string | null>>(() => (
+    PART_STRUCTURED_SUBJECTS.reduce((acc, subject) => {
+      acc[subject] = null;
+      return acc;
+    }, {} as Record<PartStructuredSubjectKey, string | null>)
+  ));
+  const [selectedComputerScienceChapterId, setSelectedComputerScienceChapterId] = useState<string | null>(null);
+  const [selectedComputerScienceSection, setSelectedComputerScienceSection] = useState<string | null>(null);
   const [launchingSectionKey, setLaunchingSectionKey] = useState<string | null>(null);
   const [selectedFlatTopicByTab, setSelectedFlatTopicByTab] = useState<Record<'quantitative-mathematics' | 'design-aptitude', string | null>>({
     'quantitative-mathematics': null,
@@ -455,7 +542,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
 
   const handleStartSectionTest = async (payload: {
     subject: SubjectKey;
-    part: AcademicPart;
+    part?: AcademicPart;
     chapterTitle: string;
     sectionTitle: string;
   }) => {
@@ -474,7 +561,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       return;
     }
 
-    const launchKey = `${payload.subject}|${payload.part}|${payload.chapterTitle}|${payload.sectionTitle}`;
+    const launchKey = `${payload.subject}|${payload.part || ''}|${payload.chapterTitle}|${payload.sectionTitle}`;
 
     try {
       setLaunchingSectionKey(launchKey);
@@ -484,7 +571,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
         topic: payload.sectionTitle,
         mode: 'topic',
         questionCount: 20,
-        part: payload.part,
+          part: payload.part || '',
         chapter: payload.chapterTitle,
         section: payload.sectionTitle,
       });
@@ -625,7 +712,103 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
             );
           }
 
-          const subject = tab.key;
+          if (tab.key === 'computer-science') {
+            const subject: SubjectKey = 'computer-science';
+            const tone = syllabusToneBySubject[subject];
+            return (
+              <TabsContent key={subject} value={subject} className="space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Computer Science Syllabus</CardTitle>
+                    <CardDescription>Chapter and section structure (no part split).</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-3">
+                      {COMPUTER_SCIENCE_SYLLABUS.map((chapter) => {
+                        const active = selectedComputerScienceChapterId === chapter.id;
+                        return (
+                          <div
+                            key={chapter.id}
+                            className={`rounded-xl border transition-all duration-300 ease-out ${active ? tone.chapterActive : `${tone.chapterIdle} ${tone.chapterHover}`} ${!active ? 'hover:-translate-y-0.5 hover:shadow-[0_8px_15px_rgba(15,23,42,0.07)]' : ''}`}
+                          >
+                            <button
+                              type="button"
+                              className="w-full p-3 text-left transition-transform duration-200 active:scale-[0.995]"
+                              onClick={() => {
+                                setSelectedComputerScienceChapterId((prev) => (prev === chapter.id ? null : chapter.id));
+                                setSelectedComputerScienceSection(null);
+                              }}
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div>
+                                  <p className="font-medium text-indigo-950">{chapter.title}</p>
+                                  <p className="mt-1 text-xs text-slate-500">{chapter.sections.length} sections</p>
+                                </div>
+                                <ChevronRight className={`h-4 w-4 transition-transform ${active ? `rotate-90 ${tone.chapterAccent}` : 'text-slate-500'}`} />
+                              </div>
+                            </button>
+
+                            {active ? (
+                              <div className={`border-t px-3 pb-3 pt-2 ${tone.panelSurface}`}>
+                                <ul className="space-y-2 text-sm">
+                                  {chapter.sections.map((section) => (
+                                    <li key={section}>
+                                      <button
+                                        type="button"
+                                        className={`w-full rounded-lg border px-3 py-2 text-left transition-all duration-300 ease-out active:scale-[0.99] ${selectedComputerScienceSection === `${chapter.id}::${section}` ? `border-transparent bg-gradient-to-r ${tone.sectionActive} text-white ${tone.sectionShadow}` : `border-slate-200/80 bg-white text-slate-700 hover:-translate-y-0.5 ${tone.sectionHover} hover:shadow-[0_8px_14px_rgba(15,23,42,0.07)]`}`}
+                                        onClick={() => {
+                                          setSelectedComputerScienceSection(`${chapter.id}::${section}`);
+                                          onSelectSection?.({
+                                            subject,
+                                            chapterTitle: chapter.title,
+                                            sectionTitle: section,
+                                          });
+                                        }}
+                                      >
+                                        {section}
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+
+                                {showStartTestButton && selectedComputerScienceSection?.startsWith(`${chapter.id}::`) ? (
+                                  <div className={`mt-3 rounded-lg border bg-white p-3 ${tone.panelSurface}`}>
+                                    <p className="mb-2 text-xs text-slate-500">
+                                      Selected section:{' '}
+                                      <span className={`font-medium ${tone.chapterAccent}`}>
+                                        {selectedComputerScienceSection.slice(`${chapter.id}::`.length)}
+                                      </span>
+                                    </p>
+                                    <Button
+                                      className={`bg-gradient-to-r ${tone.sectionActive} text-white transition-all duration-200 hover:brightness-105`}
+                                      disabled={Boolean(launchingSectionKey)}
+                                      onClick={() => {
+                                        const selectedSection = selectedComputerScienceSection.slice(`${chapter.id}::`.length);
+                                        if (!selectedSection) return;
+                                        void handleStartSectionTest({
+                                          subject,
+                                          chapterTitle: chapter.title,
+                                          sectionTitle: selectedSection,
+                                        });
+                                      }}
+                                    >
+                                      {launchingSectionKey === `${subject}||${chapter.title}|${selectedComputerScienceSection.slice(`${chapter.id}::`.length)}` ? 'Starting...' : 'Start Test'}
+                                    </Button>
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </Card>
+              </TabsContent>
+            );
+          }
+
+          const subject = tab.key as PartStructuredSubjectKey;
           const tone = syllabusToneBySubject[subject];
           const selectedPart = selectedPartBySubject[subject];
           const currentPart = selectedPart ? SYLLABUS[subject][selectedPart] : null;

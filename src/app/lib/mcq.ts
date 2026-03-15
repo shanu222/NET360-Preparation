@@ -1,5 +1,24 @@
-export type SubjectKey = 'mathematics' | 'physics' | 'english' | 'biology' | 'chemistry';
+export type SubjectKey =
+	| 'mathematics'
+	| 'physics'
+	| 'english'
+	| 'biology'
+	| 'chemistry'
+	| 'computer-science'
+	| 'quantitative-mathematics'
+	| 'design-aptitude';
 export type Difficulty = 'Easy' | 'Medium' | 'Hard';
+
+export const SUBJECT_KEYS: SubjectKey[] = [
+	'mathematics',
+	'physics',
+	'english',
+	'biology',
+	'chemistry',
+	'computer-science',
+	'quantitative-mathematics',
+	'design-aptitude',
+];
 
 export interface McqImageFile {
   name: string;
@@ -57,9 +76,16 @@ const subjectAliases: Record<string, SubjectKey> = {
 	english: 'english',
 	biology: 'biology',
 	chemistry: 'chemistry',
+	'computer-science': 'computer-science',
+	'computer science': 'computer-science',
+	cs: 'computer-science',
+	'quantitative-mathematics': 'quantitative-mathematics',
+	'quantitative mathematics': 'quantitative-mathematics',
+	'design-aptitude': 'design-aptitude',
+	'design aptitude': 'design-aptitude',
 };
 
-const subjectOrder: SubjectKey[] = ['mathematics', 'physics', 'english', 'biology', 'chemistry'];
+const subjectOrder: SubjectKey[] = SUBJECT_KEYS;
 
 function splitCsvLine(line: string): string[] {
 	const values: string[] = [];
@@ -140,6 +166,9 @@ export function parseMcqs(csvText: string): MCQ[] {
 		english: [],
 		biology: [],
 		chemistry: [],
+		'computer-science': [],
+		'quantitative-mathematics': [],
+		'design-aptitude': [],
 	};
 
 	parsedRows.forEach((row) => {
@@ -176,5 +205,15 @@ export function parseMcqs(csvText: string): MCQ[] {
 }
 
 export function getSubjectLabel(subject: SubjectKey): string {
-	return `${subject.charAt(0).toUpperCase()}${subject.slice(1)}`;
+	const labels: Record<SubjectKey, string> = {
+		mathematics: 'Mathematics',
+		physics: 'Physics',
+		english: 'English',
+		biology: 'Biology',
+		chemistry: 'Chemistry',
+		'computer-science': 'Computer Science',
+		'quantitative-mathematics': 'Quantitative Mathematics',
+		'design-aptitude': 'Design Aptitude',
+	};
+	return labels[subject] || `${subject.charAt(0).toUpperCase()}${subject.slice(1)}`;
 }

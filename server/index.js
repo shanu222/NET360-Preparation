@@ -467,8 +467,11 @@ const SUPPORTED_SUBJECTS = new Set([
   'chemistry',
   'biology',
   'english',
+  'computer-science',
   'quantitative mathematics',
+  'quantitative-mathematics',
   'design aptitude',
+  'design-aptitude',
 ]);
 const DEFAULT_CONTRIBUTION_POLICY = {
   maxSubmissionsPerDay: 5,
@@ -559,7 +562,8 @@ const MCQ_ALLOWED_IMAGE_MIME_TYPES = new Set([
   'image/tiff',
 ]);
 const MCQ_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MCQ_PART_REQUIRED_SUBJECTS = new Set(['mathematics', 'physics', 'chemistry', 'biology']);
+const MCQ_PART_REQUIRED_SUBJECTS = new Set(['mathematics', 'physics', 'chemistry', 'biology', 'english']);
+const MCQ_FLAT_TOPIC_SUBJECTS = new Set(['quantitative-mathematics', 'design-aptitude']);
 const COMMUNITY_PROFILE_PICTURE_ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -633,6 +637,7 @@ async function getContributionPolicy() {
 
 function moderateQuestionSubmission(params) {
   const subject = String(params?.subject || '').trim().toLowerCase();
+  const normalizedSubject = normalizeSubjectKey(subject);
   const questionText = String(params?.questionText || '').trim();
   const questionDescription = String(params?.questionDescription || '').trim();
   const questionSource = String(params?.questionSource || '').trim();
@@ -640,7 +645,7 @@ function moderateQuestionSubmission(params) {
   const attachments = Array.isArray(params?.attachments) ? params.attachments : [];
 
   const blob = [
-    subject,
+    normalizedSubject,
     questionText,
     questionDescription,
     questionSource,
@@ -653,7 +658,7 @@ function moderateQuestionSubmission(params) {
   const reasons = [];
   let score = 0;
 
-  if (!SUPPORTED_SUBJECTS.has(subject)) {
+  if (!SUPPORTED_SUBJECTS.has(normalizedSubject)) {
     reasons.push('Subject is not part of supported academic categories.');
     score += 50;
   }
@@ -4313,11 +4318,11 @@ const NET_TEST_PROFILES = {
     durationMinutes: 180,
     totalQuestions: 200,
     distribution: [
-      { label: 'Quantitative Mathematics', percentage: 50, sourceSubjects: ['mathematics'] },
+      { label: 'Quantitative Mathematics', percentage: 50, sourceSubjects: ['quantitative-mathematics'] },
       { label: 'English', percentage: 50, sourceSubjects: ['english'] },
     ],
     subjectWiseQuestions: {
-      mathematics: 100,
+      'quantitative-mathematics': 100,
       english: 100,
     },
   },
@@ -4326,15 +4331,14 @@ const NET_TEST_PROFILES = {
     durationMinutes: 180,
     totalQuestions: 200,
     distribution: [
-      // Design aptitude is approximated from mixed conceptual pools.
-      { label: 'Design Aptitude', percentage: 50, sourceSubjects: ['english', 'physics', 'mathematics'] },
+      { label: 'Design Aptitude', percentage: 50, sourceSubjects: ['design-aptitude'] },
       { label: 'Mathematics', percentage: 30, sourceSubjects: ['mathematics'] },
       { label: 'English', percentage: 20, sourceSubjects: ['english'] },
     ],
     subjectWiseQuestions: {
-      mathematics: 100,
-      english: 60,
-      physics: 40,
+      'design-aptitude': 100,
+      mathematics: 60,
+      english: 40,
     },
   },
   'net-natural-sciences': {
@@ -10432,12 +10436,13 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   } = req.body || {};
 
   const normalizedSubject = String(subject || '').toLowerCase().trim();
+  const normalizedSubjectKey = normalizeSubjectKey(normalizedSubject);
   const normalizedPart = String(part || '').toLowerCase().trim();
   const normalizedChapter = String(chapter || '').trim();
   const normalizedSection = String(section || '').trim();
   const normalizedTopic = String(topic || '').trim();
-  const isFlatTopicSubject = normalizedSubject === 'quantitative-mathematics' || normalizedSubject === 'design-aptitude';
-  const requiresPartSelection = !isFlatTopicSubject && isPartSelectionRequiredSubject(normalizedSubject);
+  const isFlatTopicSubject = MCQ_FLAT_TOPIC_SUBJECTS.has(normalizedSubjectKey);
+  const requiresPartSelection = !isFlatTopicSubject && isPartSelectionRequiredSubject(normalizedSubjectKey);
 
   if (!answer || !normalizedSubject) {
     res.status(400).json({ error: 'answer and subject are required.' });
@@ -10502,7 +10507,7 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
     optionMedia: normalizedOptionMedia,
     answer: resolvedAnswerKey,
     subject: normalizedSubject,
-    part: isFlatTopicSubject ? '' : normalizedPart,
+    part: isFlatTopicSubject ? '' : (requiresPartSelection ? normalizedPart : ''),
     chapter: isFlatTopicSubject ? '' : normalizedChapter,
     section: resolvedSection,
     topic: resolvedTopic,

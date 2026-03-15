@@ -187,8 +187,8 @@ type NetTrackId =
 const SUBJECTS_BY_TRACK: Record<NetTrackId, SubjectKey[]> = {
   'net-engineering': ['mathematics', 'physics', 'english'],
   'net-applied-sciences': ['biology', 'chemistry', 'english'],
-  'net-business-social-sciences': ['mathematics', 'english'],
-  'net-architecture': ['mathematics', 'physics', 'english'],
+  'net-business-social-sciences': ['quantitative-mathematics', 'english'],
+  'net-architecture': ['design-aptitude', 'mathematics', 'english'],
   'net-natural-sciences': ['mathematics', 'english'],
 };
 
