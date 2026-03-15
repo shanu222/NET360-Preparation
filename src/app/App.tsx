@@ -1,4 +1,4 @@
-import { Component, Suspense, lazy, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
+import { Component, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
 import { ScrollArea } from './components/ui/scroll-area';
 import { Dashboard } from './components/Dashboard';
 import { NUSTGuide } from './components/NUSTGuide';
@@ -11,6 +11,8 @@ import { Analytics } from './components/Analytics';
 import { MeritCalculator } from './components/MeritCalculator';
 import { Profile } from './components/Profile';
 import { Community } from './components/Community';
+import { ProgramExplorer } from './components/ProgramExplorer';
+import { NETTypes } from './components/NETTypes';
 import { SupportChatWidget } from './components/SupportChatWidget';
 import { FirstTimeSetup, isTermsAccepted } from './components/FirstTimeSetup';
 import { 
@@ -57,50 +59,6 @@ function resolveInitialThemeMode(): ThemeMode {
 
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
-
-const ProgramExplorer = lazy(async () => {
-  try {
-    const module = await import('./components/ProgramExplorer');
-    return { default: module.ProgramExplorer };
-  } catch (error) {
-    // Enhanced logging for debugging dynamic import failures
-    if (error && error.stack) {
-      console.error('Failed to load Programs section bundle:', error.stack);
-    } else {
-      console.error('Failed to load Programs section bundle:', error);
-    }
-    // Optionally, display the error message in the UI for debugging
-    return {
-      default: () => (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
-          Could not load Programs right now. Please try again.<br />
-          <span style={{ color: 'red', fontSize: '0.9em' }}>{String(error && error.message ? error.message : error)}</span>
-        </div>
-      ),
-    };
-  }
-});
-
-const NETTypes = lazy(async () => {
-  try {
-    const module = await import('./components/NETTypes');
-    return { default: module.NETTypes };
-  } catch (error) {
-    if (error && error.stack) {
-      console.error('Failed to load NET Types section bundle:', error.stack);
-    } else {
-      console.error('Failed to load NET Types section bundle:', error);
-    }
-    return {
-      default: () => (
-        <div className="rounded-xl border border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
-          Could not load NET Types right now. Please try again.<br />
-          <span style={{ color: 'red', fontSize: '0.9em' }}>{String(error && error.message ? error.message : error)}</span>
-        </div>
-      ),
-    };
-  }
-});
 
 type SectionId =
   | 'home'
@@ -189,14 +147,6 @@ class SectionErrorBoundary extends Component<{ children: ReactNode; sectionName:
 
     return this.props.children;
   }
-}
-
-function SectionLoadingFallback({ sectionName }: { sectionName: string }) {
-  return (
-    <div className="rounded-xl border border-indigo-100 bg-white/80 p-4 text-sm text-slate-600">
-      Loading {sectionName}...
-    </div>
-  );
 }
 
 function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
@@ -476,9 +426,7 @@ export default function App() {
               {activeTab === 'programs' ? (
                 <div className="mt-0 net360-page">
                   <SectionErrorBoundary sectionName="Programs" resetKey={activeTab}>
-                    <Suspense fallback={<SectionLoadingFallback sectionName="Programs" />}>
-                      <ProgramExplorer />
-                    </Suspense>
+                    <ProgramExplorer />
                   </SectionErrorBoundary>
                 </div>
               ) : null}
@@ -486,9 +434,7 @@ export default function App() {
               {activeTab === 'net-types' ? (
                 <div className="mt-0 net360-page">
                   <SectionErrorBoundary sectionName="NET Types" resetKey={activeTab}>
-                    <Suspense fallback={<SectionLoadingFallback sectionName="NET Types" />}>
-                      <NETTypes />
-                    </Suspense>
+                    <NETTypes />
                   </SectionErrorBoundary>
                 </div>
               ) : null}

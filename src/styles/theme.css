@@ -41,6 +41,10 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --net360-text-primary: #1f2a63;
+  --net360-text-secondary: #44527a;
+  --net360-surface-1: rgba(255, 255, 255, 0.95);
+  --net360-surface-2: rgba(248, 250, 255, 0.9);
 }
 
 .dark {
@@ -78,6 +82,10 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(0.269 0 0);
   --sidebar-ring: oklch(0.439 0 0);
+  --net360-text-primary: #e7ecff;
+  --net360-text-secondary: #c4d0f3;
+  --net360-surface-1: rgba(24, 34, 73, 0.9);
+  --net360-surface-2: rgba(17, 25, 55, 0.9);
 }
 
 @theme inline {
@@ -200,7 +208,7 @@
 
   p {
     line-height: 1.6;
-    color: #465273;
+    color: var(--net360-text-secondary);
   }
 
   label {
@@ -282,6 +290,23 @@
   .net360-page .overflow-x-auto,
   .net360-page [data-slot='scroll-area'] {
     max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+    scrollbar-width: thin;
+  }
+
+  .net360-horizontal-scroll {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+    scrollbar-width: thin;
+  }
+
+  .net360-horizontal-scroll > * {
+    min-width: max-content;
   }
 
   .net360-page .recharts-responsive-container,
@@ -290,7 +315,7 @@
   }
 
   .net360-page h1 {
-    color: #1f2a63;
+    color: var(--net360-text-primary);
     font-size: clamp(1.5rem, 1.2rem + 1.2vw, 1.95rem);
   }
 
@@ -477,7 +502,19 @@
   .dark .net360-page span,
   .dark .net360-page label,
   .dark .net360-page a {
-    color: #c2cced;
+    color: var(--net360-text-secondary);
+  }
+
+  .net360-page .text-white,
+  .dark .net360-page .text-white,
+  .dark .net360-page .text-white\/90,
+  .dark .net360-page .text-white\/80 {
+    color: #ffffff !important;
+  }
+
+  .net360-page .text-black,
+  .dark .net360-page .text-black {
+    color: #0f172a !important;
   }
 
   .dark .net360-page [data-slot='tabs-list'] {

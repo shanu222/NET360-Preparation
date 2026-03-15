@@ -1237,8 +1237,8 @@ export function Community() {
   return (
     <div className="min-w-0 space-y-4">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-4">
-        <div className="overflow-x-auto pb-1 [scrollbar-gutter:stable]">
-          <TabsList className="inline-flex h-auto w-max min-w-max gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 via-indigo-50 to-fuchsia-50 p-1.5 shadow-[0_10px_20px_rgba(99,102,241,0.12)]">
+        <div className="net360-horizontal-scroll -mx-1 px-1 pb-1 [scrollbar-gutter:stable]">
+          <TabsList className="inline-flex h-auto w-max min-w-max flex-nowrap gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 via-indigo-50 to-fuchsia-50 p-1.5 shadow-[0_10px_20px_rgba(99,102,241,0.12)]">
             <TabsTrigger value="discover-students" className={sectionTabTriggerClassName}>Discover Students</TabsTrigger>
             <TabsTrigger value="study-partners" className={sectionTabTriggerClassName}>Study Partners</TabsTrigger>
             <TabsTrigger value="discussion-rooms" className={sectionTabTriggerClassName}>Discussion Rooms</TabsTrigger>
@@ -2040,7 +2040,7 @@ export function Community() {
 
                 <div className="max-h-[300px] overflow-auto rounded-lg border p-3 space-y-2 sm:max-h-[330px]">
                   {messages.map((item) => (
-                    <div key={item.id} className={`max-w-[85%] rounded-md p-2 text-sm ${item.senderUserId === user.id ? 'ml-auto bg-indigo-100 text-indigo-900' : 'bg-slate-100'}`}>
+                    <div key={item.id} className={`max-w-[88%] rounded-md p-2 text-sm ${item.senderUserId === user.id ? 'ml-auto bg-indigo-100 text-indigo-900 dark:bg-indigo-500/30 dark:text-indigo-100' : 'bg-slate-100 text-slate-800 dark:bg-slate-800/85 dark:text-slate-100'}`}>
                       {item.messageType === 'call-invite' && item.callInvite?.roomUrl ? (
                         <div className="space-y-1">
                           <p>{item.text || `${item.callInvite.mode === 'video' ? 'Video' : 'Audio'} call invite`}</p>
@@ -2067,7 +2067,7 @@ export function Community() {
                           <button
                             key={`${item.id}-${emoji}`}
                             type="button"
-                            className="rounded border bg-white/70 px-1.5 py-0.5 text-[11px]"
+                            className="rounded border bg-white/70 px-1.5 py-0.5 text-[11px] text-slate-800 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100"
                             onClick={() => void toggleMessageReaction(item.id, emoji)}
                           >
                             {emoji}

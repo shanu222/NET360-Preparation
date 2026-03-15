@@ -1198,7 +1198,7 @@ export function Profile({ onNavigate }: ProfileProps) {
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Plan</span>
-                <Badge>Premium</Badge>
+                <Badge className="bg-gradient-to-r from-amber-500 to-orange-500 text-white dark:from-amber-400 dark:to-orange-400 dark:text-slate-900">Premium</Badge>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Tests Taken</span>
