@@ -3323,36 +3323,38 @@ export default function AdminApp() {
     try {
       setBulkUploading(true);
 
-      for (const item of bulkParsed) {
+      const parsedMcqs = bulkParsed.map((item) => {
         const optionMedia = item.options.map((text, idx) => ({
           key: String.fromCharCode(65 + idx),
           text,
           image: parsedDataUrlToImage(item.optionImageDataUrls?.[idx], `option-${idx + 1}-image`),
         }));
 
-        await apiRequest('/api/admin/mcqs', {
-          method: 'POST',
-          body: JSON.stringify({
-            subject: hierarchyContext.subject,
-            part: hierarchyContext.part,
-            chapter: hierarchyContext.chapter,
-            section: hierarchyContext.section,
-            topic: hierarchyContext.topic,
-            question: item.question,
-            questionImageUrl: item.questionImageUrl,
-            questionImage: parsedDataUrlToImage(item.questionImageDataUrl, 'question-image'),
-            options: item.options,
-            optionMedia,
-            answer: item.answer,
-            tip: item.tip,
-            explanationText: item.tip,
-            explanationImage: parsedDataUrlToImage(item.explanationImageDataUrl, 'explanation-image'),
-            shortTrickText: String(item.shortTrick || '').trim(),
-            shortTrickImage: null,
-            difficulty: item.difficulty,
-          }),
-        }, authToken);
-      }
+        return {
+          subject: hierarchyContext.subject,
+          part: hierarchyContext.part,
+          chapter: hierarchyContext.chapter,
+          section: hierarchyContext.section,
+          topic: hierarchyContext.topic,
+          question: item.question,
+          questionImageUrl: item.questionImageUrl,
+          questionImage: parsedDataUrlToImage(item.questionImageDataUrl, 'question-image'),
+          options: item.options,
+          optionMedia,
+          answer: item.answer,
+          tip: item.tip,
+          explanationText: item.tip,
+          explanationImage: parsedDataUrlToImage(item.explanationImageDataUrl, 'explanation-image'),
+          shortTrickText: String(item.shortTrick || '').trim(),
+          shortTrickImage: null,
+          difficulty: item.difficulty,
+        };
+      });
+
+      await apiRequest('/api/admin/mcqs/bulk', {
+        method: 'POST',
+        body: JSON.stringify({ mcqs: parsedMcqs }),
+      }, authToken);
 
       toast.success(`${bulkParsed.length} MCQ(s) uploaded successfully.`);
       setBulkInput('');

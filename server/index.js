@@ -10502,7 +10502,7 @@ app.post('/api/admin/mcqs/parse', authMiddleware, requireAdmin, async (req, res)
   }
 });
 
-app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
+function buildAdminMcqDocument(input = {}) {
   const {
     question,
     questionImageUrl = '',
@@ -10521,7 +10521,7 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
     explanationImage = null,
     shortTrickText = '',
     shortTrickImage = null,
-  } = req.body || {};
+  } = input || {};
 
   const normalizedSubject = String(subject || '').toLowerCase().trim();
   const normalizedSubjectKey = normalizeSubjectKey(normalizedSubject);
@@ -10533,47 +10533,32 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const requiresPartSelection = !isFlatTopicSubject && isPartSelectionRequiredSubject(normalizedSubjectKey);
 
   if (!answer || !normalizedSubject) {
-    res.status(400).json({ error: 'answer and subject are required.' });
-    return;
+    throw new Error('answer and subject are required.');
   }
 
   if (!isFlatTopicSubject && (!normalizedChapter || !normalizedSection || (requiresPartSelection && !normalizedPart))) {
-    res.status(400).json({
-      error: requiresPartSelection
+    throw new Error(
+      requiresPartSelection
         ? 'part, chapter, and section are required for this subject.'
         : 'chapter and section are required for this subject.',
-    });
-    return;
+    );
   }
 
   if (isFlatTopicSubject && !normalizedTopic && !normalizedSection) {
-    res.status(400).json({ error: 'topic is required for this subject.' });
-    return;
+    throw new Error('topic is required for this subject.');
   }
 
-  let normalizedQuestionImage;
-  let normalizedExplanationImage;
-  let normalizedShortTrickImage;
-  let normalizedOptions;
-  let normalizedOptionMedia;
-
-  try {
-    normalizedQuestionImage = normalizeMcqImageFile(questionImage, 'Question image');
-    normalizedExplanationImage = normalizeMcqImageFile(explanationImage, 'Explanation image');
-    normalizedShortTrickImage = normalizeMcqImageFile(shortTrickImage, 'Short trick image');
-    const normalized = sanitizeMcqOptionsWithMedia(options, optionMedia);
-    normalizedOptions = normalized.options;
-    normalizedOptionMedia = normalized.optionMedia;
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid MCQ image payload.' });
-    return;
-  }
+  const normalizedQuestionImage = normalizeMcqImageFile(questionImage, 'Question image');
+  const normalizedExplanationImage = normalizeMcqImageFile(explanationImage, 'Explanation image');
+  const normalizedShortTrickImage = normalizeMcqImageFile(shortTrickImage, 'Short trick image');
+  const normalized = sanitizeMcqOptionsWithMedia(options, optionMedia);
+  const normalizedOptions = normalized.options;
+  const normalizedOptionMedia = normalized.optionMedia;
 
   const normalizedQuestionText = String(question || '').trim();
   const hasQuestionImage = Boolean(normalizedQuestionImage) || Boolean(String(questionImageUrl || '').trim());
   if (!normalizedQuestionText && !hasQuestionImage) {
-    res.status(400).json({ error: 'Question text or question image is required.' });
-    return;
+    throw new Error('Question text or question image is required.');
   }
 
   const resolvedTopic = isFlatTopicSubject
@@ -10583,11 +10568,10 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const resolvedAnswerKey = resolveAnswerToOptionKey(answer, normalizedOptionMedia, normalizedOptions);
 
   if (!resolvedAnswerKey) {
-    res.status(400).json({ error: 'Correct answer must match one option (A/B/C/D, 1/2/3/4, or exact option text).' });
-    return;
+    throw new Error('Correct answer must match one option (A/B/C/D, 1/2/3/4, or exact option text).');
   }
 
-  const mcq = await MCQModel.create({
+  return {
     question: normalizedQuestionText || 'Refer to attached image.',
     questionImageUrl: String(questionImageUrl || '').trim(),
     questionImage: normalizedQuestionImage,
@@ -10605,6 +10589,20 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
     explanationImage: normalizedExplanationImage,
     shortTrickText: String(shortTrickText || ''),
     shortTrickImage: normalizedShortTrickImage,
+  };
+}
+
+app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
+  let payload;
+  try {
+    payload = buildAdminMcqDocument(req.body || {});
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid MCQ payload.' });
+    return;
+  }
+
+  const mcq = await MCQModel.create({
+    ...payload,
     source: 'Admin',
   });
 
@@ -10612,6 +10610,44 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
 
   res.status(201).json({
     mcq: serializeMcq(mcq),
+  });
+});
+
+app.post('/api/admin/mcqs/bulk', authMiddleware, requireAdmin, async (req, res) => {
+  const parsedMcqs = Array.isArray(req.body?.mcqs)
+    ? req.body.mcqs
+    : (Array.isArray(req.body?.parsedMCQs) ? req.body.parsedMCQs : []);
+
+  if (!parsedMcqs.length) {
+    res.status(400).json({ error: 'mcqs array is required.' });
+    return;
+  }
+
+  let docs;
+  try {
+    docs = parsedMcqs.map((item, index) => {
+      try {
+        return {
+          ...buildAdminMcqDocument(item || {}),
+          source: 'Admin',
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Invalid MCQ payload.';
+        throw new Error(`MCQ ${index + 1}: ${message}`);
+      }
+    });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not validate MCQ list.' });
+    return;
+  }
+
+  const createdMcqs = await MCQModel.insertMany(docs, { ordered: true });
+
+  broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'bulk-create' } });
+
+  res.status(201).json({
+    count: createdMcqs.length,
+    mcqs: createdMcqs.map((item) => serializeMcq(item)),
   });
 });
 
