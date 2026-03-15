@@ -10455,17 +10455,41 @@ function buildAdminMcqDocument(input = {}) {
   };
 }
 
-function normalizeBulkUploadMcqEntry(input = {}) {
-  const subject = String(input.subject || 'english').trim().toLowerCase();
-  const chapter = String(input.chapter || 'Vocabulary').trim();
-  const section = String(input.section || 'Synonyms').trim();
-  const topic = String(input.topic || section || 'Synonyms').trim();
+async function resolveExistingEnglishVocabularySynonymsContext() {
+  const existing = await MCQModel.findOne({
+    subject: { $regex: '^english$', $options: 'i' },
+    chapter: { $regex: '^vocabulary$', $options: 'i' },
+    section: { $regex: '^synonyms$', $options: 'i' },
+  })
+    .select('subject part chapter section topic')
+    .lean();
+
+  if (!existing) {
+    throw new Error('Existing English -> Vocabulary -> Synonyms context was not found in database. Add one MCQ there first.');
+  }
+
+  return {
+    subject: String(existing.subject || 'english').trim().toLowerCase(),
+    part: String(existing.part || 'part1').trim().toLowerCase(),
+    chapter: String(existing.chapter || 'Vocabulary').trim(),
+    section: String(existing.section || 'Synonyms').trim(),
+    topic: String(existing.topic || existing.section || 'Synonyms').trim(),
+  };
+}
+
+function normalizeBulkUploadMcqEntry(input = {}, fixedContext) {
+  const subject = String(fixedContext?.subject || 'english').trim().toLowerCase();
+  const chapter = String(fixedContext?.chapter || 'Vocabulary').trim();
+  const section = String(fixedContext?.section || 'Synonyms').trim();
+  const topic = String(fixedContext?.topic || section || 'Synonyms').trim();
   const difficulty = normalizeDifficulty(input.difficulty || 'Medium');
   const question = String(input.question || '').trim();
   const explanation = String(input.explanation || input.tip || input.explanationText || '').trim();
   const source = String(input.source || 'Bulk Upload').trim();
   const requiresPart = isPartSelectionRequiredSubject(subject);
-  const part = requiresPart ? String(input.part || 'part1').trim().toLowerCase() : '';
+  const part = requiresPart
+    ? String(fixedContext?.part || input.part || 'part1').trim().toLowerCase()
+    : '';
 
   const directOptions = Array.isArray(input.options)
     ? input.options.map((item) => String(item || '').trim()).filter(Boolean)
@@ -10556,9 +10580,17 @@ app.post('/api/mcqs/bulk-upload', authMiddleware, requireAdmin, async (req, res)
   const prepared = [];
   const skippedDuplicates = [];
 
+  let fixedContext;
+  try {
+    fixedContext = await resolveExistingEnglishVocabularySynonymsContext();
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not resolve existing chapter/section context.' });
+    return;
+  }
+
   try {
     rows.forEach((row, index) => {
-      const normalized = normalizeBulkUploadMcqEntry(row || {});
+      const normalized = normalizeBulkUploadMcqEntry(row || {}, fixedContext);
       if (seen.has(normalized.signature)) {
         skippedDuplicates.push({ index, reason: 'Duplicate in payload', question: normalized.doc.question });
         return;
@@ -10615,18 +10647,43 @@ app.post('/api/admin/mcqs/bulk', authMiddleware, requireAdmin, async (req, res) 
   const parsedMcqs = Array.isArray(req.body?.mcqs)
     ? req.body.mcqs
     : (Array.isArray(req.body?.parsedMCQs) ? req.body.parsedMCQs : []);
+  const enforceExistingEnglishVocabularySynonyms = Boolean(req.body?.enforceExistingEnglishVocabularySynonyms);
 
   if (!parsedMcqs.length) {
     res.status(400).json({ error: 'mcqs array is required.' });
     return;
   }
 
+  let fixedContext = null;
+  if (enforceExistingEnglishVocabularySynonyms) {
+    try {
+      fixedContext = await resolveExistingEnglishVocabularySynonymsContext();
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : 'Could not resolve existing chapter/section context.' });
+      return;
+    }
+  }
+
   let docs;
   try {
     docs = parsedMcqs.map((item, index) => {
       try {
+        const shouldPinToExistingContext = fixedContext
+          && normalizeSubjectKey(item?.subject || fixedContext.subject) === 'english';
+
+        const pinnedItem = shouldPinToExistingContext
+          ? {
+            ...item,
+            subject: fixedContext.subject,
+            part: fixedContext.part,
+            chapter: fixedContext.chapter,
+            section: fixedContext.section,
+            topic: fixedContext.topic,
+          }
+          : item;
+
         return {
-          ...buildAdminMcqDocument(item || {}),
+          ...buildAdminMcqDocument(pinnedItem || {}),
           source: 'Admin',
         };
       } catch (error) {

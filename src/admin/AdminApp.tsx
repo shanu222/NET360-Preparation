@@ -3353,7 +3353,10 @@ export default function AdminApp() {
 
       await apiRequest('/api/admin/mcqs/bulk', {
         method: 'POST',
-        body: JSON.stringify({ mcqs: parsedMcqs }),
+        body: JSON.stringify({
+          mcqs: parsedMcqs,
+          enforceExistingEnglishVocabularySynonyms: true,
+        }),
       }, authToken);
 
       toast.success(`${bulkParsed.length} MCQ(s) uploaded successfully.`);

@@ -175,6 +175,24 @@ async function run() {
 
   await connectMongo(mongoUri);
 
+  const existingContext = await MCQModel.findOne({
+    subject: { $regex: '^english$', $options: 'i' },
+    chapter: { $regex: '^vocabulary$', $options: 'i' },
+    section: { $regex: '^synonyms$', $options: 'i' },
+  })
+    .select('subject part chapter section topic')
+    .lean();
+
+  if (!existingContext) {
+    throw new Error('Existing English -> Vocabulary -> Synonyms context not found. Seed was blocked to avoid creating a new chapter/section.');
+  }
+
+  const fixedSubject = String(existingContext.subject || 'english').toLowerCase().trim();
+  const fixedPart = String(existingContext.part || 'part1').toLowerCase().trim();
+  const fixedChapter = String(existingContext.chapter || 'Vocabulary').trim();
+  const fixedSection = String(existingContext.section || 'Synonyms').trim();
+  const fixedTopic = String(existingContext.topic || fixedSection || 'Synonyms').trim();
+
   const prepared = sourceMcqs.map((item, index) => {
     const options = [item.optionA, item.optionB, item.optionC, item.optionD].map((v) => String(v || '').trim());
     if (options.some((value) => !value)) {
@@ -187,11 +205,11 @@ async function run() {
     }
 
     return {
-      subject: String(item.subject || 'English').toLowerCase(),
-      part: 'part1',
-      chapter: String(item.chapter || 'Vocabulary').trim(),
-      section: String(item.section || 'Synonyms').trim(),
-      topic: 'Synonyms',
+      subject: fixedSubject,
+      part: fixedPart,
+      chapter: fixedChapter,
+      section: fixedSection,
+      topic: fixedTopic,
       question: String(item.question || '').trim(),
       options,
       optionMedia: options.map((text, i) => ({ key: String.fromCharCode(65 + i), text, image: null })),
@@ -204,10 +222,10 @@ async function run() {
   });
 
   const scopeFilter = {
-    subject: 'english',
-    part: 'part1',
-    chapter: 'Vocabulary',
-    section: 'Synonyms',
+    subject: fixedSubject,
+    part: fixedPart,
+    chapter: fixedChapter,
+    section: fixedSection,
   };
 
   const existing = await MCQModel.find(scopeFilter).select('question').lean();
