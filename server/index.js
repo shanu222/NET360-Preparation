@@ -8892,9 +8892,39 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     });
   } else if (normalizedTestType === 'subject-wise') {
     const pickedSubject = String(selectedSubject || normalizedSubject || '').toLowerCase();
-    const subjectCount = profile.subjectWiseQuestions[pickedSubject] || desiredQuestions;
-    const subjectPool = await MCQModel.find({ subject: pickedSubject }).lean();
-    selected = shuffle(subjectPool).slice(0, Math.min(subjectCount, subjectPool.length));
+    const profileSubjects = Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects)));
+    if (!pickedSubject || !profileSubjects.includes(pickedSubject)) {
+      res.status(400).json({ error: 'Selected subject is not part of the chosen NET type.' });
+      return;
+    }
+
+    const subjectPercentage = profile.distribution.reduce((sum, entry) => (
+      entry.sourceSubjects.includes(pickedSubject)
+        ? sum + Number(entry.percentage || 0)
+        : sum
+    ), 0);
+
+    if (subjectPercentage <= 0) {
+      res.status(400).json({ error: 'Subject weightage is not configured for the selected NET type.' });
+      return;
+    }
+
+    const requiredSubjectQuestions = Math.max(
+      1,
+      Math.round((subjectPercentage / 100) * Number(profile.totalQuestions || 200)),
+    );
+
+    const subjectFilter = { subject: pickedSubject };
+    const totalAvailable = await MCQModel.countDocuments(subjectFilter);
+
+    if (totalAvailable >= requiredSubjectQuestions) {
+      selected = await MCQModel.aggregate([
+        { $match: subjectFilter },
+        { $sample: { size: requiredSubjectQuestions } },
+      ]);
+    } else {
+      selected = await MCQModel.find(subjectFilter).lean();
+    }
   } else if (normalizedTestType === 'adaptive' || normalizedMode === 'adaptive') {
     const weakTopics = req.user.progress?.weakTopics || [];
     selected = generateAdaptiveSet({
