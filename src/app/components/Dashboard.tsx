@@ -32,7 +32,7 @@ const SUBJECT_STYLE_FALLBACKS = [
   { badge: 'from-sky-500 to-indigo-400', bar: 'bg-sky-500' },
 ];
 
-type DashboardSubjectKey = SubjectKey | 'computer-science' | 'intelligence';
+type DashboardSubjectKey = SubjectKey;
 
 interface DashboardSubjectDescriptor {
   key: DashboardSubjectKey;
@@ -54,7 +54,7 @@ function buildDashboardSubjects(targetProgram: string): DashboardSubjectDescript
       { key: 'physics', label: getSubjectLabel('physics'), source: 'physics' },
       { key: 'chemistry', label: getSubjectLabel('chemistry'), source: 'chemistry' },
       { key: 'english', label: getSubjectLabel('english'), source: 'english' },
-      { key: 'intelligence', label: DASHBOARD_LABEL_OVERRIDES.intelligence || 'Intelligence', source: null },
+      { key: 'intelligence', label: DASHBOARD_LABEL_OVERRIDES.intelligence || 'Intelligence', source: 'intelligence' },
     ];
   }
 
@@ -62,9 +62,9 @@ function buildDashboardSubjects(targetProgram: string): DashboardSubjectDescript
     return [
       { key: 'mathematics', label: getSubjectLabel('mathematics'), source: 'mathematics' },
       { key: 'physics', label: getSubjectLabel('physics'), source: 'physics' },
-      { key: 'computer-science', label: DASHBOARD_LABEL_OVERRIDES['computer-science'] || 'Computer Science', source: null },
+      { key: 'computer-science', label: DASHBOARD_LABEL_OVERRIDES['computer-science'] || 'Computer Science', source: 'computer-science' },
       { key: 'english', label: getSubjectLabel('english'), source: 'english' },
-      { key: 'intelligence', label: DASHBOARD_LABEL_OVERRIDES.intelligence || 'Intelligence', source: null },
+      { key: 'intelligence', label: DASHBOARD_LABEL_OVERRIDES.intelligence || 'Intelligence', source: 'intelligence' },
     ];
   }
 

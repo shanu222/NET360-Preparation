@@ -46,7 +46,7 @@ import {
   AlertDialogTrigger,
 } from '../app/components/ui/alert-dialog';
 import { toast } from 'sonner';
-import { COMPUTER_SCIENCE_SYLLABUS, FLAT_TOPIC_TABS, SYLLABUS } from '../app/components/Preparation';
+import { COMPUTER_SCIENCE_SYLLABUS, FLAT_TOPIC_TABS, INTELLIGENCE_SYLLABUS, SYLLABUS } from '../app/components/Preparation';
 import type { SubjectKey } from '../app/lib/mcq';
 import {
   downloadBlobFile,
@@ -1608,6 +1608,7 @@ export default function AdminApp() {
       'quantitative-mathematics': 'Quantitative Mathematics',
       'design-aptitude': 'Design Aptitude',
       'computer-science': 'Computer Science',
+      intelligence: 'Intelligence',
     };
 
     Object.entries(SYLLABUS).forEach(([subject, subjectParts]) => {
@@ -1633,6 +1634,19 @@ export default function AdminApp() {
         ensureChapter(
           computerScienceNode,
           `cs::${chapter.id}`,
+          chapter.title,
+          '',
+          Array.isArray(chapter.sections) ? chapter.sections : [],
+        );
+      });
+    }
+
+    const intelligenceNode = ensureSubject('intelligence', specialLabels.intelligence);
+    if (intelligenceNode) {
+      INTELLIGENCE_SYLLABUS.forEach((chapter) => {
+        ensureChapter(
+          intelligenceNode,
+          `intelligence::${chapter.id}`,
           chapter.title,
           '',
           Array.isArray(chapter.sections) ? chapter.sections : [],

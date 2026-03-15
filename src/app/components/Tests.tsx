@@ -104,7 +104,7 @@ const NET_PROFILES: NetTypeProfile[] = [
     totalQuestions: 200,
     durationMinutes: 180,
     distribution: [
-      { label: 'Quantitative Mathematics', percentage: 50, mcqs: 100, sourceSubjects: ['quantitative-mathematics'] },
+      { label: 'Quantitative Mathematics & Intelligence', percentage: 50, mcqs: 100, sourceSubjects: ['quantitative-mathematics', 'intelligence'] },
       { label: 'English', percentage: 50, mcqs: 100, sourceSubjects: ['english'] },
     ],
   },

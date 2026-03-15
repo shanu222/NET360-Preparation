@@ -489,6 +489,7 @@ const SUPPORTED_SUBJECTS = new Set([
   'biology',
   'english',
   'computer-science',
+  'intelligence',
   'quantitative mathematics',
   'quantitative-mathematics',
   'design aptitude',
@@ -863,10 +864,10 @@ const NET_TEST_PROFILES: Record<string, {
     durationMinutes: 180,
     totalQuestions: 200,
     distribution: [
-      { label: 'Quantitative Mathematics', percentage: 50, sourceSubjects: ['quantitative-mathematics'] },
+      { label: 'Quantitative Mathematics & Intelligence', percentage: 50, sourceSubjects: ['quantitative-mathematics', 'intelligence'] },
       { label: 'English', percentage: 50, sourceSubjects: ['english'] },
     ],
-    subjectWiseQuestions: { 'quantitative-mathematics': 100, english: 100 },
+    subjectWiseQuestions: { 'quantitative-mathematics': 100, intelligence: 100, english: 100 },
   },
   'net-architecture': {
     label: 'NET Architecture',

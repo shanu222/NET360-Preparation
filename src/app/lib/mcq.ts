@@ -5,6 +5,7 @@ export type SubjectKey =
 	| 'biology'
 	| 'chemistry'
 	| 'computer-science'
+	| 'intelligence'
 	| 'quantitative-mathematics'
 	| 'design-aptitude';
 export type Difficulty = 'Easy' | 'Medium' | 'Hard';
@@ -16,6 +17,7 @@ export const SUBJECT_KEYS: SubjectKey[] = [
 	'biology',
 	'chemistry',
 	'computer-science',
+	'intelligence',
 	'quantitative-mathematics',
 	'design-aptitude',
 ];
@@ -79,6 +81,7 @@ const subjectAliases: Record<string, SubjectKey> = {
 	'computer-science': 'computer-science',
 	'computer science': 'computer-science',
 	cs: 'computer-science',
+	intelligence: 'intelligence',
 	'quantitative-mathematics': 'quantitative-mathematics',
 	'quantitative mathematics': 'quantitative-mathematics',
 	'design-aptitude': 'design-aptitude',
@@ -167,6 +170,7 @@ export function parseMcqs(csvText: string): MCQ[] {
 		biology: [],
 		chemistry: [],
 		'computer-science': [],
+		intelligence: [],
 		'quantitative-mathematics': [],
 		'design-aptitude': [],
 	};
@@ -212,6 +216,7 @@ export function getSubjectLabel(subject: SubjectKey): string {
 		biology: 'Biology',
 		chemistry: 'Chemistry',
 		'computer-science': 'Computer Science',
+		intelligence: 'Intelligence',
 		'quantitative-mathematics': 'Quantitative Mathematics',
 		'design-aptitude': 'Design Aptitude',
 	};

@@ -22,7 +22,7 @@ export interface PartItem {
   chapters: ChapterItem[];
 }
 
-const subjectTabs: SubjectKey[] = ['mathematics', 'physics', 'english', 'biology', 'chemistry', 'computer-science'];
+const subjectTabs: SubjectKey[] = ['mathematics', 'physics', 'english', 'biology', 'chemistry', 'computer-science', 'intelligence'];
 const PART_STRUCTURED_SUBJECTS: PartStructuredSubjectKey[] = ['mathematics', 'physics', 'english', 'biology', 'chemistry'];
 const tabItems: Array<{ key: TabKey; label: string }> = [
   { key: 'mathematics', label: 'Mathematics' },
@@ -31,6 +31,7 @@ const tabItems: Array<{ key: TabKey; label: string }> = [
   { key: 'biology', label: 'Biology' },
   { key: 'chemistry', label: 'Chemistry' },
   { key: 'computer-science', label: 'Computer Science' },
+  { key: 'intelligence', label: 'Intelligence' },
   { key: 'quantitative-mathematics', label: 'Quantitative Mathematics' },
   { key: 'design-aptitude', label: 'Design Aptitude' },
 ];
@@ -60,6 +61,10 @@ const tabTriggerToneByKey: Record<TabKey, { idle: string; active: string }> = {
     idle: 'border-sky-200 bg-sky-50/80 text-sky-700 hover:bg-sky-100',
     active: 'data-[state=active]:from-sky-600 data-[state=active]:to-indigo-500 data-[state=active]:shadow-[0_12px_24px_rgba(14,116,144,0.34)]',
   },
+  intelligence: {
+    idle: 'border-violet-200 bg-violet-50/80 text-violet-700 hover:bg-violet-100',
+    active: 'data-[state=active]:from-violet-600 data-[state=active]:to-fuchsia-500 data-[state=active]:shadow-[0_12px_24px_rgba(124,58,237,0.34)]',
+  },
   'quantitative-mathematics': {
     idle: 'border-fuchsia-200 bg-fuchsia-50/80 text-fuchsia-700 hover:bg-fuchsia-100',
     active: 'data-[state=active]:from-fuchsia-600 data-[state=active]:to-violet-500 data-[state=active]:shadow-[0_12px_24px_rgba(192,38,211,0.34)]',
@@ -77,6 +82,7 @@ const tabWidthPresetByKey: Record<TabKey, string> = {
   biology: 'min-w-[112px] max-w-[144px] sm:min-w-[144px] sm:max-w-[172px]',
   chemistry: 'min-w-[124px] max-w-[156px] sm:min-w-[154px] sm:max-w-[182px]',
   'computer-science': 'min-w-[146px] max-w-[186px] sm:min-w-[190px] sm:max-w-[226px]',
+  intelligence: 'min-w-[128px] max-w-[164px] sm:min-w-[164px] sm:max-w-[198px]',
   'quantitative-mathematics': 'min-w-[176px] max-w-[214px] sm:min-w-[228px] sm:max-w-[262px]',
   'design-aptitude': 'min-w-[146px] max-w-[184px] sm:min-w-[190px] sm:max-w-[224px]',
 };
@@ -182,6 +188,20 @@ const syllabusToneBySubject: Record<
     sectionShadow: 'shadow-[0_10px_18px_rgba(14,116,144,0.26)]',
     panelSurface: 'border-sky-200 bg-sky-50/35',
   },
+  intelligence: {
+    partIdle: 'border-violet-200/80 bg-violet-50/45',
+    partHover: 'hover:border-violet-300 hover:bg-violet-50/85',
+    partActive: 'from-violet-600 to-fuchsia-500',
+    partShadow: 'shadow-[0_14px_24px_rgba(124,58,237,0.3)]',
+    chapterIdle: 'border-violet-100 bg-white',
+    chapterHover: 'hover:border-violet-200 hover:bg-violet-50/35',
+    chapterActive: 'border-violet-300/80 bg-violet-50/75 shadow-[0_10px_18px_rgba(124,58,237,0.15)]',
+    chapterAccent: 'text-violet-700',
+    sectionHover: 'hover:border-violet-300 hover:bg-violet-50 hover:text-violet-900',
+    sectionActive: 'from-violet-600 to-fuchsia-500',
+    sectionShadow: 'shadow-[0_10px_18px_rgba(124,58,237,0.26)]',
+    panelSurface: 'border-violet-200 bg-violet-50/35',
+  },
   'quantitative-mathematics': {
     partIdle: 'border-fuchsia-200/80 bg-fuchsia-50/45',
     partHover: 'hover:border-fuchsia-300 hover:bg-fuchsia-50/85',
@@ -263,6 +283,39 @@ export const COMPUTER_SCIENCE_SYLLABUS: ChapterItem[] = [
     id: 'cs-c7',
     title: 'Chapter 7 - Additional Topics',
     sections: ['Artificial Intelligence', 'Software Engineering', 'Web Engineering', 'Digital Logic Design'],
+  },
+];
+
+export const INTELLIGENCE_SYLLABUS: ChapterItem[] = [
+  {
+    id: 'iq-c1',
+    title: 'Chapter 1 - Analytical Reasoning',
+    sections: ['Logical Scenarios', 'Logical Deductions'],
+  },
+  {
+    id: 'iq-c2',
+    title: 'Chapter 2 - Coding & Decoding',
+    sections: ['Letter-Based Puzzles', 'Number-Based Puzzles'],
+  },
+  {
+    id: 'iq-c3',
+    title: 'Chapter 3 - Direction Sense',
+    sections: ['Movement Problems', 'Relative Position Questions'],
+  },
+  {
+    id: 'iq-c4',
+    title: 'Chapter 4 - Odd One Out',
+    sections: ['Series Anomalies', 'Pattern Exceptions'],
+  },
+  {
+    id: 'iq-c5',
+    title: 'Chapter 5 - Series Completion',
+    sections: ['Number Series Patterns', 'Figure Series Patterns'],
+  },
+  {
+    id: 'iq-c6',
+    title: 'Chapter 6 - Critical Thinking',
+    sections: ['Problem Solving', 'Pattern Recognition'],
   },
 ];
 
@@ -451,6 +504,8 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
   ));
   const [selectedComputerScienceChapterId, setSelectedComputerScienceChapterId] = useState<string | null>(null);
   const [selectedComputerScienceSection, setSelectedComputerScienceSection] = useState<string | null>(null);
+  const [selectedIntelligenceChapterId, setSelectedIntelligenceChapterId] = useState<string | null>(null);
+  const [selectedIntelligenceSection, setSelectedIntelligenceSection] = useState<string | null>(null);
   const [launchingSectionKey, setLaunchingSectionKey] = useState<string | null>(null);
   const [selectedFlatTopicByTab, setSelectedFlatTopicByTab] = useState<Record<'quantitative-mathematics' | 'design-aptitude', string | null>>({
     'quantitative-mathematics': null,
@@ -712,20 +767,25 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
             );
           }
 
-          if (tab.key === 'computer-science') {
-            const subject: SubjectKey = 'computer-science';
+          if (tab.key === 'computer-science' || tab.key === 'intelligence') {
+            const subject: SubjectKey = tab.key;
+            const chapterOnlySyllabus = subject === 'computer-science' ? COMPUTER_SCIENCE_SYLLABUS : INTELLIGENCE_SYLLABUS;
             const tone = syllabusToneBySubject[subject];
+            const selectedChapterId = subject === 'computer-science' ? selectedComputerScienceChapterId : selectedIntelligenceChapterId;
+            const selectedSection = subject === 'computer-science' ? selectedComputerScienceSection : selectedIntelligenceSection;
+            const setSelectedChapter = subject === 'computer-science' ? setSelectedComputerScienceChapterId : setSelectedIntelligenceChapterId;
+            const setSelectedSection = subject === 'computer-science' ? setSelectedComputerScienceSection : setSelectedIntelligenceSection;
             return (
               <TabsContent key={subject} value={subject} className="space-y-4">
                 <Card>
                   <CardHeader>
-                    <CardTitle>Computer Science Syllabus</CardTitle>
+                    <CardTitle>{getSubjectLabel(subject)} Syllabus</CardTitle>
                     <CardDescription>Chapter and section structure (no part split).</CardDescription>
                   </CardHeader>
                   <CardContent>
                     <div className="space-y-3">
-                      {COMPUTER_SCIENCE_SYLLABUS.map((chapter) => {
-                        const active = selectedComputerScienceChapterId === chapter.id;
+                      {chapterOnlySyllabus.map((chapter) => {
+                        const active = selectedChapterId === chapter.id;
                         return (
                           <div
                             key={chapter.id}
@@ -735,8 +795,8 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                               type="button"
                               className="w-full p-3 text-left transition-transform duration-200 active:scale-[0.995]"
                               onClick={() => {
-                                setSelectedComputerScienceChapterId((prev) => (prev === chapter.id ? null : chapter.id));
-                                setSelectedComputerScienceSection(null);
+                                setSelectedChapter((prev) => (prev === chapter.id ? null : chapter.id));
+                                setSelectedSection(null);
                               }}
                             >
                               <div className="flex items-start justify-between gap-3">
@@ -755,9 +815,9 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                     <li key={section}>
                                       <button
                                         type="button"
-                                        className={`w-full rounded-lg border px-3 py-2 text-left transition-all duration-300 ease-out active:scale-[0.99] ${selectedComputerScienceSection === `${chapter.id}::${section}` ? `border-transparent bg-gradient-to-r ${tone.sectionActive} text-white ${tone.sectionShadow}` : `border-slate-200/80 bg-white text-slate-700 hover:-translate-y-0.5 ${tone.sectionHover} hover:shadow-[0_8px_14px_rgba(15,23,42,0.07)]`}`}
+                                        className={`w-full rounded-lg border px-3 py-2 text-left transition-all duration-300 ease-out active:scale-[0.99] ${selectedSection === `${chapter.id}::${section}` ? `border-transparent bg-gradient-to-r ${tone.sectionActive} text-white ${tone.sectionShadow}` : `border-slate-200/80 bg-white text-slate-700 hover:-translate-y-0.5 ${tone.sectionHover} hover:shadow-[0_8px_14px_rgba(15,23,42,0.07)]`}`}
                                         onClick={() => {
-                                          setSelectedComputerScienceSection(`${chapter.id}::${section}`);
+                                          setSelectedSection(`${chapter.id}::${section}`);
                                           onSelectSection?.({
                                             subject,
                                             chapterTitle: chapter.title,
@@ -771,28 +831,28 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                   ))}
                                 </ul>
 
-                                {showStartTestButton && selectedComputerScienceSection?.startsWith(`${chapter.id}::`) ? (
+                                {showStartTestButton && selectedSection?.startsWith(`${chapter.id}::`) ? (
                                   <div className={`mt-3 rounded-lg border bg-white p-3 ${tone.panelSurface}`}>
                                     <p className="mb-2 text-xs text-slate-500">
                                       Selected section:{' '}
                                       <span className={`font-medium ${tone.chapterAccent}`}>
-                                        {selectedComputerScienceSection.slice(`${chapter.id}::`.length)}
+                                        {selectedSection.slice(`${chapter.id}::`.length)}
                                       </span>
                                     </p>
                                     <Button
                                       className={`bg-gradient-to-r ${tone.sectionActive} text-white transition-all duration-200 hover:brightness-105`}
                                       disabled={Boolean(launchingSectionKey)}
                                       onClick={() => {
-                                        const selectedSection = selectedComputerScienceSection.slice(`${chapter.id}::`.length);
-                                        if (!selectedSection) return;
+                                        const selectedSectionTitle = selectedSection.slice(`${chapter.id}::`.length);
+                                        if (!selectedSectionTitle) return;
                                         void handleStartSectionTest({
                                           subject,
                                           chapterTitle: chapter.title,
-                                          sectionTitle: selectedSection,
+                                          sectionTitle: selectedSectionTitle,
                                         });
                                       }}
                                     >
-                                      {launchingSectionKey === `${subject}||${chapter.title}|${selectedComputerScienceSection.slice(`${chapter.id}::`.length)}` ? 'Starting...' : 'Start Test'}
+                                      {launchingSectionKey === `${subject}||${chapter.title}|${selectedSection.slice(`${chapter.id}::`.length)}` ? 'Starting...' : 'Start Test'}
                                     </Button>
                                   </div>
                                 ) : null}
