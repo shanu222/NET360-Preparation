@@ -3115,11 +3115,7 @@ export default function AdminApp() {
         .catch(() => undefined);
     } catch (error) {
       console.error('Add MCQ failed:', error);
-      if (!form.id) {
-        toast.error('Failed to add MCQ');
-      } else {
-        toast.error(error instanceof Error ? error.message : 'Could not save MCQ.');
-      }
+      toast.error(error instanceof Error ? error.message : (form.id ? 'Could not save MCQ.' : 'Failed to add MCQ.'));
     } finally {
       setIsSavingMcq(false);
     }

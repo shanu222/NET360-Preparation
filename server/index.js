@@ -559,6 +559,7 @@ const MCQ_ALLOWED_IMAGE_MIME_TYPES = new Set([
   'image/tiff',
 ]);
 const MCQ_MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+const MCQ_PART_REQUIRED_SUBJECTS = new Set(['mathematics', 'physics', 'chemistry', 'biology']);
 const COMMUNITY_PROFILE_PICTURE_ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
   'image/png',
@@ -579,6 +580,14 @@ function shuffle(array) {
 
 function hashToken(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function normalizeSubjectKey(value) {
+  return String(value || '').trim().toLowerCase().replace(/\s+/g, '-');
+}
+
+function isPartSelectionRequiredSubject(value) {
+  return MCQ_PART_REQUIRED_SUBJECTS.has(normalizeSubjectKey(value));
 }
 
 function normalizeContributionActorKey(params) {
@@ -10428,14 +10437,19 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const normalizedSection = String(section || '').trim();
   const normalizedTopic = String(topic || '').trim();
   const isFlatTopicSubject = normalizedSubject === 'quantitative-mathematics' || normalizedSubject === 'design-aptitude';
+  const requiresPartSelection = !isFlatTopicSubject && isPartSelectionRequiredSubject(normalizedSubject);
 
   if (!answer || !normalizedSubject) {
     res.status(400).json({ error: 'answer and subject are required.' });
     return;
   }
 
-  if (!isFlatTopicSubject && (!normalizedPart || !normalizedChapter || !normalizedSection)) {
-    res.status(400).json({ error: 'part, chapter, and section are required for this subject.' });
+  if (!isFlatTopicSubject && (!normalizedChapter || !normalizedSection || (requiresPartSelection && !normalizedPart))) {
+    res.status(400).json({
+      error: requiresPartSelection
+        ? 'part, chapter, and section are required for this subject.'
+        : 'chapter and section are required for this subject.',
+    });
     return;
   }
 
