@@ -4253,12 +4253,40 @@ export default function AdminApp() {
                 ) : null}
                 {bankMcqs.map((item, idx) => (
                   <div key={item.id} className="rounded-md border p-3 text-sm space-y-1.5">
-                    <p className="font-medium">Q{idx + 1}. {item.question}</p>
-                    {item.options.map((option, optionIdx) => (
-                      <p key={`${item.id}-opt-${optionIdx}`} className="text-muted-foreground">
-                        {String.fromCharCode(65 + optionIdx)}) {option}
-                      </p>
-                    ))}
+                    <p className="font-medium">Q{idx + 1}.</p>
+                    <McqMathText value={String(item.question || '')} asBlock className="text-slate-800" />
+                    {normalizeMcqImageSrc(item.questionImage?.dataUrl || item.questionImageUrl) ? (
+                      <img
+                        src={normalizeMcqImageSrc(item.questionImage?.dataUrl || item.questionImageUrl)}
+                        alt={`MCQ question ${idx + 1}`}
+                        className="mcq-preview-image"
+                      />
+                    ) : null}
+                    {(() => {
+                      const optionMedia = Array.isArray(item.optionMedia) && item.optionMedia.length
+                        ? item.optionMedia
+                        : (Array.isArray(item.options) ? item.options : []).map((text, optionIdx) => ({
+                          key: String.fromCharCode(65 + optionIdx),
+                          text: String(text || ''),
+                          image: null,
+                        }));
+
+                      return optionMedia.map((option, optionIdx) => (
+                        <div key={`${item.id}-opt-${optionIdx}`} className="space-y-1">
+                          <p className="text-muted-foreground">
+                            {String(option.key || String.fromCharCode(65 + optionIdx)).toUpperCase()}){' '}
+                            <McqMathText value={String(option.text || '')} className="text-slate-700" />
+                          </p>
+                          {normalizeMcqImageSrc(option.image?.dataUrl) ? (
+                            <img
+                              src={normalizeMcqImageSrc(option.image?.dataUrl)}
+                              alt={`Option ${String(option.key || String.fromCharCode(65 + optionIdx)).toUpperCase()} image`}
+                              className="option-preview-image"
+                            />
+                          ) : null}
+                        </div>
+                      ));
+                    })()}
                     <p>Answer: <span className="font-medium">{item.answer}</span></p>
                     {item.tip ? <p className="text-muted-foreground">Explanation: {item.tip}</p> : null}
                   </div>
@@ -6470,6 +6498,15 @@ export default function AdminApp() {
 
                           <div className="space-y-1.5">
                             <Label>Question Image</Label>
+                            {normalizeMcqImageSrc(draft.questionImage?.dataUrl) ? (
+                              <img
+                                src={normalizeMcqImageSrc(draft.questionImage?.dataUrl)}
+                                alt="Current question image"
+                                className="edit-image-preview"
+                              />
+                            ) : (
+                              <p className="text-xs text-muted-foreground">No image uploaded</p>
+                            )}
                             <Input
                               type="file"
                               accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
@@ -6614,6 +6651,16 @@ export default function AdminApp() {
                                       e.currentTarget.value = '';
                                     }}
                                   />
+
+                                  {normalizeMcqImageSrc(option.image?.dataUrl) ? (
+                                    <img
+                                      src={normalizeMcqImageSrc(option.image?.dataUrl)}
+                                      alt={`Current option ${option.key} image`}
+                                      className="edit-image-preview"
+                                    />
+                                  ) : (
+                                    <p className="text-xs text-muted-foreground">No option image uploaded</p>
+                                  )}
 
                                   <div className="flex items-center justify-between gap-2">
                                     {option.image ? (
