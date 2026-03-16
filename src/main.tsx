@@ -25,17 +25,19 @@
   createRoot(document.getElementById("root")!).render(
     <ErrorBoundary>
       {
-        shouldRenderAdminApp
-          ? <AdminApp />
-          : isTestInterfaceRoute
-            ? (
-              <AuthProvider>
-                <AppDataProvider>
-                  <TestInterfacePage />
-                  <Toaster richColors position="top-right" />
-                </AppDataProvider>
-              </AuthProvider>
-            )
+        // Keep exam/test routes highest priority so admin preview windows
+        // still render the real test interface on admin-host deployments.
+        isTestInterfaceRoute
+          ? (
+            <AuthProvider>
+              <AppDataProvider>
+                <TestInterfacePage />
+                <Toaster richColors position="top-right" />
+              </AppDataProvider>
+            </AuthProvider>
+          )
+          : shouldRenderAdminApp
+            ? <AdminApp />
             : (
               <HashRouter>
                 <App />
