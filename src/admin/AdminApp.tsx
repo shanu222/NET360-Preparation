@@ -55,6 +55,7 @@ import {
   openDataUrlPreview,
 } from '../app/lib/filePreview';
 import { McqMathText, normalizeMcqImageSrc } from '../app/components/McqRender';
+import { TestInterfacePage, type TestSession } from '../app/components/TestInterfacePage';
 import 'mathlive';
 import '../styles/admin-theme.css';
 
@@ -1476,6 +1477,7 @@ export default function AdminApp() {
   const [bulkParseErrors, setBulkParseErrors] = useState<string[]>([]);
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
+  const [previewSessionDraft, setPreviewSessionDraft] = useState<TestSession | null>(null);
   const [isSavingMcq, setIsSavingMcq] = useState(false);
   const [bulkDeleteMode, setBulkDeleteMode] = useState<BulkDeleteMode>('section-topic');
   const [bulkDeleteSubject, setBulkDeleteSubject] = useState('mathematics');
@@ -3177,6 +3179,129 @@ export default function AdminApp() {
       }
     }
     setForm(fresh);
+  };
+
+  const normalizePreviewSubject = (value: string): SubjectKey => {
+    const allowedSubjects = new Set([
+      'mathematics',
+      'physics',
+      'chemistry',
+      'biology',
+      'english',
+      'computer-science',
+      'intelligence',
+      'quantitative-mathematics',
+      'design-aptitude',
+    ]);
+    const normalized = String(value || '').trim().toLowerCase();
+    return (allowedSubjects.has(normalized) ? normalized : 'mathematics') as SubjectKey;
+  };
+
+  const buildManualPreviewSession = () => {
+    const normalizedOptionMedia = form.optionMedia
+      .map((item, idx) => ({
+        key: String(item.key || String.fromCharCode(65 + idx)).trim().toUpperCase(),
+        text: String(item.text || '').trim(),
+        image: item.image || null,
+      }))
+      .filter((item) => item.text || item.image)
+      .slice(0, 8);
+
+    if (!normalizedOptionMedia.length || normalizedOptionMedia.length < 2) {
+      toast.error('Add at least two options before opening preview.');
+      return null;
+    }
+
+    if (form.questionType === 'text' && !String(form.question || '').trim()) {
+      toast.error('Question text is required before preview.');
+      return null;
+    }
+
+    if (form.questionType === 'image' && !form.questionImage) {
+      toast.error('Upload a question image before preview.');
+      return null;
+    }
+
+    const topicLabel = String(form.topic || form.section || 'Preview Topic').trim();
+    const startedAt = new Date().toISOString();
+
+    return {
+      id: `admin-preview-manual-${Date.now()}`,
+      topic: topicLabel,
+      questionCount: 1,
+      durationMinutes: 10,
+      startedAt,
+      questions: [
+        {
+          id: 'admin-preview-question-1',
+          subject: normalizePreviewSubject(form.subject),
+          topic: topicLabel,
+          question: String(form.question || '').trim() || 'Refer to attached image.',
+          options: normalizedOptionMedia.map((item) => item.text || `[${item.key}]`),
+          optionMedia: normalizedOptionMedia,
+          questionImage: form.questionImage || null,
+          difficulty: (form.difficulty || 'Medium') as 'Easy' | 'Medium' | 'Hard',
+        },
+      ],
+    };
+  };
+
+  const buildDocumentPreviewSession = () => {
+    if (!bulkParsed.length) {
+      toast.error('Parse MCQs first, then click Preview Test.');
+      return null;
+    }
+
+    const startedAt = new Date().toISOString();
+
+    const questions = bulkParsed.map((item, index) => {
+      const normalizedOptions = (Array.isArray(item.options) ? item.options : [])
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .slice(0, 8);
+
+      return {
+        id: `admin-preview-document-question-${index + 1}`,
+        subject: normalizePreviewSubject(item.subject || form.subject),
+        topic: String(item.topic || item.section || form.topic || form.section || 'Preview Topic').trim(),
+        question: String(item.question || '').trim() || 'Refer to attached image.',
+        questionImageUrl: String(item.questionImageUrl || '').trim(),
+        questionImage: parsedDataUrlToImage(item.questionImageDataUrl, `document-question-${index + 1}-image`),
+        options: normalizedOptions,
+        optionMedia: normalizedOptions.map((text, optionIndex) => ({
+          key: String.fromCharCode(65 + optionIndex),
+          text,
+          image: parsedDataUrlToImage(item.optionImageDataUrls?.[optionIndex], `document-option-${index + 1}-${optionIndex + 1}`),
+        })),
+        difficulty: (item.difficulty || 'Medium') as 'Easy' | 'Medium' | 'Hard',
+      };
+    }).filter((item) => Array.isArray(item.options) && item.options.length >= 2);
+
+    if (!questions.length) {
+      toast.error('No valid parsed MCQs available for preview.');
+      return null;
+    }
+
+    return {
+      id: `admin-preview-document-${Date.now()}`,
+      topic: String(form.topic || form.section || questions[0].topic || 'Parsed MCQ Preview').trim(),
+      questionCount: questions.length,
+      durationMinutes: Math.max(10, questions.length * 2),
+      startedAt,
+      questions,
+    };
+  };
+
+  const openManualPreviewTest = () => {
+    const preview = buildManualPreviewSession();
+    if (!preview) return;
+    setPreviewSessionDraft(preview);
+  };
+
+  const openDocumentPreviewTest = () => {
+    const preview = buildDocumentPreviewSession();
+    if (!preview) return;
+    setPreviewSessionDraft(preview);
   };
 
   const handleAddMCQ = async (event?: MouseEvent<HTMLButtonElement>) => {
@@ -5840,14 +5965,19 @@ export default function AdminApp() {
                                 <p className="text-xs font-medium text-indigo-800 dark:text-indigo-200">
                                   Parsed preview: {bulkParsed.length} MCQ(s). Review/edit before uploading.
                                 </p>
-                                <Button type="button" onClick={() => void uploadBulkMcqs()} disabled={bulkUploading}>
-                                  {bulkUploading ? (
-                                    <>
-                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                      Uploading...
-                                    </>
-                                  ) : 'Upload All MCQs'}
-                                </Button>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Button type="button" variant="outline" onClick={openDocumentPreviewTest} disabled={!bulkParsed.length}>
+                                    Preview Test
+                                  </Button>
+                                  <Button type="button" onClick={() => void uploadBulkMcqs()} disabled={bulkUploading}>
+                                    {bulkUploading ? (
+                                      <>
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        Uploading...
+                                      </>
+                                    ) : 'Upload All MCQs'}
+                                  </Button>
+                                </div>
                               </div>
 
                               {(() => {
@@ -5997,6 +6127,20 @@ export default function AdminApp() {
                                     </div>
                                   </div>
                                 ))}
+                              </div>
+
+                              <div className="flex flex-wrap justify-end gap-2 border-t border-indigo-200/70 pt-2">
+                                <Button type="button" variant="outline" onClick={openDocumentPreviewTest} disabled={!bulkParsed.length}>
+                                  Preview Test
+                                </Button>
+                                <Button type="button" onClick={() => void uploadBulkMcqs()} disabled={bulkUploading}>
+                                  {bulkUploading ? (
+                                    <>
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      Uploading...
+                                    </>
+                                  ) : 'Upload All MCQs'}
+                                </Button>
                               </div>
                             </div>
                           ) : null}
@@ -6393,6 +6537,9 @@ export default function AdminApp() {
                         </div>
 
                         <div className="flex flex-wrap gap-2">
+                          <Button type="button" variant="outline" onClick={openManualPreviewTest}>
+                            Preview Test
+                          </Button>
                           <Button type="button" onClick={(event) => void handleAddMCQ(event)} disabled={isSavingMcq}>
                             {isSavingMcq ? (
                               <>
@@ -7723,6 +7870,24 @@ export default function AdminApp() {
           </Tabs>
         </div>
       </main>
+
+      {previewSessionDraft ? (
+        <div className="fixed inset-0 z-[120] bg-slate-900/70 backdrop-blur-[1px]">
+          <button
+            type="button"
+            className="absolute right-3 top-3 z-[121] rounded border border-white/70 bg-white/90 px-3 py-1 text-xs font-medium text-slate-900 shadow"
+            onClick={() => setPreviewSessionDraft(null)}
+          >
+            Close Preview
+          </button>
+          <div className="h-full w-full overflow-auto">
+            <TestInterfacePage
+              previewSession={previewSessionDraft}
+              onClosePreview={() => setPreviewSessionDraft(null)}
+            />
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
