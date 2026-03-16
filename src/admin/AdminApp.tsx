@@ -119,28 +119,87 @@ function focusMathField(targetId: string) {
   field.focus();
 }
 
-function insertImageTokenToField(targetId: string, dataUrl: string) {
-  const normalized = String(dataUrl || '').trim();
-  if (!normalized) return;
+function insertTextToField(targetId: string, text: string) {
+  const snippet = String(text || '');
+  if (!snippet) return;
 
   const field = document.getElementById(targetId) as MathFieldLikeElement | null;
   if (!field) return;
 
-  const token = `[[img:${normalized}]]`;
   try {
     if (typeof field.insert === 'function') {
-      field.insert(token, { insertionMode: 'replaceSelection' });
+      field.insert(snippet, { insertionMode: 'replaceSelection' });
     } else if (typeof field.executeCommand === 'function') {
-      field.executeCommand(['insert', token]);
+      field.executeCommand(['insert', snippet]);
     } else {
-      field.setValue(`${field.getValue('latex')}${token}`);
+      field.setValue(`${field.getValue('latex')}${snippet}`);
     }
 
     field.dispatchEvent(new Event('input', { bubbles: true }));
     field.focus();
   } catch {
-    // Keep editor input usable even if token insertion is unsupported.
+    // Keep editor input usable even if insertion is unsupported on a platform.
   }
+}
+
+function insertImageTokenToField(targetId: string, dataUrl: string) {
+  const normalized = String(dataUrl || '').trim();
+  if (!normalized) return;
+
+  insertTextToField(targetId, `[[img:${normalized}]]`);
+}
+
+function extractRichBoldTextFromClipboard(event: ClipboardEvent): string {
+  const html = String(event.clipboardData?.getData('text/html') || '').trim();
+  if (!html || typeof DOMParser === 'undefined') return '';
+
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const inlineTags = new Set(['span', 'strong', 'b', 'em', 'i', 'u', 'sup', 'sub', 'a']);
+  const blockTags = new Set(['p', 'div', 'li', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6']);
+
+  const normalizeTagText = (value: string) =>
+    String(value || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\u00a0/g, ' ')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+
+  const nodeToRichText = (node: Node): string => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return String(node.textContent || '');
+    }
+
+    if (node.nodeType !== Node.ELEMENT_NODE) return '';
+
+    const element = node as Element;
+    const tag = String(element.tagName || '').toLowerCase();
+    if (tag === 'br') return '\n';
+
+    if (tag === 'img') return '';
+
+    const styleAttr = String(element.getAttribute('style') || '').toLowerCase();
+    const isBoldTag = tag === 'strong' || tag === 'b' || /font-weight\s*:\s*(bold|[6-9]00)/i.test(styleAttr);
+    const childText = Array.from(element.childNodes).map((child) => nodeToRichText(child)).join('');
+    const wrappedText = isBoldTag && childText.trim() ? `<strong>${childText}</strong>` : childText;
+
+    if (blockTags.has(tag) || !inlineTags.has(tag)) {
+      return `\n${wrappedText}\n`;
+    }
+
+    return wrappedText;
+  };
+
+  const raw = Array.from(doc.body.childNodes || []).map((node) => nodeToRichText(node)).join('');
+  const normalized = normalizeTagText(raw)
+    .replace(/<[^>]*>/g, (token) => {
+      const cleaned = String(token || '').trim();
+      if (/^<\s*(strong|b)\b[^>]*>$/i.test(cleaned)) return '<strong>';
+      if (/^<\s*\/\s*(strong|b)\s*>$/i.test(cleaned)) return '</strong>';
+      return '';
+    });
+
+  return normalized;
 }
 
 async function extractPastedImageDataUrl(event: ClipboardEvent): Promise<string | null> {
@@ -255,6 +314,13 @@ function MathLiveInput({
 
     const handlePaste = (event: Event) => {
       const clipboardEvent = event as ClipboardEvent;
+      const richText = extractRichBoldTextFromClipboard(clipboardEvent);
+      if (richText) {
+        clipboardEvent.preventDefault();
+        insertTextToField(id, richText);
+        return;
+      }
+
       const hasImageClipboardItem = Array.from(clipboardEvent.clipboardData?.items || []).some((item) =>
         String(item.type || '').toLowerCase().startsWith('image/'),
       );

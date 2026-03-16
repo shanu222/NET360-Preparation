@@ -821,7 +821,7 @@ function normalizeMcqImageFile(input, fieldLabel = 'Image') {
 
 function sanitizeMcqOptionsWithMedia(optionsRaw, optionMediaRaw) {
   const optionTexts = Array.isArray(optionsRaw)
-    ? optionsRaw.map((item) => String(item || '').trim())
+    ? optionsRaw.map((item) => normalizeRichMcqText(item))
     : [];
 
   const mediaRows = Array.isArray(optionMediaRaw) ? optionMediaRaw : [];
@@ -831,7 +831,7 @@ function sanitizeMcqOptionsWithMedia(optionsRaw, optionMediaRaw) {
   for (let i = 0; i < maxLength; i += 1) {
     const legacyText = optionTexts[i] || '';
     const row = mediaRows[i] && typeof mediaRows[i] === 'object' ? mediaRows[i] : {};
-    const text = String(row.text || legacyText).trim();
+    const text = normalizeRichMcqText(row.text || legacyText);
     const image = normalizeMcqImageFile(row.image, `Option ${String.fromCharCode(65 + i)} image`);
 
     if (!text && !image) continue;
@@ -893,7 +893,7 @@ function resolveAnswerToOptionKey(answerRaw, optionMedia, options) {
       ? options.map((text, index) => ({ key: String.fromCharCode(65 + index), text: String(text || '').trim() }))
       : []);
 
-  const byText = normalizedOptions.find((item) => String(item?.text || '').trim().toLowerCase() === raw.toLowerCase());
+  const byText = normalizedOptions.find((item) => flattenRichMcqTextForMatch(item?.text || '') === flattenRichMcqTextForMatch(raw));
   if (byText?.key) {
     return String(byText.key).trim().toUpperCase();
   }
@@ -1056,6 +1056,37 @@ function normalizePlainText(value) {
     .trim();
 }
 
+function sanitizeAllowedBoldTags(value) {
+  return String(value || '').replace(/<[^>]*>/g, (tag) => {
+    const trimmed = String(tag || '').trim();
+    const opening = trimmed.match(/^<\s*(strong|b)\b[^>]*>$/i);
+    if (opening) return '<strong>';
+
+    const closing = trimmed.match(/^<\s*\/\s*(strong|b)\s*>$/i);
+    if (closing) return '</strong>';
+
+    return '';
+  });
+}
+
+function normalizeRichMcqText(value) {
+  const raw = String(value || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\u0000/g, '')
+    .replace(/\u00a0/g, ' ');
+
+  const withMarkdownBold = raw.replace(/\*\*([^*\n][\s\S]*?)\*\*/g, '<strong>$1</strong>');
+  return sanitizeAllowedBoldTags(withMarkdownBold).trim();
+}
+
+function flattenRichMcqTextForMatch(value) {
+  return sanitizeAllowedBoldTags(value)
+    .replace(/<\/?strong>/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
 function splitInlineOptions(line) {
   const compact = String(line || '').replace(/\s+/g, ' ').trim();
   if (!compact) return [];
@@ -1088,7 +1119,7 @@ function splitInlineOptions(line) {
 }
 
 function normalizeOptionText(value) {
-  return String(value || '')
+  return normalizeRichMcqText(value)
     .replace(/^(?:option\s*)?(?:[A-H]|\d{1,2})(?:\s*[\).:-])?\s*/i, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -1109,7 +1140,8 @@ function resolveAnswerToOption(answerRaw, options) {
     }
   }
 
-  const directIndex = options.findIndex((item) => String(item || '').trim().toLowerCase() === normalizedAnswer.toLowerCase());
+  const answerComparable = flattenRichMcqTextForMatch(normalizedAnswer);
+  const directIndex = options.findIndex((item) => flattenRichMcqTextForMatch(item) === answerComparable);
   if (directIndex >= 0) return options[directIndex];
 
   return normalizedAnswer;
@@ -1339,10 +1371,10 @@ async function parseBulkMcqsWithAi(rawText) {
     const errors = [];
 
     rows.slice(0, BULK_PARSE_LIMIT).forEach((row, idx) => {
-      const question = String(row?.question || '').replace(/\s+/g, ' ').trim();
+      const question = normalizeRichMcqText(String(row?.question || '').replace(/\s+/g, ' ').trim());
       const options = parseOptionsFromUnknown(row?.options);
       const answer = resolveAnswerToOption(row?.answer, options);
-      const tip = String(row?.explanation || '').trim();
+      const tip = normalizeRichMcqText(row?.explanation || '');
       const difficulty = normalizeDifficulty(row?.difficulty);
       const questionImageRef = String(row?.questionImage || '').trim();
       const explanationImageRef = String(row?.explanationImage || '').trim();
@@ -1530,8 +1562,8 @@ function parseBulkMcqsFromText(raw) {
       }
     }
 
-    const question = questionLines.join(' ').trim();
-    const normalizedOptions = options.map((option) => option.text.trim()).filter(Boolean);
+    const question = normalizeRichMcqText(questionLines.join(' '));
+    const normalizedOptions = options.map((option) => normalizeRichMcqText(option.text)).filter(Boolean);
     const resolvedAnswer = resolveAnswerToOption(answer, normalizedOptions);
     if ((!question && !questionImageUrl && !questionImageDataUrl) || normalizedOptions.length < 2 || !resolvedAnswer) {
       skipped += 1;
@@ -1550,7 +1582,7 @@ function parseBulkMcqsFromText(raw) {
       options: normalizedOptions,
       optionImageDataUrls: options.map((option) => option.imageDataUrl || ''),
       answer: resolvedAnswer,
-      tip: explanationLines.join('\n').trim(),
+      tip: normalizeRichMcqText(explanationLines.join('\n')),
       explanationImageDataUrl,
       difficulty,
     });
@@ -1628,6 +1660,8 @@ async function extractTextFromUpload(filePayload) {
       if (node.type !== 'tag') return;
 
       const tag = String(node.name || '').toLowerCase();
+      const styleAttr = String($(node).attr('style') || '').toLowerCase();
+      const isBoldNode = tag === 'strong' || tag === 'b' || /font-weight\s*:\s*(bold|[6-9]00)/i.test(styleAttr);
       if (tag === 'img') {
         const src = String($(node).attr('src') || '').trim();
         if (/^data:image\//i.test(src)) {
@@ -1642,11 +1676,14 @@ async function extractTextFromUpload(filePayload) {
       }
 
       if (blockTags.has(tag)) chunks.push('\n');
+      if (isBoldNode) chunks.push('<strong>');
 
       const children = node.children || [];
       for (const child of children) {
         traverse(child);
       }
+
+      if (isBoldNode) chunks.push('</strong>');
 
       if (blockTags.has(tag) || !inlineTextTags.has(tag)) chunks.push('\n');
     };
@@ -10599,7 +10636,7 @@ function buildAdminMcqDocument(input = {}) {
   const normalizedOptions = normalized.options;
   const normalizedOptionMedia = normalized.optionMedia;
 
-  const normalizedQuestionText = String(question || '').trim();
+  const normalizedQuestionText = normalizeRichMcqText(question || '');
   const hasQuestionImage = Boolean(normalizedQuestionImage) || Boolean(String(questionImageUrl || '').trim());
   if (!normalizedQuestionText && !hasQuestionImage) {
     throw new Error('Question text or question image is required.');
@@ -10615,6 +10652,8 @@ function buildAdminMcqDocument(input = {}) {
     throw new Error('Correct answer must match one option (A/B/C/D, 1/2/3/4, or exact option text).');
   }
 
+  const normalizedExplanationText = normalizeRichMcqText(explanationText || tip || '');
+
   return {
     question: normalizedQuestionText || 'Refer to attached image.',
     questionImageUrl: String(questionImageUrl || '').trim(),
@@ -10628,10 +10667,10 @@ function buildAdminMcqDocument(input = {}) {
     section: resolvedSection,
     topic: resolvedTopic,
     difficulty: String(difficulty),
-    tip: String(explanationText || tip || ''),
-    explanationText: String(explanationText || tip || ''),
+    tip: normalizedExplanationText,
+    explanationText: normalizedExplanationText,
     explanationImage: normalizedExplanationImage,
-    shortTrickText: String(shortTrickText || ''),
+    shortTrickText: normalizeRichMcqText(shortTrickText || ''),
     shortTrickImage: normalizedShortTrickImage,
     source: 'Admin',
   };
@@ -10715,7 +10754,11 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
   ['question', 'questionImageUrl', 'answer', 'subject', 'part', 'chapter', 'section', 'topic', 'difficulty', 'tip', 'explanationText', 'shortTrickText'].forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(req.body, field)) {
       const value = String(req.body[field] ?? '');
-      payload[field] = ['subject', 'part'].includes(field) ? value.toLowerCase().trim() : value;
+      payload[field] = ['subject', 'part'].includes(field)
+        ? value.toLowerCase().trim()
+        : ['question', 'tip', 'explanationText', 'shortTrickText'].includes(field)
+          ? normalizeRichMcqText(value)
+          : value;
     }
   });
 
@@ -10781,7 +10824,7 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
   }
 
   if (Object.prototype.hasOwnProperty.call(payload, 'explanationText') || Object.prototype.hasOwnProperty.call(payload, 'tip')) {
-    const explanation = String(payload.explanationText || payload.tip || '').trim();
+    const explanation = normalizeRichMcqText(payload.explanationText || payload.tip || '');
     payload.explanationText = explanation;
     payload.tip = explanation;
   }
@@ -10793,7 +10836,7 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
       return;
     }
 
-    const nextQuestion = String(payload.question || '').trim();
+    const nextQuestion = normalizeRichMcqText(payload.question || '');
     const nextQuestionImage = payload.questionImage || existingForQuestion.questionImage || null;
     const nextLegacyImageUrl = String(payload.questionImageUrl || existingForQuestion.questionImageUrl || '').trim();
     if (!nextQuestion && !nextQuestionImage && !nextLegacyImageUrl) {

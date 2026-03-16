@@ -17,6 +17,7 @@ function hasMathDelimiters(value: string) {
 }
 
 const INLINE_IMAGE_TOKEN_REGEX = /\[\[img:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\]\]/gi;
+const INLINE_BOLD_TAG_REGEX = /<(?:strong|b)>([\s\S]*?)<\/\s*(?:strong|b)\s*>/gi;
 
 function normalizeMathSegment(value: string) {
   const raw = String(value || '');
@@ -47,9 +48,34 @@ export function McqMathText({
 
   const segments = useMemo(() => {
     const raw = String(value || '');
-    if (!raw.trim()) return [] as Array<{ kind: 'text' | 'image'; value: string }>;
+    if (!raw.trim()) return [] as Array<{ kind: 'text' | 'image' | 'bold'; value: string }>;
 
-    const parts: Array<{ kind: 'text' | 'image'; value: string }> = [];
+    const parts: Array<{ kind: 'text' | 'image' | 'bold'; value: string }> = [];
+    const pushRichTextParts = (input: string) => {
+      const plain = String(input || '');
+      if (!plain) return;
+
+      let boldLastIndex = 0;
+      let boldMatch: RegExpExecArray | null;
+      const boldRegex = new RegExp(INLINE_BOLD_TAG_REGEX.source, 'gi');
+
+      while ((boldMatch = boldRegex.exec(plain))) {
+        const boldStart = boldMatch.index;
+        if (boldStart > boldLastIndex) {
+          parts.push({ kind: 'text', value: normalizeMathSegment(plain.slice(boldLastIndex, boldStart)) });
+        }
+
+        const boldValue = normalizeMathSegment(String(boldMatch[1] || ''));
+        if (boldValue) {
+          parts.push({ kind: 'bold', value: boldValue });
+        }
+        boldLastIndex = boldRegex.lastIndex;
+      }
+
+      if (boldLastIndex < plain.length) {
+        parts.push({ kind: 'text', value: normalizeMathSegment(plain.slice(boldLastIndex)) });
+      }
+    };
     let lastIndex = 0;
     let match: RegExpExecArray | null;
     const regex = new RegExp(INLINE_IMAGE_TOKEN_REGEX.source, 'gi');
@@ -57,7 +83,7 @@ export function McqMathText({
     while ((match = regex.exec(raw))) {
       const tokenStart = match.index;
       if (tokenStart > lastIndex) {
-        parts.push({ kind: 'text', value: normalizeMathSegment(raw.slice(lastIndex, tokenStart)) });
+        pushRichTextParts(raw.slice(lastIndex, tokenStart));
       }
 
       const imageSrc = normalizeMcqImageSrc(match[1]);
@@ -69,7 +95,7 @@ export function McqMathText({
     }
 
     if (lastIndex < raw.length) {
-      parts.push({ kind: 'text', value: normalizeMathSegment(raw.slice(lastIndex)) });
+      pushRichTextParts(raw.slice(lastIndex));
     }
 
     if (!parts.length) {
@@ -111,6 +137,11 @@ export function McqMathText({
         }
 
         if (!segment.value) return null;
+
+        if (segment.kind === 'bold') {
+          return <strong key={`math-bold-${index}`}>{segment.value}</strong>;
+        }
+
         return <span key={`math-text-${index}`}>{segment.value}</span>;
       })}
     </span>
