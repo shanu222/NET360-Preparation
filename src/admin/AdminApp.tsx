@@ -4541,7 +4541,7 @@ export default function AdminApp() {
                   {activeBankSubject?.label || '-'} / {activeBankChapter?.label || '-'} / {activeBankSection?.label || '-'}
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3 max-h-[70vh] overflow-auto">
+              <CardContent className="mcq-display-container space-y-3 max-h-[80vh] overflow-y-auto pr-2">
                 {!activeBankSection ? (
                   <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
                     Select a section/topic to load MCQs.
@@ -4553,46 +4553,84 @@ export default function AdminApp() {
                     No MCQs found for this section/topic.
                   </div>
                 ) : null}
-                {bankMcqs.map((item, idx) => (
-                  <div key={item.id} className="rounded-md border p-3 text-sm space-y-1.5">
-                    <p className="font-medium">Q{idx + 1}.</p>
-                    <McqMathText value={String(item.question || '')} asBlock className="text-slate-800" />
-                    {normalizeMcqImageSrc(item.questionImage?.dataUrl || item.questionImageUrl) ? (
-                      <img
-                        src={normalizeMcqImageSrc(item.questionImage?.dataUrl || item.questionImageUrl)}
-                        alt={`MCQ question ${idx + 1}`}
-                        className="mcq-preview-image"
-                      />
-                    ) : null}
-                    {(() => {
-                      const optionMedia = Array.isArray(item.optionMedia) && item.optionMedia.length
-                        ? item.optionMedia
-                        : (Array.isArray(item.options) ? item.options : []).map((text, optionIdx) => ({
-                          key: String.fromCharCode(65 + optionIdx),
-                          text: String(text || ''),
-                          image: null,
-                        }));
+                {bankMcqs.map((item, idx) => {
+                  const questionImageSrc = normalizeMcqImageSrc(item.questionImage?.dataUrl || item.questionImageUrl);
+                  const optionMedia = Array.isArray(item.optionMedia) && item.optionMedia.length
+                    ? item.optionMedia
+                    : (Array.isArray(item.options) ? item.options : []).map((text, optionIdx) => ({
+                      key: String.fromCharCode(65 + optionIdx),
+                      text: String(text || ''),
+                      image: null,
+                    }));
+                  const explanationText = String(item.explanationText || item.tip || '').trim();
+                  const explanationImageSrc = normalizeMcqImageSrc(item.explanationImage?.dataUrl);
 
-                      return optionMedia.map((option, optionIdx) => (
-                        <div key={`${item.id}-opt-${optionIdx}`} className="space-y-1">
-                          <p className="text-muted-foreground">
-                            {String(option.key || String.fromCharCode(65 + optionIdx)).toUpperCase()}){' '}
-                            <McqMathText value={String(option.text || '')} className="text-slate-700" />
-                          </p>
-                          {normalizeMcqImageSrc(option.image?.dataUrl) ? (
+                  return (
+                    <div key={item.id} className="rounded-md border border-[#2b5f9f] bg-[#eef4fb] p-2.5 text-sm text-[#0d2c5a]">
+                      <div className="mb-2 border-b border-[#2b5f9f] bg-[#d6e5f4] px-2 py-1 text-sm">
+                        Question No : <span className="text-blue-700">{idx + 1} of {bankMcqs.length}</span>
+                      </div>
+
+                      <section className="mb-2">
+                        <p className="mb-2 font-semibold text-black">Question</p>
+                        <div className="question-content rounded border border-[#1e3f6e] bg-white p-2.5 text-sm text-black sm:text-base">
+                          <McqMathText value={String(item.question || '')} asBlock className="whitespace-pre-wrap" />
+                          {questionImageSrc ? (
                             <img
-                              src={normalizeMcqImageSrc(option.image?.dataUrl)}
-                              alt={`Option ${String(option.key || String.fromCharCode(65 + optionIdx)).toUpperCase()} image`}
-                              className="option-preview-image"
+                              src={questionImageSrc}
+                              alt={`MCQ question ${idx + 1}`}
+                              className="mcq-image mt-2 max-h-60 w-full"
                             />
                           ) : null}
                         </div>
-                      ));
-                    })()}
-                    <p>Answer: <span className="font-medium">{item.answer}</span></p>
-                    {item.tip ? <p className="text-muted-foreground">Explanation: {item.tip}</p> : null}
-                  </div>
-                ))}
+                      </section>
+
+                      <section className="mb-2 border-y border-[#2b5f9f] bg-[#a9c6df] px-2 py-1 text-sm">
+                        Answer ( <span className="text-blue-700">Please select your correct option</span> )
+                      </section>
+
+                      <section className="space-y-2 border-b border-[#2b5f9f] bg-[#d6dbe2] p-2">
+                        {optionMedia.map((option, optionIdx) => {
+                          const optionKey = String(option.key || String.fromCharCode(65 + optionIdx)).toUpperCase();
+                          const optionImageSrc = normalizeMcqImageSrc(option.image?.dataUrl);
+                          return (
+                            <div key={`${item.id}-opt-${optionIdx}`} className="option-content rounded border border-[#1e3f6e] bg-white px-2 py-2 text-sm text-black sm:text-base">
+                              <p className="font-medium text-slate-700">{optionKey}.</p>
+                              <McqMathText value={String(option.text || '')} className="whitespace-pre-wrap" />
+                              {optionImageSrc ? (
+                                <img
+                                  src={optionImageSrc}
+                                  alt={`Option ${optionKey} image`}
+                                  className="option-image mt-2 max-h-40 w-full"
+                                />
+                              ) : null}
+                            </div>
+                          );
+                        })}
+                      </section>
+
+                      <div className="mt-2 space-y-1 px-1 text-sm">
+                        <p>Answer: <span className="font-medium">{item.answer}</span></p>
+                        {explanationText || explanationImageSrc ? (
+                          <div className="explanation-content mt-2 rounded border border-indigo-100 bg-indigo-50/40 p-2">
+                            <p className="text-xs font-semibold text-indigo-900 sm:text-sm">Explanation</p>
+                            <div className="mt-1 h-px w-full bg-indigo-200" />
+                            {explanationText ? (
+                              <p className="mt-2 whitespace-pre-wrap text-slate-700"><McqMathText value={explanationText} /></p>
+                            ) : null}
+                            {explanationImageSrc ? (
+                              <img
+                                src={explanationImageSrc}
+                                alt={`Explanation ${idx + 1}`}
+                                className="mcq-image mt-2 max-h-40 w-full"
+                              />
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
               </CardContent>
             </Card>
           </div>
