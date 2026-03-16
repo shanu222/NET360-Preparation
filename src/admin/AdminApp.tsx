@@ -1,4 +1,4 @@
-import { type ChangeEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, type ChangeEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -54,6 +54,7 @@ import {
   openBlobPreview,
   openDataUrlPreview,
 } from '../app/lib/filePreview';
+import 'mathlive';
 import '../styles/admin-theme.css';
 
 const FLAT_TOPIC_SUBJECTS = new Set(['quantitative-mathematics', 'design-aptitude']);
@@ -66,6 +67,92 @@ const ADMIN_SIDEBAR_EXPANDED_KEY = 'net360-admin-sidebar-expanded';
 const ADMIN_DESKTOP_MIN_WIDTH = 1024;
 const ADMIN_TABLET_COLLAPSE_MAX_WIDTH = 1280;
 const ADMIN_BRAND_LOGO_SRC = '/net360-logo.png';
+
+type MathFieldLikeElement = HTMLElement & {
+  getValue: (format?: 'latex' | 'math-json' | 'spoken') => string;
+  setValue: (value: string, options?: { silenceNotifications?: boolean }) => void;
+  insert?: (value: string, options?: { insertionMode?: 'replaceSelection' | 'insertBefore' | 'insertAfter' }) => void;
+  executeCommand?: (command: unknown) => void;
+};
+
+function normalizeMathInputId(value: string) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'math-input';
+}
+
+function insertMathSymbolToField(targetId: string, snippet = '\\sqrt{}') {
+  const field = document.getElementById(targetId) as MathFieldLikeElement | null;
+  if (!field) return;
+
+  try {
+    if (typeof field.insert === 'function') {
+      field.insert(snippet, { insertionMode: 'replaceSelection' });
+    } else if (typeof field.executeCommand === 'function') {
+      field.executeCommand(['insert', snippet]);
+    } else {
+      field.setValue(`${field.getValue('latex')}${snippet}`);
+    }
+
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.focus();
+  } catch {
+    // Keep the editor usable even if symbol insertion is not supported on a platform.
+  }
+}
+
+function MathLiveInput({
+  id,
+  value,
+  placeholder,
+  className,
+  onValueChange,
+}: {
+  id: string;
+  value: string;
+  placeholder?: string;
+  className?: string;
+  onValueChange: (nextValue: string) => void;
+}) {
+  const fieldRef = useRef<MathFieldLikeElement | null>(null);
+
+  useEffect(() => {
+    const field = fieldRef.current;
+    if (!field) return;
+
+    const handleInput = () => {
+      onValueChange(field.getValue('latex'));
+    };
+
+    field.addEventListener('input', handleInput);
+    return () => {
+      field.removeEventListener('input', handleInput);
+    };
+  }, [onValueChange]);
+
+  useEffect(() => {
+    const field = fieldRef.current;
+    if (!field) return;
+
+    const currentValue = field.getValue('latex');
+    const nextValue = String(value || '');
+    if (currentValue !== nextValue) {
+      field.setValue(nextValue, { silenceNotifications: true });
+    }
+  }, [value]);
+
+  return createElement('math-field', {
+    id,
+    ref: (node: MathFieldLikeElement | null) => {
+      fieldRef.current = node;
+    },
+    class: `block min-h-[44px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ${className || ''}`.trim(),
+    placeholder: placeholder || '',
+    'virtual-keyboard-mode': 'onfocus',
+    'smart-mode': 'false',
+  } as Record<string, unknown>);
+}
 
 function toTitleLabel(value: string) {
   return String(value || '')
@@ -3171,7 +3258,7 @@ export default function AdminApp() {
 
     try {
       setBulkProcessing(true);
-      console.info('Admin document extraction started', {
+      console.info('Admin Analyse by AI started', {
         hasFile: Boolean(bulkFile),
         sourceType: bulkFile ? 'file' : 'text',
         subject: hierarchyContext.subject,
@@ -3235,19 +3322,19 @@ export default function AdminApp() {
       setBulkParsed(limitedParsed);
       setShowParsedPreview(true);
 
-      console.info('Admin document extraction completed', {
+      console.info('Admin Analyse by AI completed', {
         parsedCount: limitedParsed.length,
         errors: payload.errors || [],
       });
 
-      toast.success(`Extracted ${limitedParsed.length} MCQ(s). Review and approve before uploading.`);
+      toast.success(`Parsed ${limitedParsed.length} MCQ(s). Review and confirm target before saving.`);
     } catch (error) {
-      console.error('Admin document extraction failed', error);
+      console.error('Admin Analyse by AI failed', error);
       const status = Number((error as { status?: number } | null)?.status || 0);
       if (status === 401 || status === 403) {
-        toast.error('Admin session expired. Please log in again to continue document extraction.');
+        toast.error('Admin session expired. Please log in again to continue AI analysis.');
       } else {
-        toast.error(error instanceof Error ? error.message : 'Document extraction failed. Please try again.');
+        toast.error(error instanceof Error ? error.message : 'AI analysis failed. Please try again.');
       }
     } finally {
       setBulkProcessing(false);
@@ -3323,41 +3410,36 @@ export default function AdminApp() {
     try {
       setBulkUploading(true);
 
-      const parsedMcqs = bulkParsed.map((item) => {
+      for (const item of bulkParsed) {
         const optionMedia = item.options.map((text, idx) => ({
           key: String.fromCharCode(65 + idx),
           text,
           image: parsedDataUrlToImage(item.optionImageDataUrls?.[idx], `option-${idx + 1}-image`),
         }));
 
-        return {
-          subject: hierarchyContext.subject,
-          part: hierarchyContext.part,
-          chapter: hierarchyContext.chapter,
-          section: hierarchyContext.section,
-          topic: hierarchyContext.topic,
-          question: item.question,
-          questionImageUrl: item.questionImageUrl,
-          questionImage: parsedDataUrlToImage(item.questionImageDataUrl, 'question-image'),
-          options: item.options,
-          optionMedia,
-          answer: item.answer,
-          tip: item.tip,
-          explanationText: item.tip,
-          explanationImage: parsedDataUrlToImage(item.explanationImageDataUrl, 'explanation-image'),
-          shortTrickText: String(item.shortTrick || '').trim(),
-          shortTrickImage: null,
-          difficulty: item.difficulty,
-        };
-      });
-
-      await apiRequest('/api/admin/mcqs/bulk', {
-        method: 'POST',
-        body: JSON.stringify({
-          mcqs: parsedMcqs,
-          enforceExistingEnglishVocabularySynonyms: true,
-        }),
-      }, authToken);
+        await apiRequest('/api/admin/mcqs', {
+          method: 'POST',
+          body: JSON.stringify({
+            subject: hierarchyContext.subject,
+            part: hierarchyContext.part,
+            chapter: hierarchyContext.chapter,
+            section: hierarchyContext.section,
+            topic: hierarchyContext.topic,
+            question: item.question,
+            questionImageUrl: item.questionImageUrl,
+            questionImage: parsedDataUrlToImage(item.questionImageDataUrl, 'question-image'),
+            options: item.options,
+            optionMedia,
+            answer: item.answer,
+            tip: item.tip,
+            explanationText: item.tip,
+            explanationImage: parsedDataUrlToImage(item.explanationImageDataUrl, 'explanation-image'),
+            shortTrickText: String(item.shortTrick || '').trim(),
+            shortTrickImage: null,
+            difficulty: item.difficulty,
+          }),
+        }, authToken);
+      }
 
       toast.success(`${bulkParsed.length} MCQ(s) uploaded successfully.`);
       setBulkInput('');
@@ -5536,7 +5618,7 @@ export default function AdminApp() {
                           <div>
                             <p className="text-sm font-semibold text-indigo-900 dark:text-indigo-200">Document Parser</p>
                             <p className="text-xs text-muted-foreground">
-                              Upload PDF/DOC/DOCX/TXT or paste MCQs, then extract and review MCQs exactly from document text before uploading.
+                              Upload PDF/DOC/DOCX/TXT or paste MCQs, then click Parse / Analyze Document to auto-fill structured MCQ fields.
                             </p>
                           </div>
 
@@ -5559,9 +5641,9 @@ export default function AdminApp() {
                               {bulkProcessing ? (
                                 <>
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                  Extracting MCQs...
+                                  Analysing MCQs...
                                 </>
-                              ) : 'Extract MCQs'}
+                              ) : 'Analyse by AI'}
                             </Button>
                             <Button
                               type="button"
@@ -5873,12 +5955,21 @@ export default function AdminApp() {
                           </div>
 
                           {form.questionType !== 'image' ? (
-                            <Textarea
-                              value={form.question}
-                              onChange={(e) => setForm((prev) => ({ ...prev, question: e.target.value }))}
-                              className="min-h-[95px]"
-                              placeholder="Question Text"
-                            />
+                            <div className="space-y-1.5">
+                              <div className="flex items-center justify-between gap-2">
+                                <Label htmlFor="questionInput">Question Text</Label>
+                                <Button type="button" size="sm" variant="outline" onClick={() => insertMathSymbolToField('questionInput')}>
+                                  Insert Math Symbol
+                                </Button>
+                              </div>
+                              <MathLiveInput
+                                id="questionInput"
+                                value={form.question}
+                                placeholder="Question Text"
+                                className="min-h-[95px]"
+                                onValueChange={(nextValue) => setForm((prev) => ({ ...prev, question: nextValue }))}
+                              />
+                            </div>
                           ) : null}
                         </div>
 
@@ -5976,18 +6067,31 @@ export default function AdminApp() {
                                 </div>
 
                                 {(form.optionTypes[optionIdx] || 'text') !== 'image' ? (
-                                  <Input
-                                    value={option.text}
-                                    placeholder={`Option ${option.key} text`}
-                                    onChange={(e) => {
-                                      const nextValue = e.target.value;
-                                      setForm((prev) => {
-                                        const optionMedia = [...prev.optionMedia];
-                                        optionMedia[optionIdx] = { ...optionMedia[optionIdx], text: nextValue };
-                                        return { ...prev, optionMedia };
-                                      });
-                                    }}
-                                  />
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <Label htmlFor={`option-input-${normalizeMathInputId(option.key)}`}>Option {option.key}</Label>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => insertMathSymbolToField(`option-input-${normalizeMathInputId(option.key)}`)}
+                                      >
+                                        Insert Math Symbol
+                                      </Button>
+                                    </div>
+                                    <MathLiveInput
+                                      id={`option-input-${normalizeMathInputId(option.key)}`}
+                                      value={option.text}
+                                      placeholder={`Option ${option.key} text`}
+                                      onValueChange={(nextValue) => {
+                                        setForm((prev) => {
+                                          const optionMedia = [...prev.optionMedia];
+                                          optionMedia[optionIdx] = { ...optionMedia[optionIdx], text: nextValue };
+                                          return { ...prev, optionMedia };
+                                        });
+                                      }}
+                                    />
+                                  </div>
                                 ) : null}
 
                                 {(form.optionTypes[optionIdx] || 'text') === 'image' ? (
@@ -6314,12 +6418,23 @@ export default function AdminApp() {
                           </div>
 
                           <div className="space-y-1.5">
-                            <Label>Question Text</Label>
-                            <Textarea
+                            <div className="flex items-center justify-between gap-2">
+                              <Label htmlFor={`bank-question-${normalizeMathInputId(item.id)}`}>Question Text</Label>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => insertMathSymbolToField(`bank-question-${normalizeMathInputId(item.id)}`)}
+                              >
+                                Insert Math Symbol
+                              </Button>
+                            </div>
+                            <MathLiveInput
+                              id={`bank-question-${normalizeMathInputId(item.id)}`}
                               value={draft.question}
-                              onChange={(e) => updateBankEditDraft(item.id, (current) => ({ ...current, question: e.target.value }))}
-                              className="min-h-[84px]"
                               placeholder="Question text"
+                              className="min-h-[84px]"
+                              onValueChange={(nextValue) => updateBankEditDraft(item.id, (current) => ({ ...current, question: nextValue }))}
                             />
                           </div>
 
@@ -6415,18 +6530,31 @@ export default function AdminApp() {
                                     </div>
                                   </div>
 
-                                  <Input
-                                    value={option.text}
-                                    placeholder={`Option ${option.key} text`}
-                                    onChange={(e) => {
-                                      const next = e.target.value;
-                                      updateBankEditDraft(item.id, (current) => {
-                                        const optionMedia = [...current.optionMedia];
-                                        optionMedia[optionIdx] = { ...optionMedia[optionIdx], text: next };
-                                        return { ...current, optionMedia };
-                                      });
-                                    }}
-                                  />
+                                  <div className="space-y-1.5">
+                                    <div className="flex items-center justify-between gap-2">
+                                      <Label htmlFor={`bank-option-${normalizeMathInputId(item.id)}-${normalizeMathInputId(option.key)}`}>Option {option.key}</Label>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => insertMathSymbolToField(`bank-option-${normalizeMathInputId(item.id)}-${normalizeMathInputId(option.key)}`)}
+                                      >
+                                        Insert Math Symbol
+                                      </Button>
+                                    </div>
+                                    <MathLiveInput
+                                      id={`bank-option-${normalizeMathInputId(item.id)}-${normalizeMathInputId(option.key)}`}
+                                      value={option.text}
+                                      placeholder={`Option ${option.key} text`}
+                                      onValueChange={(nextValue) => {
+                                        updateBankEditDraft(item.id, (current) => {
+                                          const optionMedia = [...current.optionMedia];
+                                          optionMedia[optionIdx] = { ...optionMedia[optionIdx], text: nextValue };
+                                          return { ...current, optionMedia };
+                                        });
+                                      }}
+                                    />
+                                  </div>
 
                                   <Input
                                     type="file"

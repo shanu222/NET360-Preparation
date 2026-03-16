@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Bookmark, CircleHelp, FastForward, Rewind, Save, Send, SkipBack, SkipForward } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
+import { renderToString } from 'katex';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
 import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
+import 'katex/dist/katex.min.css';
 
 type Difficulty = 'Easy' | 'Medium' | 'Hard';
 
@@ -155,6 +157,40 @@ function formatTime(totalSeconds: number) {
   const mins = Math.floor(totalSeconds / 60);
   const secs = totalSeconds % 60;
   return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+}
+
+function mightContainMath(value: string) {
+  return /\\[a-z]+|[_^{}]|[∫∑√π≤≥≈≠±∞α-ωΑ-Ω₀-₉⁰-⁹]/.test(String(value || ''));
+}
+
+function MathText({
+  value,
+  className,
+  displayMode = false,
+}: {
+  value: string;
+  className?: string;
+  displayMode?: boolean;
+}) {
+  const content = String(value || '').trim();
+
+  const rendered = useMemo(() => {
+    if (!content || !mightContainMath(content)) return '';
+    try {
+      return renderToString(content, {
+        displayMode,
+        throwOnError: false,
+        strict: 'ignore',
+      });
+    } catch {
+      return '';
+    }
+  }, [content, displayMode]);
+
+  if (!content) return null;
+  if (!rendered) return <span className={className}>{content}</span>;
+
+  return <span className={className} dangerouslySetInnerHTML={{ __html: rendered }} />;
 }
 
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
@@ -730,7 +766,7 @@ export function TestInterfacePage() {
           <section className="order-2 border-b border-[#2b5f9f] p-2 md:order-1 md:border-b-0 md:border-r">
             <p className="mb-2 font-semibold text-black">Question</p>
             <div className="min-h-[104px] rounded border border-[#1e3f6e] bg-white p-2.5 text-sm text-black sm:min-h-[120px] sm:p-3 sm:text-base">
-              {question.question}
+              <MathText value={question.question} displayMode className="block whitespace-pre-wrap" />
               {question.questionImage?.dataUrl ? (
                 <img
                   src={question.questionImage.dataUrl}
@@ -812,7 +848,7 @@ export function TestInterfacePage() {
                 />
                 <div className="rounded border border-[#1e3f6e] bg-white px-2 py-2 text-sm text-black sm:text-base">
                   <p className="font-medium text-slate-700">{option.key}.</p>
-                  {option.text ? <p>{option.text}</p> : null}
+                  {option.text ? <MathText value={option.text} className="whitespace-pre-wrap" /> : null}
                   {option.image?.dataUrl ? (
                     <img
                       src={option.image.dataUrl}
@@ -946,7 +982,7 @@ export function TestInterfacePage() {
                 <p className="text-sm font-semibold text-slate-800">Review (shown after completion)</p>
                 {reviewRows.map((row, idx) => (
                   <div key={`${row.questionId}-${idx}`} className="rounded border border-slate-200 p-2 text-xs sm:text-sm">
-                    <p className="font-semibold">Q{idx + 1}. {row.question}</p>
+                    <p className="font-semibold">Q{idx + 1}. <MathText value={row.question} /></p>
                     {row.questionImage?.dataUrl ? (
                       <img src={row.questionImage.dataUrl} alt={`Review question ${idx + 1}`} className="mt-2 max-h-48 w-full rounded border object-contain" />
                     ) : null}
@@ -966,7 +1002,7 @@ export function TestInterfacePage() {
                           <p className="text-xs font-semibold text-indigo-900 sm:text-sm">Explanation / Short Trick</p>
                           <div className="mt-1 h-px w-full bg-indigo-200" />
                           {explanationOrShortTrickText ? (
-                            <p className="mt-2 whitespace-pre-wrap text-slate-700">{explanationOrShortTrickText}</p>
+                            <p className="mt-2 whitespace-pre-wrap text-slate-700"><MathText value={explanationOrShortTrickText} /></p>
                           ) : null}
                           {explanationOrShortTrickImage?.dataUrl ? (
                             <img
