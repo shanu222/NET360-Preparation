@@ -103,6 +103,57 @@ function insertMathSymbolToField(targetId: string, snippet = '\\sqrt{}') {
   }
 }
 
+function openMathToolbarForField(targetId: string) {
+  const field = document.getElementById(targetId) as MathFieldLikeElement | null;
+  if (!field) return;
+
+  field.focus();
+
+  if (typeof field.executeCommand === 'function') {
+    try {
+      field.executeCommand('showVirtualKeyboard');
+      return;
+    } catch {
+      try {
+        field.executeCommand(['showVirtualKeyboard']);
+        return;
+      } catch {
+        // If command is unavailable, focus is enough to open keyboard on supported clients.
+      }
+    }
+  }
+
+  field.dispatchEvent(new Event('focus', { bubbles: true }));
+}
+
+function MathToolbar({ targetId }: { targetId: string }) {
+  const toolbarButtons: Array<{ key: string; label: string; snippet?: string; onClick?: () => void }> = [
+    { key: 'calculator', label: 'Calculator', onClick: () => openMathToolbarForField(targetId) },
+    { key: 'symbol', label: 'Symbol', snippet: '\\alpha' },
+    { key: 'fraction', label: 'Fraction', snippet: '\\frac{}{}' },
+    { key: 'power', label: 'Power', snippet: 'x^{ }' },
+    { key: 'sqrt', label: 'Square Root', snippet: '\\sqrt{}' },
+    { key: 'pi', label: 'Pi', snippet: '\\pi' },
+    { key: 'scientific', label: 'Scientific', snippet: '\\times 10^{}' },
+  ];
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {toolbarButtons.map((button) => (
+        <Button
+          key={`${targetId}-${button.key}`}
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={button.onClick || (() => insertMathSymbolToField(targetId, button.snippet || ''))}
+        >
+          {button.label}
+        </Button>
+      ))}
+    </div>
+  );
+}
+
 function MathLiveInput({
   id,
   value,
@@ -5985,11 +6036,9 @@ export default function AdminApp() {
 
                           {form.questionType !== 'image' ? (
                             <div className="space-y-1.5">
-                              <div className="flex items-center justify-between gap-2">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
                                 <Label htmlFor="questionInput">Question Text</Label>
-                                <Button type="button" size="sm" variant="outline" onClick={() => insertMathSymbolToField('questionInput')}>
-                                  Insert Math Symbol
-                                </Button>
+                                <MathToolbar targetId="questionInput" />
                               </div>
                               <MathLiveInput
                                 id="questionInput"
@@ -6097,16 +6146,9 @@ export default function AdminApp() {
 
                                 {(form.optionTypes[optionIdx] || 'text') !== 'image' ? (
                                   <div className="space-y-1.5">
-                                    <div className="flex items-center justify-between gap-2">
+                                    <div className="flex flex-wrap items-center justify-between gap-2">
                                       <Label htmlFor={`option-input-${normalizeMathInputId(option.key)}`}>Option {option.key}</Label>
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => insertMathSymbolToField(`option-input-${normalizeMathInputId(option.key)}`)}
-                                      >
-                                        Insert Math Symbol
-                                      </Button>
+                                      <MathToolbar targetId={`option-input-${normalizeMathInputId(option.key)}`} />
                                     </div>
                                     <MathLiveInput
                                       id={`option-input-${normalizeMathInputId(option.key)}`}
@@ -6179,35 +6221,6 @@ export default function AdminApp() {
                           </div>
                         </div>
 
-                        <div className="space-y-2 rounded-md border border-slate-300/70 bg-slate-50/60 p-2">
-                          <p className="text-xs font-semibold text-slate-700">MCQ Preview</p>
-                          <div className="rounded border border-slate-200 bg-white p-2 text-sm">
-                            <McqMathText value={form.question} asBlock className="text-slate-800" />
-                            {normalizeMcqImageSrc(form.questionImage?.dataUrl) ? (
-                              <img
-                                src={normalizeMcqImageSrc(form.questionImage?.dataUrl)}
-                                alt="Question preview"
-                                className="mcq-image"
-                              />
-                            ) : null}
-                          </div>
-                          <div className="space-y-2">
-                            {form.optionMedia.map((option) => (
-                              <div key={`preview-option-${option.key}`} className="rounded border border-slate-200 bg-white p-2 text-sm">
-                                <p className="font-semibold text-slate-700">{option.key}.</p>
-                                <McqMathText value={option.text} className="text-slate-800" />
-                                {normalizeMcqImageSrc(option.image?.dataUrl) ? (
-                                  <img
-                                    src={normalizeMcqImageSrc(option.image?.dataUrl)}
-                                    alt={`Option ${option.key} preview`}
-                                    className="option-image"
-                                  />
-                                ) : null}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
                         <div className="grid gap-3 md:grid-cols-2">
                           <div className="space-y-1.5">
                             <Label>Correct Answer</Label>
@@ -6237,12 +6250,16 @@ export default function AdminApp() {
                           <p className="text-sm font-medium text-indigo-900">Explanation / Short Trick (optional)</p>
 
                           <div className="space-y-1.5">
-                            <Label>Text</Label>
-                            <Textarea
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <Label htmlFor="explanationInput">Text</Label>
+                              <MathToolbar targetId="explanationInput" />
+                            </div>
+                            <MathLiveInput
+                              id="explanationInput"
                               value={form.explanationText}
-                              onChange={(e) => setForm((prev) => ({ ...prev, explanationText: e.target.value, shortTrickText: '' }))}
                               className="min-h-[110px]"
                               placeholder="Write explanation, short trick, formula, steps, or reasoning"
+                              onValueChange={(nextValue) => setForm((prev) => ({ ...prev, explanationText: nextValue, shortTrickText: '' }))}
                             />
                           </div>
 
