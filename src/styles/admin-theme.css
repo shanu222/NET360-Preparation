@@ -667,3 +667,86 @@
     max-width: 100%;
   }
 }
+
+@media (max-width: 1024px) {
+  .admin-shell,
+  .admin-shell .admin-main,
+  .admin-shell .admin-content {
+    overflow-x: hidden;
+  }
+
+  .admin-shell .admin-main [class*='md:grid-cols-'],
+  .admin-shell .admin-main [class*='lg:grid-cols-'],
+  .admin-shell .admin-main [class*='xl:grid-cols-'],
+  .admin-shell .admin-main [class*='2xl:grid-cols-'] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .admin-shell .admin-main [class*='md:grid-cols-['],
+  .admin-shell .admin-main [class*='lg:grid-cols-['],
+  .admin-shell .admin-main [class*='xl:grid-cols-['],
+  .admin-shell .admin-main [class*='2xl:grid-cols-['] {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+
+  .admin-shell .admin-main [data-slot='card-content'] {
+    overflow-x: hidden;
+  }
+
+  .admin-shell .admin-main .max-h-\[70vh\],
+  .admin-shell .admin-main .max-h-\[72vh\],
+  .admin-shell .admin-main .max-h-\[80vh\],
+  .admin-shell .admin-main .max-h-\[520px\],
+  .admin-shell .admin-main .max-h-\[620px\],
+  .admin-shell .admin-main .max-h-\[760px\],
+  .admin-shell .admin-main .max-h-\[860px\] {
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .admin-shell img {
+    max-width: 100%;
+    height: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .admin-shell .admin-main [data-slot='input'],
+  .admin-shell .admin-main [data-slot='textarea'],
+  .admin-shell .admin-main [data-slot='select-trigger'],
+  .admin-shell .admin-main [data-slot='button'],
+  .admin-shell .admin-main input,
+  .admin-shell .admin-main select,
+  .admin-shell .admin-main textarea,
+  .admin-shell .admin-main button {
+    max-width: 100%;
+  }
+
+  .admin-shell .admin-main [class*='max-h-\[70vh\]'],
+  .admin-shell .admin-main [class*='max-h-\[72vh\]'],
+  .admin-shell .admin-main [class*='max-h-\[80vh\]'] {
+    max-height: 62vh !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .admin-shell .admin-main {
+    padding-left: max(0.55rem, env(safe-area-inset-left, 0px));
+    padding-right: max(0.55rem, env(safe-area-inset-right, 0px));
+  }
+
+  .admin-shell .admin-main .flex.flex-wrap.gap-2 {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-shell .admin-main .flex.flex-wrap.gap-2 > [data-slot='button'],
+  .admin-shell .admin-main .flex.flex-wrap.gap-2 > button {
+    width: 100%;
+  }
+
+  .admin-shell .admin-main [data-slot='card-content'] {
+    padding: 0.75rem;
+  }
+}
