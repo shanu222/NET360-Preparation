@@ -3580,47 +3580,64 @@ export default function AdminApp() {
     const hierarchyContext = resolveDocumentHierarchyContext(true);
     if (!hierarchyContext) return;
 
-    const previewLabel = hierarchyContext.label;
-
-    if (!window.confirm(`Save ${bulkParsed.length} MCQ(s)?\nTarget: ${previewLabel}\n\nContinue?`)) {
-      return;
-    }
-
     try {
       setBulkUploading(true);
 
-      for (const item of bulkParsed) {
-        const optionMedia = item.options.map((text, idx) => ({
+      const mcqsPayload = bulkParsed.map((item) => {
+        const optionMedia = (item.options || []).map((text, idx) => ({
           key: String.fromCharCode(65 + idx),
-          text,
+          text: String(text || ''),
           image: parsedDataUrlToImage(item.optionImageDataUrls?.[idx], `option-${idx + 1}-image`),
         }));
 
-        await apiRequest('/api/admin/mcqs', {
-          method: 'POST',
-          body: JSON.stringify({
-            subject: hierarchyContext.subject,
-            part: hierarchyContext.part,
-            chapter: hierarchyContext.chapter,
-            section: hierarchyContext.section,
-            topic: hierarchyContext.topic,
-            question: item.question,
-            questionImageUrl: item.questionImageUrl,
-            questionImage: parsedDataUrlToImage(item.questionImageDataUrl, 'question-image'),
-            options: item.options,
-            optionMedia,
-            answer: item.answer,
-            tip: item.tip,
-            explanationText: item.tip,
-            explanationImage: parsedDataUrlToImage(item.explanationImageDataUrl, 'explanation-image'),
-            shortTrickText: String(item.shortTrick || '').trim(),
-            shortTrickImage: null,
-            difficulty: item.difficulty,
-          }),
-        }, authToken);
+        return {
+          subject: hierarchyContext.subject,
+          part: hierarchyContext.part,
+          chapter: hierarchyContext.chapter,
+          section: hierarchyContext.section,
+          topic: hierarchyContext.topic,
+          question: item.question,
+          questionImageUrl: item.questionImageUrl,
+          questionImage: parsedDataUrlToImage(item.questionImageDataUrl, 'question-image'),
+          options: item.options,
+          optionMedia,
+          answer: item.answer,
+          tip: item.tip,
+          explanationText: item.tip,
+          explanationImage: parsedDataUrlToImage(item.explanationImageDataUrl, 'explanation-image'),
+          shortTrickText: String(item.shortTrick || '').trim(),
+          shortTrickImage: null,
+          difficulty: item.difficulty,
+        };
+      });
+
+      const result = await apiRequest<{
+        success: boolean;
+        createdCount: number;
+        failedCount: number;
+        errors: string[];
+      }>('/api/admin/upload-mcqs-bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+          subject: hierarchyContext.subject,
+          part: hierarchyContext.part,
+          chapter: hierarchyContext.chapter,
+          section: hierarchyContext.section,
+          topic: hierarchyContext.topic,
+          mcqs: mcqsPayload,
+        }),
+      }, authToken);
+
+      if (!result?.success || !result.createdCount) {
+        throw new Error(result?.errors?.[0] || 'Bulk upload failed.');
       }
 
-      toast.success(`${bulkParsed.length} MCQ(s) uploaded successfully.`);
+      if (result.failedCount > 0) {
+        toast.warning(`Uploaded ${result.createdCount} MCQ(s). ${result.failedCount} failed.`);
+      } else {
+        toast.success(`${result.createdCount} MCQ(s) uploaded successfully.`);
+      }
+
       setBulkInput('');
       setBulkFile(null);
       setBulkParsed([]);
@@ -3634,6 +3651,10 @@ export default function AdminApp() {
     } finally {
       setBulkUploading(false);
     }
+  };
+
+  const uploadAllMCQs = async () => {
+    await uploadBulkMcqs();
   };
 
   const updateParsedMcq = (index: number, updater: (item: ParsedBulkMcq) => ParsedBulkMcq) => {
@@ -6137,7 +6158,7 @@ export default function AdminApp() {
                                 <Button type="button" variant="outline" onClick={openDocumentMcqPreview}>
                                   Preview Test
                                 </Button>
-                                <Button type="button" onClick={() => void uploadBulkMcqs()} disabled={bulkUploading}>
+                                <Button id="uploadAllMcqsBtn" type="button" onClick={() => void uploadAllMCQs()} disabled={bulkUploading}>
                                   {bulkUploading ? (
                                     <>
                                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />

@@ -10546,7 +10546,7 @@ app.post('/api/admin/mcqs/parse', authMiddleware, requireAdmin, async (req, res)
   }
 });
 
-app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
+function buildAdminMcqDocument(input = {}) {
   const {
     question,
     questionImageUrl = '',
@@ -10565,7 +10565,7 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
     explanationImage = null,
     shortTrickText = '',
     shortTrickImage = null,
-  } = req.body || {};
+  } = input || {};
 
   const normalizedSubject = String(subject || '').toLowerCase().trim();
   const normalizedSubjectKey = normalizeSubjectKey(normalizedSubject);
@@ -10577,47 +10577,32 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const requiresPartSelection = !isFlatTopicSubject && isPartSelectionRequiredSubject(normalizedSubjectKey);
 
   if (!answer || !normalizedSubject) {
-    res.status(400).json({ error: 'answer and subject are required.' });
-    return;
+    throw new Error('answer and subject are required.');
   }
 
   if (!isFlatTopicSubject && (!normalizedChapter || !normalizedSection || (requiresPartSelection && !normalizedPart))) {
-    res.status(400).json({
-      error: requiresPartSelection
+    throw new Error(
+      requiresPartSelection
         ? 'part, chapter, and section are required for this subject.'
         : 'chapter and section are required for this subject.',
-    });
-    return;
+    );
   }
 
   if (isFlatTopicSubject && !normalizedTopic && !normalizedSection) {
-    res.status(400).json({ error: 'topic is required for this subject.' });
-    return;
+    throw new Error('topic is required for this subject.');
   }
 
-  let normalizedQuestionImage;
-  let normalizedExplanationImage;
-  let normalizedShortTrickImage;
-  let normalizedOptions;
-  let normalizedOptionMedia;
-
-  try {
-    normalizedQuestionImage = normalizeMcqImageFile(questionImage, 'Question image');
-    normalizedExplanationImage = normalizeMcqImageFile(explanationImage, 'Explanation image');
-    normalizedShortTrickImage = normalizeMcqImageFile(shortTrickImage, 'Short trick image');
-    const normalized = sanitizeMcqOptionsWithMedia(options, optionMedia);
-    normalizedOptions = normalized.options;
-    normalizedOptionMedia = normalized.optionMedia;
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid MCQ image payload.' });
-    return;
-  }
+  const normalizedQuestionImage = normalizeMcqImageFile(questionImage, 'Question image');
+  const normalizedExplanationImage = normalizeMcqImageFile(explanationImage, 'Explanation image');
+  const normalizedShortTrickImage = normalizeMcqImageFile(shortTrickImage, 'Short trick image');
+  const normalized = sanitizeMcqOptionsWithMedia(options, optionMedia);
+  const normalizedOptions = normalized.options;
+  const normalizedOptionMedia = normalized.optionMedia;
 
   const normalizedQuestionText = String(question || '').trim();
   const hasQuestionImage = Boolean(normalizedQuestionImage) || Boolean(String(questionImageUrl || '').trim());
   if (!normalizedQuestionText && !hasQuestionImage) {
-    res.status(400).json({ error: 'Question text or question image is required.' });
-    return;
+    throw new Error('Question text or question image is required.');
   }
 
   const resolvedTopic = isFlatTopicSubject
@@ -10627,11 +10612,10 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const resolvedAnswerKey = resolveAnswerToOptionKey(answer, normalizedOptionMedia, normalizedOptions);
 
   if (!resolvedAnswerKey) {
-    res.status(400).json({ error: 'Correct answer must match one option (A/B/C/D, 1/2/3/4, or exact option text).' });
-    return;
+    throw new Error('Correct answer must match one option (A/B/C/D, 1/2/3/4, or exact option text).');
   }
 
-  const mcq = await MCQModel.create({
+  return {
     question: normalizedQuestionText || 'Refer to attached image.',
     questionImageUrl: String(questionImageUrl || '').trim(),
     questionImage: normalizedQuestionImage,
@@ -10650,12 +10634,79 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
     shortTrickText: String(shortTrickText || ''),
     shortTrickImage: normalizedShortTrickImage,
     source: 'Admin',
-  });
+  };
+}
 
-  broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'create' } });
+app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const mcqDocument = buildAdminMcqDocument(req.body || {});
+    const mcq = await MCQModel.create(mcqDocument);
 
-  res.status(201).json({
-    mcq: serializeMcq(mcq),
+    broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'create' } });
+
+    res.status(201).json({
+      mcq: serializeMcq(mcq),
+    });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not save MCQ.' });
+  }
+});
+
+app.post('/api/admin/upload-mcqs-bulk', authMiddleware, requireAdmin, async (req, res) => {
+  const requestBody = req.body || {};
+  const incomingMcqs = Array.isArray(requestBody.mcqs) ? requestBody.mcqs : [];
+
+  if (!incomingMcqs.length) {
+    res.status(400).json({ success: false, createdCount: 0, failedCount: 0, errors: ['No MCQs provided for bulk upload.'] });
+    return;
+  }
+
+  const scope = {
+    subject: String(requestBody.subject || '').trim(),
+    part: String(requestBody.part || '').trim(),
+    chapter: String(requestBody.chapter || '').trim(),
+    section: String(requestBody.section || '').trim(),
+    topic: String(requestBody.topic || '').trim(),
+  };
+
+  const created = [];
+  const errors = [];
+
+  const candidates = incomingMcqs.slice(0, BULK_PARSE_LIMIT);
+  if (incomingMcqs.length > BULK_PARSE_LIMIT) {
+    errors.push(`Only the first ${BULK_PARSE_LIMIT} MCQs were processed.`);
+  }
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const item = candidates[index];
+    const payload = {
+      ...(item && typeof item === 'object' ? item : {}),
+      subject: scope.subject || item?.subject,
+      part: scope.part || item?.part,
+      chapter: scope.chapter || item?.chapter,
+      section: scope.section || item?.section,
+      topic: scope.topic || item?.topic || scope.section || item?.section,
+    };
+
+    try {
+      const mcqDocument = buildAdminMcqDocument(payload);
+      const mcq = await MCQModel.create(mcqDocument);
+      created.push(serializeMcq(mcq));
+    } catch (error) {
+      errors.push(`MCQ #${index + 1}: ${error instanceof Error ? error.message : 'Could not save.'}`);
+    }
+  }
+
+  if (created.length > 0) {
+    broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'bulk-create' } });
+  }
+
+  res.status(created.length ? 201 : 400).json({
+    success: created.length > 0,
+    createdCount: created.length,
+    failedCount: candidates.length - created.length,
+    errors,
+    mcqs: created,
   });
 });
 
