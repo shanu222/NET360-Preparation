@@ -54,6 +54,7 @@ import {
   openBlobPreview,
   openDataUrlPreview,
 } from '../app/lib/filePreview';
+import { McqMathText, normalizeMcqImageSrc } from '../app/components/McqRender';
 import 'mathlive';
 import '../styles/admin-theme.css';
 
@@ -5725,7 +5726,7 @@ export default function AdminApp() {
                                       <Label>Detected Question Image</Label>
                                       {item.questionImageDataUrl || item.questionImageUrl ? (
                                         <img
-                                          src={item.questionImageDataUrl || item.questionImageUrl}
+                                          src={normalizeMcqImageSrc(item.questionImageDataUrl || item.questionImageUrl)}
                                           alt={`Parsed question image ${mcqIndex + 1}`}
                                           className="max-h-44 w-auto rounded border border-indigo-300/60 bg-white/70 object-contain p-1"
                                         />
@@ -5763,7 +5764,7 @@ export default function AdminApp() {
                                               <Label className="text-xs text-muted-foreground">Detected Option Image</Label>
                                               {item.optionImageDataUrls?.[optionIndex] ? (
                                                 <img
-                                                  src={item.optionImageDataUrls[optionIndex]}
+                                                  src={normalizeMcqImageSrc(item.optionImageDataUrls[optionIndex])}
                                                   alt={`Parsed option image ${mcqIndex + 1}-${String.fromCharCode(65 + optionIndex)}`}
                                                   className="max-h-32 w-auto rounded border border-indigo-300/60 bg-white/70 object-contain p-1"
                                                 />
@@ -6144,6 +6145,35 @@ export default function AdminApp() {
                                     </div>
                                   ) : null}
                                 </div>
+                                ) : null}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="space-y-2 rounded-md border border-slate-300/70 bg-slate-50/60 p-2">
+                          <p className="text-xs font-semibold text-slate-700">MCQ Preview</p>
+                          <div className="rounded border border-slate-200 bg-white p-2 text-sm">
+                            <McqMathText value={form.question} asBlock className="text-slate-800" />
+                            {normalizeMcqImageSrc(form.questionImage?.dataUrl) ? (
+                              <img
+                                src={normalizeMcqImageSrc(form.questionImage?.dataUrl)}
+                                alt="Question preview"
+                                className="mcq-image"
+                              />
+                            ) : null}
+                          </div>
+                          <div className="space-y-2">
+                            {form.optionMedia.map((option) => (
+                              <div key={`preview-option-${option.key}`} className="rounded border border-slate-200 bg-white p-2 text-sm">
+                                <p className="font-semibold text-slate-700">{option.key}.</p>
+                                <McqMathText value={option.text} className="text-slate-800" />
+                                {normalizeMcqImageSrc(option.image?.dataUrl) ? (
+                                  <img
+                                    src={normalizeMcqImageSrc(option.image?.dataUrl)}
+                                    alt={`Option ${option.key} preview`}
+                                    className="option-image"
+                                  />
                                 ) : null}
                               </div>
                             ))}
@@ -6625,6 +6655,35 @@ export default function AdminApp() {
                                       </Button>
                                     </div>
                                   </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="space-y-2 rounded-md border border-slate-300/70 bg-slate-50/60 p-2">
+                            <p className="text-xs font-semibold text-slate-700">MCQ Preview</p>
+                            <div className="rounded border border-slate-200 bg-white p-2 text-sm">
+                              <McqMathText value={draft.question} asBlock className="text-slate-800" />
+                              {normalizeMcqImageSrc(draft.questionImage?.dataUrl) ? (
+                                <img
+                                  src={normalizeMcqImageSrc(draft.questionImage?.dataUrl)}
+                                  alt="Question preview"
+                                  className="mcq-image"
+                                />
+                              ) : null}
+                            </div>
+                            <div className="space-y-2">
+                              {draft.optionMedia.map((option) => (
+                                <div key={`${item.id}-preview-${option.key}`} className="rounded border border-slate-200 bg-white p-2 text-sm">
+                                  <p className="font-semibold text-slate-700">{option.key}.</p>
+                                  <McqMathText value={option.text} className="text-slate-800" />
+                                  {normalizeMcqImageSrc(option.image?.dataUrl) ? (
+                                    <img
+                                      src={normalizeMcqImageSrc(option.image?.dataUrl)}
+                                      alt={`Option ${option.key} preview`}
+                                      className="option-image"
+                                    />
+                                  ) : null}
                                 </div>
                               ))}
                             </div>
