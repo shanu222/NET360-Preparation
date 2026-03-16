@@ -74,7 +74,7 @@ interface ReviewRow {
   } | null;
 }
 
-export interface TestSession {
+interface TestSession {
   id: string;
   topic: string;
   questionCount: number;
@@ -84,11 +84,6 @@ export interface TestSession {
   cancelReason?: string;
   cancelTrigger?: string;
   questions: SessionQuestion[];
-}
-
-interface TestInterfacePageProps {
-  previewSession?: TestSession | null;
-  onClosePreview?: () => void;
 }
 
 interface ChallengeAnswerRow {
@@ -165,9 +160,8 @@ function formatTime(totalSeconds: number) {
 
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
 
-export function TestInterfacePage({ previewSession = null, onClosePreview }: TestInterfacePageProps = {}) {
+export function TestInterfacePage() {
   const { user } = useAuth();
-  const isPreviewMode = Boolean(previewSession);
   const candidatePhoto = useMemo(() => {
     try {
       return localStorage.getItem(PROFILE_PHOTO_STORAGE_KEY) || '';
@@ -236,21 +230,6 @@ export function TestInterfacePage({ previewSession = null, onClosePreview }: Tes
   const [challengeLockedAnswers, setChallengeLockedAnswers] = useState<Record<string, string>>({});
   const [launchResolved, setLaunchResolved] = useState(false);
 
-  useEffect(() => {
-    if (!isPreviewMode) return;
-
-    setSession(previewSession);
-    setLoading(false);
-    setError(previewSession?.questions?.length ? null : 'Preview session has no questions.');
-    setCurrentIndex(0);
-    setAnswers({});
-    setMarkedForReview({});
-    setResult(null);
-    setReviewRows([]);
-    setRemainingSeconds(Math.max(1, Number(previewSession?.durationMinutes || 1) * 60));
-    setLaunchResolved(true);
-  }, [isPreviewMode, previewSession]);
-
   const violationCountRef = useRef(0);
   const violationDebounceAtRef = useRef(0);
   const hasAutoCancelledRef = useRef(false);
@@ -275,7 +254,6 @@ export function TestInterfacePage({ previewSession = null, onClosePreview }: Tes
   };
 
   useEffect(() => {
-    if (isPreviewMode) return;
     setError(null);
     const params = new URLSearchParams(window.location.search);
     const fromQuery = params.get('authToken');
@@ -333,7 +311,7 @@ export function TestInterfacePage({ previewSession = null, onClosePreview }: Tes
 
     setResolvedToken(token);
     setLaunchResolved(true);
-  }, [isPreviewMode]);
+  }, []);
 
   const getChallengeAttemptStorageKey = (challengeId: string) => `net360-challenge-attempt-${challengeId}`;
 
@@ -404,7 +382,6 @@ export function TestInterfacePage({ previewSession = null, onClosePreview }: Tes
   useEffect(() => {
     async function loadSession() {
       try {
-        if (isPreviewMode) return;
         if (!launchResolved || !resolvedToken) return;
 
         if (isChallengeMode) {
@@ -492,10 +469,9 @@ export function TestInterfacePage({ previewSession = null, onClosePreview }: Tes
     }
 
     void loadSession();
-  }, [isChallengeMode, isPreviewMode, launchResolved, resolvedChallengeId, resolvedSessionId, resolvedToken]);
+  }, [isChallengeMode, launchResolved, resolvedChallengeId, resolvedSessionId, resolvedToken]);
 
   useEffect(() => {
-    if (isPreviewMode) return;
     if (!session || result || remainingSeconds <= 0) return;
 
     const timer = window.setInterval(() => {
@@ -519,13 +495,12 @@ export function TestInterfacePage({ previewSession = null, onClosePreview }: Tes
     }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [challengeStartedAtMs, isChallengeMode, isPreviewMode, session, remainingSeconds, result]);
+  }, [challengeStartedAtMs, isChallengeMode, session, remainingSeconds, result]);
 
   useEffect(() => {
-    if (isPreviewMode) return;
     if (!session || result || isSubmitting || remainingSeconds !== 0) return;
     void handleSubmit(true);
-  }, [isPreviewMode, session, result, isSubmitting, remainingSeconds]);
+  }, [session, result, isSubmitting, remainingSeconds]);
 
   const question = session?.questions[currentIndex] || null;
 
@@ -647,7 +622,6 @@ export function TestInterfacePage({ previewSession = null, onClosePreview }: Tes
   };
 
   useEffect(() => {
-    if (isPreviewMode) return;
     if (!session || !resolvedToken || result || hasAutoCancelledRef.current) return;
     if (isChallengeMode && !resolvedChallengeId) return;
     if (!isChallengeMode && !resolvedSessionId) return;
@@ -709,7 +683,7 @@ export function TestInterfacePage({ previewSession = null, onClosePreview }: Tes
       appStateListener?.remove();
       backButtonListener?.remove();
     };
-  }, [isChallengeMode, isPreviewMode, resolvedChallengeId, resolvedSessionId, resolvedToken, result, session]);
+  }, [isChallengeMode, resolvedChallengeId, resolvedSessionId, resolvedToken, result, session]);
 
   if (loading) {
     return (
@@ -727,15 +701,9 @@ export function TestInterfacePage({ previewSession = null, onClosePreview }: Tes
           <button
             type="button"
             className="rounded border border-[#2b5f9f] bg-[#d7e8ff] px-3 py-1.5 text-sm"
-            onClick={() => {
-              if (onClosePreview) {
-                onClosePreview();
-                return;
-              }
-              window.close();
-            }}
+            onClick={() => window.close()}
           >
-            {isPreviewMode ? 'Close Preview' : 'Close'}
+            Close
           </button>
         </div>
       </div>
@@ -780,7 +748,7 @@ export function TestInterfacePage({ previewSession = null, onClosePreview }: Tes
           <aside className="order-1 grid grid-cols-1 gap-2 border-b border-[#2b5f9f] p-2 md:order-2 md:block md:border-b-0">
             <p className="mb-1 text-xs text-black">Candidate</p>
             <div className="mb-2 rounded border border-[#d25555] bg-white p-2 text-center text-[13px] text-black">
-              {isPreviewMode ? 'Admin Preview' : `${user?.firstName || 'Candidate'} ${user?.lastName || ''}`}
+              {user?.firstName || 'Candidate'} {user?.lastName || ''}
             </div>
             <div className="rounded border border-[#d25555] bg-white p-1.5 text-center text-xs text-black">
               {candidatePhoto ? (
@@ -893,26 +861,15 @@ export function TestInterfacePage({ previewSession = null, onClosePreview }: Tes
           <button
             type="button"
             className="inline-flex w-full items-center justify-center gap-1 rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-1 text-blue-700 hover:bg-[#c9deff] disabled:opacity-60 sm:w-auto"
-            onClick={() => {
-              if (isPreviewMode) {
-                if (onClosePreview) {
-                  onClosePreview();
-                } else {
-                  window.close();
-                }
-                return;
-              }
-              void handleSubmit(false);
-            }}
-            disabled={isPreviewMode ? false : (isSubmitting || Boolean(result))}
+            onClick={() => void handleSubmit(false)}
+            disabled={isSubmitting || Boolean(result)}
           >
             <Send className="h-4 w-4" />
-            {isPreviewMode ? 'Close Preview' : 'Click here to FINISH Your Test'}
+            Click here to FINISH Your Test
           </button>
         </footer>
       </div>
 
-      {!isPreviewMode ? (
       <div className="mt-1 bg-white px-2 py-2 text-center text-xs text-red-600 sm:text-sm">
         NUST NET-style testing interface{' '}
         <button
@@ -935,7 +892,6 @@ export function TestInterfacePage({ previewSession = null, onClosePreview }: Tes
           Go to Login Page
         </button>
       </div>
-      ) : null}
 
       {result ? (
         <div className="fixed inset-0 grid place-items-center bg-black/35 p-3">
