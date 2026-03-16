@@ -4189,8 +4189,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const difficulty = String(body.difficulty || 'Medium') as Difficulty;
     const topic = String(body.topic || 'All Topics');
     const part = String(body.part || '').toLowerCase();
-    const chapter = String(body.chapter || '').toLowerCase();
-    const section = String(body.section || '').toLowerCase();
+    const chapter = String(body.chapter || '');
+    const section = String(body.section || '');
     const mode = String(body.mode || '') as TestMode;
     const netType = normalizeNetType(body.netType);
     const testType = String(body.testType || '').toLowerCase() as TestType | '';
@@ -4205,6 +4205,15 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
 
     const mcqs = await loadMcqs();
     let selected: MCQ[] = [];
+
+    const normalizeTextForMatch = (value: unknown) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+    const exactThenContains = (rows: MCQ[], key: 'chapter' | 'section' | 'topic', requested: string) => {
+      const query = normalizeTextForMatch(requested);
+      if (!query) return rows;
+      const exact = rows.filter((item) => normalizeTextForMatch(item[key]) === query);
+      if (exact.length) return exact;
+      return rows.filter((item) => normalizeTextForMatch(item[key]).includes(query));
+    };
 
     const profileSubjects = Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects)));
     const scoped = mcqs.filter((item) => profileSubjects.includes(item.subject));
@@ -4227,26 +4236,41 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         questionCount,
       });
     } else {
-      let pool = mcqs.filter(
-        (item) => item.subject === subject && item.difficulty.toLowerCase() === difficulty.toLowerCase(),
-      );
-
-      if (part) {
-        pool = pool.filter((item) => String(item.part || '').toLowerCase() === part);
-      }
-      if (chapter) {
-        pool = pool.filter((item) => String(item.chapter || '').toLowerCase().includes(chapter));
-      }
-      if (section) {
-        pool = pool.filter((item) => String(item.section || '').toLowerCase().includes(section));
-      }
-
-      if (topic && topic !== 'All Topics') {
-        const byTopic = pool.filter((item) => item.topic.toLowerCase().includes(topic.toLowerCase()));
-        if (byTopic.length) {
-          pool = byTopic;
+      const applyHierarchyFilters = (rows: MCQ[]) => {
+        let scoped = [...rows];
+        if (chapter && chapter !== 'All Chapters') {
+          scoped = exactThenContains(scoped, 'chapter', chapter);
         }
+        if (section && section !== 'All Sections') {
+          scoped = exactThenContains(scoped, 'section', section);
+        }
+        if (topic && topic !== 'All Topics') {
+          const byTopic = exactThenContains(scoped, 'topic', topic);
+          if (byTopic.length) {
+            scoped = byTopic;
+          }
+        }
+        return scoped;
+      };
+
+      const basePool = mcqs.filter((item) => item.subject === subject && (!part || String(item.part || '').toLowerCase() === part));
+      let pool = applyHierarchyFilters(basePool.filter((item) => item.difficulty.toLowerCase() === difficulty.toLowerCase()));
+
+      if (!pool.length) {
+        pool = applyHierarchyFilters(basePool);
       }
+
+      console.log('TEST FILTER', {
+        subject,
+        part,
+        chapter,
+        section,
+        difficulty,
+        topic,
+        mode,
+        testType,
+      });
+      console.log('MCQ COUNT', pool.length);
 
       selected = shuffle(pool).slice(0, Math.min(questionCount, pool.length));
     }

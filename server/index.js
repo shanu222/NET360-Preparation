@@ -8975,10 +8975,23 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
   const normalizedMode = String(mode);
   const normalizedSubject = String(subject || 'mathematics').toLowerCase();
   const normalizedDifficulty = String(difficulty || 'Medium');
+  const normalizedPart = String(part || '').toLowerCase().trim();
+  const normalizedChapter = String(chapter || '').trim();
+  const normalizedSection = String(section || '').trim();
+  const normalizedTopic = String(topic || '').trim();
   const normalizedNetType = normalizeNetType(netType);
   const profile = NET_TEST_PROFILES[normalizedNetType] || NET_TEST_PROFILES['net-engineering'];
   const normalizedTestType = String(testType || '').toLowerCase();
   const desiredQuestions = clamp(Number(questionCount) || (normalizedMode === 'mock' ? profile.totalQuestions : 20), 1, 200);
+
+  const normalizeTextForMatch = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const exactThenContains = (rows, key, requested) => {
+    const query = normalizeTextForMatch(requested);
+    if (!query) return rows;
+    const exact = rows.filter((item) => normalizeTextForMatch(item?.[key]) === query);
+    if (exact.length) return exact;
+    return rows.filter((item) => normalizeTextForMatch(item?.[key]).includes(query));
+  };
 
   let selected = [];
   const allInProfile = await MCQModel.find({
@@ -9008,27 +9021,58 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
       userProgress: req.user.progress || defaultProgress(),
     });
   } else {
-    const filter = {
+    const baseFilter = {
       subject: normalizedSubject,
+    };
+    if (normalizedPart) {
+      baseFilter.part = normalizedPart;
+    }
+
+    const applyHierarchyFilters = (rows) => {
+      let scoped = [...rows];
+
+      if (normalizedChapter && normalizedChapter !== 'All Chapters') {
+        scoped = exactThenContains(scoped, 'chapter', normalizedChapter);
+      }
+      if (normalizedSection && normalizedSection !== 'All Sections') {
+        scoped = exactThenContains(scoped, 'section', normalizedSection);
+      }
+      if (normalizedTopic && normalizedTopic !== 'All Topics') {
+        const byTopic = exactThenContains(scoped, 'topic', normalizedTopic);
+        if (byTopic.length) {
+          scoped = byTopic;
+        }
+      }
+
+      return scoped;
+    };
+
+    const difficultyFilter = {
+      ...baseFilter,
       difficulty: normalizedDifficulty,
     };
 
-    if (part) {
-      filter.part = String(part).toLowerCase().trim();
-    }
-    if (chapter && chapter !== 'All Chapters') {
-      filter.chapter = { $regex: String(chapter), $options: 'i' };
-    }
-    if (section && section !== 'All Sections') {
-      filter.section = { $regex: String(section), $options: 'i' };
-    }
-    if (topic && topic !== 'All Topics') {
-      filter.topic = { $regex: String(topic), $options: 'i' };
+    let pool = applyHierarchyFilters(await MCQModel.find(difficultyFilter).lean());
+
+    // If selected difficulty has no rows, fallback to any difficulty for same saved hierarchy.
+    if (!pool.length) {
+      pool = applyHierarchyFilters(await MCQModel.find(baseFilter).lean());
     }
 
-    const pool = await MCQModel.find(filter).lean();
     selected = shuffle(pool).slice(0, Math.min(desiredQuestions, pool.length));
   }
+
+  console.log('TEST FILTER', {
+    subject: normalizedSubject,
+    part: normalizedPart,
+    chapter: normalizedChapter,
+    section: normalizedSection,
+    difficulty: normalizedDifficulty,
+    topic: normalizedTopic,
+    mode: normalizedMode,
+    testType: normalizedTestType,
+  });
+  console.log('MCQ COUNT', selected.length);
 
   if (!selected.length) {
     res.status(404).json({ error: 'No questions available for this configuration.' });
