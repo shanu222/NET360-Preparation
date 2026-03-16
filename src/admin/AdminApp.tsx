@@ -1,4 +1,4 @@
-import { createElement, type ChangeEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, type ChangeEvent, type FormEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -3216,9 +3216,11 @@ export default function AdminApp() {
     setForm(fresh);
   };
 
-  const handleAddMCQ = async (event?: MouseEvent<HTMLButtonElement>) => {
+  const handleAddMCQ = async (event?: Pick<MouseEvent<HTMLButtonElement>, 'preventDefault' | 'stopPropagation'> | Pick<FormEvent<HTMLFormElement>, 'preventDefault'>) => {
     event?.preventDefault();
-    event?.stopPropagation();
+    if ('stopPropagation' in (event || {})) {
+      event.stopPropagation();
+    }
 
     if (isSavingMcq) return;
     if (!authToken) {
@@ -3405,6 +3407,15 @@ export default function AdminApp() {
     } finally {
       setIsSavingMcq(false);
     }
+  };
+
+  const submitMCQ = async () => {
+    await handleAddMCQ();
+  };
+
+  const handleManualMcqSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    void submitMCQ();
   };
 
   const analyzeBulkMcqs = async () => {
@@ -6141,7 +6152,7 @@ export default function AdminApp() {
                         ) : null}
 
                         {uploadMode === 'manual' ? (
-                          <>
+                          <form className="space-y-3" onSubmit={handleManualMcqSubmit}>
                             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                               <div className="space-y-1.5">
                                 <Label>Subject</Label>
@@ -6527,10 +6538,10 @@ export default function AdminApp() {
                         </div>
 
                         <div className="flex flex-wrap gap-2">
-                          <Button type="button" variant="outline" onClick={openManualMcqPreview}>
+                          <Button id="previewBtn" type="button" variant="outline" onClick={openManualMcqPreview}>
                             Preview Test
                           </Button>
-                          <Button type="button" onClick={(event) => void handleAddMCQ(event)} disabled={isSavingMcq}>
+                          <Button id="addMcqBtn" type="submit" disabled={isSavingMcq}>
                             {isSavingMcq ? (
                               <>
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -6538,9 +6549,9 @@ export default function AdminApp() {
                               </>
                             ) : form.id ? 'Update MCQ' : 'Add MCQs'}
                           </Button>
-                          <Button variant="outline" onClick={resetForm}>Clear</Button>
+                          <Button type="button" variant="outline" onClick={resetForm}>Clear</Button>
                         </div>
-                          </>
+                          </form>
                         ) : null}
                       </div>
                   </div>
