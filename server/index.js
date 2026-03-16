@@ -1060,16 +1060,16 @@ function sanitizeAllowedInlineFormattingTags(value) {
   return String(value || '').replace(/<[^>]*>/g, (tag) => {
     const trimmed = String(tag || '').trim();
     const openingStrong = trimmed.match(/^<\s*(strong|b)\b[^>]*>$/i);
-    if (openingStrong) return '<strong>';
+    if (openingStrong) return `<${String(openingStrong[1] || '').toLowerCase()}>`;
 
     const closingStrong = trimmed.match(/^<\s*\/\s*(strong|b)\s*>$/i);
-    if (closingStrong) return '</strong>';
+    if (closingStrong) return `</${String(closingStrong[1] || '').toLowerCase()}>`;
 
     const openingEmphasis = trimmed.match(/^<\s*(em|i)\b[^>]*>$/i);
-    if (openingEmphasis) return '<em>';
+    if (openingEmphasis) return `<${String(openingEmphasis[1] || '').toLowerCase()}>`;
 
     const closingEmphasis = trimmed.match(/^<\s*\/\s*(em|i)\s*>$/i);
-    if (closingEmphasis) return '</em>';
+    if (closingEmphasis) return `</${String(closingEmphasis[1] || '').toLowerCase()}>`;
 
     return '';
   });
@@ -1087,7 +1087,7 @@ function normalizeRichMcqText(value) {
 
 function flattenRichMcqTextForMatch(value) {
   return sanitizeAllowedInlineFormattingTags(value)
-    .replace(/<\/?(?:strong|em)>/gi, '')
+    .replace(/<\/?(?:strong|b|em|i)>/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
@@ -1356,6 +1356,8 @@ async function parseBulkMcqsWithAi(rawText) {
             '- Detect all question boundaries (1., 1), Q1, Question 1, etc.).',
             '- Support mixed option formats: A) A. A, Option 1, 1) and inline options in one line.',
             '- Keep options separated as array items.',
+            '- Input may already include inline HTML formatting tags such as <strong>, <b>, <em>, and <i>. Keep these tags unchanged in question, options, and explanation fields.',
+            '- Do not convert existing formatting tags into plain text, markdown, or escaped entities.',
             '- Capture image references (data URLs or http URLs) near question/options/explanation when available.',
             '- answer may be letter/number/text; provide best available answer token from source.',
             '- If explanation is not present, use empty string.',
