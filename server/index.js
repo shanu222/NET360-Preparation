@@ -1339,7 +1339,7 @@ async function parseBulkMcqsWithAi(rawText) {
     const errors = [];
 
     rows.slice(0, BULK_PARSE_LIMIT).forEach((row, idx) => {
-      const question = String(row?.question || '').replace(/\s+/g, ' ').trim();
+      const question = String(row?.question || '').trim();
       const options = parseOptionsFromUnknown(row?.options);
       const answer = resolveAnswerToOption(row?.answer, options);
       const tip = String(row?.explanation || '').trim();
@@ -1524,13 +1524,13 @@ function parseBulkMcqsFromText(raw) {
       if (capturingExplanation) {
         explanationLines.push(line);
       } else if (activeOptionIndex >= 0 && options[activeOptionIndex]) {
-        options[activeOptionIndex].text = `${options[activeOptionIndex].text} ${line}`.trim();
+        options[activeOptionIndex].text = `${options[activeOptionIndex].text}\n${line}`.trim();
       } else {
         questionLines.push(line);
       }
     }
 
-    const question = questionLines.join(' ').trim();
+    const question = questionLines.join('\n').trim();
     const normalizedOptions = options.map((option) => option.text.trim()).filter(Boolean);
     const resolvedAnswer = resolveAnswerToOption(answer, normalizedOptions);
     if ((!question && !questionImageUrl && !questionImageDataUrl) || normalizedOptions.length < 2 || !resolvedAnswer) {
@@ -1608,55 +1608,76 @@ async function extractTextFromUpload(filePayload) {
 
     const $ = cheerio.load(String(result?.value || ''));
     const chunks = [];
-    const inlineTextTags = new Set(['span', 'strong', 'b', 'em', 'i', 'u', 'sup', 'sub', 'a']);
-    const blockTags = new Set(['p', 'div', 'li', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'tr', 'td']);
 
-    const pushChunk = (value) => {
-      const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+    const serializeInline = (node) => {
+      if (!node) return '';
+      if (node.type === 'text') {
+        return String(node.data || '').replace(/\s+/g, ' ');
+      }
+      if (node.type !== 'tag') return '';
+
+      const tag = String(node.name || '').toLowerCase();
+      if (tag === 'br') return '\n';
+      if (tag === 'img') {
+        const src = String($(node).attr('src') || '').trim();
+        return /^data:image\//i.test(src) ? ` image: ${src} ` : '';
+      }
+
+      const content = (node.children || []).map((child) => serializeInline(child)).join('').trim();
+      if (!content) return '';
+
+      if (tag === 'strong' || tag === 'b') return `<b>${content}</b>`;
+      if (tag === 'em' || tag === 'i') return `<i>${content}</i>`;
+      if (tag === 'u') return `<u>${content}</u>`;
+      if (tag === 'sup') return `<sup>${content}</sup>`;
+      if (tag === 'sub') return `<sub>${content}</sub>`;
+
+      return content;
+    };
+
+    const pushLine = (value) => {
+      const normalized = String(value || '').replace(/[ \t\f\v]+/g, ' ').trim();
       if (!normalized) return;
       chunks.push(normalized);
     };
 
-    const traverse = (node) => {
+    const visitBlock = (node) => {
       if (!node) return;
-
       if (node.type === 'text') {
-        pushChunk(node.data);
+        pushLine(node.data);
         return;
       }
-
       if (node.type !== 'tag') return;
 
       const tag = String(node.name || '').toLowerCase();
+      if (tag === 'ul' || tag === 'ol') {
+        const listItems = $(node).children('li').toArray();
+        listItems.forEach((item, index) => {
+          const marker = tag === 'ol' ? `${index + 1}. ` : '- ';
+          pushLine(`${marker}${serializeInline(item)}`);
+        });
+        return;
+      }
+
       if (tag === 'img') {
-        const src = String($(node).attr('src') || '').trim();
-        if (/^data:image\//i.test(src)) {
-          chunks.push(`image: ${src}`);
-        }
+        const imageEntry = serializeInline(node);
+        if (imageEntry) pushLine(imageEntry);
         return;
       }
 
-      if (tag === 'br') {
-        chunks.push('\n');
+      const blockLine = serializeInline(node);
+      if (blockLine) {
+        pushLine(blockLine);
         return;
       }
 
-      if (blockTags.has(tag)) chunks.push('\n');
-
-      const children = node.children || [];
-      for (const child of children) {
-        traverse(child);
-      }
-
-      if (blockTags.has(tag) || !inlineTextTags.has(tag)) chunks.push('\n');
+      (node.children || []).forEach((child) => visitBlock(child));
     };
 
     const rootNodes = $('body').length ? $('body').contents().toArray() : $.root().contents().toArray();
-    rootNodes.forEach((node) => traverse(node));
+    rootNodes.forEach((node) => visitBlock(node));
 
-    const assembled = chunks
-      .join('\n')
-      .replace(/\n{3,}/g, '\n\n');
+    const assembled = chunks.join('\n').replace(/\n{3,}/g, '\n\n');
 
     return normalizePlainText(assembled);
   }

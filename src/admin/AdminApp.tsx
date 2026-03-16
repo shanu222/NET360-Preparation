@@ -84,8 +84,22 @@ function normalizeMathInputId(value: string) {
 }
 
 function insertMathSymbolToField(targetId: string, snippet = '\\sqrt{}') {
-  const field = document.getElementById(targetId) as MathFieldLikeElement | null;
-  if (!field) return;
+  const rawField = document.getElementById(targetId) as (MathFieldLikeElement | HTMLTextAreaElement | HTMLInputElement | null);
+  if (!rawField) return;
+
+  if (rawField instanceof HTMLTextAreaElement || rawField instanceof HTMLInputElement) {
+    const start = rawField.selectionStart ?? rawField.value.length;
+    const end = rawField.selectionEnd ?? start;
+    const nextValue = `${rawField.value.slice(0, start)}${snippet}${rawField.value.slice(end)}`;
+    rawField.value = nextValue;
+    const nextCursor = start + snippet.length;
+    rawField.setSelectionRange(nextCursor, nextCursor);
+    rawField.dispatchEvent(new Event('input', { bubbles: true }));
+    rawField.focus();
+    return;
+  }
+
+  const field = rawField as MathFieldLikeElement;
 
   try {
     if (typeof field.insert === 'function') {
@@ -103,9 +117,36 @@ function insertMathSymbolToField(targetId: string, snippet = '\\sqrt{}') {
   }
 }
 
-function openMathToolbarForField(targetId: string) {
-  const field = document.getElementById(targetId) as MathFieldLikeElement | null;
+function wrapSelectionInTextField(targetId: string, before: string, after: string) {
+  const field = document.getElementById(targetId) as (HTMLTextAreaElement | HTMLInputElement | null);
   if (!field) return;
+
+  const start = field.selectionStart ?? field.value.length;
+  const end = field.selectionEnd ?? start;
+  const selected = field.value.slice(start, end) || 'text';
+  const replacement = `${before}${selected}${after}`;
+  const nextValue = `${field.value.slice(0, start)}${replacement}${field.value.slice(end)}`;
+  field.value = nextValue;
+  const nextSelectionStart = start + before.length;
+  const nextSelectionEnd = nextSelectionStart + selected.length;
+  field.setSelectionRange(nextSelectionStart, nextSelectionEnd);
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+  field.focus();
+}
+
+function openMathToolbarForField(targetId: string) {
+  const rawField = document.getElementById(targetId) as (MathFieldLikeElement | HTMLTextAreaElement | HTMLInputElement | null);
+  if (!rawField) return;
+
+  if (rawField instanceof HTMLTextAreaElement || rawField instanceof HTMLInputElement) {
+    insertMathSymbolToField(targetId, '\\( \\)');
+    const cursor = (rawField.selectionStart ?? 0) - 3;
+    rawField.setSelectionRange(Math.max(0, cursor), Math.max(0, cursor));
+    rawField.focus();
+    return;
+  }
+
+  const field = rawField as MathFieldLikeElement;
 
   field.focus();
 
@@ -128,7 +169,13 @@ function openMathToolbarForField(targetId: string) {
 
 function MathToolbar({ targetId }: { targetId: string }) {
   const toolbarButtons: Array<{ key: string; label: string; snippet?: string; onClick?: () => void }> = [
+    { key: 'bold', label: 'Bold', onClick: () => wrapSelectionInTextField(targetId, '<b>', '</b>') },
+    { key: 'italic', label: 'Italic', onClick: () => wrapSelectionInTextField(targetId, '<i>', '</i>') },
+    { key: 'underline', label: 'Underline', onClick: () => wrapSelectionInTextField(targetId, '<u>', '</u>') },
+    { key: 'superscript', label: 'Superscript', onClick: () => wrapSelectionInTextField(targetId, '<sup>', '</sup>') },
+    { key: 'subscript', label: 'Subscript', onClick: () => wrapSelectionInTextField(targetId, '<sub>', '</sub>') },
     { key: 'calculator', label: 'Calculator', onClick: () => openMathToolbarForField(targetId) },
+    { key: 'equation', label: 'Equation', snippet: '\\( \\)' },
     { key: 'symbol', label: 'Symbol', snippet: '\\alpha' },
     { key: 'fraction', label: 'Fraction', snippet: '\\frac{}{}' },
     { key: 'power', label: 'Power', snippet: 'x^{ }' },
@@ -204,6 +251,38 @@ function MathLiveInput({
     'virtual-keyboard-mode': 'onfocus',
     'smart-mode': 'false',
   } as Record<string, unknown>);
+}
+
+function RichTextEditor({
+  id,
+  label,
+  value,
+  placeholder,
+  className,
+  onValueChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  placeholder?: string;
+  className?: string;
+  onValueChange: (nextValue: string) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <Label htmlFor={id}>{label}</Label>
+        <MathToolbar targetId={id} />
+      </div>
+      <Textarea
+        id={id}
+        value={value}
+        onChange={(e) => onValueChange(e.target.value)}
+        className={className}
+        placeholder={placeholder}
+      />
+    </div>
+  );
 }
 
 function toTitleLabel(value: string) {
@@ -1066,13 +1145,13 @@ function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[]
       if (capturingExplanation) {
         explanationLines.push(line);
       } else if (activeOptionIndex >= 0 && options[activeOptionIndex]) {
-        options[activeOptionIndex].text = `${options[activeOptionIndex].text} ${line}`.trim();
+        options[activeOptionIndex].text = `${options[activeOptionIndex].text}\n${line}`.trim();
       } else {
         questionLines.push(line);
       }
     }
 
-    const question = questionLines.join(' ').trim();
+    const question = questionLines.join('\n').trim();
     const normalizedOptions = options.map((option) => option.text.trim()).filter(Boolean);
     const normalizedAnswer = normalizeAnswerToken(answerToken, normalizedOptions);
     if ((!question && !questionImageUrl && !questionImageDataUrl) || normalizedOptions.length < 2 || !normalizedAnswer) {
@@ -5794,6 +5873,9 @@ export default function AdminApp() {
                                     <div className="space-y-1">
                                       <Label>Question Text</Label>
                                       <Textarea value={item.question} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, question: e.target.value }))} className="min-h-[84px]" />
+                                      <div className="rounded border border-indigo-200/70 bg-white p-2 text-sm">
+                                        <McqMathText value={item.question} asBlock className="text-slate-800" />
+                                      </div>
                                     </div>
 
                                     <div className="space-y-1">
@@ -5839,6 +5921,9 @@ export default function AdminApp() {
                                                 Remove
                                               </Button>
                                             </div>
+                                            <div className="rounded border border-indigo-200/60 bg-white p-2 text-sm">
+                                              <McqMathText value={option} className="text-slate-800" />
+                                            </div>
                                             <div className="space-y-1">
                                               <Label className="text-xs text-muted-foreground">Detected Option Image</Label>
                                               {item.optionImageDataUrls?.[optionIndex] ? (
@@ -5879,6 +5964,9 @@ export default function AdminApp() {
                                     <div className="space-y-1">
                                       <Label>Explanation</Label>
                                       <Textarea value={item.tip || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, tip: e.target.value }))} className="min-h-[80px]" />
+                                      <div className="rounded border border-indigo-200/70 bg-white p-2 text-sm">
+                                        <McqMathText value={item.tip || ''} asBlock className="text-slate-800" />
+                                      </div>
                                     </div>
 
                                     <div className="space-y-1">
@@ -6035,19 +6123,14 @@ export default function AdminApp() {
                           </div>
 
                           {form.questionType !== 'image' ? (
-                            <div className="space-y-1.5">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <Label htmlFor="questionInput">Question Text</Label>
-                                <MathToolbar targetId="questionInput" />
-                              </div>
-                              <MathLiveInput
-                                id="questionInput"
-                                value={form.question}
-                                placeholder="Question Text"
-                                className="min-h-[95px]"
-                                onValueChange={(nextValue) => setForm((prev) => ({ ...prev, question: nextValue }))}
-                              />
-                            </div>
+                            <RichTextEditor
+                              id="questionInput"
+                              label="Question Text"
+                              value={form.question}
+                              placeholder="Question Text"
+                              className="min-h-[110px]"
+                              onValueChange={(nextValue) => setForm((prev) => ({ ...prev, question: nextValue }))}
+                            />
                           ) : null}
                         </div>
 
@@ -6145,24 +6228,20 @@ export default function AdminApp() {
                                 </div>
 
                                 {(form.optionTypes[optionIdx] || 'text') !== 'image' ? (
-                                  <div className="space-y-1.5">
-                                    <div className="flex flex-wrap items-center justify-between gap-2">
-                                      <Label htmlFor={`option-input-${normalizeMathInputId(option.key)}`}>Option {option.key}</Label>
-                                      <MathToolbar targetId={`option-input-${normalizeMathInputId(option.key)}`} />
-                                    </div>
-                                    <MathLiveInput
-                                      id={`option-input-${normalizeMathInputId(option.key)}`}
-                                      value={option.text}
-                                      placeholder={`Option ${option.key} text`}
-                                      onValueChange={(nextValue) => {
-                                        setForm((prev) => {
-                                          const optionMedia = [...prev.optionMedia];
-                                          optionMedia[optionIdx] = { ...optionMedia[optionIdx], text: nextValue };
-                                          return { ...prev, optionMedia };
-                                        });
-                                      }}
-                                    />
-                                  </div>
+                                  <RichTextEditor
+                                    id={`option-input-${normalizeMathInputId(option.key)}`}
+                                    label={`Option ${option.key}`}
+                                    value={option.text}
+                                    placeholder={`Option ${option.key} text`}
+                                    className="min-h-[88px]"
+                                    onValueChange={(nextValue) => {
+                                      setForm((prev) => {
+                                        const optionMedia = [...prev.optionMedia];
+                                        optionMedia[optionIdx] = { ...optionMedia[optionIdx], text: nextValue };
+                                        return { ...prev, optionMedia };
+                                      });
+                                    }}
+                                  />
                                 ) : null}
 
                                 {(form.optionTypes[optionIdx] || 'text') === 'image' ? (
@@ -6250,12 +6329,9 @@ export default function AdminApp() {
                           <p className="text-sm font-medium text-indigo-900">Explanation / Short Trick (optional)</p>
 
                           <div className="space-y-1.5">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <Label htmlFor="explanationInput">Text</Label>
-                              <MathToolbar targetId="explanationInput" />
-                            </div>
-                            <MathLiveInput
+                            <RichTextEditor
                               id="explanationInput"
+                              label="Text"
                               value={form.explanationText}
                               className="min-h-[110px]"
                               placeholder="Write explanation, short trick, formula, steps, or reasoning"
