@@ -17,7 +17,7 @@ function hasMathDelimiters(value: string) {
 }
 
 const INLINE_IMAGE_TOKEN_REGEX = /\[\[img:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\]\]/gi;
-const INLINE_BOLD_TAG_REGEX = /<(?:strong|b)>([\s\S]*?)<\/\s*(?:strong|b)\s*>/gi;
+const INLINE_FORMAT_TAG_REGEX = /<(strong|b|em|i)>([\s\S]*?)<\/\s*(strong|b|em|i)\s*>/gi;
 
 function normalizeMathSegment(value: string) {
   const raw = String(value || '');
@@ -48,32 +48,39 @@ export function McqMathText({
 
   const segments = useMemo(() => {
     const raw = String(value || '');
-    if (!raw.trim()) return [] as Array<{ kind: 'text' | 'image' | 'bold'; value: string }>;
+    if (!raw.trim()) return [] as Array<{ kind: 'text' | 'image' | 'bold' | 'italic'; value: string }>;
 
-    const parts: Array<{ kind: 'text' | 'image' | 'bold'; value: string }> = [];
+    const parts: Array<{ kind: 'text' | 'image' | 'bold' | 'italic'; value: string }> = [];
     const pushRichTextParts = (input: string) => {
       const plain = String(input || '');
       if (!plain) return;
 
-      let boldLastIndex = 0;
-      let boldMatch: RegExpExecArray | null;
-      const boldRegex = new RegExp(INLINE_BOLD_TAG_REGEX.source, 'gi');
+      let formatLastIndex = 0;
+      let formatMatch: RegExpExecArray | null;
+      const formatRegex = new RegExp(INLINE_FORMAT_TAG_REGEX.source, 'gi');
 
-      while ((boldMatch = boldRegex.exec(plain))) {
-        const boldStart = boldMatch.index;
-        if (boldStart > boldLastIndex) {
-          parts.push({ kind: 'text', value: normalizeMathSegment(plain.slice(boldLastIndex, boldStart)) });
+      while ((formatMatch = formatRegex.exec(plain))) {
+        const formatStart = formatMatch.index;
+        if (formatStart > formatLastIndex) {
+          parts.push({ kind: 'text', value: normalizeMathSegment(plain.slice(formatLastIndex, formatStart)) });
         }
 
-        const boldValue = normalizeMathSegment(String(boldMatch[1] || ''));
-        if (boldValue) {
-          parts.push({ kind: 'bold', value: boldValue });
+        const openingTag = String(formatMatch[1] || '').toLowerCase();
+        const closingTag = String(formatMatch[3] || '').toLowerCase();
+        if (openingTag !== closingTag) {
+          parts.push({ kind: 'text', value: normalizeMathSegment(formatMatch[0]) });
+        } else {
+          const formatValue = normalizeMathSegment(String(formatMatch[2] || ''));
+          if (formatValue) {
+            parts.push({ kind: openingTag === 'strong' || openingTag === 'b' ? 'bold' : 'italic', value: formatValue });
+          }
         }
-        boldLastIndex = boldRegex.lastIndex;
+
+        formatLastIndex = formatRegex.lastIndex;
       }
 
-      if (boldLastIndex < plain.length) {
-        parts.push({ kind: 'text', value: normalizeMathSegment(plain.slice(boldLastIndex)) });
+      if (formatLastIndex < plain.length) {
+        parts.push({ kind: 'text', value: normalizeMathSegment(plain.slice(formatLastIndex)) });
       }
     };
     let lastIndex = 0;
@@ -139,7 +146,13 @@ export function McqMathText({
         if (!segment.value) return null;
 
         if (segment.kind === 'bold') {
+          if (!segment.value) return null;
           return <strong key={`math-bold-${index}`}>{segment.value}</strong>;
+        }
+
+        if (segment.kind === 'italic') {
+          if (!segment.value) return null;
+          return <em key={`math-italic-${index}`}>{segment.value}</em>;
         }
 
         return <span key={`math-text-${index}`}>{segment.value}</span>;

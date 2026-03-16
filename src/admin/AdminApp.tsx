@@ -180,8 +180,15 @@ function extractRichBoldTextFromClipboard(event: ClipboardEvent): string {
 
     const styleAttr = String(element.getAttribute('style') || '').toLowerCase();
     const isBoldTag = tag === 'strong' || tag === 'b' || /font-weight\s*:\s*(bold|[6-9]00)/i.test(styleAttr);
+    const isItalicTag = tag === 'em' || tag === 'i' || /font-style\s*:\s*(italic|oblique)/i.test(styleAttr);
     const childText = Array.from(element.childNodes).map((child) => nodeToRichText(child)).join('');
-    const wrappedText = isBoldTag && childText.trim() ? `<strong>${childText}</strong>` : childText;
+    let wrappedText = childText;
+    if (isItalicTag && childText.trim()) {
+      wrappedText = `<em>${wrappedText}</em>`;
+    }
+    if (isBoldTag && childText.trim()) {
+      wrappedText = `<strong>${wrappedText}</strong>`;
+    }
 
     if (blockTags.has(tag) || !inlineTags.has(tag)) {
       return `\n${wrappedText}\n`;
@@ -196,6 +203,8 @@ function extractRichBoldTextFromClipboard(event: ClipboardEvent): string {
       const cleaned = String(token || '').trim();
       if (/^<\s*(strong|b)\b[^>]*>$/i.test(cleaned)) return '<strong>';
       if (/^<\s*\/\s*(strong|b)\s*>$/i.test(cleaned)) return '</strong>';
+      if (/^<\s*(em|i)\b[^>]*>$/i.test(cleaned)) return '<em>';
+      if (/^<\s*\/\s*(em|i)\s*>$/i.test(cleaned)) return '</em>';
       return '';
     });
 

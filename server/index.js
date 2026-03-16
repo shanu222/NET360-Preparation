@@ -1056,14 +1056,20 @@ function normalizePlainText(value) {
     .trim();
 }
 
-function sanitizeAllowedBoldTags(value) {
+function sanitizeAllowedInlineFormattingTags(value) {
   return String(value || '').replace(/<[^>]*>/g, (tag) => {
     const trimmed = String(tag || '').trim();
-    const opening = trimmed.match(/^<\s*(strong|b)\b[^>]*>$/i);
-    if (opening) return '<strong>';
+    const openingStrong = trimmed.match(/^<\s*(strong|b)\b[^>]*>$/i);
+    if (openingStrong) return '<strong>';
 
-    const closing = trimmed.match(/^<\s*\/\s*(strong|b)\s*>$/i);
-    if (closing) return '</strong>';
+    const closingStrong = trimmed.match(/^<\s*\/\s*(strong|b)\s*>$/i);
+    if (closingStrong) return '</strong>';
+
+    const openingEmphasis = trimmed.match(/^<\s*(em|i)\b[^>]*>$/i);
+    if (openingEmphasis) return '<em>';
+
+    const closingEmphasis = trimmed.match(/^<\s*\/\s*(em|i)\s*>$/i);
+    if (closingEmphasis) return '</em>';
 
     return '';
   });
@@ -1076,12 +1082,12 @@ function normalizeRichMcqText(value) {
     .replace(/\u00a0/g, ' ');
 
   const withMarkdownBold = raw.replace(/\*\*([^*\n][\s\S]*?)\*\*/g, '<strong>$1</strong>');
-  return sanitizeAllowedBoldTags(withMarkdownBold).trim();
+  return sanitizeAllowedInlineFormattingTags(withMarkdownBold).trim();
 }
 
 function flattenRichMcqTextForMatch(value) {
-  return sanitizeAllowedBoldTags(value)
-    .replace(/<\/?strong>/gi, '')
+  return sanitizeAllowedInlineFormattingTags(value)
+    .replace(/<\/?(?:strong|em)>/gi, '')
     .replace(/\s+/g, ' ')
     .trim()
     .toLowerCase();
@@ -1598,6 +1604,84 @@ function parseBulkMcqsFromText(raw) {
   return { parsed, errors };
 }
 
+function normalizeStructuredSourceHtml(value) {
+  return String(value || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\u0000/g, '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/[ \f\v]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function inferPdfTextStyle(item, styles) {
+  const styleInfo = styles && item?.fontName ? styles[item.fontName] : null;
+  const fontName = String(item?.fontName || '');
+  const fontFamily = String(styleInfo?.fontFamily || '');
+  const hint = `${fontName} ${fontFamily}`.toLowerCase();
+
+  const isBold = /(bold|black|heavy|demi|semibold|extrabold|medium)/i.test(hint);
+  const isItalic = /(italic|oblique)/i.test(hint);
+
+  return { isBold, isItalic };
+}
+
+function wrapWithFormattingTags(text, style) {
+  const safeText = escapeHtml(String(text || ''));
+  if (!safeText.trim()) return '';
+
+  let result = safeText;
+  if (style?.isItalic) {
+    result = `<em>${result}</em>`;
+  }
+  if (style?.isBold) {
+    result = `<strong>${result}</strong>`;
+  }
+  return result;
+}
+
+function buildPdfStructuredHtmlPage(textContent) {
+  const items = Array.isArray(textContent?.items) ? textContent.items : [];
+  const styles = textContent?.styles || {};
+  if (!items.length) return '';
+
+  const lines = [];
+  let currentLineY = null;
+  let currentLine = '';
+
+  const flushLine = () => {
+    const trimmed = currentLine.trim();
+    if (trimmed) lines.push(trimmed);
+    currentLine = '';
+  };
+
+  items.forEach((item) => {
+    const rawText = String(item?.str || '');
+    if (!rawText) return;
+
+    const y = Number(Array.isArray(item?.transform) ? item.transform[5] : Number.NaN);
+    const hasY = Number.isFinite(y);
+
+    if (hasY && currentLineY != null && Math.abs(y - currentLineY) > 2.5) {
+      flushLine();
+    }
+
+    if (hasY) currentLineY = y;
+
+    const style = inferPdfTextStyle(item, styles);
+    const token = wrapWithFormattingTags(rawText, style);
+    if (!token) return;
+
+    if (currentLine && !/^\s/.test(rawText)) {
+      currentLine += ' ';
+    }
+    currentLine += token;
+  });
+
+  flushLine();
+  return lines.join('\n');
+}
+
 async function extractTextFromUpload(filePayload) {
   const fileName = String(filePayload?.name || '').trim();
   const extension = path.extname(fileName).toLowerCase();
@@ -1613,8 +1697,14 @@ async function extractTextFromUpload(filePayload) {
   }
 
   if (mimeType.includes('pdf') || extension === '.pdf') {
-    const parsed = await pdfParse(fileMeta.buffer);
-    return normalizePlainText(parsed?.text || '');
+    const parsed = await pdfParse(fileMeta.buffer, {
+      pagerender: (pageData) => pageData
+        .getTextContent({ normalizeWhitespace: false, disableCombineTextItems: false })
+        .then((textContent) => buildPdfStructuredHtmlPage(textContent)),
+    });
+
+    const structured = String(parsed?.text || '');
+    return normalizeStructuredSourceHtml(structured);
   }
 
   if (
@@ -1662,6 +1752,7 @@ async function extractTextFromUpload(filePayload) {
       const tag = String(node.name || '').toLowerCase();
       const styleAttr = String($(node).attr('style') || '').toLowerCase();
       const isBoldNode = tag === 'strong' || tag === 'b' || /font-weight\s*:\s*(bold|[6-9]00)/i.test(styleAttr);
+      const isItalicNode = tag === 'em' || tag === 'i' || /font-style\s*:\s*(italic|oblique)/i.test(styleAttr);
       if (tag === 'img') {
         const src = String($(node).attr('src') || '').trim();
         if (/^data:image\//i.test(src)) {
@@ -1677,12 +1768,14 @@ async function extractTextFromUpload(filePayload) {
 
       if (blockTags.has(tag)) chunks.push('\n');
       if (isBoldNode) chunks.push('<strong>');
+      if (isItalicNode) chunks.push('<em>');
 
       const children = node.children || [];
       for (const child of children) {
         traverse(child);
       }
 
+      if (isItalicNode) chunks.push('</em>');
       if (isBoldNode) chunks.push('</strong>');
 
       if (blockTags.has(tag) || !inlineTextTags.has(tag)) chunks.push('\n');
@@ -1695,7 +1788,7 @@ async function extractTextFromUpload(filePayload) {
       .join('\n')
       .replace(/\n{3,}/g, '\n\n');
 
-    return normalizePlainText(assembled);
+    return normalizeStructuredSourceHtml(assembled);
   }
 
   if (mimeType.includes('msword') || extension === '.doc') {
