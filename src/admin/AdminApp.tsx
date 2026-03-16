@@ -104,6 +104,82 @@ function insertMathSymbolToField(targetId: string, snippet = '\\sqrt{}') {
   }
 }
 
+function focusMathField(targetId: string) {
+  const field = document.getElementById(targetId) as MathFieldLikeElement | null;
+  if (!field) return;
+
+  try {
+    if (typeof field.executeCommand === 'function') {
+      field.executeCommand('toggleVirtualKeyboard');
+    }
+  } catch {
+    // Keep focus behavior resilient even if keyboard toggle is unsupported.
+  }
+
+  field.focus();
+}
+
+const SHARED_MATH_TOOLBAR_ACTIONS: Array<{ label: string; snippet?: string; action: 'focus' | 'insert' }> = [
+  { label: 'Math Calc', action: 'focus' },
+  { label: 'Symbol', action: 'insert', snippet: '\\pm' },
+  { label: 'Fraction', action: 'insert', snippet: '\\frac{}{}' },
+  { label: 'Power', action: 'insert', snippet: 'x^{}' },
+  { label: 'Sqrt', action: 'insert', snippet: '\\sqrt{}' },
+  { label: 'Pi', action: 'insert', snippet: '\\pi' },
+  { label: 'Sci', action: 'insert', snippet: '\\times 10^{}' },
+];
+
+function MathEditorField({
+  id,
+  label,
+  value,
+  placeholder,
+  className,
+  onValueChange,
+}: {
+  id: string;
+  label: string;
+  value: string;
+  placeholder?: string;
+  className?: string;
+  onValueChange: (nextValue: string) => void;
+}) {
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <Label htmlFor={id}>{label}</Label>
+        <div className="flex flex-wrap items-center gap-1">
+          {SHARED_MATH_TOOLBAR_ACTIONS.map((item) => (
+            <Button
+              key={`${id}-${item.label}`}
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-7 px-2 text-[11px]"
+              onClick={() => {
+                if (item.action === 'focus') {
+                  focusMathField(id);
+                  return;
+                }
+                insertMathSymbolToField(id, item.snippet || '\\sqrt{}');
+              }}
+            >
+              {item.label}
+            </Button>
+          ))}
+        </div>
+      </div>
+      <MathLiveInput
+        id={id}
+        value={value}
+        placeholder={placeholder}
+        className={className}
+        onValueChange={onValueChange}
+      />
+    </div>
+  );
+}
+
 function MathLiveInput({
   id,
   value,
@@ -6113,21 +6189,14 @@ export default function AdminApp() {
                           </div>
 
                           {form.questionType !== 'image' ? (
-                            <div className="space-y-1.5">
-                              <div className="flex items-center justify-between gap-2">
-                                <Label htmlFor="questionInput">Question Text</Label>
-                                <Button type="button" size="sm" variant="outline" onClick={() => insertMathSymbolToField('questionInput')}>
-                                  Insert Math Symbol
-                                </Button>
-                              </div>
-                              <MathLiveInput
-                                id="questionInput"
-                                value={form.question}
-                                placeholder="Question Text"
-                                className="min-h-[95px]"
-                                onValueChange={(nextValue) => setForm((prev) => ({ ...prev, question: nextValue }))}
-                              />
-                            </div>
+                            <MathEditorField
+                              id="questionInput"
+                              label="Question Text"
+                              value={form.question}
+                              placeholder="Question Text"
+                              className="min-h-[95px]"
+                              onValueChange={(nextValue) => setForm((prev) => ({ ...prev, question: nextValue }))}
+                            />
                           ) : null}
                         </div>
 
@@ -6225,31 +6294,19 @@ export default function AdminApp() {
                                 </div>
 
                                 {(form.optionTypes[optionIdx] || 'text') !== 'image' ? (
-                                  <div className="space-y-1.5">
-                                    <div className="flex items-center justify-between gap-2">
-                                      <Label htmlFor={`option-input-${normalizeMathInputId(option.key)}`}>Option {option.key}</Label>
-                                      <Button
-                                        type="button"
-                                        size="sm"
-                                        variant="outline"
-                                        onClick={() => insertMathSymbolToField(`option-input-${normalizeMathInputId(option.key)}`)}
-                                      >
-                                        Insert Math Symbol
-                                      </Button>
-                                    </div>
-                                    <MathLiveInput
-                                      id={`option-input-${normalizeMathInputId(option.key)}`}
-                                      value={option.text}
-                                      placeholder={`Option ${option.key} text`}
-                                      onValueChange={(nextValue) => {
-                                        setForm((prev) => {
-                                          const optionMedia = [...prev.optionMedia];
-                                          optionMedia[optionIdx] = { ...optionMedia[optionIdx], text: nextValue };
-                                          return { ...prev, optionMedia };
-                                        });
-                                      }}
-                                    />
-                                  </div>
+                                  <MathEditorField
+                                    id={`option-input-${normalizeMathInputId(option.key)}`}
+                                    label={`Option ${option.key}`}
+                                    value={option.text}
+                                    placeholder={`Option ${option.key} text`}
+                                    onValueChange={(nextValue) => {
+                                      setForm((prev) => {
+                                        const optionMedia = [...prev.optionMedia];
+                                        optionMedia[optionIdx] = { ...optionMedia[optionIdx], text: nextValue };
+                                        return { ...prev, optionMedia };
+                                      });
+                                    }}
+                                  />
                                 ) : null}
 
                                 {(form.optionTypes[optionIdx] || 'text') === 'image' ? (
@@ -6308,35 +6365,6 @@ export default function AdminApp() {
                           </div>
                         </div>
 
-                        <div className="space-y-2 rounded-md border border-slate-300/70 bg-slate-50/60 p-2">
-                          <p className="text-xs font-semibold text-slate-700">MCQ Preview</p>
-                          <div className="rounded border border-slate-200 bg-white p-2 text-sm">
-                            <McqMathText value={form.question} asBlock className="text-slate-800" />
-                            {normalizeMcqImageSrc(form.questionImage?.dataUrl) ? (
-                              <img
-                                src={normalizeMcqImageSrc(form.questionImage?.dataUrl)}
-                                alt="Question preview"
-                                className="mcq-image"
-                              />
-                            ) : null}
-                          </div>
-                          <div className="space-y-2">
-                            {form.optionMedia.map((option) => (
-                              <div key={`preview-option-${option.key}`} className="rounded border border-slate-200 bg-white p-2 text-sm">
-                                <p className="font-semibold text-slate-700">{option.key}.</p>
-                                <McqMathText value={option.text} className="text-slate-800" />
-                                {normalizeMcqImageSrc(option.image?.dataUrl) ? (
-                                  <img
-                                    src={normalizeMcqImageSrc(option.image?.dataUrl)}
-                                    alt={`Option ${option.key} preview`}
-                                    className="option-image"
-                                  />
-                                ) : null}
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-
                         <div className="grid gap-3 md:grid-cols-2">
                           <div className="space-y-1.5">
                             <Label>Correct Answer</Label>
@@ -6365,15 +6393,14 @@ export default function AdminApp() {
                         <div className="space-y-3 rounded-lg border border-indigo-200 bg-indigo-50/30 p-3">
                           <p className="text-sm font-medium text-indigo-900">Explanation / Short Trick (optional)</p>
 
-                          <div className="space-y-1.5">
-                            <Label>Text</Label>
-                            <Textarea
-                              value={form.explanationText}
-                              onChange={(e) => setForm((prev) => ({ ...prev, explanationText: e.target.value, shortTrickText: '' }))}
-                              className="min-h-[110px]"
-                              placeholder="Write explanation, short trick, formula, steps, or reasoning"
-                            />
-                          </div>
+                          <MathEditorField
+                            id="explanationInput"
+                            label="Explanation"
+                            value={form.explanationText}
+                            onValueChange={(nextValue) => setForm((prev) => ({ ...prev, explanationText: nextValue, shortTrickText: '' }))}
+                            className="min-h-[110px]"
+                            placeholder="Write explanation, short trick, formula, steps, or reasoning"
+                          />
 
                           <div className="space-y-1.5">
                             <Label>Image</Label>
