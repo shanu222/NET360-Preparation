@@ -864,7 +864,7 @@ export function TestInterfacePage() {
         <main className="grid gap-0 border-b border-[#2b5f9f] bg-[#c8d3df] md:grid-cols-[1fr_160px]">
           <section className="order-2 border-b border-[#2b5f9f] p-2 md:order-1 md:border-b-0 md:border-r">
             <p className="mb-2 font-semibold text-black">Question</p>
-            <div className="min-h-[104px] rounded border border-[#1e3f6e] bg-white p-2.5 text-sm text-black sm:min-h-[120px] sm:p-3 sm:text-base">
+            <div className="question-content min-h-[104px] rounded border border-[#1e3f6e] bg-white p-2.5 text-sm text-black sm:min-h-[120px] sm:p-3 sm:text-base">
               <McqMathText value={question.question} asBlock className="whitespace-pre-wrap" />
               {questionImageSrc ? (
                 <img
@@ -945,7 +945,7 @@ export function TestInterfacePage() {
                       });
                   }}
                 />
-                <div className="rounded border border-[#1e3f6e] bg-white px-2 py-2 text-sm text-black sm:text-base">
+                <div className="option-content rounded border border-[#1e3f6e] bg-white px-2 py-2 text-sm text-black sm:text-base">
                   <p className="font-medium text-slate-700">{option.key}.</p>
                   {option.text ? <McqMathText value={option.text} className="whitespace-pre-wrap" /> : null}
                   {normalizeMcqImageSrc(option.image?.dataUrl) ? (
@@ -1098,7 +1098,7 @@ export function TestInterfacePage() {
                     {Array.isArray(row.optionMedia) && row.optionMedia.length ? (
                       <div className="mt-2 space-y-1">
                         {row.optionMedia.map((option) => (
-                          <div key={`${row.questionId}-${option.key}`} className="rounded border border-slate-200 bg-white p-2">
+                          <div key={`${row.questionId}-${option.key}`} className="option-content rounded border border-slate-200 bg-white p-2">
                             <p className="font-medium text-slate-700">{option.key}.</p>
                             <McqMathText value={String(option.text || '')} className="text-slate-700" />
                             {normalizeMcqImageSrc(option.image?.dataUrl) ? (
@@ -1124,7 +1124,7 @@ export function TestInterfacePage() {
                       if (!explanationOrShortTrickText && !explanationOrShortTrickImage?.dataUrl) return null;
 
                       return (
-                        <div className="mt-2 rounded border border-indigo-100 bg-indigo-50/40 p-2">
+                        <div className="explanation-content mt-2 rounded border border-indigo-100 bg-indigo-50/40 p-2">
                           <p className="text-xs font-semibold text-indigo-900 sm:text-sm">Explanation / Short Trick</p>
                           <div className="mt-1 h-px w-full bg-indigo-200" />
                           {explanationOrShortTrickText ? (

@@ -119,6 +119,51 @@ function focusMathField(targetId: string) {
   field.focus();
 }
 
+function insertImageTokenToField(targetId: string, dataUrl: string) {
+  const normalized = String(dataUrl || '').trim();
+  if (!normalized) return;
+
+  const field = document.getElementById(targetId) as MathFieldLikeElement | null;
+  if (!field) return;
+
+  const token = `[[img:${normalized}]]`;
+  try {
+    if (typeof field.insert === 'function') {
+      field.insert(token, { insertionMode: 'replaceSelection' });
+    } else if (typeof field.executeCommand === 'function') {
+      field.executeCommand(['insert', token]);
+    } else {
+      field.setValue(`${field.getValue('latex')}${token}`);
+    }
+
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.focus();
+  } catch {
+    // Keep editor input usable even if token insertion is unsupported.
+  }
+}
+
+async function extractPastedImageDataUrl(event: ClipboardEvent): Promise<string | null> {
+  const clipboardData = event.clipboardData;
+  if (!clipboardData) return null;
+
+  const imageItem = Array.from(clipboardData.items || []).find((item) => String(item.type || '').toLowerCase().startsWith('image/'));
+  if (!imageItem) return null;
+
+  const file = imageItem.getAsFile();
+  if (!file) return null;
+  if (!isSupportedMcqImage(file)) {
+    toast.error('Unsupported pasted image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+    return null;
+  }
+  if (file.size > MCQ_IMAGE_MAX_BYTES) {
+    toast.error('Pasted image is too large. Maximum size is 5 MB.');
+    return null;
+  }
+
+  return fileToDataUrl(file);
+}
+
 const SHARED_MATH_TOOLBAR_ACTIONS: Array<{ label: string; snippet?: string; action: 'focus' | 'insert' }> = [
   { label: 'Math Calc', action: 'focus' },
   { label: 'Symbol', action: 'insert', snippet: '\\pm' },
@@ -136,6 +181,7 @@ function MathEditorField({
   placeholder,
   className,
   onValueChange,
+  onImagePaste,
 }: {
   id: string;
   label: string;
@@ -143,6 +189,7 @@ function MathEditorField({
   placeholder?: string;
   className?: string;
   onValueChange: (nextValue: string) => void;
+  onImagePaste?: (dataUrl: string) => void;
 }) {
   return (
     <div className="space-y-1.5">
@@ -175,6 +222,7 @@ function MathEditorField({
         placeholder={placeholder}
         className={className}
         onValueChange={onValueChange}
+        onImagePaste={onImagePaste}
       />
     </div>
   );
@@ -186,12 +234,14 @@ function MathLiveInput({
   placeholder,
   className,
   onValueChange,
+  onImagePaste,
 }: {
   id: string;
   value: string;
   placeholder?: string;
   className?: string;
   onValueChange: (nextValue: string) => void;
+  onImagePaste?: (dataUrl: string) => void;
 }) {
   const fieldRef = useRef<MathFieldLikeElement | null>(null);
 
@@ -203,11 +253,32 @@ function MathLiveInput({
       onValueChange(field.getValue('latex'));
     };
 
+    const handlePaste = (event: Event) => {
+      const clipboardEvent = event as ClipboardEvent;
+      const hasImageClipboardItem = Array.from(clipboardEvent.clipboardData?.items || []).some((item) =>
+        String(item.type || '').toLowerCase().startsWith('image/'),
+      );
+      if (!hasImageClipboardItem) return;
+
+      clipboardEvent.preventDefault();
+      void extractPastedImageDataUrl(clipboardEvent)
+        .then((dataUrl) => {
+          if (!dataUrl) return;
+          onImagePaste?.(dataUrl);
+          insertImageTokenToField(id, dataUrl);
+        })
+        .catch(() => {
+          // Keep standard paste behavior for non-image clipboard content.
+        });
+    };
+
     field.addEventListener('input', handleInput);
+    field.addEventListener('paste', handlePaste);
     return () => {
       field.removeEventListener('input', handleInput);
+      field.removeEventListener('paste', handlePaste);
     };
-  }, [onValueChange]);
+  }, [id, onImagePaste, onValueChange]);
 
   useEffect(() => {
     const field = fieldRef.current;

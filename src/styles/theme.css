@@ -698,20 +698,25 @@
     line-height: 1.55;
   }
 
-  .mcq-image {
-    max-width: 400px;
-    margin-top: 10px;
-    border-radius: 0.375rem;
-    border: 1px solid rgba(148, 163, 184, 0.35);
+  .question-content img,
+  .option-content img,
+  .explanation-content img,
+  .mcq-image,
+  .option-image,
+  .mcq-inline-image {
+    max-width: 100%;
+    height: auto;
+    border: none;
+    background: transparent;
+    display: inline-block;
     object-fit: contain;
+    vertical-align: middle;
   }
 
-  .option-image {
-    max-width: 200px;
-    margin-left: 10px;
-    border-radius: 0.375rem;
-    border: 1px solid rgba(148, 163, 184, 0.35);
-    object-fit: contain;
+  .mcq-image,
+  .option-image,
+  .mcq-inline-image {
+    margin-top: 0.35rem;
   }
 
   .mcq-preview-image {
