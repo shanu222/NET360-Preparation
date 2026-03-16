@@ -11017,18 +11017,6 @@ process.on('uncaughtException', (error) => {
 
 async function bootstrap() {
   validateCriticalConfiguration();
-  await connectMongo(MONGODB_URI);
-  try {
-    await bootstrapAdminAccounts();
-  } catch (error) {
-    console.error('[startup] Admin bootstrap deferred because MongoDB is unavailable:', error?.message || error);
-  }
-
-  await refreshNustAdmissionsCache({ force: true });
-  setInterval(() => {
-    void refreshNustAdmissionsCache({ force: true });
-  }, NUST_ADMISSIONS_REFRESH_MS);
-
   const server = app.listen(PORT, () => {
     console.log(`NET360 API running on http://localhost:${PORT}`);
   });
@@ -11036,6 +11024,22 @@ async function bootstrap() {
   server.headersTimeout = clamp(REQUEST_TIMEOUT_MS + 5_000, 10_000, 180_000);
   server.requestTimeout = REQUEST_TIMEOUT_MS;
   server.keepAliveTimeout = 15_000;
+
+  // Run potentially slow external startup tasks after the server is listening
+  // so deployment health checks are not blocked by Mongo/network latency.
+  void (async () => {
+    await connectMongo(MONGODB_URI);
+    try {
+      await bootstrapAdminAccounts();
+    } catch (error) {
+      console.error('[startup] Admin bootstrap deferred because MongoDB is unavailable:', error?.message || error);
+    }
+
+    await refreshNustAdmissionsCache({ force: true });
+    setInterval(() => {
+      void refreshNustAdmissionsCache({ force: true });
+    }, NUST_ADMISSIONS_REFRESH_MS);
+  })();
 }
 
 bootstrap().catch((error) => {
