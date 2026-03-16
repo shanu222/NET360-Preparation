@@ -181,6 +181,45 @@ export function TestInterfacePage() {
   const [result, setResult] = useState<ResultState | null>(null);
   const [reviewRows, setReviewRows] = useState<ReviewRow[]>([]);
 
+  useEffect(() => {
+    if (!result) return;
+
+    const fullscreenBtn = document.getElementById('fullscreenResultBtn') as HTMLButtonElement | null;
+    const resultContainer = document.getElementById('resultContainer') as HTMLDivElement | null;
+    if (!fullscreenBtn || !resultContainer) return;
+
+    const updateButtonLabel = () => {
+      fullscreenBtn.innerText = document.fullscreenElement ? 'Exit Full Screen' : 'Full Screen View';
+    };
+
+    const handleFullscreenToggle = async () => {
+      try {
+        if (!document.fullscreenElement) {
+          await resultContainer.requestFullscreen();
+        } else {
+          await document.exitFullscreen();
+        }
+      } catch {
+        // Ignore browser fullscreen errors and keep the result modal functional.
+      } finally {
+        updateButtonLabel();
+      }
+    };
+
+    const handleFullscreenChange = () => {
+      updateButtonLabel();
+    };
+
+    fullscreenBtn.addEventListener('click', handleFullscreenToggle);
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    updateButtonLabel();
+
+    return () => {
+      fullscreenBtn.removeEventListener('click', handleFullscreenToggle);
+      document.removeEventListener('fullscreenchange', handleFullscreenChange);
+    };
+  }, [result]);
+
   const [resolvedToken, setResolvedToken] = useState<string | null>(null);
   const [resolvedSessionId, setResolvedSessionId] = useState<string | null>(null);
   const [resolvedChallengeId, setResolvedChallengeId] = useState<string | null>(null);
@@ -852,7 +891,7 @@ export function TestInterfacePage() {
 
       {result ? (
         <div className="fixed inset-0 grid place-items-center bg-black/35 p-3">
-          <div className="w-full max-w-md rounded border-2 border-[#2b5f9f] bg-white p-4">
+          <div id="resultContainer" className="w-full max-w-md rounded border-2 border-[#2b5f9f] bg-white p-4">
             <h2 className="text-xl text-[#0d2c5a]">{isChallengeMode ? 'Challenge Submitted' : 'Test Submitted'}</h2>
             <p className="mt-1 text-sm text-slate-600">
               {isChallengeMode ? 'Your challenge attempt has been recorded.' : 'Your attempt has been saved successfully.'}
@@ -892,6 +931,13 @@ export function TestInterfacePage() {
                 }}
               >
                 Back to Dashboard
+              </button>
+              <button
+                id="fullscreenResultBtn"
+                type="button"
+                className="rounded border border-slate-700 bg-slate-100 px-3 py-1 text-slate-800"
+              >
+                Full Screen View
               </button>
             </div>
 
