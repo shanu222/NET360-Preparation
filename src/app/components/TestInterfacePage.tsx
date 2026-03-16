@@ -86,6 +86,37 @@ interface TestSession {
   questions: SessionQuestion[];
 }
 
+interface AdminPreviewPayload {
+  source?: string;
+  createdAt?: number;
+  topic?: string;
+  durationMinutes?: number;
+  questions?: Array<{
+    id?: string;
+    subject?: string;
+    topic?: string;
+    question?: string;
+    options?: string[];
+    optionMedia?: Array<{
+      key?: string;
+      text?: string;
+      image?: {
+        name?: string;
+        mimeType?: string;
+        size?: number;
+        dataUrl?: string;
+      } | null;
+    }>;
+    questionImage?: {
+      name?: string;
+      mimeType?: string;
+      size?: number;
+      dataUrl?: string;
+    } | null;
+    difficulty?: Difficulty;
+  }>;
+}
+
 interface ChallengeAnswerRow {
   questionId: string;
   selectedOption: string;
@@ -159,6 +190,7 @@ function formatTime(totalSeconds: number) {
 }
 
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
+const ADMIN_MCQ_TEST_PREVIEW_STORAGE_KEY = 'net360-admin-mcq-test-preview';
 
 export function TestInterfacePage() {
   const { user } = useAuth();
@@ -229,6 +261,7 @@ export function TestInterfacePage() {
   const [challengeStartedAtMs, setChallengeStartedAtMs] = useState<number | null>(null);
   const [challengeLockedAnswers, setChallengeLockedAnswers] = useState<Record<string, string>>({});
   const [launchResolved, setLaunchResolved] = useState(false);
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
 
   const violationCountRef = useRef(0);
   const violationDebounceAtRef = useRef(0);
@@ -253,9 +286,96 @@ export function TestInterfacePage() {
     }
   };
 
+  const getAdminPreviewPayload = () => {
+    try {
+      const raw = localStorage.getItem(ADMIN_MCQ_TEST_PREVIEW_STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as AdminPreviewPayload;
+      if (!Array.isArray(parsed.questions) || !parsed.questions.length) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  };
+
   useEffect(() => {
     setError(null);
     const params = new URLSearchParams(window.location.search);
+    const previewMode = ['1', 'true', 'admin-mcq-upload'].includes(String(params.get('preview') || '').trim().toLowerCase());
+
+    if (previewMode) {
+      const previewPayload = getAdminPreviewPayload();
+      if (!previewPayload) {
+        setError('Preview payload not found. Return to admin upload and click Preview Test again.');
+        setLoading(false);
+        return;
+      }
+
+      const mappedQuestions: SessionQuestion[] = (previewPayload.questions || []).map((row, index) => {
+        const optionMedia = Array.isArray(row.optionMedia)
+          ? row.optionMedia.map((option, optionIndex) => ({
+            key: String(option.key || String.fromCharCode(65 + optionIndex)).toUpperCase(),
+            text: String(option.text || ''),
+            image: option.image
+              ? {
+                name: String(option.image.name || `option-${optionIndex + 1}.png`),
+                mimeType: String(option.image.mimeType || 'image/png'),
+                size: Number(option.image.size || 0),
+                dataUrl: String(option.image.dataUrl || ''),
+              }
+              : null,
+          }))
+          : [];
+
+        const fallbackOptions = Array.isArray(row.options)
+          ? row.options.map((item) => String(item || ''))
+          : optionMedia.map((option) => option.text || `[${option.key}]`);
+
+        const difficulty = String(row.difficulty || 'Medium').trim();
+
+        return {
+          id: String(row.id || `preview-q-${index + 1}`),
+          subject: String(row.subject || 'mathematics').toLowerCase() as SubjectKey,
+          topic: String(row.topic || previewPayload.topic || 'Preview').trim() || 'Preview',
+          question: String(row.question || ''),
+          options: fallbackOptions,
+          optionMedia,
+          questionImage: row.questionImage
+            ? {
+              name: String(row.questionImage.name || `question-${index + 1}.png`),
+              mimeType: String(row.questionImage.mimeType || 'image/png'),
+              size: Number(row.questionImage.size || 0),
+              dataUrl: String(row.questionImage.dataUrl || ''),
+            }
+            : null,
+          difficulty: (difficulty === 'Easy' || difficulty === 'Hard' ? difficulty : 'Medium') as Difficulty,
+        };
+      });
+
+      if (!mappedQuestions.length) {
+        setError('No preview questions available. Return to admin upload and try again.');
+        setLoading(false);
+        return;
+      }
+
+      const durationMinutes = Math.max(1, Number(previewPayload.durationMinutes || 60));
+      const previewSession: TestSession = {
+        id: 'admin-preview-session',
+        topic: String(previewPayload.topic || 'Admin MCQ Preview').trim() || 'Admin MCQ Preview',
+        questionCount: mappedQuestions.length,
+        durationMinutes,
+        startedAt: new Date().toISOString(),
+        questions: mappedQuestions,
+      };
+
+      setIsPreviewMode(true);
+      setSession(previewSession);
+      setRemainingSeconds(durationMinutes * 60);
+      setLoading(false);
+      setLaunchResolved(true);
+      return;
+    }
+
     const fromQuery = params.get('authToken');
     const launchFallback = getLaunchFallback();
     const fromLaunchPayload = launchFallback?.authToken || null;
@@ -380,6 +500,8 @@ export function TestInterfacePage() {
   }, [session]);
 
   useEffect(() => {
+    if (isPreviewMode) return;
+
     async function loadSession() {
       try {
         if (!launchResolved || !resolvedToken) return;
@@ -469,7 +591,7 @@ export function TestInterfacePage() {
     }
 
     void loadSession();
-  }, [isChallengeMode, launchResolved, resolvedChallengeId, resolvedSessionId, resolvedToken]);
+  }, [isChallengeMode, isPreviewMode, launchResolved, resolvedChallengeId, resolvedSessionId, resolvedToken]);
 
   useEffect(() => {
     if (!session || result || remainingSeconds <= 0) return;
@@ -498,9 +620,10 @@ export function TestInterfacePage() {
   }, [challengeStartedAtMs, isChallengeMode, session, remainingSeconds, result]);
 
   useEffect(() => {
+    if (isPreviewMode) return;
     if (!session || result || isSubmitting || remainingSeconds !== 0) return;
     void handleSubmit(true);
-  }, [session, result, isSubmitting, remainingSeconds]);
+  }, [isPreviewMode, session, result, isSubmitting, remainingSeconds]);
 
   const question = session?.questions[currentIndex] || null;
 
@@ -541,6 +664,13 @@ export function TestInterfacePage() {
   };
 
   const handleSubmit = async (auto = false) => {
+    if (isPreviewMode) {
+      if (auto) {
+        toast.message('Preview timer ended. Close this window to return to editor.');
+      }
+      return;
+    }
+
     if (!session || isSubmitting || result || !resolvedToken) return;
 
     setIsSubmitting(true);
@@ -622,6 +752,7 @@ export function TestInterfacePage() {
   };
 
   useEffect(() => {
+    if (isPreviewMode) return;
     if (!session || !resolvedToken || result || hasAutoCancelledRef.current) return;
     if (isChallengeMode && !resolvedChallengeId) return;
     if (!isChallengeMode && !resolvedSessionId) return;
@@ -683,7 +814,7 @@ export function TestInterfacePage() {
       appStateListener?.remove();
       backButtonListener?.remove();
     };
-  }, [isChallengeMode, resolvedChallengeId, resolvedSessionId, resolvedToken, result, session]);
+  }, [isChallengeMode, isPreviewMode, resolvedChallengeId, resolvedSessionId, resolvedToken, result, session]);
 
   if (loading) {
     return (
@@ -748,7 +879,7 @@ export function TestInterfacePage() {
           <aside className="order-1 grid grid-cols-1 gap-2 border-b border-[#2b5f9f] p-2 md:order-2 md:block md:border-b-0">
             <p className="mb-1 text-xs text-black">Candidate</p>
             <div className="mb-2 rounded border border-[#d25555] bg-white p-2 text-center text-[13px] text-black">
-              {user?.firstName || 'Candidate'} {user?.lastName || ''}
+              {isPreviewMode ? 'Admin Preview' : `${user?.firstName || 'Candidate'} ${user?.lastName || ''}`.trim()}
             </div>
             <div className="rounded border border-[#d25555] bg-white p-1.5 text-center text-xs text-black">
               {candidatePhoto ? (
@@ -858,20 +989,30 @@ export function TestInterfacePage() {
             <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded bg-[#facc15]" />Marked {reviewCount}</span>
           </div>
 
-          <button
-            type="button"
-            className="inline-flex w-full items-center justify-center gap-1 rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-1 text-blue-700 hover:bg-[#c9deff] disabled:opacity-60 sm:w-auto"
-            onClick={() => void handleSubmit(false)}
-            disabled={isSubmitting || Boolean(result)}
-          >
-            <Send className="h-4 w-4" />
-            Click here to FINISH Your Test
-          </button>
+          {isPreviewMode ? (
+            <button
+              type="button"
+              className="inline-flex w-full items-center justify-center gap-1 rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-1 text-blue-700 hover:bg-[#c9deff] sm:w-auto"
+              onClick={() => window.close()}
+            >
+              Close Preview
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="inline-flex w-full items-center justify-center gap-1 rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-1 text-blue-700 hover:bg-[#c9deff] disabled:opacity-60 sm:w-auto"
+              onClick={() => void handleSubmit(false)}
+              disabled={isSubmitting || Boolean(result)}
+            >
+              <Send className="h-4 w-4" />
+              Click here to FINISH Your Test
+            </button>
+          )}
         </footer>
       </div>
 
       <div className="mt-1 bg-white px-2 py-2 text-center text-xs text-red-600 sm:text-sm">
-        NUST NET-style testing interface{' '}
+        {isPreviewMode ? 'Admin preview mode using student test layout' : 'NUST NET-style testing interface'}{' '}
         <button
           type="button"
           className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
