@@ -523,12 +523,6 @@ function containsRegex(value, maxLen = 80) {
   return { $regex: escaped, $options: 'i' };
 }
 
-function exactRegex(value, maxLen = 80) {
-  const escaped = escapeRegexLiteral(value, maxLen);
-  if (!escaped) return null;
-  return { $regex: `^${escaped}$`, $options: 'i' };
-}
-
 const COMMUNITY_PROFILE_SELECT = 'userId username shareProfilePicture profilePictureUrl favoriteSubjects targetNetType subjectsNeedHelp preparationLevel studyTimePreference testScoreRange bio quizStats createdAt';
 const COMMUNITY_USER_SELECT = 'firstName lastName targetProgram city progress.averageScore progress.weakTopics role';
 const COMMUNITY_CONNECTION_SELECT = 'participantA participantB createdAt blockedByUserIds';
@@ -1053,12 +1047,12 @@ function serializeSupportMessage(item) {
 function normalizePlainText(value) {
   return String(value || '')
     .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
     .replace(/\u0000/g, ' ')
     .replace(/\t/g, ' ')
     .replace(/\u00a0/g, ' ')
-    .replace(/[\f\v]+/g, ' ')
+    .replace(/[ \f\v]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
+    .replace(/([^\n])\s+((?:q(?:uestion)?\s*)?\d{1,3}\s*[\).:-])/gi, '$1\n$2')
     .trim();
 }
 
@@ -1294,6 +1288,116 @@ function splitQuestionBlocks(text) {
   });
 }
 
+async function parseBulkMcqsWithAi(rawText) {
+  if (!openai) {
+    return { parsed: [], errors: ['AI parser is unavailable.'] };
+  }
+
+  const inputText = String(rawText || '').trim();
+  if (!inputText) {
+    return { parsed: [], errors: ['No content found to parse.'] };
+  }
+
+  const baseHierarchy = extractHierarchyContextFromText(inputText);
+
+  const clippedText = inputText.length > 120000 ? inputText.slice(0, 120000) : inputText;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: OPENAI_MODEL,
+      temperature: 0,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You extract ALL MCQs from messy educational documents.',
+            'Return strict JSON only in this schema:',
+            '{"mcqs":[{"subject":"","part":"part1|part2|","chapter":"","section":"","topic":"","question":"...","questionImage":"","options":["..."],"optionImages":[""],"answer":"...","explanation":"...","explanationImage":"","difficulty":"Easy|Medium|Hard"}]}',
+            'Rules:',
+            '- Detect all question boundaries (1., 1), Q1, Question 1, etc.).',
+            '- Support mixed option formats: A) A. A, Option 1, 1) and inline options in one line.',
+            '- Keep options separated as array items.',
+            '- Capture image references (data URLs or http URLs) near question/options/explanation when available.',
+            '- answer may be letter/number/text; provide best available answer token from source.',
+            '- If explanation is not present, use empty string.',
+            `- Return at most ${BULK_PARSE_LIMIT} MCQs.`,
+          ].join('\n'),
+        },
+        {
+          role: 'user',
+          content: clippedText,
+        },
+      ],
+    });
+
+    const raw = completion.choices?.[0]?.message?.content || '';
+    const parsedJson = extractJsonObject(raw);
+    const rows = Array.isArray(parsedJson?.mcqs) ? parsedJson.mcqs : [];
+
+    const parsed = [];
+    const errors = [];
+
+    rows.slice(0, BULK_PARSE_LIMIT).forEach((row, idx) => {
+      const question = String(row?.question || '').replace(/\s+/g, ' ').trim();
+      const options = parseOptionsFromUnknown(row?.options);
+      const answer = resolveAnswerToOption(row?.answer, options);
+      const tip = String(row?.explanation || '').trim();
+      const difficulty = normalizeDifficulty(row?.difficulty);
+      const questionImageRef = String(row?.questionImage || '').trim();
+      const explanationImageRef = String(row?.explanationImage || '').trim();
+      const optionImageRefs = Array.isArray(row?.optionImages)
+        ? row.optionImages.map((item) => String(item || '').trim())
+        : [];
+      const rowHierarchy = normalizeParsedHierarchyContext({
+        subject: row?.subject || baseHierarchy.subject,
+        part: row?.part || baseHierarchy.part,
+        chapter: row?.chapter || baseHierarchy.chapter,
+        section: row?.section || baseHierarchy.section,
+        topic: row?.topic || baseHierarchy.topic,
+      });
+
+      if (!question) {
+        errors.push(`Q${idx + 1}: question text is missing.`);
+        return;
+      }
+      if (options.length < 2) {
+        errors.push(`Q${idx + 1}: at least 2 options are required.`);
+        return;
+      }
+      if (!answer) {
+        errors.push(`Q${idx + 1}: correct answer is missing.`);
+        return;
+      }
+
+      parsed.push({
+        subject: rowHierarchy.subject,
+        part: rowHierarchy.part,
+        chapter: rowHierarchy.chapter,
+        section: rowHierarchy.section,
+        topic: rowHierarchy.topic,
+        question,
+        questionImageUrl: /^https?:\/\//i.test(questionImageRef) ? questionImageRef : '',
+        questionImageDataUrl: /^data:image\//i.test(questionImageRef) ? questionImageRef : '',
+        options,
+        optionImageDataUrls: optionImageRefs.map((ref) => (/^data:image\//i.test(ref) ? ref : '')),
+        answer,
+        tip,
+        explanationImageDataUrl: /^data:image\//i.test(explanationImageRef) ? explanationImageRef : '',
+        difficulty,
+      });
+    });
+
+    if (!parsed.length) {
+      return { parsed: [], errors: ['AI parser could not extract valid MCQs.'] };
+    }
+
+    return { parsed, errors };
+  } catch {
+    return { parsed: [], errors: ['AI parser failed for this document.'] };
+  }
+}
+
 function parseBulkMcqsFromText(raw) {
   const text = normalizePlainText(raw);
   if (!text) return { parsed: [], errors: ['No content found to parse.'] };
@@ -1420,16 +1524,16 @@ function parseBulkMcqsFromText(raw) {
       if (capturingExplanation) {
         explanationLines.push(line);
       } else if (activeOptionIndex >= 0 && options[activeOptionIndex]) {
-        options[activeOptionIndex].text = `${options[activeOptionIndex].text}\n${line}`.trim();
+        options[activeOptionIndex].text = `${options[activeOptionIndex].text} ${line}`.trim();
       } else {
         questionLines.push(line);
       }
     }
 
-    const question = questionLines.join('\n').trim();
+    const question = questionLines.join(' ').trim();
     const normalizedOptions = options.map((option) => option.text.trim()).filter(Boolean);
-    const extractedAnswer = String(answer || '').trim();
-    if ((!question && !questionImageUrl && !questionImageDataUrl) || normalizedOptions.length < 2) {
+    const resolvedAnswer = resolveAnswerToOption(answer, normalizedOptions);
+    if ((!question && !questionImageUrl && !questionImageDataUrl) || normalizedOptions.length < 2 || !resolvedAnswer) {
       skipped += 1;
       return;
     }
@@ -1445,7 +1549,7 @@ function parseBulkMcqsFromText(raw) {
       questionImageDataUrl,
       options: normalizedOptions,
       optionImageDataUrls: options.map((option) => option.imageDataUrl || ''),
-      answer: extractedAnswer,
+      answer: resolvedAnswer,
       tip: explanationLines.join('\n').trim(),
       explanationImageDataUrl,
       difficulty,
@@ -8875,7 +8979,6 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
   const profile = NET_TEST_PROFILES[normalizedNetType] || NET_TEST_PROFILES['net-engineering'];
   const normalizedTestType = String(testType || '').toLowerCase();
   const desiredQuestions = clamp(Number(questionCount) || (normalizedMode === 'mock' ? profile.totalQuestions : 20), 1, 200);
-  const isPreparationTopicTest = normalizedMode === 'topic';
 
   let selected = [];
   const allInProfile = await MCQModel.find({
@@ -8892,39 +8995,9 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     });
   } else if (normalizedTestType === 'subject-wise') {
     const pickedSubject = String(selectedSubject || normalizedSubject || '').toLowerCase();
-    const profileSubjects = Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects)));
-    if (!pickedSubject || !profileSubjects.includes(pickedSubject)) {
-      res.status(400).json({ error: 'Selected subject is not part of the chosen NET type.' });
-      return;
-    }
-
-    const subjectPercentage = profile.distribution.reduce((sum, entry) => (
-      entry.sourceSubjects.includes(pickedSubject)
-        ? sum + Number(entry.percentage || 0)
-        : sum
-    ), 0);
-
-    if (subjectPercentage <= 0) {
-      res.status(400).json({ error: 'Subject weightage is not configured for the selected NET type.' });
-      return;
-    }
-
-    const requiredSubjectQuestions = Math.max(
-      1,
-      Math.round((subjectPercentage / 100) * Number(profile.totalQuestions || 200)),
-    );
-
-    const subjectFilter = { subject: pickedSubject };
-    const totalAvailable = await MCQModel.countDocuments(subjectFilter);
-
-    if (totalAvailable >= requiredSubjectQuestions) {
-      selected = await MCQModel.aggregate([
-        { $match: subjectFilter },
-        { $sample: { size: requiredSubjectQuestions } },
-      ]);
-    } else {
-      selected = await MCQModel.find(subjectFilter).lean();
-    }
+    const subjectCount = profile.subjectWiseQuestions[pickedSubject] || desiredQuestions;
+    const subjectPool = await MCQModel.find({ subject: pickedSubject }).lean();
+    selected = shuffle(subjectPool).slice(0, Math.min(subjectCount, subjectPool.length));
   } else if (normalizedTestType === 'adaptive' || normalizedMode === 'adaptive') {
     const weakTopics = req.user.progress?.weakTopics || [];
     selected = generateAdaptiveSet({
@@ -8940,53 +9013,21 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
       difficulty: normalizedDifficulty,
     };
 
-    const topicScopeFilter = {
-      subject: normalizedSubject,
-    };
-
     if (part) {
-      const normalizedPart = String(part).toLowerCase().trim();
-      filter.part = normalizedPart;
-      topicScopeFilter.part = normalizedPart;
+      filter.part = String(part).toLowerCase().trim();
     }
     if (chapter && chapter !== 'All Chapters') {
-      const chapterExpr = exactRegex(String(chapter), 160);
-      if (chapterExpr) {
-        filter.chapter = chapterExpr;
-        topicScopeFilter.chapter = chapterExpr;
-      }
+      filter.chapter = { $regex: String(chapter), $options: 'i' };
     }
     if (section && section !== 'All Sections') {
-      const sectionExpr = exactRegex(String(section), 160);
-      if (sectionExpr) {
-        filter.section = sectionExpr;
-        topicScopeFilter.section = sectionExpr;
-      }
+      filter.section = { $regex: String(section), $options: 'i' };
     }
     if (topic && topic !== 'All Topics') {
-      const topicExpr = exactRegex(String(topic), 160);
-      if (topicExpr) {
-        filter.topic = topicExpr;
-        topicScopeFilter.topic = topicExpr;
-      }
+      filter.topic = { $regex: String(topic), $options: 'i' };
     }
 
-    if (isPreparationTopicTest) {
-      const sectionTestSize = 25;
-      const totalAvailable = await MCQModel.countDocuments(topicScopeFilter);
-
-      if (totalAvailable >= sectionTestSize) {
-        selected = await MCQModel.aggregate([
-          { $match: topicScopeFilter },
-          { $sample: { size: sectionTestSize } },
-        ]);
-      } else {
-        selected = await MCQModel.find(topicScopeFilter).lean();
-      }
-    } else {
-      const pool = await MCQModel.find(filter).lean();
-      selected = shuffle(pool).slice(0, Math.min(desiredQuestions, pool.length));
-    }
+    const pool = await MCQModel.find(filter).lean();
+    selected = shuffle(pool).slice(0, Math.min(desiredQuestions, pool.length));
   }
 
   if (!selected.length) {
@@ -9074,11 +9115,7 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     selectedSubject: selectedSubject || null,
   };
 
-  res.status(201).json({
-    session: serialized,
-    totalQuestions: questions.length,
-    questions,
-  });
+  res.status(201).json({ session: serialized });
 });
 
 app.get('/api/tests/attempts', authMiddleware, async (req, res) => {
@@ -10370,11 +10407,38 @@ app.delete('/api/admin/mcqs/purge-all', authMiddleware, requireAdmin, async (_re
 });
 
 async function parseMcqsFromSourceText(sourceText) {
-  // Strict extraction mode: parse only from extracted document text and do not use generative rewriting.
-  const extractedResult = parseBulkMcqsFromText(sourceText);
-  const parsed = Array.isArray(extractedResult.parsed) ? extractedResult.parsed.slice(0, BULK_PARSE_LIMIT) : [];
-  const errors = Array.isArray(extractedResult.errors) ? [...extractedResult.errors] : [];
-  if ((extractedResult.parsed?.length || 0) > BULK_PARSE_LIMIT && !errors.some((item) => /first 15 mcqs/i.test(String(item)))) {
+  const heuristicResult = parseBulkMcqsFromText(sourceText);
+  let finalResult = heuristicResult;
+
+  const countDetectedImages = (result) => {
+    const rows = Array.isArray(result?.parsed) ? result.parsed : [];
+    return rows.reduce((total, row) => {
+      const questionImage = /^data:image\//i.test(String(row?.questionImageDataUrl || '')) ? 1 : 0;
+      const optionImages = Array.isArray(row?.optionImageDataUrls)
+        ? row.optionImageDataUrls.filter((item) => /^data:image\//i.test(String(item || ''))).length
+        : 0;
+      const explanationImage = /^data:image\//i.test(String(row?.explanationImageDataUrl || '')) ? 1 : 0;
+      return total + questionImage + optionImages + explanationImage;
+    }, 0);
+  };
+
+  if (openai) {
+    const aiResult = await parseBulkMcqsWithAi(sourceText);
+    const heuristicScore = (heuristicResult.parsed?.length || 0) - (heuristicResult.errors?.length || 0);
+    const aiScore = (aiResult.parsed?.length || 0) - (aiResult.errors?.length || 0);
+    const heuristicImageScore = countDetectedImages(heuristicResult);
+    const aiImageScore = countDetectedImages(aiResult);
+
+    const preferHeuristicForImages = heuristicImageScore > 0 && aiImageScore < heuristicImageScore;
+
+    if (aiResult.parsed.length > 0 && aiScore >= heuristicScore && !preferHeuristicForImages) {
+      finalResult = aiResult;
+    }
+  }
+
+  const parsed = Array.isArray(finalResult.parsed) ? finalResult.parsed.slice(0, BULK_PARSE_LIMIT) : [];
+  const errors = Array.isArray(finalResult.errors) ? [...finalResult.errors] : [];
+  if ((finalResult.parsed?.length || 0) > BULK_PARSE_LIMIT && !errors.some((item) => /first 15 mcqs/i.test(String(item)))) {
     errors.unshift(`Only the first ${BULK_PARSE_LIMIT} MCQs were kept from this import.`);
   }
 
@@ -10408,10 +10472,10 @@ app.post('/api/ai/parse-mcqs', authMiddleware, requireAdmin, aiParseUpload.singl
     const result = await parseMcqsFromSourceText(sourceText);
     res.json(result);
   } catch (error) {
-    console.error('Document MCQ parse failed:', error);
+    console.error('AI MCQ parse failed:', error);
     res.status(400).json({
       parsed: [],
-      errors: [error instanceof Error ? error.message : 'Could not parse content from document text.'],
+      errors: [error instanceof Error ? error.message : 'Could not parse content via AI.'],
     });
   }
 });
@@ -10438,7 +10502,7 @@ app.post('/api/admin/mcqs/parse', authMiddleware, requireAdmin, async (req, res)
   }
 });
 
-function buildAdminMcqDocument(input = {}) {
+app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const {
     question,
     questionImageUrl = '',
@@ -10457,7 +10521,7 @@ function buildAdminMcqDocument(input = {}) {
     explanationImage = null,
     shortTrickText = '',
     shortTrickImage = null,
-  } = input || {};
+  } = req.body || {};
 
   const normalizedSubject = String(subject || '').toLowerCase().trim();
   const normalizedSubjectKey = normalizeSubjectKey(normalizedSubject);
@@ -10469,32 +10533,47 @@ function buildAdminMcqDocument(input = {}) {
   const requiresPartSelection = !isFlatTopicSubject && isPartSelectionRequiredSubject(normalizedSubjectKey);
 
   if (!answer || !normalizedSubject) {
-    throw new Error('answer and subject are required.');
+    res.status(400).json({ error: 'answer and subject are required.' });
+    return;
   }
 
   if (!isFlatTopicSubject && (!normalizedChapter || !normalizedSection || (requiresPartSelection && !normalizedPart))) {
-    throw new Error(
-      requiresPartSelection
+    res.status(400).json({
+      error: requiresPartSelection
         ? 'part, chapter, and section are required for this subject.'
         : 'chapter and section are required for this subject.',
-    );
+    });
+    return;
   }
 
   if (isFlatTopicSubject && !normalizedTopic && !normalizedSection) {
-    throw new Error('topic is required for this subject.');
+    res.status(400).json({ error: 'topic is required for this subject.' });
+    return;
   }
 
-  const normalizedQuestionImage = normalizeMcqImageFile(questionImage, 'Question image');
-  const normalizedExplanationImage = normalizeMcqImageFile(explanationImage, 'Explanation image');
-  const normalizedShortTrickImage = normalizeMcqImageFile(shortTrickImage, 'Short trick image');
-  const normalized = sanitizeMcqOptionsWithMedia(options, optionMedia);
-  const normalizedOptions = normalized.options;
-  const normalizedOptionMedia = normalized.optionMedia;
+  let normalizedQuestionImage;
+  let normalizedExplanationImage;
+  let normalizedShortTrickImage;
+  let normalizedOptions;
+  let normalizedOptionMedia;
+
+  try {
+    normalizedQuestionImage = normalizeMcqImageFile(questionImage, 'Question image');
+    normalizedExplanationImage = normalizeMcqImageFile(explanationImage, 'Explanation image');
+    normalizedShortTrickImage = normalizeMcqImageFile(shortTrickImage, 'Short trick image');
+    const normalized = sanitizeMcqOptionsWithMedia(options, optionMedia);
+    normalizedOptions = normalized.options;
+    normalizedOptionMedia = normalized.optionMedia;
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid MCQ image payload.' });
+    return;
+  }
 
   const normalizedQuestionText = String(question || '').trim();
   const hasQuestionImage = Boolean(normalizedQuestionImage) || Boolean(String(questionImageUrl || '').trim());
   if (!normalizedQuestionText && !hasQuestionImage) {
-    throw new Error('Question text or question image is required.');
+    res.status(400).json({ error: 'Question text or question image is required.' });
+    return;
   }
 
   const resolvedTopic = isFlatTopicSubject
@@ -10504,10 +10583,11 @@ function buildAdminMcqDocument(input = {}) {
   const resolvedAnswerKey = resolveAnswerToOptionKey(answer, normalizedOptionMedia, normalizedOptions);
 
   if (!resolvedAnswerKey) {
-    throw new Error('Correct answer must match one option (A/B/C/D, 1/2/3/4, or exact option text).');
+    res.status(400).json({ error: 'Correct answer must match one option (A/B/C/D, 1/2/3/4, or exact option text).' });
+    return;
   }
 
-  return {
+  const mcq = await MCQModel.create({
     question: normalizedQuestionText || 'Refer to attached image.',
     questionImageUrl: String(questionImageUrl || '').trim(),
     questionImage: normalizedQuestionImage,
@@ -10525,108 +10605,6 @@ function buildAdminMcqDocument(input = {}) {
     explanationImage: normalizedExplanationImage,
     shortTrickText: String(shortTrickText || ''),
     shortTrickImage: normalizedShortTrickImage,
-  };
-}
-
-async function resolveExistingEnglishVocabularySynonymsContext() {
-  const existing = await MCQModel.findOne({
-    subject: { $regex: '^english$', $options: 'i' },
-    chapter: { $regex: '^vocabulary$', $options: 'i' },
-    section: { $regex: '^synonyms$', $options: 'i' },
-  })
-    .select('subject part chapter section topic')
-    .lean();
-
-  if (!existing) {
-    throw new Error('Existing English -> Vocabulary -> Synonyms context was not found in database. Add one MCQ there first.');
-  }
-
-  return {
-    subject: String(existing.subject || 'english').trim().toLowerCase(),
-    part: String(existing.part || 'part1').trim().toLowerCase(),
-    chapter: String(existing.chapter || 'Vocabulary').trim(),
-    section: String(existing.section || 'Synonyms').trim(),
-    topic: String(existing.topic || existing.section || 'Synonyms').trim(),
-  };
-}
-
-function normalizeBulkUploadMcqEntry(input = {}, fixedContext) {
-  const subject = String(fixedContext?.subject || 'english').trim().toLowerCase();
-  const chapter = String(fixedContext?.chapter || 'Vocabulary').trim();
-  const section = String(fixedContext?.section || 'Synonyms').trim();
-  const topic = String(fixedContext?.topic || section || 'Synonyms').trim();
-  const difficulty = normalizeDifficulty(input.difficulty || 'Medium');
-  const question = String(input.question || '').trim();
-  const explanation = String(input.explanation || input.tip || input.explanationText || '').trim();
-  const source = String(input.source || 'Bulk Upload').trim();
-  const requiresPart = isPartSelectionRequiredSubject(subject);
-  const part = requiresPart
-    ? String(fixedContext?.part || input.part || 'part1').trim().toLowerCase()
-    : '';
-
-  const directOptions = Array.isArray(input.options)
-    ? input.options.map((item) => String(item || '').trim()).filter(Boolean)
-    : [];
-
-  const fieldOptions = [input.optionA, input.optionB, input.optionC, input.optionD]
-    .map((item) => String(item || '').trim())
-    .filter(Boolean);
-
-  const options = directOptions.length ? directOptions : fieldOptions;
-
-  if (!question) {
-    throw new Error('question is required.');
-  }
-  if (options.length !== 4) {
-    throw new Error('Each MCQ must include exactly 4 options (A-D).');
-  }
-
-  const answerRaw = String(input.correctAnswer || input.answer || '').trim();
-  const answerKey = resolveAnswerToOptionKey(answerRaw, null, options);
-  if (!answerKey) {
-    throw new Error('correctAnswer must match one option (A-D, 1-4, or exact option text).');
-  }
-
-  const normalizedQuestion = question.replace(/\s+/g, ' ').trim().toLowerCase();
-  if (!normalizedQuestion) {
-    throw new Error('question is required.');
-  }
-
-  return {
-    doc: {
-      subject,
-      part,
-      chapter,
-      section,
-      topic,
-      question,
-      options,
-      optionMedia: options.map((text, index) => ({
-        key: String.fromCharCode(65 + index),
-        text,
-        image: null,
-      })),
-      answer: answerKey,
-      tip: explanation,
-      explanationText: explanation,
-      difficulty,
-      source,
-    },
-    signature: `${subject}|${part}|${chapter.toLowerCase()}|${section.toLowerCase()}|${normalizedQuestion}`,
-  };
-}
-
-app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
-  let payload;
-  try {
-    payload = buildAdminMcqDocument(req.body || {});
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid MCQ payload.' });
-    return;
-  }
-
-  const mcq = await MCQModel.create({
-    ...payload,
     source: 'Admin',
   });
 
@@ -10634,148 +10612,6 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
 
   res.status(201).json({
     mcq: serializeMcq(mcq),
-  });
-});
-
-app.post('/api/mcqs/bulk-upload', authMiddleware, requireAdmin, async (req, res) => {
-  const rows = Array.isArray(req.body?.mcqs) ? req.body.mcqs : [];
-  if (!rows.length) {
-    res.status(400).json({ error: 'mcqs array is required.' });
-    return;
-  }
-
-  if (rows.length > 100) {
-    res.status(400).json({ error: 'Bulk upload supports up to 100 MCQs per request.' });
-    return;
-  }
-
-  const seen = new Set();
-  const prepared = [];
-  const skippedDuplicates = [];
-
-  let fixedContext;
-  try {
-    fixedContext = await resolveExistingEnglishVocabularySynonymsContext();
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not resolve existing chapter/section context.' });
-    return;
-  }
-
-  try {
-    rows.forEach((row, index) => {
-      const normalized = normalizeBulkUploadMcqEntry(row || {}, fixedContext);
-      if (seen.has(normalized.signature)) {
-        skippedDuplicates.push({ index, reason: 'Duplicate in payload', question: normalized.doc.question });
-        return;
-      }
-      seen.add(normalized.signature);
-      prepared.push(normalized);
-    });
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Invalid MCQ payload.' });
-    return;
-  }
-
-  const existingByScope = await Promise.all(
-    prepared.map((item) => MCQModel.findOne({
-      subject: item.doc.subject,
-      part: item.doc.part,
-      chapter: item.doc.chapter,
-      section: item.doc.section,
-      question: { $regex: `^${escapeRegexLiteral(item.doc.question, 500)}$`, $options: 'i' },
-    }).select('question').lean()),
-  );
-
-  const docsToInsert = [];
-  prepared.forEach((item, index) => {
-    if (existingByScope[index]) {
-      skippedDuplicates.push({ index, reason: 'Duplicate in database', question: item.doc.question });
-      return;
-    }
-    docsToInsert.push(item.doc);
-  });
-
-  if (!docsToInsert.length) {
-    res.json({
-      insertedCount: 0,
-      skippedCount: skippedDuplicates.length,
-      skippedDuplicates,
-      mcqs: [],
-    });
-    return;
-  }
-
-  const inserted = await MCQModel.insertMany(docsToInsert, { ordered: true });
-  broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'bulk-upload' } });
-
-  res.status(201).json({
-    insertedCount: inserted.length,
-    skippedCount: skippedDuplicates.length,
-    skippedDuplicates,
-    mcqs: inserted.map((item) => serializeMcq(item)),
-  });
-});
-
-app.post('/api/admin/mcqs/bulk', authMiddleware, requireAdmin, async (req, res) => {
-  const parsedMcqs = Array.isArray(req.body?.mcqs)
-    ? req.body.mcqs
-    : (Array.isArray(req.body?.parsedMCQs) ? req.body.parsedMCQs : []);
-  const enforceExistingEnglishVocabularySynonyms = Boolean(req.body?.enforceExistingEnglishVocabularySynonyms);
-
-  if (!parsedMcqs.length) {
-    res.status(400).json({ error: 'mcqs array is required.' });
-    return;
-  }
-
-  let fixedContext = null;
-  if (enforceExistingEnglishVocabularySynonyms) {
-    try {
-      fixedContext = await resolveExistingEnglishVocabularySynonymsContext();
-    } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : 'Could not resolve existing chapter/section context.' });
-      return;
-    }
-  }
-
-  let docs;
-  try {
-    docs = parsedMcqs.map((item, index) => {
-      try {
-        const shouldPinToExistingContext = fixedContext
-          && normalizeSubjectKey(item?.subject || fixedContext.subject) === 'english';
-
-        const pinnedItem = shouldPinToExistingContext
-          ? {
-            ...item,
-            subject: fixedContext.subject,
-            part: fixedContext.part,
-            chapter: fixedContext.chapter,
-            section: fixedContext.section,
-            topic: fixedContext.topic,
-          }
-          : item;
-
-        return {
-          ...buildAdminMcqDocument(pinnedItem || {}),
-          source: 'Admin',
-        };
-      } catch (error) {
-        const message = error instanceof Error ? error.message : 'Invalid MCQ payload.';
-        throw new Error(`MCQ ${index + 1}: ${message}`);
-      }
-    });
-  } catch (error) {
-    res.status(400).json({ error: error instanceof Error ? error.message : 'Could not validate MCQ list.' });
-    return;
-  }
-
-  const createdMcqs = await MCQModel.insertMany(docs, { ordered: true });
-
-  broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'bulk-create' } });
-
-  res.status(201).json({
-    count: createdMcqs.length,
-    mcqs: createdMcqs.map((item) => serializeMcq(item)),
   });
 });
 
