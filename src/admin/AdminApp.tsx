@@ -1,4 +1,4 @@
-import { createElement, type ChangeEvent, type FormEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, type ChangeEvent, type ClipboardEvent as ReactClipboardEvent, type FormEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -1338,27 +1338,6 @@ function fileToDataUrl(file: File): Promise<string> {
     reader.onerror = () => reject(new Error('Could not read file.'));
     reader.readAsDataURL(file);
   });
-}
-
-function dataUrlToImageFile(dataUrl: string, fallbackName = 'pasted-image.png'): File | null {
-  const normalized = String(dataUrl || '').trim();
-  const match = normalized.match(/^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)$/i);
-  if (!match) return null;
-
-  const mimeType = String(match[1] || 'image/png').toLowerCase();
-  const base64 = String(match[2] || '').replace(/\s+/g, '');
-  if (!base64) return null;
-
-  try {
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let idx = 0; idx < binary.length; idx += 1) {
-      bytes[idx] = binary.charCodeAt(idx);
-    }
-    return new File([bytes], fallbackName, { type: mimeType });
-  } catch {
-    return null;
-  }
 }
 
 const MCQ_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif']);
@@ -3671,34 +3650,21 @@ export default function AdminApp() {
     return String(extractedText || '').trim();
   };
 
-  const applyMathEditorImageToText = async (
-    imageInput: File | string,
-    setEditorValue: (nextValue: string) => void,
-    successMessage: string,
-  ) => {
+  const handleSingleMcqMathImagePaste = async (pastedImageDataUrl: string) => {
     try {
       setBulkProcessing(true);
-      const extractedText = await extractSingleMcqMathTextFromImage(imageInput);
+      const extractedText = await extractSingleMcqMathTextFromImage(pastedImageDataUrl);
       if (!extractedText.trim()) {
         toast.error('Could not extract readable MCQ text from pasted image.');
         return;
       }
-      setEditorValue(extractedText);
-      toast.success(successMessage);
+      setSingleMcqInput(extractedText);
+      toast.success('Pasted image extracted to text and inserted into the MCQ box.');
     } catch {
       toast.error('Could not process pasted image. Please try again with a clearer image.');
     } finally {
       setBulkProcessing(false);
     }
-  };
-
-  const handleMathEditorImagePaste = async (
-    pastedImageDataUrl: string,
-    setEditorValue: (nextValue: string) => void,
-    successMessage: string,
-  ) => {
-    const imageFile = dataUrlToImageFile(pastedImageDataUrl, 'pasted-mcq-image.png');
-    await applyMathEditorImageToText(imageFile || pastedImageDataUrl, setEditorValue, successMessage);
   };
 
   const analyzeSingleMcq = async () => {
@@ -6317,11 +6283,7 @@ export default function AdminApp() {
                                 value={singleMcqInput}
                                 onValueChange={(nextValue) => setSingleMcqInput(nextValue)}
                                 onImagePaste={(dataUrl) => {
-                                  void handleMathEditorImagePaste(
-                                    dataUrl,
-                                    (nextValue) => setSingleMcqInput(nextValue),
-                                    'Pasted image extracted to text and inserted into the MCQ box.',
-                                  );
+                                  void handleSingleMcqMathImagePaste(dataUrl);
                                 }}
                                 insertImageTokenOnPaste={false}
                                 className="min-h-[170px]"
@@ -6720,14 +6682,6 @@ export default function AdminApp() {
                               placeholder="Question Text"
                               className="min-h-[95px]"
                               onValueChange={(nextValue) => setForm((prev) => ({ ...prev, question: nextValue }))}
-                              onImagePaste={(dataUrl) => {
-                                void handleMathEditorImagePaste(
-                                  dataUrl,
-                                  (nextValue) => setForm((prev) => ({ ...prev, question: nextValue })),
-                                  'Pasted image extracted to text and inserted into the question box.',
-                                );
-                              }}
-                              insertImageTokenOnPaste={false}
                             />
                           ) : null}
                         </div>
