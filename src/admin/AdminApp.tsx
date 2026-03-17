@@ -1,4 +1,4 @@
-import { createElement, type ChangeEvent, type FormEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, type ChangeEvent, type ClipboardEvent, type FormEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -1585,6 +1585,7 @@ export default function AdminApp() {
   const [bulkFile, setBulkFile] = useState<File | null>(null);
   const [singleMcqInput, setSingleMcqInput] = useState('');
   const [singleMcqImageFile, setSingleMcqImageFile] = useState<File | null>(null);
+  const [singleMcqPastedImageDataUrl, setSingleMcqPastedImageDataUrl] = useState('');
   const [bulkParsed, setBulkParsed] = useState<ParsedBulkMcq[]>([]);
   const [showParsedPreview, setShowParsedPreview] = useState(false);
   const [bulkParseErrors, setBulkParseErrors] = useState<string[]>([]);
@@ -3620,22 +3621,32 @@ export default function AdminApp() {
     return (localParsed.parsed || []).length > 1;
   };
 
-  const runSingleMcqOcr = async (file: File) => {
+  const runSingleMcqOcr = async (input: File | string) => {
     const { createWorker } = await import('tesseract.js');
     const worker = await createWorker('eng');
     try {
-      const result = await worker.recognize(file);
+      const result = await worker.recognize(input);
       return String(result?.data?.text || '').trim();
     } finally {
       await worker.terminate();
     }
   };
 
+  const handleSingleMcqTextareaPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedImageDataUrl = await extractPastedImageDataUrl(event.nativeEvent);
+    if (!pastedImageDataUrl) return;
+
+    event.preventDefault();
+    setSingleMcqPastedImageDataUrl(pastedImageDataUrl);
+    toast.success('Pasted image captured. Click Parse MCQ to run OCR and parse.');
+  };
+
   const analyzeSingleMcq = async () => {
     if (!authToken) return;
 
     const hasText = Boolean(singleMcqInput.trim());
-    if (!hasText && !singleMcqImageFile) {
+    const hasImageInput = Boolean(singleMcqImageFile || singleMcqPastedImageDataUrl);
+    if (!hasText && !hasImageInput) {
       toast.error('Paste one MCQ or upload one MCQ image first.');
       return;
     }
@@ -3651,7 +3662,10 @@ export default function AdminApp() {
     try {
       setBulkProcessing(true);
 
-      const rawText = hasText ? singleMcqInput : await runSingleMcqOcr(singleMcqImageFile!);
+      const imageSource = singleMcqImageFile || singleMcqPastedImageDataUrl;
+      const rawText = hasText
+        ? singleMcqInput
+        : await runSingleMcqOcr(imageSource!);
       if (!rawText.trim()) {
         toast.error('Could not extract readable MCQ text. Use clear text format or a higher-quality image.');
         return;
@@ -3687,7 +3701,7 @@ export default function AdminApp() {
       if (!withSelectedHierarchy.length) {
         setBulkParseErrors(payload.errors || []);
         setShowParsedPreview(false);
-        toast.error(payload.errors?.[0] || 'Could not parse MCQ. Use format: question, A/B/C/D options, Correct:, Explanation:.');
+        toast.error(payload.errors?.[0] || 'Could not detect valid MCQ format from pasted image or text. Use: question, A/B/C/D, Correct:, Explanation:.');
         return;
       }
 
@@ -6281,6 +6295,9 @@ export default function AdminApp() {
                               <Textarea
                                 value={singleMcqInput}
                                 onChange={(e) => setSingleMcqInput(e.target.value)}
+                                onPaste={(event) => {
+                                  void handleSingleMcqTextareaPaste(event);
+                                }}
                                 className="min-h-[170px]"
                                 placeholder={[
                                   'question',
@@ -6298,11 +6315,25 @@ export default function AdminApp() {
                                 type="file"
                                 className="hidden"
                                 accept="image/*"
-                                onChange={(e) => setSingleMcqImageFile(e.target.files?.[0] || null)}
+                                onChange={(e) => {
+                                  setSingleMcqImageFile(e.target.files?.[0] || null);
+                                  setSingleMcqPastedImageDataUrl('');
+                                }}
                               />
 
                               {singleMcqImageFile ? (
                                 <p className="text-xs text-muted-foreground">Selected image: {singleMcqImageFile.name}</p>
+                              ) : null}
+
+                              {singleMcqPastedImageDataUrl ? (
+                                <div className="space-y-1">
+                                  <p className="text-xs text-muted-foreground">Pasted image preview</p>
+                                  <img
+                                    src={singleMcqPastedImageDataUrl}
+                                    alt="Pasted single MCQ"
+                                    className="max-h-44 w-auto rounded border border-indigo-300/60 bg-white/70 object-contain p-1"
+                                  />
+                                </div>
                               ) : null}
 
                               <div className="flex flex-wrap gap-2">
@@ -6316,7 +6347,7 @@ export default function AdminApp() {
                                 <Button
                                   type="button"
                                   onClick={() => void analyzeSingleMcq()}
-                                  disabled={bulkProcessing || (!singleMcqInput.trim() && !singleMcqImageFile)}
+                                  disabled={bulkProcessing || (!singleMcqInput.trim() && !singleMcqImageFile && !singleMcqPastedImageDataUrl)}
                                 >
                                   {bulkProcessing ? (
                                     <>
