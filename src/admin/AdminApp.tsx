@@ -3835,13 +3835,13 @@ export default function AdminApp() {
       }
 
       const formatted = [
-        `Question: [[img:${segments[0]}]]`,
-        `A. [[img:${segments[1]}]]`,
-        `B. [[img:${segments[2]}]]`,
-        `C. [[img:${segments[3]}]]`,
-        `D. [[img:${segments[4]}]]`,
-        `Correct Answer: [[img:${segments[5]}]]`,
-        `Explanation: [[img:${segments[6]}]]`,
+        `Question: ${segments[0]}`,
+        `OptionA: ${segments[1]}`,
+        `OptionB: ${segments[2]}`,
+        `OptionC: ${segments[3]}`,
+        `OptionD: ${segments[4]}`,
+        `Correct Answer: ${segments[5]}`,
+        `Explanation: ${segments[6]}`,
       ].join('\n');
 
       setSingleMcqInput(formatted);
