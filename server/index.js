@@ -9114,7 +9114,11 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
   const normalizedNetType = normalizeNetType(netType);
   const profile = NET_TEST_PROFILES[normalizedNetType] || NET_TEST_PROFILES['net-engineering'];
   const normalizedTestType = String(testType || '').toLowerCase();
-  const desiredQuestions = clamp(Number(questionCount) || (normalizedMode === 'mock' ? profile.totalQuestions : 20), 1, 200);
+  const isPreparationTopicSession = normalizedMode === 'topic';
+  const requestedQuestions = Number(questionCount) || (normalizedMode === 'mock' ? profile.totalQuestions : 20);
+  const desiredQuestions = isPreparationTopicSession
+    ? 25
+    : clamp(requestedQuestions, 1, 200);
 
   const normalizeTextForMatch = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
   const exactThenContains = (rows, key, requested) => {
