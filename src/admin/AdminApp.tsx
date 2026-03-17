@@ -3746,74 +3746,6 @@ export default function AdminApp() {
     toast.success(`Filled ${limitedParsed.length} MCQ field(s).`);
   };
 
-  const runPasteMcqImageOcr = async (input: string) => {
-    const { createWorker } = await import('tesseract.js');
-    const worker = await createWorker('eng');
-    try {
-      const result = await worker.recognize(input);
-      return String(result?.data?.text || '').trim();
-    } finally {
-      await worker.terminate();
-    }
-  };
-
-  const formatPasteMcqOcrText = (rawText: string) => {
-    const text = String(rawText || '')
-      .replace(/\r\n/g, '\n')
-      .replace(/\u00a0/g, ' ')
-      .replace(/Correctanswer/gi, 'Correct answer')
-      .replace(/Correctans?wer/gi, 'Correct answer')
-      .replace(/([A-Da-d])(?=\d)/g, '$1. ')
-      .replace(/\s{2,}/g, ' ')
-      .trim();
-
-    const optionRegex = /(?:^|\n)\s*(?:Option\s*)?([A-Da-d])[\).:\-]?\s*(.*?)(?=(?:\n\s*(?:Option\s*)?[A-Da-d][\).:\-]?\s*)|\n\s*(?:Correct\s*answer|Answer|Explanation)\b|$)/gis;
-    const optionsByKey: Record<string, string> = {};
-    let optionMatch: RegExpExecArray | null;
-    while ((optionMatch = optionRegex.exec(text)) !== null) {
-      const key = String(optionMatch[1] || '').toUpperCase();
-      const body = String(optionMatch[2] || '').trim();
-      if (key && body) optionsByKey[key] = body;
-    }
-
-    const firstOptionIndex = text.search(/(?:^|\n)\s*(?:Option\s*)?[A-Da-d][\).:\-]?\s*/i);
-    const question = String(firstOptionIndex >= 0 ? text.slice(0, firstOptionIndex) : text)
-      .replace(/(?:^|\n)\s*Question\s*[:=-]?\s*/i, '')
-      .trim();
-    const answer = String(text.match(/(?:^|\n)\s*(?:Correct\s*answer|Answer|Ans(?:wer)?)\s*[:=-]\s*(.+?)(?:\n|$)/i)?.[1] || '').trim();
-    const explanation = String(text.match(/(?:^|\n)\s*Explanation\s*[:=-]\s*([\s\S]*)$/i)?.[1] || '').trim();
-
-    const lines: string[] = [];
-    lines.push(`Question: ${question}`);
-    lines.push(`A. ${optionsByKey.A || ''}`);
-    lines.push(`B. ${optionsByKey.B || ''}`);
-    lines.push(`C. ${optionsByKey.C || ''}`);
-    lines.push(`D. ${optionsByKey.D || ''}`);
-    lines.push(`Correct Answer: ${answer}`);
-    lines.push(`Explanation: ${explanation}`);
-
-    return lines.join('\n').trim();
-  };
-
-  const handlePasteMcqImagePaste = async (dataUrl: string) => {
-    const normalizedDataUrl = String(dataUrl || '').trim();
-    if (!normalizedDataUrl) return;
-
-    try {
-      const extractedText = await runPasteMcqImageOcr(normalizedDataUrl);
-      if (!extractedText.trim()) {
-        toast.error('Could not extract readable MCQ text from pasted image.');
-        return;
-      }
-
-      const formatted = formatPasteMcqOcrText(extractedText);
-      setSingleMcqInput(formatted);
-      toast.success('Pasted image converted into structured MCQ text.');
-    } catch {
-      toast.error('Could not process pasted image. Please try again with a clearer image.');
-    }
-  };
-
   const resolveDocumentHierarchyContext = (showToast = true) => {
     const subject = String(form.subject || '').trim().toLowerCase();
     const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(subject);
@@ -6387,10 +6319,6 @@ export default function AdminApp() {
                                 label="Paste MCQ Content"
                                 value={singleMcqInput}
                                 onValueChange={(nextValue) => setSingleMcqInput(nextValue)}
-                                onImagePaste={(dataUrl) => {
-                                  void handlePasteMcqImagePaste(dataUrl);
-                                }}
-                                insertImageTokenOnPaste={false}
                                 className="min-h-[170px]"
                                 placeholder={[
                                   'question',
