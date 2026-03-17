@@ -1,4 +1,4 @@
-import { createElement, type ChangeEvent, type ClipboardEvent, type FormEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, type ChangeEvent, type ClipboardEvent as ReactClipboardEvent, type FormEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -78,6 +78,11 @@ type MathFieldLikeElement = HTMLElement & {
   executeCommand?: (command: unknown) => void;
 };
 
+type ClipboardDataEvent = {
+  clipboardData: DataTransfer | null;
+  preventDefault: () => void;
+};
+
 function normalizeMathInputId(value: string) {
   return String(value || '')
     .toLowerCase()
@@ -150,7 +155,7 @@ function insertImageTokenToField(targetId: string, dataUrl: string) {
   insertTextToField(targetId, `[[img:${normalized}]]`);
 }
 
-function extractRichBoldTextFromClipboard(event: ClipboardEvent): string {
+function extractRichBoldTextFromClipboard(event: ClipboardDataEvent): string {
   const html = String(event.clipboardData?.getData('text/html') || '').trim();
   if (!html || typeof DOMParser === 'undefined') return '';
 
@@ -212,7 +217,7 @@ function extractRichBoldTextFromClipboard(event: ClipboardEvent): string {
   return normalized;
 }
 
-async function extractPastedImageDataUrl(event: ClipboardEvent): Promise<string | null> {
+async function extractPastedImageDataUrl(event: ClipboardDataEvent): Promise<string | null> {
   const clipboardData = event.clipboardData;
   if (!clipboardData) return null;
 
@@ -323,7 +328,7 @@ function MathLiveInput({
     };
 
     const handlePaste = (event: Event) => {
-      const clipboardEvent = event as ClipboardEvent;
+      const clipboardEvent = event as unknown as ClipboardDataEvent;
       const richText = extractRichBoldTextFromClipboard(clipboardEvent);
       if (richText) {
         clipboardEvent.preventDefault();
@@ -1585,7 +1590,6 @@ export default function AdminApp() {
   const [bulkFile, setBulkFile] = useState<File | null>(null);
   const [singleMcqInput, setSingleMcqInput] = useState('');
   const [singleMcqImageFile, setSingleMcqImageFile] = useState<File | null>(null);
-  const [singleMcqPastedImageDataUrl, setSingleMcqPastedImageDataUrl] = useState('');
   const [bulkParsed, setBulkParsed] = useState<ParsedBulkMcq[]>([]);
   const [showParsedPreview, setShowParsedPreview] = useState(false);
   const [bulkParseErrors, setBulkParseErrors] = useState<string[]>([]);
@@ -3632,20 +3636,33 @@ export default function AdminApp() {
     }
   };
 
-  const handleSingleMcqTextareaPaste = async (event: ClipboardEvent<HTMLTextAreaElement>) => {
-    const pastedImageDataUrl = await extractPastedImageDataUrl(event.nativeEvent);
+  const handleSingleMcqTextareaPaste = async (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedImageDataUrl = await extractPastedImageDataUrl(event.nativeEvent as unknown as ClipboardDataEvent);
     if (!pastedImageDataUrl) return;
 
     event.preventDefault();
-    setSingleMcqPastedImageDataUrl(pastedImageDataUrl);
-    toast.success('Pasted image captured. Click Parse MCQ to run OCR and parse.');
+
+    try {
+      setBulkProcessing(true);
+      const extractedText = await runSingleMcqOcr(pastedImageDataUrl);
+      if (!extractedText.trim()) {
+        toast.error('Could not extract readable MCQ text from pasted image.');
+        return;
+      }
+      setSingleMcqInput(extractedText);
+      toast.success('Pasted image extracted to text and inserted into the MCQ box.');
+    } catch {
+      toast.error('Could not process pasted image. Please try again with a clearer image.');
+    } finally {
+      setBulkProcessing(false);
+    }
   };
 
   const analyzeSingleMcq = async () => {
     if (!authToken) return;
 
     const hasText = Boolean(singleMcqInput.trim());
-    const hasImageInput = Boolean(singleMcqImageFile || singleMcqPastedImageDataUrl);
+    const hasImageInput = Boolean(singleMcqImageFile);
     if (!hasText && !hasImageInput) {
       toast.error('Paste one MCQ or upload one MCQ image first.');
       return;
@@ -3662,7 +3679,7 @@ export default function AdminApp() {
     try {
       setBulkProcessing(true);
 
-      const imageSource = singleMcqImageFile || singleMcqPastedImageDataUrl;
+      const imageSource = singleMcqImageFile;
       const rawText = hasText
         ? singleMcqInput
         : await runSingleMcqOcr(imageSource!);
@@ -6317,23 +6334,11 @@ export default function AdminApp() {
                                 accept="image/*"
                                 onChange={(e) => {
                                   setSingleMcqImageFile(e.target.files?.[0] || null);
-                                  setSingleMcqPastedImageDataUrl('');
                                 }}
                               />
 
                               {singleMcqImageFile ? (
                                 <p className="text-xs text-muted-foreground">Selected image: {singleMcqImageFile.name}</p>
-                              ) : null}
-
-                              {singleMcqPastedImageDataUrl ? (
-                                <div className="space-y-1">
-                                  <p className="text-xs text-muted-foreground">Pasted image preview</p>
-                                  <img
-                                    src={singleMcqPastedImageDataUrl}
-                                    alt="Pasted single MCQ"
-                                    className="max-h-44 w-auto rounded border border-indigo-300/60 bg-white/70 object-contain p-1"
-                                  />
-                                </div>
                               ) : null}
 
                               <div className="flex flex-wrap gap-2">
@@ -6347,7 +6352,7 @@ export default function AdminApp() {
                                 <Button
                                   type="button"
                                   onClick={() => void analyzeSingleMcq()}
-                                  disabled={bulkProcessing || (!singleMcqInput.trim() && !singleMcqImageFile && !singleMcqPastedImageDataUrl)}
+                                  disabled={bulkProcessing || (!singleMcqInput.trim() && !singleMcqImageFile)}
                                 >
                                   {bulkProcessing ? (
                                     <>
