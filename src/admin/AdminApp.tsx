@@ -3625,27 +3625,39 @@ export default function AdminApp() {
       return;
     }
 
-    const normalizePastedMcqText = (value: string) => {
-      let normalized = String(value || '')
-        .replace(/\r\n/g, '\n')
-        .replace(/\u00a0/g, ' ')
-        .replace(/Correctanswer/gi, 'Correct answer')
-        .replace(/Correctans?wer/gi, 'Correct answer')
-        .replace(/Explanation\s*:/gi, 'Explanation:')
-        .replace(/([A-Da-d][\).:])(?=\S)/g, '$1 ')
-        .replace(/(^|\s)([A-Da-d])(?=\d)/g, '$1$2. ')
-        .replace(/\s+(Correct\s*answer\s*[:=-])/gi, '\n$1')
-        .replace(/\s+(Explanation\s*[:=-])/gi, '\n$1')
-        .replace(/\s+(Ans(?:wer)?\s*[:=-])/gi, '\n$1')
-        .replace(/\s{2,}/g, ' ')
-        .replace(/\n{3,}/g, '\n\n')
-        .trim();
+    const normalizePastedMcqText = (value: string) => String(value || '')
+      .replace(/\r\n/g, '\n')
+      .replace(/\u00a0/g, ' ')
+      .replace(/Correctanswer/gi, 'Correct answer')
+      .replace(/Correctans?wer/gi, 'Correct answer')
+      .replace(/Explanation\s*:/gi, 'Explanation:')
+      .replace(/([A-Da-d][\).:])(?=\S)/g, '$1 ')
+      .replace(/(^|\s)([A-Da-d])(?=\d)/g, '$1$2. ')
+      .replace(/\s+(Correct\s*answer\s*[:=-])/gi, '\n$1')
+      .replace(/\s+(Explanation\s*[:=-])/gi, '\n$1')
+      .replace(/\s+(Ans(?:wer)?\s*[:=-])/gi, '\n$1')
+      .replace(/([^\n])\s+((?:Option\s*)?[A-Da-d][\).:])\s*/g, '$1\n$2 ')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
 
-      normalized = normalized.replace(/([^\n])\s+((?:Option\s*)?[A-Da-d][\).:])\s*/g, '$1\n$2 ');
-      return normalized;
+    const parseAnswerToken = (answerText: string, options: string[]) => {
+      const raw = String(answerText || '').trim();
+      if (!raw) return '';
+      const letter = raw.match(/^([A-Da-d])\b/);
+      if (letter) {
+        const idx = letter[1].toUpperCase().charCodeAt(0) - 65;
+        return options[idx] || letter[1].toUpperCase();
+      }
+      const number = raw.match(/^(\d)\b/);
+      if (number) {
+        const idx = Number(number[1]) - 1;
+        return options[idx] || raw;
+      }
+      const byText = options.find((opt) => String(opt || '').trim().toLowerCase() === raw.toLowerCase());
+      return byText || raw;
     };
 
-    const fallbackExtractMcq = (value: string): ParsedBulkMcq | null => {
+    const extractWithLabels = (value: string): ParsedBulkMcq | null => {
       const text = String(value || '').trim();
       if (!text) return null;
 
@@ -3658,38 +3670,16 @@ export default function AdminApp() {
         if (key && body) optionsByKey[key] = body;
       }
 
-      const orderedKeys = ['A', 'B', 'C', 'D'];
-      const options = orderedKeys.map((key) => optionsByKey[key]).filter(Boolean);
+      const options = ['A', 'B', 'C', 'D'].map((key) => optionsByKey[key]).filter(Boolean);
       const firstOptionIndex = text.search(/(?:^|\n)\s*(?:Option\s*)?[A-Da-d][\).:\-]\s*/i);
-      const answerMatch = text.match(/(?:^|\n)\s*(?:Correct\s*answer|Answer|Ans(?:wer)?)\s*[:=-]\s*(.+?)(?:\n|$)/i);
-      const explanationMatch = text.match(/(?:^|\n)\s*Explanation\s*[:=-]\s*([\s\S]*)$/i);
-
-      const question = String(
-        firstOptionIndex >= 0 ? text.slice(0, firstOptionIndex) : text,
-      )
+      const question = String(firstOptionIndex >= 0 ? text.slice(0, firstOptionIndex) : '')
         .replace(/(?:^|\n)\s*Question\s*[:=-]?\s*/i, '')
         .trim();
+      const answerText = String(text.match(/(?:^|\n)\s*(?:Correct\s*answer|Answer|Ans(?:wer)?)\s*[:=-]\s*(.+?)(?:\n|$)/i)?.[1] || '').trim();
+      const answer = parseAnswerToken(answerText, options);
+      const tip = String(text.match(/(?:^|\n)\s*Explanation\s*[:=-]\s*([\s\S]*)$/i)?.[1] || '').trim();
 
-      let answer = String(answerMatch?.[1] || '').trim();
-      if (answer) {
-        const letter = answer.match(/^([A-Da-d])\b/);
-        const number = answer.match(/^(\d)\b/);
-        if (letter) {
-          const idx = letter[1].toUpperCase().charCodeAt(0) - 65;
-          answer = options[idx] || letter[1].toUpperCase();
-        } else if (number) {
-          const idx = Number(number[1]) - 1;
-          answer = options[idx] || answer;
-        } else {
-          const normalizedAnswer = answer.toLowerCase();
-          const byText = options.find((opt) => String(opt || '').trim().toLowerCase() === normalizedAnswer);
-          if (byText) answer = byText;
-        }
-      }
-
-      const tip = String(explanationMatch?.[1] || '').trim();
-      if (!question || options.length < 2 || !answer) return null;
-
+      if (!question || options.length < 3 || !answer) return null;
       return {
         question,
         questionImageUrl: '',
@@ -3704,6 +3694,65 @@ export default function AdminApp() {
       };
     };
 
+    const extractWithHeuristics = (value: string): ParsedBulkMcq | null => {
+      const lines = String(value || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+      if (!lines.length) return null;
+
+      const optionLineRe = /^(?:Option\s*)?([A-Da-d])[\).:\-]?\s*(.*)$/i;
+      const firstOptionIndex = lines.findIndex((line) => optionLineRe.test(line));
+      const questionLines = firstOptionIndex > 0 ? lines.slice(0, firstOptionIndex) : [lines[0]];
+      const question = questionLines.join(' ').replace(/^Question\s*[:=-]?\s*/i, '').trim();
+
+      const candidateLines = firstOptionIndex >= 0 ? lines.slice(firstOptionIndex) : lines.slice(1);
+      const optionsByKey: Record<string, string> = {};
+      const consumed = new Set<number>();
+      let optionCount = 0;
+      for (let idx = 0; idx < candidateLines.length; idx += 1) {
+        const match = candidateLines[idx].match(optionLineRe);
+        if (!match) {
+          if (optionCount >= 3) break;
+          continue;
+        }
+        const key = String(match[1] || '').toUpperCase();
+        if (!['A', 'B', 'C', 'D'].includes(key)) continue;
+        const text = String(match[2] || '').trim();
+        optionsByKey[key] = text;
+        consumed.add(idx);
+        optionCount += 1;
+      }
+
+      const options = ['A', 'B', 'C', 'D'].map((key) => optionsByKey[key]).filter(Boolean);
+      const remainingLines = candidateLines.filter((_, idx) => !consumed.has(idx));
+      const answerLine = remainingLines.find((line) => /(?:correct\s*answer|answer|ans(?:wer)?)/i.test(line)) || '';
+      const answerToken = answerLine
+        ? String(answerLine.replace(/^(?:correct\s*answer|answer|ans(?:wer)?)\s*[:=-]?\s*/i, '')).trim()
+        : (remainingLines.find((line) => /^[A-Da-d]$/.test(line)) || '');
+      const answer = parseAnswerToken(answerToken, options);
+
+      const explanation = remainingLines
+        .filter((line) => line !== answerLine && !/^[A-Da-d]$/.test(line))
+        .join('\n')
+        .replace(/^Explanation\s*[:=-]?\s*/i, '')
+        .trim();
+
+      if (!question || options.length < 3 || !answer) return null;
+      return {
+        question,
+        questionImageUrl: '',
+        questionImageDataUrl: '',
+        options,
+        optionImageDataUrls: [],
+        answer,
+        tip: explanation,
+        shortTrick: '',
+        explanationImageDataUrl: '',
+        difficulty: 'Medium',
+      };
+    };
+
     const cleanedText = normalizePastedMcqText(rawText);
     setSingleMcqInput(cleanedText);
     setBulkInput(cleanedText);
@@ -3712,16 +3761,12 @@ export default function AdminApp() {
     const hierarchyContext = resolveDocumentHierarchyContext(true);
     if (!hierarchyContext) return;
 
-    const parsedPayload = parseBulkMcqs(cleanedText);
-    let parsedRows = parsedPayload.parsed || [];
-    let errors = [...(parsedPayload.errors || [])];
-
-    if (!parsedRows.length) {
-      const fallbackRow = fallbackExtractMcq(cleanedText);
-      if (fallbackRow) {
-        parsedRows = [fallbackRow];
-        errors = ['Used fallback extraction due to OCR formatting issues.', ...errors];
-      }
+    const labelExtracted = extractWithLabels(cleanedText);
+    const heuristicExtracted = labelExtracted ? null : extractWithHeuristics(cleanedText);
+    const parsedRows = labelExtracted ? [labelExtracted] : heuristicExtracted ? [heuristicExtracted] : [];
+    const errors: string[] = [];
+    if (!labelExtracted && heuristicExtracted) {
+      errors.push('Used heuristic extraction because expected labels were missing or incomplete.');
     }
 
     const withSelectedHierarchy = parsedRows.map((item) => ({
