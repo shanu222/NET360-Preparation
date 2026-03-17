@@ -6426,10 +6426,13 @@ export default function AdminApp() {
                                       </Button>
                                     </div>
 
-                                    <div className="space-y-1">
-                                      <Label>Question Text</Label>
-                                      <Textarea value={item.question} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, question: e.target.value }))} className="min-h-[84px]" />
-                                    </div>
+                                    <MathEditorField
+                                      id={`bulk-question-${mcqIndex}`}
+                                      label="Question Text"
+                                      value={item.question}
+                                      className="min-h-[84px]"
+                                      onValueChange={(nextValue) => updateParsedMcq(mcqIndex, (current) => ({ ...current, question: nextValue }))}
+                                    />
 
                                     <div className="space-y-1">
                                       <Label>Question Image URL (if present)</Label>
@@ -6461,9 +6464,13 @@ export default function AdminApp() {
                                       <div className="space-y-2">
                                         {(item.options || []).map((option, optionIndex) => (
                                           <div key={`bulk-option-${mcqIndex}-${optionIndex}`} className="space-y-1 rounded-md border border-indigo-300/40 p-2">
-                                            <div className="grid gap-2 md:grid-cols-[80px_1fr_auto] md:items-center">
-                                              <Label>Option {String.fromCharCode(65 + optionIndex)}</Label>
-                                              <Input value={option} onChange={(e) => updateParsedOption(mcqIndex, optionIndex, e.target.value)} />
+                                            <div className="grid gap-2 md:grid-cols-[1fr_auto] md:items-start">
+                                              <MathEditorField
+                                                id={`bulk-option-${mcqIndex}-${optionIndex}`}
+                                                label={`Option ${String.fromCharCode(65 + optionIndex)}`}
+                                                value={option}
+                                                onValueChange={(nextValue) => updateParsedOption(mcqIndex, optionIndex, nextValue)}
+                                              />
                                               <Button
                                                 type="button"
                                                 variant="outline"
@@ -6511,10 +6518,13 @@ export default function AdminApp() {
                                       </div>
                                     </div>
 
-                                    <div className="space-y-1">
-                                      <Label>Explanation</Label>
-                                      <Textarea value={item.tip || ''} onChange={(e) => updateParsedMcq(mcqIndex, (current) => ({ ...current, tip: e.target.value }))} className="min-h-[80px]" />
-                                    </div>
+                                    <MathEditorField
+                                      id={`bulk-explanation-${mcqIndex}`}
+                                      label="Explanation"
+                                      value={item.tip || ''}
+                                      className="min-h-[80px]"
+                                      onValueChange={(nextValue) => updateParsedMcq(mcqIndex, (current) => ({ ...current, tip: nextValue }))}
+                                    />
 
                                     <div className="space-y-1">
                                       <Label>Short Trick</Label>
