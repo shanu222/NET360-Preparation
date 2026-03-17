@@ -3645,10 +3645,15 @@ export default function AdminApp() {
     }
   };
 
+  const extractSingleMcqMathTextFromImage = async (input: File | string) => {
+    const extractedText = await runSingleMcqOcr(input);
+    return String(extractedText || '').trim();
+  };
+
   const handleSingleMcqMathImagePaste = async (pastedImageDataUrl: string) => {
     try {
       setBulkProcessing(true);
-      const extractedText = await runSingleMcqOcr(pastedImageDataUrl);
+      const extractedText = await extractSingleMcqMathTextFromImage(pastedImageDataUrl);
       if (!extractedText.trim()) {
         toast.error('Could not extract readable MCQ text from pasted image.');
         return;
@@ -3684,7 +3689,7 @@ export default function AdminApp() {
       const imageSource = singleMcqImageFile;
       const rawText = hasText
         ? singleMcqInput
-        : await runSingleMcqOcr(imageSource!);
+        : await extractSingleMcqMathTextFromImage(imageSource!);
       if (!rawText.trim()) {
         toast.error('Could not extract readable MCQ text. Use clear text format or a higher-quality image.');
         return;
