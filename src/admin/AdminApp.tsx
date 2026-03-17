@@ -3618,40 +3618,6 @@ export default function AdminApp() {
     }
   };
 
-  const runSingleMcqOcr = async (input: File | string) => {
-    const { createWorker } = await import('tesseract.js');
-    const worker = await createWorker('eng');
-    try {
-      const result = await worker.recognize(input);
-      return String(result?.data?.text || '').trim();
-    } finally {
-      await worker.terminate();
-    }
-  };
-
-  const extractSingleMcqMathTextFromImage = async (input: File | string) => {
-    const extractedText = await runSingleMcqOcr(input);
-    return String(extractedText || '').trim();
-  };
-
-  const handleSingleMcqMathImagePaste = async (pastedImageDataUrl: string) => {
-    const normalizedDataUrl = String(pastedImageDataUrl || '').trim();
-    if (!normalizedDataUrl) return;
-
-    try {
-      const extractedText = await extractSingleMcqMathTextFromImage(normalizedDataUrl);
-      if (!extractedText.trim()) {
-        toast.error('Could not extract readable MCQ text from pasted image.');
-        return;
-      }
-
-      setSingleMcqInput(extractedText);
-      toast.success('Pasted image extracted to text and inserted into the MCQ box.');
-    } catch {
-      toast.error('Could not process pasted image. Please try again with a clearer image.');
-    }
-  };
-
   const fillFieldsFromPastedMcq = () => {
     const rawText = String(singleMcqInput || '').trim();
     if (!rawText) {
@@ -6237,10 +6203,6 @@ export default function AdminApp() {
                                 label="Paste MCQ Content"
                                 value={singleMcqInput}
                                 onValueChange={(nextValue) => setSingleMcqInput(nextValue)}
-                                onImagePaste={(dataUrl) => {
-                                  void handleSingleMcqMathImagePaste(dataUrl);
-                                }}
-                                insertImageTokenOnPaste={false}
                                 className="min-h-[170px]"
                                 placeholder={[
                                   'question',
