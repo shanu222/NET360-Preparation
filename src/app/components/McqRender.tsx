@@ -9,11 +9,21 @@ declare global {
 }
 
 function looksLikeMath(value: string) {
-  return /\\[a-zA-Z]+|[_^{}]|[∫∑√π≤≥≈≠±∞α-ωΑ-Ω₀-₉⁰-⁹]/.test(String(value || ''));
+  return /\\[a-zA-Z]+|[∫∑√π≤≥≈≠±∞α-ωΑ-Ω₀-₉⁰-⁹]|[A-Za-z0-9)\]}][_^][A-Za-z0-9+-]+/.test(String(value || ''));
 }
 
 function hasMathDelimiters(value: string) {
   return /\\\(|\\\[|\$\$?|\\begin\{/.test(String(value || ''));
+}
+
+function sanitizeLatexScripts(value: string) {
+  const raw = String(value || '');
+
+  // Convert common shorthand like H_2 or x^2 into braced TeX to avoid parser errors.
+  const normalized = raw.replace(/([A-Za-z0-9)\]}])([_^])([A-Za-z0-9+-]+)/g, '$1$2{$3}');
+
+  // Escape any remaining unbraced script operators so they render as plain text.
+  return normalized.replace(/(^|[^\\])([_^])(?!\{)/g, '$1\\$2');
 }
 
 const INLINE_IMAGE_TOKEN_REGEX = /\[\[img:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\]\]/gi;
@@ -22,8 +32,9 @@ const INLINE_FORMAT_TAG_REGEX = /<(strong|b|em|i)>([\s\S]*?)<\/\s*(strong|b|em|i
 function normalizeMathSegment(value: string) {
   const raw = String(value || '');
   if (!raw.trim()) return '';
-  if (hasMathDelimiters(raw)) return raw;
-  if (looksLikeMath(raw)) return `\\(${raw}\\)`;
+  const sanitized = sanitizeLatexScripts(raw);
+  if (hasMathDelimiters(sanitized)) return sanitized;
+  if (looksLikeMath(sanitized)) return `\\(${sanitized}\\)`;
   return raw;
 }
 
@@ -112,7 +123,15 @@ export function McqMathText({
     return parts;
   }, [value]);
 
+  const shouldTypeset = useMemo(() => {
+    return segments.some((segment) => {
+      if (segment.kind === 'image') return false;
+      return hasMathDelimiters(segment.value);
+    });
+  }, [segments]);
+
   useEffect(() => {
+    if (!shouldTypeset) return;
     const node = hostRef.current;
     if (!node) return;
     const mathJax = window.MathJax;
@@ -121,7 +140,7 @@ export function McqMathText({
     void mathJax.typesetPromise([node]).catch(() => {
       // Keep UI responsive even if MathJax fails on malformed expressions.
     });
-  }, [segments]);
+  }, [segments, shouldTypeset]);
 
   if (!segments.length) return null;
 
