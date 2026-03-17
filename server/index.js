@@ -10726,60 +10726,7 @@ app.delete('/api/admin/mcqs/purge-all', authMiddleware, requireAdmin, async (_re
 });
 
 async function parseMcqsFromSourceText(sourceText) {
-  const cleanExtractedSourceText = (rawText) => normalizePlainText(String(rawText || ''))
-    .replace(/[\u200B-\u200D\uFEFF]/g, '')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-
-  const sanitizeAndValidateParsedMcqs = (rows) => {
-    const safeRows = Array.isArray(rows) ? rows : [];
-    const validationErrors = [];
-
-    const sanitized = safeRows
-      .map((row, idx) => {
-        const question = normalizeRichMcqText(row?.question || '');
-        const options = Array.isArray(row?.options)
-          ? row.options.map((item) => normalizeRichMcqText(item)).filter(Boolean)
-          : [];
-        const answer = resolveAnswerToOption(row?.answer || '', options);
-
-        if (!question) {
-          validationErrors.push(`Q${idx + 1}: question text is missing.`);
-          return null;
-        }
-        if (options.length < 2) {
-          validationErrors.push(`Q${idx + 1}: at least 2 options are required.`);
-          return null;
-        }
-        if (options.length < 4) {
-          validationErrors.push(`Q${idx + 1}: detected ${options.length} option(s); 4 options are recommended.`);
-        }
-        if (!answer) {
-          validationErrors.push(`Q${idx + 1}: answer is missing or invalid.`);
-          return null;
-        }
-
-        return {
-          ...row,
-          subject: String(row?.subject || '').trim().toLowerCase(),
-          part: String(row?.part || '').trim().toLowerCase(),
-          chapter: String(row?.chapter || '').trim(),
-          section: String(row?.section || '').trim(),
-          topic: String(row?.topic || '').trim(),
-          question,
-          options,
-          answer,
-          tip: normalizeRichMcqText(row?.tip || ''),
-          difficulty: normalizeDifficulty(row?.difficulty),
-        };
-      })
-      .filter(Boolean);
-
-    return { sanitized, validationErrors };
-  };
-
-  const normalizedSource = cleanExtractedSourceText(sourceText);
+  const normalizedSource = String(sourceText || '');
   console.log('Extracted text length:', normalizedSource.length);
 
   const heuristicResult = parseBulkMcqsFromText(normalizedSource);
@@ -10793,15 +10740,11 @@ async function parseMcqsFromSourceText(sourceText) {
     finalResult = aiResult;
   }
 
-  const { sanitized, validationErrors } = sanitizeAndValidateParsedMcqs(finalResult.parsed || []);
-  const parsed = sanitized.slice(0, BULK_PARSE_LIMIT);
+  const parsed = Array.isArray(finalResult.parsed) ? finalResult.parsed.slice(0, BULK_PARSE_LIMIT) : [];
   const errors = Array.isArray(finalResult.errors) ? [...finalResult.errors] : [];
-  errors.push(...validationErrors);
   if ((finalResult.parsed?.length || 0) > BULK_PARSE_LIMIT && !errors.some((item) => /first 15 mcqs/i.test(String(item)))) {
     errors.unshift(`Only the first ${BULK_PARSE_LIMIT} MCQs were kept from this import.`);
   }
-
-  console.log('MCQs found:', parsed.length);
 
   return { parsed, errors };
 }
