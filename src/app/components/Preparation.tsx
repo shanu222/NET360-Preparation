@@ -6,6 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from 'sonner';
 import { apiRequest } from '../lib/api';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
+import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../lib/hierarchyDedup';
 
 type AcademicPart = 'part1' | 'part2';
 type TabKey = SubjectKey;
@@ -22,25 +23,8 @@ export interface PartItem {
   chapters: ChapterItem[];
 }
 
-function normalizeSyllabusTitleKey(value: string) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
-}
-
 function uniqueSections(sections: string[]) {
-  const seen = new Set<string>();
-  const normalized: string[] = [];
-  (sections || []).forEach((section) => {
-    const label = String(section || '').trim();
-    if (!label) return;
-    const key = normalizeSyllabusTitleKey(label);
-    if (seen.has(key)) return;
-    seen.add(key);
-    normalized.push(label);
-  });
-  return normalized;
+  return dedupeNormalizedStrings(sections);
 }
 
 function dedupeChaptersByTitle(chapters: ChapterItem[]) {
@@ -49,7 +33,7 @@ function dedupeChaptersByTitle(chapters: ChapterItem[]) {
   (chapters || []).forEach((chapter) => {
     const title = String(chapter?.title || '').trim();
     if (!title) return;
-    const titleKey = normalizeSyllabusTitleKey(title);
+    const titleKey = normalizeHierarchyLabel(title);
     const currentSections = uniqueSections(Array.isArray(chapter?.sections) ? chapter.sections : []);
 
     if (!chapterMap.has(titleKey)) {

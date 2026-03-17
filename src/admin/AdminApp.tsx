@@ -26,6 +26,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { apiRequest, buildApiUrl } from '../app/lib/api';
+import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../app/lib/hierarchyDedup';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
 import { Button } from '../app/components/ui/button';
 import { Input } from '../app/components/ui/input';
@@ -391,10 +392,7 @@ function normalizeSubjectKey(value: string) {
 }
 
 function normalizeSyllabusChapterKey(value: string) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
+  return normalizeHierarchyLabel(value);
 }
 
 function isPartSelectionRequiredSubject(value: string) {
@@ -1843,10 +1841,10 @@ export default function AdminApp() {
       const sectionRaw = String(row.section || '').trim();
       const count = Number(row.count || 0);
 
-      const chapterKey = chapterRaw ? chapterRaw.toLowerCase() : '__no_chapter__';
+      const chapterKey = chapterRaw ? normalizeHierarchyLabel(chapterRaw) : '__no_chapter__';
       const chapterLabel = chapterRaw || 'General Topics';
       const sectionLabel = sectionRaw || chapterLabel;
-      const sectionKey = sectionLabel.toLowerCase();
+      const sectionKey = normalizeHierarchyLabel(sectionLabel);
 
       if (!subjectMap.has(subjectKey)) {
         subjectMap.set(subjectKey, {
@@ -1940,8 +1938,10 @@ export default function AdminApp() {
         });
       }
       const chapter = subjectNode.chapters.get(key)!;
-      const merged = new Set<string>([...chapter.sections, ...sections.filter(Boolean)]);
-      chapter.sections = Array.from(merged).sort((a, b) => a.localeCompare(b));
+      chapter.sections = dedupeNormalizedStrings([
+        ...chapter.sections,
+        ...sections.filter(Boolean),
+      ]).sort((a, b) => a.localeCompare(b));
     };
 
     const specialLabels: Record<string, string> = {
@@ -1995,7 +1995,9 @@ export default function AdminApp() {
       const subjectNode = ensureSubject(subject, specialLabels[subject] || toTitleLabel(subject));
       if (!subjectNode) return;
 
-      const configuredFlatTopics = Array.from(new Set((FLAT_TOPIC_TABS[subject as 'quantitative-mathematics' | 'design-aptitude']?.topics || []).filter(Boolean)));
+      const configuredFlatTopics = dedupeNormalizedStrings(
+        (FLAT_TOPIC_TABS[subject as 'quantitative-mathematics' | 'design-aptitude']?.topics || []).filter(Boolean),
+      );
       if (!configuredFlatTopics.length) return;
 
       ensureChapter(
@@ -2067,15 +2069,15 @@ export default function AdminApp() {
   const manualSectionOptions = useMemo(() => {
     const activeSubject = syllabusTree.find((item) => item.subject === form.subject);
     if (isManualFlatTopicSubject) {
-      return Array.from(
-        new Set((activeSubject?.chapters || []).flatMap((item) => item.sections || []).filter(Boolean)),
+      return dedupeNormalizedStrings(
+        (activeSubject?.chapters || []).flatMap((item) => item.sections || []).filter(Boolean),
       ).sort((a, b) => a.localeCompare(b));
     }
 
     const chapter = manualChapterOptions.find((item) => item.value === uploadChapterKey);
     if (!chapter) return [];
     const subjectChapter = (activeSubject?.chapters || []).find((item) => item.key === chapter.value);
-    return Array.from(new Set((subjectChapter?.sections || []).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    return dedupeNormalizedStrings((subjectChapter?.sections || []).filter(Boolean)).sort((a, b) => a.localeCompare(b));
   }, [syllabusTree, form.subject, uploadChapterKey, manualChapterOptions, isManualFlatTopicSubject]);
 
   const deleteSubjectOptions = manualSubjectOptions;
@@ -2095,12 +2097,12 @@ export default function AdminApp() {
   const deleteSectionOptions = useMemo(() => {
     const activeSubject = syllabusTree.find((item) => item.subject === bulkDeleteSubject);
     if (isBulkDeleteFlatTopicSubject) {
-      return Array.from(
-        new Set((activeSubject?.chapters || []).flatMap((item) => item.sections || []).filter(Boolean)),
+      return dedupeNormalizedStrings(
+        (activeSubject?.chapters || []).flatMap((item) => item.sections || []).filter(Boolean),
       ).sort((a, b) => a.localeCompare(b));
     }
     const chapter = (activeSubject?.chapters || []).find((item) => item.key === bulkDeleteChapterKey);
-    return Array.from(new Set((chapter?.sections || []).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    return dedupeNormalizedStrings((chapter?.sections || []).filter(Boolean)).sort((a, b) => a.localeCompare(b));
   }, [syllabusTree, bulkDeleteSubject, bulkDeleteChapterKey, isBulkDeleteFlatTopicSubject]);
 
   const bankSubjectOptions = manualSubjectOptions;
@@ -2120,12 +2122,12 @@ export default function AdminApp() {
   const bankSectionOptions = useMemo(() => {
     const activeSubject = syllabusTree.find((item) => item.subject === bankFilterSubject);
     if (isBankFlatTopicSubject) {
-      return Array.from(
-        new Set((activeSubject?.chapters || []).flatMap((item) => item.sections || []).filter(Boolean)),
+      return dedupeNormalizedStrings(
+        (activeSubject?.chapters || []).flatMap((item) => item.sections || []).filter(Boolean),
       ).sort((a, b) => a.localeCompare(b));
     }
     const chapter = (activeSubject?.chapters || []).find((item) => item.key === bankFilterChapterKey);
-    return Array.from(new Set((chapter?.sections || []).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    return dedupeNormalizedStrings((chapter?.sections || []).filter(Boolean)).sort((a, b) => a.localeCompare(b));
   }, [syllabusTree, bankFilterSubject, bankFilterChapterKey, isBankFlatTopicSubject]);
 
   const authToken = token;
@@ -3291,11 +3293,9 @@ export default function AdminApp() {
     setForm(fresh);
   };
 
-  const handleAddMCQ = async (event?: Pick<MouseEvent<HTMLButtonElement>, 'preventDefault' | 'stopPropagation'> | Pick<FormEvent<HTMLFormElement>, 'preventDefault'>) => {
+  const handleAddMCQ = async (event?: Pick<FormEvent<HTMLFormElement>, 'preventDefault'> & { stopPropagation?: () => void }) => {
     event?.preventDefault();
-    if ('stopPropagation' in (event || {})) {
-      event.stopPropagation();
-    }
+    event?.stopPropagation?.();
 
     if (isSavingMcq) return;
     if (!authToken) {
