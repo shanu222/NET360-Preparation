@@ -1547,6 +1547,7 @@ export default function AdminApp() {
   const [bankSubjectKey, setBankSubjectKey] = useState('');
   const [bankChapterKey, setBankChapterKey] = useState('');
   const [bankSectionKey, setBankSectionKey] = useState('');
+  const [bankDifficultyFilter, setBankDifficultyFilter] = useState<'' | 'Easy' | 'Medium' | 'Hard'>('');
   const [bankMcqs, setBankMcqs] = useState<AdminMCQ[]>([]);
   const [bankLoading, setBankLoading] = useState(false);
   const [issuedTokens, setIssuedTokens] = useState<Record<string, string>>({});
@@ -1648,6 +1649,12 @@ export default function AdminApp() {
         .includes(needle),
     );
   }, [mcqs, query]);
+
+  const filteredBankMcqs = useMemo(() => {
+    if (!bankDifficultyFilter) return bankMcqs;
+    const target = String(bankDifficultyFilter || '').trim().toLowerCase();
+    return bankMcqs.filter((item) => String(item.difficulty || '').trim().toLowerCase() === target);
+  }, [bankMcqs, bankDifficultyFilter]);
 
   const selectedDirectAssignPlanName = useMemo(() => {
     const matched = (subscriptionOverview?.plans || []).find((item) => item.id === assignPlanForm.planId);
@@ -4530,6 +4537,7 @@ export default function AdminApp() {
                       setBankSubjectKey(subject.key);
                       setBankChapterKey('');
                       setBankSectionKey('');
+                      setBankDifficultyFilter('');
                       setBankMcqs([]);
                     }}
                     className={`w-full rounded-md border px-3 py-2 text-left text-sm ${bankSubjectKey === subject.key ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-muted'}`}
@@ -4565,6 +4573,7 @@ export default function AdminApp() {
                     onClick={() => {
                       setBankChapterKey(chapter.key);
                       setBankSectionKey('');
+                      setBankDifficultyFilter('');
                       setBankMcqs([]);
                     }}
                     className={`w-full rounded-md border px-3 py-2 text-left text-sm ${bankChapterKey === chapter.key ? 'bg-indigo-50 border-indigo-300' : 'hover:bg-muted'}`}
@@ -4622,13 +4631,58 @@ export default function AdminApp() {
                     Select a section/topic to load MCQs.
                   </div>
                 ) : null}
-                {bankLoading ? <p className="text-sm text-muted-foreground">Loading MCQs...</p> : null}
-                {!bankLoading && activeBankSection && !bankMcqs.length ? (
-                  <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
-                    No MCQs found for this section/topic.
+                {activeBankSection ? (
+                  <div className="flex flex-wrap items-center gap-2 rounded-md border border-indigo-100 bg-indigo-50/40 p-2">
+                    <span className="text-xs font-medium text-indigo-900">Difficulty:</span>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={bankDifficultyFilter === 'Easy' ? 'default' : 'outline'}
+                      className="h-7"
+                      onClick={() => setBankDifficultyFilter((prev) => (prev === 'Easy' ? '' : 'Easy'))}
+                    >
+                      Easy
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={bankDifficultyFilter === 'Medium' ? 'default' : 'outline'}
+                      className="h-7"
+                      onClick={() => setBankDifficultyFilter((prev) => (prev === 'Medium' ? '' : 'Medium'))}
+                    >
+                      Medium
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={bankDifficultyFilter === 'Hard' ? 'default' : 'outline'}
+                      className="h-7"
+                      onClick={() => setBankDifficultyFilter((prev) => (prev === 'Hard' ? '' : 'Hard'))}
+                    >
+                      Hard
+                    </Button>
+                    {bankDifficultyFilter ? (
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7"
+                        onClick={() => setBankDifficultyFilter('')}
+                      >
+                        Clear
+                      </Button>
+                    ) : null}
                   </div>
                 ) : null}
-                {bankMcqs.map((item, idx) => {
+                {bankLoading ? <p className="text-sm text-muted-foreground">Loading MCQs...</p> : null}
+                {!bankLoading && activeBankSection && !filteredBankMcqs.length ? (
+                  <div className="rounded-md border border-dashed p-5 text-center text-sm text-muted-foreground">
+                    {bankDifficultyFilter
+                      ? `No ${bankDifficultyFilter} MCQs found for this section/topic.`
+                      : 'No MCQs found for this section/topic.'}
+                  </div>
+                ) : null}
+                {filteredBankMcqs.map((item, idx) => {
                   const questionImageSrc = normalizeMcqImageSrc(item.questionImage?.dataUrl || item.questionImageUrl);
                   const optionMedia = Array.isArray(item.optionMedia) && item.optionMedia.length
                     ? item.optionMedia
@@ -4643,7 +4697,7 @@ export default function AdminApp() {
                   return (
                     <div key={item.id} className="rounded-md border border-[#2b5f9f] bg-[#eef4fb] p-2.5 text-sm text-[#0d2c5a]">
                       <div className="mb-2 border-b border-[#2b5f9f] bg-[#d6e5f4] px-2 py-1 text-sm">
-                        Question No : <span className="text-blue-700">{idx + 1} of {bankMcqs.length}</span>
+                        Question No : <span className="text-blue-700">{idx + 1} of {filteredBankMcqs.length}</span>
                       </div>
 
                       <section className="mb-2">
