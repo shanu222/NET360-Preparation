@@ -1585,7 +1585,6 @@ export default function AdminApp() {
   const [bulkFile, setBulkFile] = useState<File | null>(null);
   const [singleMcqInput, setSingleMcqInput] = useState('');
   const [singleMcqImageFile, setSingleMcqImageFile] = useState<File | null>(null);
-  const [singleMcqProcessing, setSingleMcqProcessing] = useState(false);
   const [bulkParsed, setBulkParsed] = useState<ParsedBulkMcq[]>([]);
   const [showParsedPreview, setShowParsedPreview] = useState(false);
   const [bulkParseErrors, setBulkParseErrors] = useState<string[]>([]);
@@ -3505,97 +3504,6 @@ export default function AdminApp() {
     void submitMCQ();
   };
 
-  const extractSingleMcqTextFromImage = async (file: File) => {
-    try {
-      const { createWorker } = await import('tesseract.js');
-      const worker = await createWorker('eng');
-      try {
-        const result = await worker.recognize(file);
-        return String(result?.data?.text || '').trim();
-      } finally {
-        await worker.terminate();
-      }
-    } catch {
-      return '';
-    }
-  };
-
-  const parseSingleMcq = async () => {
-    if (!authToken) return;
-
-    const hasText = Boolean(singleMcqInput.trim());
-    const hasImage = Boolean(singleMcqImageFile);
-    if (!hasText && !hasImage) {
-      toast.error('Paste one MCQ or upload a single MCQ image first.');
-      return;
-    }
-
-    const hierarchyContext = resolveDocumentHierarchyContext(true);
-    if (!hierarchyContext) return;
-
-    try {
-      setSingleMcqProcessing(true);
-
-      let sourceText = singleMcqInput;
-      if (!sourceText.trim() && singleMcqImageFile) {
-        sourceText = await extractSingleMcqTextFromImage(singleMcqImageFile);
-      }
-
-      if (!sourceText.trim()) {
-        toast.error('Could not extract readable MCQ text from image. Use clear image or paste text in A, B, C, D format with Correct and Explanation.');
-        return;
-      }
-
-      let payload: ParsedBulkResponse;
-      try {
-        payload = await apiRequest<ParsedBulkResponse>('/api/ai/parse-mcqs', {
-          method: 'POST',
-          body: JSON.stringify({
-            sourceType: 'text',
-            rawText: sourceText,
-          }),
-        }, authToken);
-      } catch {
-        payload = parseBulkMcqs(sourceText);
-      }
-
-      const withSelectedHierarchy = (payload.parsed || []).map((item) => ({
-        ...item,
-        subject: hierarchyContext.subject,
-        part: hierarchyContext.part,
-        chapter: hierarchyContext.chapter,
-        section: hierarchyContext.section,
-        topic: hierarchyContext.topic,
-      }));
-
-      if (withSelectedHierarchy.length > 1) {
-        setBulkParsed([]);
-        setBulkParseErrors(payload.errors || []);
-        setShowParsedPreview(false);
-        toast.error('Please paste or upload only one MCQ at a time.');
-        return;
-      }
-
-      if (!withSelectedHierarchy.length) {
-        setBulkParsed([]);
-        setBulkParseErrors(payload.errors || []);
-        setShowParsedPreview(false);
-        toast.error(payload.errors?.[0] || 'Parsing failed. Use format: question, A/B/C/D options, Correct:, Explanation:.');
-        return;
-      }
-
-      setBulkParsed([withSelectedHierarchy[0]]);
-      setBulkParseErrors(payload.errors || []);
-      setShowParsedPreview(true);
-      toast.success('Parsed 1 MCQ. Review and upload using existing flow.');
-    } catch (error) {
-      console.error('Single MCQ parse failed', error);
-      toast.error(error instanceof Error ? error.message : 'Could not parse single MCQ. Use A/B/C/D options and Correct field.');
-    } finally {
-      setSingleMcqProcessing(false);
-    }
-  };
-
   const analyzeBulkMcqs = async () => {
     if (!authToken) return;
 
@@ -3693,6 +3601,110 @@ export default function AdminApp() {
       } else {
         toast.error(error instanceof Error ? error.message : 'AI analysis failed. Please try again.');
       }
+    } finally {
+      setBulkProcessing(false);
+    }
+  };
+
+  const containsMultipleMcqs = (rawText: string) => {
+    const normalized = normalizeBulkText(rawText);
+    if (!normalized) return false;
+
+    const likelyQuestionStarts = (normalized.match(/^\s*(?:q(?:uestion)?\s*)?\d{1,3}(?:\s*[\).:-])\s+/gim) || []).length;
+    if (likelyQuestionStarts > 1) return true;
+
+    const answerMarkers = (normalized.match(/^\s*(?:correct\s*answer|correct\s*option|correct|answer|ans(?:wer)?\.?)\s*[:=-]/gim) || []).length;
+    if (answerMarkers > 1) return true;
+
+    const localParsed = parseBulkMcqs(rawText);
+    return (localParsed.parsed || []).length > 1;
+  };
+
+  const runSingleMcqOcr = async (file: File) => {
+    const { createWorker } = await import('tesseract.js');
+    const worker = await createWorker('eng');
+    try {
+      const result = await worker.recognize(file);
+      return String(result?.data?.text || '').trim();
+    } finally {
+      await worker.terminate();
+    }
+  };
+
+  const analyzeSingleMcq = async () => {
+    if (!authToken) return;
+
+    const hasText = Boolean(singleMcqInput.trim());
+    if (!hasText && !singleMcqImageFile) {
+      toast.error('Paste one MCQ or upload one MCQ image first.');
+      return;
+    }
+
+    if (singleMcqImageFile && singleMcqImageFile.size > 8 * 1024 * 1024) {
+      toast.error('Uploaded image is too large. Maximum size is 8 MB.');
+      return;
+    }
+
+    const hierarchyContext = resolveDocumentHierarchyContext(true);
+    if (!hierarchyContext) return;
+
+    try {
+      setBulkProcessing(true);
+
+      const rawText = hasText ? singleMcqInput : await runSingleMcqOcr(singleMcqImageFile!);
+      if (!rawText.trim()) {
+        toast.error('Could not extract readable MCQ text. Use clear text format or a higher-quality image.');
+        return;
+      }
+
+      if (containsMultipleMcqs(rawText)) {
+        toast.error('Please paste or upload only one MCQ at a time.');
+        return;
+      }
+
+      let payload: ParsedBulkResponse;
+      try {
+        payload = await apiRequest<ParsedBulkResponse>('/api/ai/parse-mcqs', {
+          method: 'POST',
+          body: JSON.stringify({
+            sourceType: 'text',
+            rawText,
+          }),
+        }, authToken);
+      } catch {
+        payload = parseBulkMcqs(rawText);
+      }
+
+      const withSelectedHierarchy = (payload.parsed || []).map((item) => ({
+        ...item,
+        subject: hierarchyContext.subject,
+        part: hierarchyContext.part,
+        chapter: hierarchyContext.chapter,
+        section: hierarchyContext.section,
+        topic: hierarchyContext.topic,
+      }));
+
+      if (!withSelectedHierarchy.length) {
+        setBulkParseErrors(payload.errors || []);
+        setShowParsedPreview(false);
+        toast.error(payload.errors?.[0] || 'Could not parse MCQ. Use format: question, A/B/C/D options, Correct:, Explanation:.');
+        return;
+      }
+
+      if (withSelectedHierarchy.length > 1) {
+        toast.error('Please paste or upload only one MCQ at a time.');
+        return;
+      }
+
+      setBulkInput(rawText);
+      setBulkFile(null);
+      setBulkParsed(withSelectedHierarchy.slice(0, 1));
+      setBulkParseErrors(payload.errors || []);
+      setShowParsedPreview(true);
+      toast.success('Parsed 1 MCQ. Review and upload using the same save flow.');
+    } catch (error) {
+      console.error('Single MCQ parse failed', error);
+      toast.error(error instanceof Error ? error.message : 'Could not parse MCQ. Use format: question, A/B/C/D options, Correct:, Explanation:.');
     } finally {
       setBulkProcessing(false);
     }
@@ -6258,13 +6270,13 @@ export default function AdminApp() {
                             </p>
                           </div>
 
-                          <details className="rounded-md border border-indigo-200/70 bg-indigo-50/40 p-3 dark:border-indigo-300/30 dark:bg-indigo-500/10">
-                            <summary className="cursor-pointer text-sm font-semibold text-indigo-900 dark:text-indigo-100">
+                          <details className="rounded-md border border-indigo-200/80 bg-indigo-50/35 p-2 dark:border-indigo-300/30 dark:bg-indigo-500/10">
+                            <summary className="cursor-pointer list-none text-sm font-semibold text-indigo-900 dark:text-indigo-100">
                               Paste MCQ
                             </summary>
                             <div className="mt-2 space-y-2">
                               <p className="text-xs text-muted-foreground">
-                                One MCQ only. Paste text or upload one image, then click Parse MCQ.
+                                Parse one MCQ at a time from pasted text or a single MCQ image.
                               </p>
                               <Textarea
                                 value={singleMcqInput}
@@ -6294,27 +6306,24 @@ export default function AdminApp() {
                               ) : null}
 
                               <div className="flex flex-wrap gap-2">
-                                <Button type="button" variant="outline" onClick={() => singleMcqImageInputRef.current?.click()} disabled={singleMcqProcessing}>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() => singleMcqImageInputRef.current?.click()}
+                                >
                                   Upload Single MCQ Image
                                 </Button>
-                                <Button type="button" variant="outline" onClick={() => void parseSingleMcq()} disabled={singleMcqProcessing || (!singleMcqInput.trim() && !singleMcqImageFile)}>
-                                  {singleMcqProcessing ? (
+                                <Button
+                                  type="button"
+                                  onClick={() => void analyzeSingleMcq()}
+                                  disabled={bulkProcessing || (!singleMcqInput.trim() && !singleMcqImageFile)}
+                                >
+                                  {bulkProcessing ? (
                                     <>
                                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                       Parsing MCQ...
                                     </>
                                   ) : 'Parse MCQ'}
-                                </Button>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  onClick={() => {
-                                    setSingleMcqInput('');
-                                    setSingleMcqImageFile(null);
-                                  }}
-                                  disabled={singleMcqProcessing}
-                                >
-                                  Clear
                                 </Button>
                               </div>
                             </div>
