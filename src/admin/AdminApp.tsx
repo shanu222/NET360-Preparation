@@ -3291,11 +3291,9 @@ export default function AdminApp() {
     setForm(fresh);
   };
 
-  const handleAddMCQ = async (event?: Pick<MouseEvent<HTMLButtonElement>, 'preventDefault' | 'stopPropagation'> | Pick<FormEvent<HTMLFormElement>, 'preventDefault'>) => {
+  const handleAddMCQ = async (event?: Pick<FormEvent<HTMLFormElement>, 'preventDefault'> & { stopPropagation?: () => void }) => {
     event?.preventDefault();
-    if ('stopPropagation' in (event || {})) {
-      event.stopPropagation();
-    }
+    event?.stopPropagation?.();
 
     if (isSavingMcq) return;
     if (!authToken) {
