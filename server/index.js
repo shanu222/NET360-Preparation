@@ -1350,7 +1350,6 @@ async function parseBulkMcqsWithAi(rawText) {
           role: 'system',
           content: [
             'You extract ALL MCQs from messy educational documents.',
-            'Extract MCQs exactly as written. Do not generate new ones.',
             'Return strict JSON only in this schema:',
             '{"mcqs":[{"subject":"","part":"part1|part2|","chapter":"","section":"","topic":"","question":"...","questionImage":"","options":["..."],"optionImages":[""],"answer":"...","explanation":"...","explanationImage":"","difficulty":"Easy|Medium|Hard"}]}',
             'Rules:',
@@ -1444,180 +1443,164 @@ function parseBulkMcqsFromText(raw) {
   if (!text) return { parsed: [], errors: ['No content found to parse.'] };
 
   const baseHierarchy = extractHierarchyContextFromText(text);
+
+  const blocks = splitQuestionBlocks(text);
+
   const errors = [];
   const parsed = [];
-  const lines = text
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
-
-  const questionPattern = /^(?:q(?:uestion)?\s*)?(\d{1,3})(?:\s*[\).:-])?\s*(.*)$/i;
-  const optionPattern = /^(?:option\s*)?([A-Da-d]|[1-4])\s*[\).:-]\s*(.+)$/i;
-  const answerPattern = /^(?:correct\s*answer|correct\s*option|correct|answer|ans(?:wer)?\.?)\s*[:=-]\s*(.+)$/i;
-  const explanationPattern = /^(?:explanation|solution|reason|short\s*trick|tip)\s*[:=-]?\s*(.*)$/i;
-  const difficultyPattern = /^(?:difficulty|level)\s*[:=-]\s*(easy|medium|hard)$/i;
-
-  const toOptionKey = (token) => {
-    const normalized = String(token || '').trim().toUpperCase();
-    if (normalized === '1') return 'A';
-    if (normalized === '2') return 'B';
-    if (normalized === '3') return 'C';
-    if (normalized === '4') return 'D';
-    return normalized;
-  };
-
-  const normalizeOptionBucket = (bucket) => {
-    const ordered = ['A', 'B', 'C', 'D']
-      .map((key) => normalizeRichMcqText(bucket[key]))
-      .filter(Boolean);
-    return ordered;
-  };
-
   let skipped = 0;
-  const state = {
-    hierarchy: { ...baseHierarchy },
-    current: null,
-    activeOptionKey: '',
-    collectingExplanation: false,
-    questionCountSeen: 0,
-  };
 
-  const commitCurrent = () => {
-    if (!state.current) return;
+  blocks.forEach((block) => {
     if (parsed.length >= BULK_PARSE_LIMIT) return;
 
-    const question = normalizeRichMcqText(state.current.questionLines.join(' '));
-    const options = normalizeOptionBucket(state.current.optionsByKey);
-    const resolvedAnswer = resolveAnswerToOption(state.current.answer, options);
+    const lines = block.content
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
 
-    if (!question || options.length < 2) {
-      skipped += 1;
-      state.current = null;
-      state.activeOptionKey = '';
-      state.collectingExplanation = false;
-      return;
-    }
+    if (!lines.length) return;
 
-    if (options.length < 4) {
-      errors.push(`Q${state.current.number}: detected ${options.length} option(s); 4 options are recommended.`);
-    }
+    lines[0] = lines[0].replace(/^(?:q(?:uestion)?\s*)?\d{1,3}(?:\s*[\).:-])?\s*/i, '').trim();
 
-    parsed.push({
-      subject: String(state.current.hierarchy.subject || '').trim().toLowerCase(),
-      part: String(state.current.hierarchy.part || '').trim().toLowerCase(),
-      chapter: String(state.current.hierarchy.chapter || '').trim(),
-      section: String(state.current.hierarchy.section || '').trim(),
-      topic: String(state.current.hierarchy.topic || '').trim(),
-      question,
-      questionImageUrl: '',
-      questionImageDataUrl: '',
-      options,
-      optionImageDataUrls: [],
-      answer: resolvedAnswer,
-      tip: normalizeRichMcqText(state.current.explanationLines.join('\n')),
-      explanationImageDataUrl: '',
-      difficulty: state.current.difficulty,
-    });
+    let questionImageUrl = '';
+    let questionImageDataUrl = '';
+    let answer = '';
+    const explanationLines = [];
+    let explanationImageDataUrl = '';
+    let difficulty = 'Medium';
+    const questionLines = [];
+    const options = [];
+    const blockHierarchy = {
+      ...baseHierarchy,
+    };
+    let capturingExplanation = false;
+    let activeOptionIndex = -1;
 
-    state.current = null;
-    state.activeOptionKey = '';
-    state.collectingExplanation = false;
-  };
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
 
-  for (const line of lines) {
-    const hierarchyLine = parseHierarchyLine(line);
-    if (hierarchyLine?.key) {
-      state.hierarchy[hierarchyLine.key] = hierarchyLine.value;
-      continue;
-    }
-
-    const questionMatch = line.match(questionPattern);
-    const couldBeNumberedOption = state.current && /^(?:option\s*)?[1-4]\s*[\).:-]\s+.+$/i.test(line);
-    if (questionMatch && /^\d{1,3}$/.test(String(questionMatch[1] || '')) && !couldBeNumberedOption) {
-      commitCurrent();
-      state.questionCountSeen += 1;
-      state.current = {
-        number: state.questionCountSeen,
-        hierarchy: { ...state.hierarchy },
-        questionLines: [String(questionMatch[2] || '').trim()].filter(Boolean),
-        optionsByKey: { A: '', B: '', C: '', D: '' },
-        answer: '',
-        explanationLines: [],
-        difficulty: 'Medium',
-      };
-      continue;
-    }
-
-    if (!state.current) {
-      continue;
-    }
-
-    const answerMatch = line.match(answerPattern);
-    if (answerMatch) {
-      state.current.answer = String(answerMatch[1] || '').trim();
-      state.activeOptionKey = '';
-      state.collectingExplanation = false;
-      continue;
-    }
-
-    const explanationMatch = line.match(explanationPattern);
-    if (explanationMatch) {
-      const content = String(explanationMatch[1] || '').trim();
-      if (content) state.current.explanationLines.push(content);
-      state.collectingExplanation = true;
-      state.activeOptionKey = '';
-      continue;
-    }
-
-    const difficultyMatch = line.match(difficultyPattern);
-    if (difficultyMatch) {
-      state.current.difficulty = normalizeDifficulty(difficultyMatch[1]);
-      continue;
-    }
-
-    const optionMatch = line.match(optionPattern);
-    if (optionMatch) {
-      const key = toOptionKey(optionMatch[1]);
-      if (['A', 'B', 'C', 'D'].includes(key)) {
-        state.current.optionsByKey[key] = String(optionMatch[2] || '').trim();
-        state.activeOptionKey = key;
-        state.collectingExplanation = false;
+      const hierarchyLine = parseHierarchyLine(line);
+      if (hierarchyLine?.key) {
+        blockHierarchy[hierarchyLine.key] = hierarchyLine.value;
         continue;
+      }
+
+      const imageRef = extractImageReference(line);
+      if (imageRef) {
+        const isDataUrl = /^data:image\//i.test(imageRef);
+        const optionImageLabel = line.match(/option\s*([A-H]|\d{1,2})\s*image/i);
+
+        if (optionImageLabel) {
+          const token = optionImageLabel[1];
+          const optionIndex = /^\d+$/.test(token)
+            ? Number(token) - 1
+            : token.toUpperCase().charCodeAt(0) - 65;
+          if (optionIndex >= 0 && optionIndex < options.length) {
+            options[optionIndex].imageDataUrl = isDataUrl ? imageRef : '';
+          }
+          continue;
+        }
+
+        if (/explanation\s*image|solution\s*image|tip\s*image/i.test(line) || capturingExplanation) {
+          explanationImageDataUrl = isDataUrl ? imageRef : explanationImageDataUrl;
+          continue;
+        }
+
+        if (activeOptionIndex >= 0 && activeOptionIndex < options.length) {
+          options[activeOptionIndex].imageDataUrl = isDataUrl ? imageRef : '';
+          continue;
+        }
+
+        if (isDataUrl) {
+          questionImageDataUrl = imageRef;
+        } else {
+          questionImageUrl = imageRef;
+        }
+        continue;
+      }
+
+      const answerMatch = line.match(/^(?:correct\s*answer|correct\s*option|correct|answer|ans(?:wer)?\.?)\s*[:=-]\s*(.+)$/i);
+      if (answerMatch) {
+        answer = answerMatch[1].trim();
+        capturingExplanation = false;
+        activeOptionIndex = -1;
+        continue;
+      }
+
+      const explanationMatch = line.match(/^(?:explanation|solution|reason|short\s*trick|tip)\s*[:=-]?\s*(.*)$/i);
+      if (explanationMatch) {
+        if (explanationMatch[1].trim()) explanationLines.push(explanationMatch[1].trim());
+        capturingExplanation = true;
+        activeOptionIndex = -1;
+        continue;
+      }
+
+      const difficultyMatch = line.match(/^(?:difficulty|level)\s*[:=-]\s*(easy|medium|hard)$/i);
+      if (difficultyMatch) {
+        const normalized = difficultyMatch[1].toLowerCase();
+        difficulty = normalized === 'easy' ? 'Easy' : normalized === 'hard' ? 'Hard' : 'Medium';
+        continue;
+      }
+
+      const inlineOptions = splitInlineOptions(line);
+      if (inlineOptions.length) {
+        inlineOptions.forEach((optionText) => {
+          options.push({ text: optionText, imageDataUrl: '' });
+        });
+        capturingExplanation = false;
+        activeOptionIndex = options.length - 1;
+        continue;
+      }
+
+      const optionMatch = line.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\s*[\).:-])\s*(.+)$/i);
+      if (optionMatch) {
+        options.push({ text: optionMatch[2].trim(), imageDataUrl: '' });
+        capturingExplanation = false;
+        activeOptionIndex = options.length - 1;
+        continue;
+      }
+
+      if (capturingExplanation) {
+        explanationLines.push(line);
+      } else if (activeOptionIndex >= 0 && options[activeOptionIndex]) {
+        options[activeOptionIndex].text = `${options[activeOptionIndex].text} ${line}`.trim();
+      } else {
+        questionLines.push(line);
       }
     }
 
-    const inlineOptions = splitInlineOptions(line);
-    if (inlineOptions.length) {
-      ['A', 'B', 'C', 'D'].forEach((key, idx) => {
-        if (!state.current.optionsByKey[key] && inlineOptions[idx]) {
-          state.current.optionsByKey[key] = inlineOptions[idx];
-        }
-      });
-      state.activeOptionKey = '';
-      state.collectingExplanation = false;
-      continue;
+    const question = normalizeRichMcqText(questionLines.join(' '));
+    const normalizedOptions = options.map((option) => normalizeRichMcqText(option.text)).filter(Boolean);
+    const resolvedAnswer = resolveAnswerToOption(answer, normalizedOptions);
+    if ((!question && !questionImageUrl && !questionImageDataUrl) || normalizedOptions.length < 2 || !resolvedAnswer) {
+      skipped += 1;
+      return;
     }
 
-    if (state.collectingExplanation) {
-      state.current.explanationLines.push(line);
-      continue;
-    }
+    parsed.push({
+      subject: String(blockHierarchy.subject || '').trim().toLowerCase(),
+      part: String(blockHierarchy.part || '').trim().toLowerCase(),
+      chapter: String(blockHierarchy.chapter || '').trim(),
+      section: String(blockHierarchy.section || '').trim(),
+      topic: String(blockHierarchy.topic || '').trim(),
+      question: question || 'Refer to attached image.',
+      questionImageUrl,
+      questionImageDataUrl,
+      options: normalizedOptions,
+      optionImageDataUrls: options.map((option) => option.imageDataUrl || ''),
+      answer: resolvedAnswer,
+      tip: normalizeRichMcqText(explanationLines.join('\n')),
+      explanationImageDataUrl,
+      difficulty,
+    });
+  });
 
-    if (state.activeOptionKey && state.current.optionsByKey[state.activeOptionKey]) {
-      state.current.optionsByKey[state.activeOptionKey] = `${state.current.optionsByKey[state.activeOptionKey]} ${line}`.trim();
-      continue;
-    }
-
-    state.current.questionLines.push(line);
-  }
-
-  commitCurrent();
-
-  if (state.questionCountSeen > BULK_PARSE_LIMIT) {
+  if (blocks.length > BULK_PARSE_LIMIT) {
     errors.push(`Only the first ${BULK_PARSE_LIMIT} MCQs were kept from this import.`);
   }
   if (skipped > 0) {
-    errors.push(`Skipped ${skipped} invalid block(s) without question text or minimum options.`);
+    errors.push(`Skipped ${skipped} unclear block(s) and continued parsing the rest.`);
   }
 
   return { parsed, errors };
@@ -1715,237 +1698,115 @@ async function extractTextFromUpload(filePayload) {
     throw new Error('Uploaded file must be between 1 byte and 8 MB.');
   }
 
-  const runPrimaryExtraction = async () => {
-    if (mimeType.includes('pdf') || extension === '.pdf') {
-      const parsed = await pdfParse(fileMeta.buffer, {
-        pagerender: (pageData) => pageData
-          .getTextContent({ normalizeWhitespace: false, disableCombineTextItems: false })
-          .then((textContent) => buildPdfStructuredHtmlPage(textContent)),
-      });
-
-      const structured = String(parsed?.text || '');
-      return normalizeStructuredSourceHtml(structured);
-    }
-
-    if (
-      mimeType.includes('officedocument.wordprocessingml.document')
-      || extension === '.docx'
-    ) {
-      const result = await mammoth.convertToHtml(
-        { buffer: fileMeta.buffer },
-        {
-          convertImage: mammoth.images.inline(async (image) => {
-            try {
-              const base64 = await image.read('base64');
-              const contentType = String(image.contentType || 'image/png').toLowerCase();
-              return {
-                src: `data:${contentType};base64,${base64}`,
-              };
-            } catch {
-              return { src: '' };
-            }
-          }),
-        },
-      );
-
-      const $ = cheerio.load(String(result?.value || ''));
-      const chunks = [];
-      const inlineTextTags = new Set(['span', 'strong', 'b', 'em', 'i', 'u', 'sup', 'sub', 'a']);
-      const blockTags = new Set(['p', 'div', 'li', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'tr', 'td']);
-
-      const pushChunk = (value) => {
-        const normalized = String(value || '').replace(/\s+/g, ' ').trim();
-        if (!normalized) return;
-        chunks.push(normalized);
-      };
-
-      const traverse = (node) => {
-        if (!node) return;
-
-        if (node.type === 'text') {
-          pushChunk(node.data);
-          return;
-        }
-
-        if (node.type !== 'tag') return;
-
-        const tag = String(node.name || '').toLowerCase();
-        const styleAttr = String($(node).attr('style') || '').toLowerCase();
-        const isBoldNode = tag === 'strong' || tag === 'b' || /font-weight\s*:\s*(bold|[6-9]00)/i.test(styleAttr);
-        const isItalicNode = tag === 'em' || tag === 'i' || /font-style\s*:\s*(italic|oblique)/i.test(styleAttr);
-        if (tag === 'img') {
-          const src = String($(node).attr('src') || '').trim();
-          if (/^data:image\//i.test(src)) {
-            chunks.push(`image: ${src}`);
-          }
-          return;
-        }
-
-        if (tag === 'br') {
-          chunks.push('\n');
-          return;
-        }
-
-        if (blockTags.has(tag)) chunks.push('\n');
-        if (isBoldNode) chunks.push('<strong>');
-        if (isItalicNode) chunks.push('<em>');
-
-        const children = node.children || [];
-        for (const child of children) {
-          traverse(child);
-        }
-
-        if (isItalicNode) chunks.push('</em>');
-        if (isBoldNode) chunks.push('</strong>');
-
-        if (blockTags.has(tag) || !inlineTextTags.has(tag)) chunks.push('\n');
-      };
-
-      const rootNodes = $('body').length ? $('body').contents().toArray() : $.root().contents().toArray();
-      rootNodes.forEach((node) => traverse(node));
-
-      const assembled = chunks
-        .join('\n')
-        .replace(/\n{3,}/g, '\n\n');
-
-      return normalizeStructuredSourceHtml(assembled);
-    }
-
-    if (mimeType.includes('msword') || extension === '.doc') {
-      // Legacy DOC is often binary; this fallback extracts any readable text blocks.
-      const docText = normalizePlainText(fileMeta.buffer.toString('latin1'));
-      if (!docText || docText.length < 25) {
-        throw new Error('Could not reliably parse this DOC file. Please save it as DOCX and upload again.');
-      }
-      return docText;
-    }
-
-    if (mimeType.includes('text/plain') || extension === '.txt') {
-      return normalizePlainText(fileMeta.buffer.toString('utf8'));
-    }
-
-    if (mimeType.startsWith('image/') || ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff'].includes(extension)) {
-      return '';
-    }
-
-    throw new Error('Unsupported file type. Upload PDF, DOC, DOCX, TXT, or image files.');
-  };
-
-  const isLowQualityExtractedText = (value) => {
-    const normalized = normalizePlainText(value || '');
-    if (!normalized) return true;
-    if (normalized.length < 120) return true;
-    const lines = normalized.split('\n').map((line) => line.trim()).filter(Boolean);
-    if (lines.length < 3) return true;
-    const alphaNumeric = normalized.replace(/[^a-z0-9]/gi, '').length;
-    return alphaNumeric < 80;
-  };
-
-  const extractDataImageBuffers = (value) => {
-    const matches = String(value || '').match(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi) || [];
-    const buffers = [];
-    matches.forEach((rawImage) => {
-      const parsed = parseDataUrl(String(rawImage || '').replace(/\s+/g, ''));
-      if (parsed?.buffer?.length) {
-        buffers.push(parsed.buffer);
-      }
-    });
-    return buffers;
-  };
-
-  const preprocessForOcr = async (imageBuffer) => {
-    try {
-      const sharpModule = await import('sharp');
-      const sharpLib = sharpModule.default;
-      return await sharpLib(imageBuffer)
-        .grayscale()
-        .normalize()
-        .median(1)
-        .sharpen()
-        .png()
-        .toBuffer();
-    } catch {
-      return imageBuffer;
-    }
-  };
-
-  const renderPdfPagesForOcr = async (pdfBuffer, maxPages = 6) => {
-    try {
-      const sharpModule = await import('sharp');
-      const sharpLib = sharpModule.default;
-      const meta = await sharpLib(pdfBuffer, { density: 220, pages: -1 }).metadata();
-      const totalPages = clamp(Number(meta?.pages || 1), 1, maxPages);
-
-      const renders = Array.from({ length: totalPages }, (_, pageIndex) => (
-        sharpLib(pdfBuffer, { density: 220, page: pageIndex })
-          .png()
-          .toBuffer()
-      ));
-
-      const settled = await Promise.allSettled(renders);
-      return settled
-        .filter((item) => item.status === 'fulfilled' && item.value?.length)
-        .map((item) => item.value);
-    } catch {
-      return [];
-    }
-  };
-
-  const runOcrOnBuffers = async (imageBuffers) => {
-    if (!imageBuffers.length) return '';
-
-    let createWorker;
-    try {
-      ({ createWorker } = await import('tesseract.js'));
-    } catch {
-      return '';
-    }
-
-    const ocrTasks = imageBuffers.map(async (buffer) => {
-      const worker = await createWorker('eng');
-      try {
-        const processed = await preprocessForOcr(buffer);
-        const result = await worker.recognize(processed);
-        return normalizePlainText(result?.data?.text || '');
-      } catch {
-        return '';
-      } finally {
-        await worker.terminate();
-      }
-    });
-
-    const settled = await Promise.allSettled(ocrTasks);
-    return settled
-      .filter((item) => item.status === 'fulfilled')
-      .map((item) => normalizePlainText(item.value || ''))
-      .filter(Boolean)
-      .join('\n\n');
-  };
-
-  const primaryText = await runPrimaryExtraction();
-  if (!isLowQualityExtractedText(primaryText)) {
-    return primaryText;
-  }
-
-  const ocrCandidateBuffers = [];
   if (mimeType.includes('pdf') || extension === '.pdf') {
-    const pageBuffers = await renderPdfPagesForOcr(fileMeta.buffer, 6);
-    ocrCandidateBuffers.push(...pageBuffers);
-  } else if (mimeType.startsWith('image/') || ['.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff'].includes(extension)) {
-    ocrCandidateBuffers.push(fileMeta.buffer);
+    const parsed = await pdfParse(fileMeta.buffer, {
+      pagerender: (pageData) => pageData
+        .getTextContent({ normalizeWhitespace: false, disableCombineTextItems: false })
+        .then((textContent) => buildPdfStructuredHtmlPage(textContent)),
+    });
+
+    const structured = String(parsed?.text || '');
+    return normalizeStructuredSourceHtml(structured);
   }
 
-  if (!ocrCandidateBuffers.length) {
-    ocrCandidateBuffers.push(...extractDataImageBuffers(primaryText));
+  if (
+    mimeType.includes('officedocument.wordprocessingml.document')
+    || extension === '.docx'
+  ) {
+    const result = await mammoth.convertToHtml(
+      { buffer: fileMeta.buffer },
+      {
+        convertImage: mammoth.images.inline(async (image) => {
+          try {
+            const base64 = await image.read('base64');
+            const contentType = String(image.contentType || 'image/png').toLowerCase();
+            return {
+              src: `data:${contentType};base64,${base64}`,
+            };
+          } catch {
+            return { src: '' };
+          }
+        }),
+      },
+    );
+
+    const $ = cheerio.load(String(result?.value || ''));
+    const chunks = [];
+    const inlineTextTags = new Set(['span', 'strong', 'b', 'em', 'i', 'u', 'sup', 'sub', 'a']);
+    const blockTags = new Set(['p', 'div', 'li', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'tr', 'td']);
+
+    const pushChunk = (value) => {
+      const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+      if (!normalized) return;
+      chunks.push(normalized);
+    };
+
+    const traverse = (node) => {
+      if (!node) return;
+
+      if (node.type === 'text') {
+        pushChunk(node.data);
+        return;
+      }
+
+      if (node.type !== 'tag') return;
+
+      const tag = String(node.name || '').toLowerCase();
+      const styleAttr = String($(node).attr('style') || '').toLowerCase();
+      const isBoldNode = tag === 'strong' || tag === 'b' || /font-weight\s*:\s*(bold|[6-9]00)/i.test(styleAttr);
+      const isItalicNode = tag === 'em' || tag === 'i' || /font-style\s*:\s*(italic|oblique)/i.test(styleAttr);
+      if (tag === 'img') {
+        const src = String($(node).attr('src') || '').trim();
+        if (/^data:image\//i.test(src)) {
+          chunks.push(`image: ${src}`);
+        }
+        return;
+      }
+
+      if (tag === 'br') {
+        chunks.push('\n');
+        return;
+      }
+
+      if (blockTags.has(tag)) chunks.push('\n');
+      if (isBoldNode) chunks.push('<strong>');
+      if (isItalicNode) chunks.push('<em>');
+
+      const children = node.children || [];
+      for (const child of children) {
+        traverse(child);
+      }
+
+      if (isItalicNode) chunks.push('</em>');
+      if (isBoldNode) chunks.push('</strong>');
+
+      if (blockTags.has(tag) || !inlineTextTags.has(tag)) chunks.push('\n');
+    };
+
+    const rootNodes = $('body').length ? $('body').contents().toArray() : $.root().contents().toArray();
+    rootNodes.forEach((node) => traverse(node));
+
+    const assembled = chunks
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n');
+
+    return normalizeStructuredSourceHtml(assembled);
   }
 
-  if (!ocrCandidateBuffers.length) {
-    return primaryText;
+  if (mimeType.includes('msword') || extension === '.doc') {
+    // Legacy DOC is often binary; this fallback extracts any readable text blocks.
+    const text = normalizePlainText(fileMeta.buffer.toString('latin1'));
+    if (!text || text.length < 25) {
+      throw new Error('Could not reliably parse this DOC file. Please save it as DOCX and upload again.');
+    }
+    return text;
   }
 
-  const ocrText = await runOcrOnBuffers(ocrCandidateBuffers);
-  const combined = normalizePlainText([primaryText, ocrText].filter(Boolean).join('\n\n'));
-  return combined || primaryText;
+  if (mimeType.includes('text/plain') || extension === '.txt') {
+    return normalizePlainText(fileMeta.buffer.toString('utf8'));
+  }
+
+  throw new Error('Unsupported file type. Upload PDF, DOC, DOCX, or TXT.');
 }
 
 async function checkSubmissionRestriction(actorKey) {
@@ -10726,18 +10587,33 @@ app.delete('/api/admin/mcqs/purge-all', authMiddleware, requireAdmin, async (_re
 });
 
 async function parseMcqsFromSourceText(sourceText) {
-  const normalizedSource = String(sourceText || '');
-  console.log('Extracted text length:', normalizedSource.length);
-
-  const heuristicResult = parseBulkMcqsFromText(normalizedSource);
-  console.log('MCQs found:', heuristicResult.parsed.length);
-
+  const heuristicResult = parseBulkMcqsFromText(sourceText);
   let finalResult = heuristicResult;
 
-  if ((heuristicResult.parsed?.length || 0) === 0 && openai) {
-    const aiResult = await parseBulkMcqsWithAi(normalizedSource);
-    console.log('MCQs found:', aiResult.parsed.length);
-    finalResult = aiResult;
+  const countDetectedImages = (result) => {
+    const rows = Array.isArray(result?.parsed) ? result.parsed : [];
+    return rows.reduce((total, row) => {
+      const questionImage = /^data:image\//i.test(String(row?.questionImageDataUrl || '')) ? 1 : 0;
+      const optionImages = Array.isArray(row?.optionImageDataUrls)
+        ? row.optionImageDataUrls.filter((item) => /^data:image\//i.test(String(item || ''))).length
+        : 0;
+      const explanationImage = /^data:image\//i.test(String(row?.explanationImageDataUrl || '')) ? 1 : 0;
+      return total + questionImage + optionImages + explanationImage;
+    }, 0);
+  };
+
+  if (openai) {
+    const aiResult = await parseBulkMcqsWithAi(sourceText);
+    const heuristicScore = (heuristicResult.parsed?.length || 0) - (heuristicResult.errors?.length || 0);
+    const aiScore = (aiResult.parsed?.length || 0) - (aiResult.errors?.length || 0);
+    const heuristicImageScore = countDetectedImages(heuristicResult);
+    const aiImageScore = countDetectedImages(aiResult);
+
+    const preferHeuristicForImages = heuristicImageScore > 0 && aiImageScore < heuristicImageScore;
+
+    if (aiResult.parsed.length > 0 && aiScore >= heuristicScore && !preferHeuristicForImages) {
+      finalResult = aiResult;
+    }
   }
 
   const parsed = Array.isArray(finalResult.parsed) ? finalResult.parsed.slice(0, BULK_PARSE_LIMIT) : [];
