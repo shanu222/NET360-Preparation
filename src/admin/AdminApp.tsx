@@ -3639,7 +3639,6 @@ export default function AdminApp() {
     if (!normalizedDataUrl) return;
 
     try {
-      setBulkProcessing(true);
       const extractedText = await extractSingleMcqMathTextFromImage(normalizedDataUrl);
       if (!extractedText.trim()) {
         toast.error('Could not extract readable MCQ text from pasted image.');
@@ -3650,8 +3649,6 @@ export default function AdminApp() {
       toast.success('Pasted image extracted to text and inserted into the MCQ box.');
     } catch {
       toast.error('Could not process pasted image. Please try again with a clearer image.');
-    } finally {
-      setBulkProcessing(false);
     }
   };
 
