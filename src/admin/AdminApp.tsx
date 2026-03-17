@@ -1,4 +1,4 @@
-import { createElement, type ChangeEvent, type ClipboardEvent as ReactClipboardEvent, type FormEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, type ChangeEvent, type FormEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -1596,7 +1596,6 @@ export default function AdminApp() {
   const [bulkInput, setBulkInput] = useState('');
   const [bulkFile, setBulkFile] = useState<File | null>(null);
   const [singleMcqInput, setSingleMcqInput] = useState('');
-  const [singleMcqImageFile, setSingleMcqImageFile] = useState<File | null>(null);
   const [bulkParsed, setBulkParsed] = useState<ParsedBulkMcq[]>([]);
   const [showParsedPreview, setShowParsedPreview] = useState(false);
   const [bulkParseErrors, setBulkParseErrors] = useState<string[]>([]);
@@ -1643,7 +1642,6 @@ export default function AdminApp() {
   const [isSendingSupportReply, setIsSendingSupportReply] = useState(false);
   const supportReplyFileInputRef = useRef<HTMLInputElement | null>(null);
   const bulkDocumentInputRef = useRef<HTMLInputElement | null>(null);
-  const singleMcqImageInputRef = useRef<HTMLInputElement | null>(null);
   const explanationImageInputRef = useRef<HTMLInputElement | null>(null);
   const didHydrateSupportRef = useRef(false);
   const lastUnreadTotalRef = useRef(0);
@@ -3620,20 +3618,6 @@ export default function AdminApp() {
     }
   };
 
-  const containsMultipleMcqs = (rawText: string) => {
-    const normalized = normalizeBulkText(rawText);
-    if (!normalized) return false;
-
-    const likelyQuestionStarts = (normalized.match(/^\s*(?:q(?:uestion)?\s*)?\d{1,3}(?:\s*[\).:-])\s+/gim) || []).length;
-    if (likelyQuestionStarts > 1) return true;
-
-    const answerMarkers = (normalized.match(/^\s*(?:correct\s*answer|correct\s*option|correct|answer|ans(?:wer)?\.?)\s*[:=-]/gim) || []).length;
-    if (answerMarkers > 1) return true;
-
-    const localParsed = parseBulkMcqs(rawText);
-    return (localParsed.parsed || []).length > 1;
-  };
-
   const runSingleMcqOcr = async (input: File | string) => {
     const { createWorker } = await import('tesseract.js');
     const worker = await createWorker('eng');
@@ -3664,48 +3648,6 @@ export default function AdminApp() {
       toast.error('Could not process pasted image. Please try again with a clearer image.');
     } finally {
       setBulkProcessing(false);
-    }
-  };
-
-  const analyzeSingleMcq = async () => {
-    if (!authToken) return;
-
-    const hasText = Boolean(singleMcqInput.trim());
-    const hasImageInput = Boolean(singleMcqImageFile);
-    if (!hasText && !hasImageInput) {
-      toast.error('Paste one MCQ or upload one MCQ image first.');
-      return;
-    }
-
-    if (singleMcqImageFile && singleMcqImageFile.size > 8 * 1024 * 1024) {
-      toast.error('Uploaded image is too large. Maximum size is 8 MB.');
-      return;
-    }
-
-    const hierarchyContext = resolveDocumentHierarchyContext(true);
-    if (!hierarchyContext) return;
-
-    try {
-      const imageSource = singleMcqImageFile;
-      const rawText = hasText
-        ? singleMcqInput
-        : await extractSingleMcqMathTextFromImage(imageSource!);
-      if (!rawText.trim()) {
-        toast.error('Could not extract readable MCQ text. Use clear text format or a higher-quality image.');
-        return;
-      }
-
-      if (containsMultipleMcqs(rawText)) {
-        toast.error('Please paste or upload only one MCQ at a time.');
-        return;
-      }
-      setSingleMcqInput(rawText);
-      setBulkInput(rawText);
-      setBulkFile(null);
-      await analyzeBulkMcqs({ text: rawText, file: null });
-    } catch (error) {
-      console.error('Single MCQ parse failed', error);
-      toast.error(error instanceof Error ? error.message : 'Could not parse MCQ. Use format: question, A/B/C/D options, Correct:, Explanation:.');
     }
   };
 
@@ -6298,41 +6240,6 @@ export default function AdminApp() {
                                 ].join('\n')}
                               />
 
-                              <Input
-                                ref={singleMcqImageInputRef}
-                                type="file"
-                                className="hidden"
-                                accept="image/*"
-                                onChange={(e) => {
-                                  setSingleMcqImageFile(e.target.files?.[0] || null);
-                                }}
-                              />
-
-                              {singleMcqImageFile ? (
-                                <p className="text-xs text-muted-foreground">Selected image: {singleMcqImageFile.name}</p>
-                              ) : null}
-
-                              <div className="flex flex-wrap gap-2">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  onClick={() => singleMcqImageInputRef.current?.click()}
-                                >
-                                  Upload Single MCQ Image
-                                </Button>
-                                <Button
-                                  type="button"
-                                  onClick={() => void analyzeSingleMcq()}
-                                  disabled={bulkProcessing || (!singleMcqInput.trim() && !singleMcqImageFile)}
-                                >
-                                  {bulkProcessing ? (
-                                    <>
-                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                      Parsing MCQ...
-                                    </>
-                                  ) : 'Parse MCQ'}
-                                </Button>
-                              </div>
                             </div>
                           </details>
 
