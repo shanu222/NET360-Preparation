@@ -256,6 +256,7 @@ function MathEditorField({
   className,
   onValueChange,
   onImagePaste,
+  insertImageTokenOnPaste,
 }: {
   id: string;
   label: string;
@@ -264,6 +265,7 @@ function MathEditorField({
   className?: string;
   onValueChange: (nextValue: string) => void;
   onImagePaste?: (dataUrl: string) => void;
+  insertImageTokenOnPaste?: boolean;
 }) {
   return (
     <div className="space-y-1.5">
@@ -297,6 +299,7 @@ function MathEditorField({
         className={className}
         onValueChange={onValueChange}
         onImagePaste={onImagePaste}
+        insertImageTokenOnPaste={insertImageTokenOnPaste}
       />
     </div>
   );
@@ -309,6 +312,7 @@ function MathLiveInput({
   className,
   onValueChange,
   onImagePaste,
+  insertImageTokenOnPaste,
 }: {
   id: string;
   value: string;
@@ -316,6 +320,7 @@ function MathLiveInput({
   className?: string;
   onValueChange: (nextValue: string) => void;
   onImagePaste?: (dataUrl: string) => void;
+  insertImageTokenOnPaste?: boolean;
 }) {
   const fieldRef = useRef<MathFieldLikeElement | null>(null);
 
@@ -346,7 +351,9 @@ function MathLiveInput({
         .then((dataUrl) => {
           if (!dataUrl) return;
           onImagePaste?.(dataUrl);
-          insertImageTokenToField(id, dataUrl);
+          if (insertImageTokenOnPaste !== false) {
+            insertImageTokenToField(id, dataUrl);
+          }
         })
         .catch(() => {
           // Keep standard paste behavior for non-image clipboard content.
@@ -359,7 +366,7 @@ function MathLiveInput({
       field.removeEventListener('input', handleInput);
       field.removeEventListener('paste', handlePaste);
     };
-  }, [id, onImagePaste, onValueChange]);
+  }, [id, insertImageTokenOnPaste, onImagePaste, onValueChange]);
 
   useEffect(() => {
     const field = fieldRef.current;
@@ -3638,12 +3645,7 @@ export default function AdminApp() {
     }
   };
 
-  const handleSingleMcqTextareaPaste = async (event: ReactClipboardEvent<HTMLTextAreaElement>) => {
-    const pastedImageDataUrl = await extractPastedImageDataUrl(event.nativeEvent as unknown as ClipboardDataEvent);
-    if (!pastedImageDataUrl) return;
-
-    event.preventDefault();
-
+  const handleSingleMcqMathImagePaste = async (pastedImageDataUrl: string) => {
     try {
       setBulkProcessing(true);
       const extractedText = await runSingleMcqOcr(pastedImageDataUrl);
@@ -6270,12 +6272,15 @@ export default function AdminApp() {
                               <p className="text-xs text-muted-foreground">
                                 Parse one MCQ at a time from pasted text or a single MCQ image.
                               </p>
-                              <Textarea
+                              <MathEditorField
+                                id="paste-single-mcq-input"
+                                label="Paste MCQ Content"
                                 value={singleMcqInput}
-                                onChange={(e) => setSingleMcqInput(e.target.value)}
-                                onPaste={(event) => {
-                                  void handleSingleMcqTextareaPaste(event);
+                                onValueChange={(nextValue) => setSingleMcqInput(nextValue)}
+                                onImagePaste={(dataUrl) => {
+                                  void handleSingleMcqMathImagePaste(dataUrl);
                                 }}
+                                insertImageTokenOnPaste={false}
                                 className="min-h-[170px]"
                                 placeholder={[
                                   'question',
