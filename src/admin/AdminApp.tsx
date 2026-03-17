@@ -1596,7 +1596,6 @@ export default function AdminApp() {
   const [bulkInput, setBulkInput] = useState('');
   const [bulkFile, setBulkFile] = useState<File | null>(null);
   const [singleMcqInput, setSingleMcqInput] = useState('');
-  const [singleMcqPastedImageDataUrl, setSingleMcqPastedImageDataUrl] = useState('');
   const [bulkParsed, setBulkParsed] = useState<ParsedBulkMcq[]>([]);
   const [showParsedPreview, setShowParsedPreview] = useState(false);
   const [bulkParseErrors, setBulkParseErrors] = useState<string[]>([]);
@@ -3635,31 +3634,20 @@ export default function AdminApp() {
     return String(extractedText || '').trim();
   };
 
-  const handleSingleMcqMathImagePaste = (pastedImageDataUrl: string) => {
-    setSingleMcqPastedImageDataUrl(String(pastedImageDataUrl || '').trim());
-    toast.success('Image pasted. Click Insert MCQ from Image to extract and parse.');
-  };
-
-  const insertSingleMcqFromPastedImage = async () => {
-    const pastedImageDataUrl = String(singleMcqPastedImageDataUrl || '').trim();
-    if (!pastedImageDataUrl) {
-      toast.error('Paste an image into the MCQ editor first.');
-      return;
-    }
+  const handleSingleMcqMathImagePaste = async (pastedImageDataUrl: string) => {
+    const normalizedDataUrl = String(pastedImageDataUrl || '').trim();
+    if (!normalizedDataUrl) return;
 
     try {
       setBulkProcessing(true);
-      const extractedText = await extractSingleMcqMathTextFromImage(pastedImageDataUrl);
+      const extractedText = await extractSingleMcqMathTextFromImage(normalizedDataUrl);
       if (!extractedText.trim()) {
         toast.error('Could not extract readable MCQ text from pasted image.');
         return;
       }
 
       setSingleMcqInput(extractedText);
-      setBulkInput(extractedText);
-      setBulkFile(null);
-      toast.success('Inserted OCR text into Paste MCQ editor. Parsing now...');
-      await analyzeBulkMcqs({ text: extractedText, file: null });
+      toast.success('Pasted image extracted to text and inserted into the MCQ box.');
     } catch {
       toast.error('Could not process pasted image. Please try again with a clearer image.');
     } finally {
@@ -6241,7 +6229,7 @@ export default function AdminApp() {
                                 value={singleMcqInput}
                                 onValueChange={(nextValue) => setSingleMcqInput(nextValue)}
                                 onImagePaste={(dataUrl) => {
-                                  handleSingleMcqMathImagePaste(dataUrl);
+                                  void handleSingleMcqMathImagePaste(dataUrl);
                                 }}
                                 insertImageTokenOnPaste={false}
                                 className="min-h-[170px]"
@@ -6255,21 +6243,6 @@ export default function AdminApp() {
                                   'Explanation: explanation text',
                                 ].join('\n')}
                               />
-
-                              {singleMcqPastedImageDataUrl ? (
-                                <p className="text-xs text-muted-foreground">Pasted image ready. Click Insert MCQ from Image.</p>
-                              ) : null}
-
-                              <div className="flex flex-wrap gap-2">
-                                <Button
-                                  type="button"
-                                  variant="outline"
-                                  onClick={() => void insertSingleMcqFromPastedImage()}
-                                  disabled={bulkProcessing || !singleMcqPastedImageDataUrl}
-                                >
-                                  Insert MCQ from Image
-                                </Button>
-                              </div>
 
                             </div>
                           </details>
