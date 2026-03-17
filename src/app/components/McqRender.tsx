@@ -18,10 +18,6 @@ function hasMathDelimiters(value: string) {
 
 const INLINE_IMAGE_TOKEN_REGEX = /\[\[img:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\]\]/gi;
 
-function stripInlineLatexDelimiters(value: string) {
-  return String(value || '').replace(/\\\(|\\\)/g, '');
-}
-
 function escapeHtml(value: string) {
   return String(value || '')
     .replace(/&/g, '&amp;')
@@ -59,7 +55,7 @@ export function McqMathText({
   const hostRef = useRef<HTMLSpanElement | null>(null);
 
   const html = useMemo(() => {
-    const raw = stripInlineLatexDelimiters(String(value || ''));
+    const raw = String(value || '');
     if (!raw.trim()) return '';
 
     const imagePlaceholders: string[] = [];
