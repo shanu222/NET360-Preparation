@@ -96,6 +96,7 @@ interface AdminPreviewPayload {
     subject?: string;
     topic?: string;
     question?: string;
+    answerKey?: string;
     options?: string[];
     optionMedia?: Array<{
       key?: string;
@@ -262,6 +263,7 @@ export function TestInterfacePage() {
   const [challengeLockedAnswers, setChallengeLockedAnswers] = useState<Record<string, string>>({});
   const [launchResolved, setLaunchResolved] = useState(false);
   const [isPreviewMode, setIsPreviewMode] = useState(false);
+  const [isPreviewReadOnly, setIsPreviewReadOnly] = useState(false);
 
   const violationCountRef = useRef(0);
   const violationDebounceAtRef = useRef(0);
@@ -311,6 +313,10 @@ export function TestInterfacePage() {
         return;
       }
 
+      const previewSource = String(previewPayload.source || '').trim().toLowerCase();
+      const previewReadOnly = previewSource === 'admin-mcq-bank-preview';
+      const prefilledAnswers: Record<string, string | null> = {};
+
       const mappedQuestions: SessionQuestion[] = (previewPayload.questions || []).map((row, index) => {
         const optionMedia = Array.isArray(row.optionMedia)
           ? row.optionMedia.map((option, optionIndex) => ({
@@ -332,9 +338,18 @@ export function TestInterfacePage() {
           : optionMedia.map((option) => option.text || `[${option.key}]`);
 
         const difficulty = String(row.difficulty || 'Medium').trim();
+        const questionId = String(row.id || `preview-q-${index + 1}`);
+
+        if (previewReadOnly) {
+          const normalizedAnswer = String(row.answerKey || '').trim().toUpperCase();
+          const optionKeys = optionMedia.length
+            ? optionMedia.map((option) => String(option.key || '').trim().toUpperCase())
+            : fallbackOptions.map((_, optionIndex) => String.fromCharCode(65 + optionIndex));
+          prefilledAnswers[questionId] = optionKeys.includes(normalizedAnswer) ? normalizedAnswer : null;
+        }
 
         return {
-          id: String(row.id || `preview-q-${index + 1}`),
+          id: questionId,
           subject: String(row.subject || 'mathematics').toLowerCase() as SubjectKey,
           topic: String(row.topic || previewPayload.topic || 'Preview').trim() || 'Preview',
           question: String(row.question || ''),
@@ -369,12 +384,16 @@ export function TestInterfacePage() {
       };
 
       setIsPreviewMode(true);
+      setIsPreviewReadOnly(previewReadOnly);
       setSession(previewSession);
+      setAnswers(previewReadOnly ? prefilledAnswers : {});
       setRemainingSeconds(durationMinutes * 60);
       setLoading(false);
       setLaunchResolved(true);
       return;
     }
+
+    setIsPreviewReadOnly(false);
 
     const fromQuery = params.get('authToken');
     const launchFallback = getLaunchFallback();
@@ -896,7 +915,13 @@ export function TestInterfacePage() {
         </main>
 
         <section className="border-b border-[#2b5f9f] bg-[#a9c6df] px-2 py-1 text-sm">
-          Answer ( <span className="text-blue-700">Please select your correct option</span> )
+          {isPreviewReadOnly
+            ? 'Selected Answer ( ' 
+            : 'Answer ( '}
+          <span className="text-blue-700">
+            {isPreviewReadOnly ? 'Read-only preview of the selected correct option' : 'Please select your correct option'}
+          </span>
+          {' )'}
         </section>
 
         <section className="space-y-2 border-b border-[#2b5f9f] bg-[#d6dbe2] p-2">
@@ -910,8 +935,9 @@ export function TestInterfacePage() {
                   type="radio"
                   name={`question-${question.id}`}
                   checked={isSelected}
-                  disabled={isLocked && !isSelected}
+                  disabled={isPreviewReadOnly || (isLocked && !isSelected)}
                   onChange={() => {
+                    if (isPreviewReadOnly) return;
                     if (!isChallengeMode || String(challengeType) !== 'live') {
                       setAnswers((prev) => ({ ...prev, [question.id]: optionValue }));
                       return;

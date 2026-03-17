@@ -899,11 +899,12 @@ interface AdminMcqPreviewQuestion {
   options: string[];
   optionMedia: AdminMcqOptionMedia[];
   questionImage: AdminMcqImageFile | null;
+  answerKey?: string;
   difficulty: 'Easy' | 'Medium' | 'Hard';
 }
 
 interface AdminMcqPreviewPayload {
-  source: 'admin-mcq-upload-preview';
+  source: 'admin-mcq-upload-preview' | 'admin-mcq-bank-preview';
   createdAt: number;
   topic: string;
   durationMinutes: number;
@@ -3843,6 +3844,48 @@ export default function AdminApp() {
       topic,
       durationMinutes: 60,
       questions,
+    });
+  };
+
+  const openBankMcqPreview = (draft: EditableBankMcq) => {
+    const topic = String(draft.topic || draft.section || 'MCQ Preview').trim() || 'MCQ Preview';
+    const optionMedia = (draft.optionMedia || []).map((option, index) => ({
+      key: String(option.key || String.fromCharCode(65 + index)).toUpperCase(),
+      text: String(option.text || ''),
+      image: option.image || null,
+    }));
+
+    const hasQuestionContent = Boolean(String(draft.question || '').trim() || draft.questionImage?.dataUrl);
+    const hasOptionContent = optionMedia.some((option) => option.text || option.image?.dataUrl);
+    if (!hasQuestionContent || !hasOptionContent) {
+      toast.error('Add question and options before opening preview.');
+      return;
+    }
+
+    const answerKey = resolveAnswerKeyFromInput(optionMedia, String(draft.answer || ''));
+    if (!answerKey) {
+      toast.error('Choose a valid correct answer before opening preview.');
+      return;
+    }
+
+    openMcqTestPreview({
+      source: 'admin-mcq-bank-preview',
+      createdAt: Date.now(),
+      topic,
+      durationMinutes: 60,
+      questions: [
+        {
+          id: String(draft.id || 'bank-preview-1'),
+          subject: String(draft.subject || 'mathematics').trim().toLowerCase(),
+          topic,
+          question: String(draft.question || ''),
+          options: optionMedia.map((option) => option.text || `[${option.key}]`),
+          optionMedia,
+          questionImage: draft.questionImage || null,
+          answerKey,
+          difficulty: draft.difficulty === 'Easy' || draft.difficulty === 'Hard' ? draft.difficulty : 'Medium',
+        },
+      ],
     });
   };
 
@@ -7136,35 +7179,6 @@ export default function AdminApp() {
                             </div>
                           </div>
 
-                          <div className="space-y-2 rounded-md border border-slate-300/70 bg-slate-50/60 p-2">
-                            <p className="text-xs font-semibold text-slate-700">MCQ Preview</p>
-                            <div className="rounded border border-slate-200 bg-white p-2 text-sm">
-                              <McqMathText value={draft.question} asBlock className="text-slate-800" />
-                              {normalizeMcqImageSrc(draft.questionImage?.dataUrl) ? (
-                                <img
-                                  src={normalizeMcqImageSrc(draft.questionImage?.dataUrl)}
-                                  alt="Question preview"
-                                  className="mcq-image"
-                                />
-                              ) : null}
-                            </div>
-                            <div className="space-y-2">
-                              {draft.optionMedia.map((option) => (
-                                <div key={`${item.id}-preview-${option.key}`} className="rounded border border-slate-200 bg-white p-2 text-sm">
-                                  <p className="font-semibold text-slate-700">{option.key}.</p>
-                                  <McqMathText value={option.text} className="text-slate-800" />
-                                  {normalizeMcqImageSrc(option.image?.dataUrl) ? (
-                                    <img
-                                      src={normalizeMcqImageSrc(option.image?.dataUrl)}
-                                      alt={`Option ${option.key} preview`}
-                                      className="option-image"
-                                    />
-                                  ) : null}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-
                           <div className="grid gap-3 md:grid-cols-2">
                             <div className="space-y-1.5">
                               <Label>Correct Answer</Label>
@@ -7293,6 +7307,13 @@ export default function AdminApp() {
                           </div>
 
                           <div className="flex flex-wrap justify-end gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => openBankMcqPreview(draft)}
+                            >
+                              Preview MCQ
+                            </Button>
                             <Button
                               type="button"
                               onClick={() => void saveBankMcqChanges(item.id)}
