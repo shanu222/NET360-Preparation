@@ -3652,6 +3652,40 @@ export default function AdminApp() {
     }
   };
 
+  const fillFieldsFromPastedMcq = () => {
+    const rawText = String(singleMcqInput || '').trim();
+    if (!rawText) {
+      toast.error('Paste MCQ text first, then click Fill the Fields.');
+      return;
+    }
+
+    const hierarchyContext = resolveDocumentHierarchyContext(true);
+    if (!hierarchyContext) return;
+
+    const payload = parseBulkMcqs(rawText);
+    const withSelectedHierarchy = (payload.parsed || []).map((item) => ({
+      ...item,
+      subject: hierarchyContext.subject,
+      part: hierarchyContext.part,
+      chapter: hierarchyContext.chapter,
+      section: hierarchyContext.section,
+      topic: hierarchyContext.topic,
+    }));
+
+    setBulkInput(rawText);
+    setBulkFile(null);
+    setBulkParsed(withSelectedHierarchy.slice(0, 15));
+    setBulkParseErrors(payload.errors || []);
+    setShowParsedPreview(true);
+
+    if (!withSelectedHierarchy.length) {
+      toast.error(payload.errors?.[0] || 'No valid MCQ fields were detected in pasted content.');
+      return;
+    }
+
+    toast.success(`Filled ${Math.min(withSelectedHierarchy.length, 15)} MCQ field(s). You can now Preview Test.`);
+  };
+
   const resolveDocumentHierarchyContext = (showToast = true) => {
     const subject = String(form.subject || '').trim().toLowerCase();
     const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(subject);
@@ -6240,6 +6274,17 @@ export default function AdminApp() {
                                   'Explanation: explanation text',
                                 ].join('\n')}
                               />
+
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={fillFieldsFromPastedMcq}
+                                  disabled={!singleMcqInput.trim()}
+                                >
+                                  Fill the Fields
+                                </Button>
+                              </div>
 
                             </div>
                           </details>
