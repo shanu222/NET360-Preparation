@@ -3791,6 +3791,66 @@ export default function AdminApp() {
     toast.success(`Filled ${limitedParsed.length} MCQ field(s).`);
   };
 
+  const splitPastedMcqImageIntoSegments = async (dataUrl: string) => {
+    const source = String(dataUrl || '').trim();
+    if (!source) return [] as string[];
+
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const node = new Image();
+      node.onload = () => resolve(node);
+      node.onerror = () => reject(new Error('Could not load pasted image for segmentation.'));
+      node.src = source;
+    });
+
+    const totalSegments = 7;
+    const width = image.naturalWidth || image.width;
+    const height = image.naturalHeight || image.height;
+    if (!width || !height) return [];
+
+    const segments: string[] = [];
+    for (let index = 0; index < totalSegments; index += 1) {
+      const startY = Math.floor((height * index) / totalSegments);
+      const endY = Math.floor((height * (index + 1)) / totalSegments);
+      const sliceHeight = Math.max(1, endY - startY);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = sliceHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) continue;
+
+      ctx.drawImage(image, 0, startY, width, sliceHeight, 0, 0, width, sliceHeight);
+      segments.push(canvas.toDataURL('image/png'));
+    }
+
+    return segments;
+  };
+
+  const handlePasteMcqImageSegmentation = async (dataUrl: string) => {
+    try {
+      const segments = await splitPastedMcqImageIntoSegments(dataUrl);
+      if (segments.length < 7) {
+        toast.error('Could not split pasted image into 7 segments. Use a clearer image.');
+        return;
+      }
+
+      const formatted = [
+        `Question: [[img:${segments[0]}]]`,
+        `A. [[img:${segments[1]}]]`,
+        `B. [[img:${segments[2]}]]`,
+        `C. [[img:${segments[3]}]]`,
+        `D. [[img:${segments[4]}]]`,
+        `Correct Answer: [[img:${segments[5]}]]`,
+        `Explanation: [[img:${segments[6]}]]`,
+      ].join('\n');
+
+      setSingleMcqInput(formatted);
+      toast.success('Pasted image segmented into Question, A-D, Correct Answer, and Explanation fields.');
+    } catch {
+      toast.error('Could not process pasted image. Please try again.');
+    }
+  };
+
   const resolveDocumentHierarchyContext = (showToast = true) => {
     const subject = String(form.subject || '').trim().toLowerCase();
     const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(subject);
@@ -6364,6 +6424,10 @@ export default function AdminApp() {
                                 label="Paste MCQ Content"
                                 value={singleMcqInput}
                                 onValueChange={(nextValue) => setSingleMcqInput(nextValue)}
+                                onImagePaste={(dataUrl) => {
+                                  void handlePasteMcqImageSegmentation(dataUrl);
+                                }}
+                                insertImageTokenOnPaste={false}
                                 className="min-h-[170px]"
                                 placeholder={[
                                   'question',
