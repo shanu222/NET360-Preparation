@@ -3509,16 +3509,18 @@ export default function AdminApp() {
     void submitMCQ();
   };
 
-  const analyzeBulkMcqs = async () => {
+  const analyzeBulkMcqs = async (sourceOverride?: { text?: string; file?: File | null }) => {
     if (!authToken) return;
 
-    const hasText = Boolean(bulkInput.trim());
-    if (!hasText && !bulkFile) {
+    const effectiveText = String(sourceOverride?.text ?? bulkInput);
+    const effectiveFile = sourceOverride?.file === undefined ? bulkFile : sourceOverride.file;
+    const hasText = Boolean(effectiveText.trim());
+    if (!hasText && !effectiveFile) {
       toast.error('Paste MCQs or upload a PDF, DOC, DOCX, or TXT file first.');
       return;
     }
 
-    if (bulkFile && bulkFile.size > 8 * 1024 * 1024) {
+    if (effectiveFile && effectiveFile.size > 8 * 1024 * 1024) {
       toast.error('Uploaded file is too large. Maximum size is 8 MB.');
       return;
     }
@@ -3529,8 +3531,8 @@ export default function AdminApp() {
     try {
       setBulkProcessing(true);
       console.info('Admin Analyse by AI started', {
-        hasFile: Boolean(bulkFile),
-        sourceType: bulkFile ? 'file' : 'text',
+        hasFile: Boolean(effectiveFile),
+        sourceType: effectiveFile ? 'file' : 'text',
         subject: hierarchyContext.subject,
         part: hierarchyContext.part,
         chapter: hierarchyContext.chapter,
@@ -3539,10 +3541,10 @@ export default function AdminApp() {
 
       let payload: ParsedBulkResponse;
 
-      if (bulkFile) {
+      if (effectiveFile) {
         const formData = new FormData();
         formData.append('sourceType', 'file');
-        formData.append('file', bulkFile);
+        formData.append('file', effectiveFile);
         payload = await apiRequest<ParsedBulkResponse>('/api/ai/parse-mcqs', {
           method: 'POST',
           body: formData,
@@ -3553,12 +3555,12 @@ export default function AdminApp() {
             method: 'POST',
             body: JSON.stringify({
               sourceType: 'text',
-              rawText: bulkInput,
+              rawText: effectiveText,
             }),
           }, authToken);
         } catch {
           // Fallback keeps local mode usable when backend parser route is unavailable.
-          payload = parseBulkMcqs(bulkInput);
+          payload = parseBulkMcqs(effectiveText);
         }
       }
 
@@ -3677,8 +3679,6 @@ export default function AdminApp() {
     if (!hierarchyContext) return;
 
     try {
-      setBulkProcessing(true);
-
       const imageSource = singleMcqImageFile;
       const rawText = hasText
         ? singleMcqInput
@@ -3692,52 +3692,13 @@ export default function AdminApp() {
         toast.error('Please paste or upload only one MCQ at a time.');
         return;
       }
-
-      let payload: ParsedBulkResponse;
-      try {
-        payload = await apiRequest<ParsedBulkResponse>('/api/ai/parse-mcqs', {
-          method: 'POST',
-          body: JSON.stringify({
-            sourceType: 'text',
-            rawText,
-          }),
-        }, authToken);
-      } catch {
-        payload = parseBulkMcqs(rawText);
-      }
-
-      const withSelectedHierarchy = (payload.parsed || []).map((item) => ({
-        ...item,
-        subject: hierarchyContext.subject,
-        part: hierarchyContext.part,
-        chapter: hierarchyContext.chapter,
-        section: hierarchyContext.section,
-        topic: hierarchyContext.topic,
-      }));
-
-      if (!withSelectedHierarchy.length) {
-        setBulkParseErrors(payload.errors || []);
-        setShowParsedPreview(false);
-        toast.error(payload.errors?.[0] || 'Could not detect valid MCQ format from pasted image or text. Use: question, A/B/C/D, Correct:, Explanation:.');
-        return;
-      }
-
-      if (withSelectedHierarchy.length > 1) {
-        toast.error('Please paste or upload only one MCQ at a time.');
-        return;
-      }
-
+      setSingleMcqInput(rawText);
       setBulkInput(rawText);
       setBulkFile(null);
-      setBulkParsed(withSelectedHierarchy.slice(0, 1));
-      setBulkParseErrors(payload.errors || []);
-      setShowParsedPreview(true);
-      toast.success('Parsed 1 MCQ. Review and upload using the same save flow.');
+      await analyzeBulkMcqs({ text: rawText, file: null });
     } catch (error) {
       console.error('Single MCQ parse failed', error);
       toast.error(error instanceof Error ? error.message : 'Could not parse MCQ. Use format: question, A/B/C/D options, Correct:, Explanation:.');
-    } finally {
-      setBulkProcessing(false);
     }
   };
 
