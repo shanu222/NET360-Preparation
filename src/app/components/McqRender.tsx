@@ -17,15 +17,7 @@ function hasMathDelimiters(value: string) {
 }
 
 const INLINE_IMAGE_TOKEN_REGEX = /\[\[img:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\]\]/gi;
-
-function escapeHtml(value: string) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
+const INLINE_FORMAT_TAG_REGEX = /<(strong|b|em|i)>([\s\S]*?)<\/\s*(strong|b|em|i)\s*>/gi;
 
 function normalizeMathSegment(value: string) {
   const raw = String(value || '');
@@ -54,56 +46,70 @@ export function McqMathText({
 }) {
   const hostRef = useRef<HTMLSpanElement | null>(null);
 
-  const html = useMemo(() => {
+  const segments = useMemo(() => {
     const raw = String(value || '');
-    if (!raw.trim()) return '';
+    if (!raw.trim()) return [] as Array<{ kind: 'text' | 'image' | 'bold' | 'italic'; value: string }>;
 
-    const imagePlaceholders: string[] = [];
-    const withPlaceholders = raw.replace(INLINE_IMAGE_TOKEN_REGEX, (_, tokenSrc: string) => {
-      const normalized = normalizeMcqImageSrc(tokenSrc);
-      if (!normalized || !/^data:image\//i.test(normalized)) return '';
-      const placeholder = `__MCQ_IMG_${imagePlaceholders.length}__`;
-      imagePlaceholders.push(normalized);
-      return placeholder;
-    });
+    const parts: Array<{ kind: 'text' | 'image' | 'bold' | 'italic'; value: string }> = [];
+    const pushRichTextParts = (input: string) => {
+      const plain = String(input || '');
+      if (!plain) return;
 
-    const allowTags = new Set(['strong', 'b', 'em', 'i', 'br']);
+      let formatLastIndex = 0;
+      let formatMatch: RegExpExecArray | null;
+      const formatRegex = new RegExp(INLINE_FORMAT_TAG_REGEX.source, 'gi');
 
-    const sanitizeNode = (node: Node): string => {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const normalized = normalizeMathSegment(String(node.textContent || ''));
-        return escapeHtml(normalized);
+      while ((formatMatch = formatRegex.exec(plain))) {
+        const formatStart = formatMatch.index;
+        if (formatStart > formatLastIndex) {
+          parts.push({ kind: 'text', value: normalizeMathSegment(plain.slice(formatLastIndex, formatStart)) });
+        }
+
+        const openingTag = String(formatMatch[1] || '').toLowerCase();
+        const closingTag = String(formatMatch[3] || '').toLowerCase();
+        if (openingTag !== closingTag) {
+          parts.push({ kind: 'text', value: normalizeMathSegment(formatMatch[0]) });
+        } else {
+          const formatValue = normalizeMathSegment(String(formatMatch[2] || ''));
+          if (formatValue) {
+            parts.push({ kind: openingTag === 'strong' || openingTag === 'b' ? 'bold' : 'italic', value: formatValue });
+          }
+        }
+
+        formatLastIndex = formatRegex.lastIndex;
       }
 
-      if (node.nodeType !== Node.ELEMENT_NODE) return '';
-
-      const element = node as Element;
-      const tag = String(element.tagName || '').toLowerCase();
-
-      if (tag === 'br') return '<br />';
-
-      const body = Array.from(element.childNodes || []).map((child) => sanitizeNode(child)).join('');
-      if (!body) return '';
-
-      if (!allowTags.has(tag)) return body;
-      return `<${tag}>${body}</${tag}>`;
+      if (formatLastIndex < plain.length) {
+        parts.push({ kind: 'text', value: normalizeMathSegment(plain.slice(formatLastIndex)) });
+      }
     };
+    let lastIndex = 0;
+    let match: RegExpExecArray | null;
+    const regex = new RegExp(INLINE_IMAGE_TOKEN_REGEX.source, 'gi');
 
-    let safeHtml = '';
+    while ((match = regex.exec(raw))) {
+      const tokenStart = match.index;
+      if (tokenStart > lastIndex) {
+        pushRichTextParts(raw.slice(lastIndex, tokenStart));
+      }
 
-    if (typeof DOMParser !== 'undefined') {
-      const doc = new DOMParser().parseFromString(`<div>${withPlaceholders}</div>`, 'text/html');
-      const nodes = Array.from(doc.body.firstChild?.childNodes || []);
-      safeHtml = nodes.map((node) => sanitizeNode(node)).join('');
-    } else {
-      safeHtml = escapeHtml(normalizeMathSegment(withPlaceholders));
+      const imageSrc = normalizeMcqImageSrc(match[1]);
+      if (imageSrc) {
+        parts.push({ kind: 'image', value: imageSrc });
+      }
+
+      lastIndex = regex.lastIndex;
     }
 
-    return safeHtml.replace(/__MCQ_IMG_(\d+)__/g, (_match, indexValue: string) => {
-      const src = imagePlaceholders[Number(indexValue)] || '';
-      if (!src) return '';
-      return `<img src="${src}" alt="Embedded MCQ visual" class="mcq-inline-image" />`;
-    });
+    if (lastIndex < raw.length) {
+      pushRichTextParts(raw.slice(lastIndex));
+    }
+
+    if (!parts.length) {
+      return [{ kind: 'text', value: normalizeMathSegment(raw) }];
+    }
+
+    return parts;
   }, [value]);
 
   useEffect(() => {
@@ -115,16 +121,42 @@ export function McqMathText({
     void mathJax.typesetPromise([node]).catch(() => {
       // Keep UI responsive even if MathJax fails on malformed expressions.
     });
-  }, [html]);
+  }, [segments]);
 
-  if (!html) return null;
+  if (!segments.length) return null;
 
   return (
     <span
       ref={hostRef}
       className={`math-content ${asBlock ? 'block' : ''} ${className || ''}`.trim()}
       style={{ whiteSpace: 'pre-wrap' }}
-      dangerouslySetInnerHTML={{ __html: html }}
-    />
+    >
+      {segments.map((segment, index) => {
+        if (segment.kind === 'image') {
+          return (
+            <img
+              key={`math-image-${index}`}
+              src={segment.value}
+              alt={`Embedded MCQ visual ${index + 1}`}
+              className="mcq-inline-image"
+            />
+          );
+        }
+
+        if (!segment.value) return null;
+
+        if (segment.kind === 'bold') {
+          if (!segment.value) return null;
+          return <strong key={`math-bold-${index}`}>{segment.value}</strong>;
+        }
+
+        if (segment.kind === 'italic') {
+          if (!segment.value) return null;
+          return <em key={`math-italic-${index}`}>{segment.value}</em>;
+        }
+
+        return <span key={`math-text-${index}`}>{segment.value}</span>;
+      })}
+    </span>
   );
 }

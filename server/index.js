@@ -1684,57 +1684,6 @@ function buildPdfStructuredHtmlPage(textContent) {
   return lines.join('\n');
 }
 
-function buildStructuredRichTextFromHtml(html) {
-  const source = String(html || '');
-  if (!source.trim()) return '';
-
-  const $ = cheerio.load(source);
-  const blockTags = new Set(['p', 'div', 'li', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'tr', 'td']);
-  const inlineFormattingTags = new Set(['strong', 'b', 'em', 'i']);
-
-  const walk = (node) => {
-    if (!node) return '';
-
-    if (node.type === 'text') {
-      return String(node.data || '').replace(/\u00a0/g, ' ');
-    }
-
-    if (node.type !== 'tag') return '';
-
-    const tag = String(node.name || '').toLowerCase();
-    if (tag === 'br') return '\n';
-
-    if (tag === 'img') {
-      const src = String($(node).attr('src') || '').trim();
-      return /^data:image\//i.test(src) ? ` image: ${src} ` : '';
-    }
-
-    const styleAttr = String($(node).attr('style') || '').toLowerCase();
-    const isStyledBold = /font-weight\s*:\s*(bold|[6-9]00)/i.test(styleAttr);
-    const isStyledItalic = /font-style\s*:\s*(italic|oblique)/i.test(styleAttr);
-
-    let body = (node.children || []).map((child) => walk(child)).join('');
-    if (!body) return '';
-
-    if (inlineFormattingTags.has(tag)) {
-      body = `<${tag}>${body}</${tag}>`;
-    } else {
-      if (isStyledItalic) body = `<em>${body}</em>`;
-      if (isStyledBold) body = `<strong>${body}</strong>`;
-    }
-
-    if (blockTags.has(tag)) {
-      return `\n${body}\n`;
-    }
-
-    return body;
-  };
-
-  const rootNodes = $('body').length ? $('body').contents().toArray() : $.root().contents().toArray();
-  const assembled = rootNodes.map((node) => walk(node)).join('');
-  return normalizeStructuredSourceHtml(assembled);
-}
-
 async function extractTextFromUpload(filePayload) {
   const fileName = String(filePayload?.name || '').trim();
   const extension = path.extname(fileName).toLowerCase();
@@ -1780,7 +1729,68 @@ async function extractTextFromUpload(filePayload) {
         }),
       },
     );
-    return buildStructuredRichTextFromHtml(String(result?.value || ''));
+
+    const $ = cheerio.load(String(result?.value || ''));
+    const chunks = [];
+    const inlineTextTags = new Set(['span', 'strong', 'b', 'em', 'i', 'u', 'sup', 'sub', 'a']);
+    const blockTags = new Set(['p', 'div', 'li', 'ul', 'ol', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'tr', 'td']);
+
+    const pushChunk = (value) => {
+      const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+      if (!normalized) return;
+      chunks.push(normalized);
+    };
+
+    const traverse = (node) => {
+      if (!node) return;
+
+      if (node.type === 'text') {
+        pushChunk(node.data);
+        return;
+      }
+
+      if (node.type !== 'tag') return;
+
+      const tag = String(node.name || '').toLowerCase();
+      const styleAttr = String($(node).attr('style') || '').toLowerCase();
+      const isBoldNode = tag === 'strong' || tag === 'b' || /font-weight\s*:\s*(bold|[6-9]00)/i.test(styleAttr);
+      const isItalicNode = tag === 'em' || tag === 'i' || /font-style\s*:\s*(italic|oblique)/i.test(styleAttr);
+      if (tag === 'img') {
+        const src = String($(node).attr('src') || '').trim();
+        if (/^data:image\//i.test(src)) {
+          chunks.push(`image: ${src}`);
+        }
+        return;
+      }
+
+      if (tag === 'br') {
+        chunks.push('\n');
+        return;
+      }
+
+      if (blockTags.has(tag)) chunks.push('\n');
+      if (isBoldNode) chunks.push('<strong>');
+      if (isItalicNode) chunks.push('<em>');
+
+      const children = node.children || [];
+      for (const child of children) {
+        traverse(child);
+      }
+
+      if (isItalicNode) chunks.push('</em>');
+      if (isBoldNode) chunks.push('</strong>');
+
+      if (blockTags.has(tag) || !inlineTextTags.has(tag)) chunks.push('\n');
+    };
+
+    const rootNodes = $('body').length ? $('body').contents().toArray() : $.root().contents().toArray();
+    rootNodes.forEach((node) => traverse(node));
+
+    const assembled = chunks
+      .join('\n')
+      .replace(/\n{3,}/g, '\n\n');
+
+    return normalizeStructuredSourceHtml(assembled);
   }
 
   if (mimeType.includes('msword') || extension === '.doc') {
