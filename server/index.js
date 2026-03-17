@@ -1450,6 +1450,166 @@ function parseBulkMcqsFromText(raw) {
   const parsed = [];
   let skipped = 0;
 
+  const fallbackParseUsingQuestionAndADOptions = () => {
+    const fallbackParsed = [];
+    const fallbackErrors = [];
+    const lines = text
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    const state = {
+      current: null,
+      activeOptionKey: '',
+      count: 0,
+    };
+
+    const commit = () => {
+      if (!state.current || fallbackParsed.length >= BULK_PARSE_LIMIT) {
+        state.current = null;
+        state.activeOptionKey = '';
+        return;
+      }
+
+      const question = normalizeRichMcqText(state.current.questionLines.join(' '));
+      const orderedOptions = ['A', 'B', 'C', 'D']
+        .map((key) => normalizeRichMcqText(state.current.optionsByKey[key]))
+        .filter(Boolean);
+
+      if (!question || orderedOptions.length < 2) {
+        state.current = null;
+        state.activeOptionKey = '';
+        return;
+      }
+
+      const resolvedAnswer = resolveAnswerToOption(state.current.answerRaw, orderedOptions) || orderedOptions[0];
+      if (!state.current.answerRaw) {
+        fallbackErrors.push(`Q${state.current.number}: answer not detected; defaulted to option A/text-first option.`);
+      }
+
+      fallbackParsed.push({
+        subject: String(state.current.hierarchy.subject || '').trim().toLowerCase(),
+        part: String(state.current.hierarchy.part || '').trim().toLowerCase(),
+        chapter: String(state.current.hierarchy.chapter || '').trim(),
+        section: String(state.current.hierarchy.section || '').trim(),
+        topic: String(state.current.hierarchy.topic || '').trim(),
+        question,
+        questionImageUrl: '',
+        questionImageDataUrl: '',
+        options: orderedOptions,
+        optionImageDataUrls: [],
+        answer: resolvedAnswer,
+        tip: normalizeRichMcqText(state.current.explanationLines.join('\n')),
+        explanationImageDataUrl: '',
+        difficulty: state.current.difficulty,
+      });
+
+      state.current = null;
+      state.activeOptionKey = '';
+    };
+
+    const inlineADRegex = /(?:^|\s)([A-Da-d])[\).:-]\s*([\s\S]*?)(?=(?:\s+[A-Da-d][\).:-]\s*)|$)/g;
+
+    for (const line of lines) {
+      const hierarchyLine = parseHierarchyLine(line);
+      if (hierarchyLine?.key) {
+        if (!state.current) {
+          state.current = {
+            number: state.count + 1,
+            hierarchy: { ...baseHierarchy, [hierarchyLine.key]: hierarchyLine.value },
+            questionLines: [],
+            optionsByKey: { A: '', B: '', C: '', D: '' },
+            answerRaw: '',
+            explanationLines: [],
+            difficulty: 'Medium',
+          };
+        } else {
+          state.current.hierarchy[hierarchyLine.key] = hierarchyLine.value;
+        }
+        continue;
+      }
+
+      const questionMatch = line.match(/^(?:q(?:uestion)?\s*)?(\d{1,3})(?:\s*[\).:-])\s*(.+)$/i);
+      if (questionMatch) {
+        commit();
+        state.count += 1;
+        state.current = {
+          number: state.count,
+          hierarchy: { ...baseHierarchy },
+          questionLines: [String(questionMatch[2] || '').trim()],
+          optionsByKey: { A: '', B: '', C: '', D: '' },
+          answerRaw: '',
+          explanationLines: [],
+          difficulty: 'Medium',
+        };
+        continue;
+      }
+
+      if (!state.current) {
+        continue;
+      }
+
+      const answerMatch = line.match(/^(?:correct\s*answer|correct\s*option|correct|answer|ans(?:wer)?\.?)\s*[:=-]\s*(.+)$/i);
+      if (answerMatch) {
+        state.current.answerRaw = String(answerMatch[1] || '').trim();
+        state.activeOptionKey = '';
+        continue;
+      }
+
+      const difficultyMatch = line.match(/^(?:difficulty|level)\s*[:=-]\s*(easy|medium|hard)$/i);
+      if (difficultyMatch) {
+        state.current.difficulty = normalizeDifficulty(difficultyMatch[1]);
+        continue;
+      }
+
+      const explanationMatch = line.match(/^(?:explanation|solution|reason|short\s*trick|tip)\s*[:=-]?\s*(.*)$/i);
+      if (explanationMatch) {
+        const detail = String(explanationMatch[1] || '').trim();
+        if (detail) state.current.explanationLines.push(detail);
+        state.activeOptionKey = '';
+        continue;
+      }
+
+      const singleOptionMatch = line.match(/^(?:option\s*)?([A-Da-d])[\).:-]\s*(.+)$/i);
+      if (singleOptionMatch) {
+        const key = String(singleOptionMatch[1] || '').toUpperCase();
+        state.current.optionsByKey[key] = String(singleOptionMatch[2] || '').trim();
+        state.activeOptionKey = key;
+        continue;
+      }
+
+      const inlineOptions = [];
+      inlineADRegex.lastIndex = 0;
+      let inlineMatch;
+      while ((inlineMatch = inlineADRegex.exec(line)) !== null) {
+        inlineOptions.push({ key: String(inlineMatch[1] || '').toUpperCase(), text: String(inlineMatch[2] || '').trim() });
+      }
+      if (inlineOptions.length >= 2) {
+        inlineOptions.forEach((item) => {
+          if (['A', 'B', 'C', 'D'].includes(item.key) && item.text) {
+            state.current.optionsByKey[item.key] = item.text;
+          }
+        });
+        state.activeOptionKey = '';
+        continue;
+      }
+
+      if (state.activeOptionKey && state.current.optionsByKey[state.activeOptionKey]) {
+        state.current.optionsByKey[state.activeOptionKey] = `${state.current.optionsByKey[state.activeOptionKey]} ${line}`.trim();
+      } else {
+        state.current.questionLines.push(line);
+      }
+    }
+
+    commit();
+
+    if (fallbackParsed.length === 0) {
+      fallbackErrors.push('Fallback parser could not detect question/option patterns (A-D).');
+    }
+
+    return { fallbackParsed, fallbackErrors };
+  };
+
   blocks.forEach((block) => {
     if (parsed.length >= BULK_PARSE_LIMIT) return;
 
@@ -1601,6 +1761,17 @@ function parseBulkMcqsFromText(raw) {
   }
   if (skipped > 0) {
     errors.push(`Skipped ${skipped} unclear block(s) and continued parsing the rest.`);
+  }
+
+  if (!parsed.length) {
+    const fallback = fallbackParseUsingQuestionAndADOptions();
+    if (fallback.fallbackParsed.length) {
+      return {
+        parsed: fallback.fallbackParsed,
+        errors: [...errors, ...fallback.fallbackErrors, 'Primary parser missed MCQs; fallback parser was used.'],
+      };
+    }
+    return { parsed, errors: [...errors, ...fallback.fallbackErrors] };
   }
 
   return { parsed, errors };
