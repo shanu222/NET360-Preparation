@@ -3659,31 +3659,9 @@ export default function AdminApp() {
       return;
     }
 
-    const hierarchyContext = resolveDocumentHierarchyContext(true);
-    if (!hierarchyContext) return;
-
-    const payload = parseBulkMcqs(rawText);
-    const withSelectedHierarchy = (payload.parsed || []).map((item) => ({
-      ...item,
-      subject: hierarchyContext.subject,
-      part: hierarchyContext.part,
-      chapter: hierarchyContext.chapter,
-      section: hierarchyContext.section,
-      topic: hierarchyContext.topic,
-    }));
-
     setBulkInput(rawText);
     setBulkFile(null);
-    setBulkParsed(withSelectedHierarchy.slice(0, 15));
-    setBulkParseErrors(payload.errors || []);
-    setShowParsedPreview(true);
-
-    if (!withSelectedHierarchy.length) {
-      toast.error(payload.errors?.[0] || 'No valid MCQ fields were detected in pasted content.');
-      return;
-    }
-
-    toast.success(`Filled ${Math.min(withSelectedHierarchy.length, 15)} MCQ field(s). You can now Preview Test.`);
+    void analyzeBulkMcqs({ text: rawText, file: null });
   };
 
   const resolveDocumentHierarchyContext = (showToast = true) => {
