@@ -3625,9 +3625,125 @@ export default function AdminApp() {
       return;
     }
 
-    setBulkInput(rawText);
+    const normalizePastedMcqText = (value: string) => {
+      let normalized = String(value || '')
+        .replace(/\r\n/g, '\n')
+        .replace(/\u00a0/g, ' ')
+        .replace(/Correctanswer/gi, 'Correct answer')
+        .replace(/Correctans?wer/gi, 'Correct answer')
+        .replace(/Explanation\s*:/gi, 'Explanation:')
+        .replace(/([A-Da-d][\).:])(?=\S)/g, '$1 ')
+        .replace(/(^|\s)([A-Da-d])(?=\d)/g, '$1$2. ')
+        .replace(/\s+(Correct\s*answer\s*[:=-])/gi, '\n$1')
+        .replace(/\s+(Explanation\s*[:=-])/gi, '\n$1')
+        .replace(/\s+(Ans(?:wer)?\s*[:=-])/gi, '\n$1')
+        .replace(/\s{2,}/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+
+      normalized = normalized.replace(/([^\n])\s+((?:Option\s*)?[A-Da-d][\).:])\s*/g, '$1\n$2 ');
+      return normalized;
+    };
+
+    const fallbackExtractMcq = (value: string): ParsedBulkMcq | null => {
+      const text = String(value || '').trim();
+      if (!text) return null;
+
+      const optionRegex = /(?:^|\n)\s*(?:Option\s*)?([A-Da-d])[\).:\-]\s*(.*?)(?=(?:\n\s*(?:Option\s*)?[A-Da-d][\).:\-]\s*)|\n\s*(?:Correct\s*answer|Answer|Explanation)\b|$)/gis;
+      const optionsByKey: Record<string, string> = {};
+      let optionMatch: RegExpExecArray | null;
+      while ((optionMatch = optionRegex.exec(text)) !== null) {
+        const key = String(optionMatch[1] || '').toUpperCase();
+        const body = String(optionMatch[2] || '').trim();
+        if (key && body) optionsByKey[key] = body;
+      }
+
+      const orderedKeys = ['A', 'B', 'C', 'D'];
+      const options = orderedKeys.map((key) => optionsByKey[key]).filter(Boolean);
+      const firstOptionIndex = text.search(/(?:^|\n)\s*(?:Option\s*)?[A-Da-d][\).:\-]\s*/i);
+      const answerMatch = text.match(/(?:^|\n)\s*(?:Correct\s*answer|Answer|Ans(?:wer)?)\s*[:=-]\s*(.+?)(?:\n|$)/i);
+      const explanationMatch = text.match(/(?:^|\n)\s*Explanation\s*[:=-]\s*([\s\S]*)$/i);
+
+      const question = String(
+        firstOptionIndex >= 0 ? text.slice(0, firstOptionIndex) : text,
+      )
+        .replace(/(?:^|\n)\s*Question\s*[:=-]?\s*/i, '')
+        .trim();
+
+      let answer = String(answerMatch?.[1] || '').trim();
+      if (answer) {
+        const letter = answer.match(/^([A-Da-d])\b/);
+        const number = answer.match(/^(\d)\b/);
+        if (letter) {
+          const idx = letter[1].toUpperCase().charCodeAt(0) - 65;
+          answer = options[idx] || letter[1].toUpperCase();
+        } else if (number) {
+          const idx = Number(number[1]) - 1;
+          answer = options[idx] || answer;
+        } else {
+          const normalizedAnswer = answer.toLowerCase();
+          const byText = options.find((opt) => String(opt || '').trim().toLowerCase() === normalizedAnswer);
+          if (byText) answer = byText;
+        }
+      }
+
+      const tip = String(explanationMatch?.[1] || '').trim();
+      if (!question || options.length < 2 || !answer) return null;
+
+      return {
+        question,
+        questionImageUrl: '',
+        questionImageDataUrl: '',
+        options,
+        optionImageDataUrls: [],
+        answer,
+        tip,
+        shortTrick: '',
+        explanationImageDataUrl: '',
+        difficulty: 'Medium',
+      };
+    };
+
+    const cleanedText = normalizePastedMcqText(rawText);
+    setSingleMcqInput(cleanedText);
+    setBulkInput(cleanedText);
     setBulkFile(null);
-    void analyzeBulkMcqs({ text: rawText, file: null });
+
+    const hierarchyContext = resolveDocumentHierarchyContext(true);
+    if (!hierarchyContext) return;
+
+    const parsedPayload = parseBulkMcqs(cleanedText);
+    let parsedRows = parsedPayload.parsed || [];
+    let errors = [...(parsedPayload.errors || [])];
+
+    if (!parsedRows.length) {
+      const fallbackRow = fallbackExtractMcq(cleanedText);
+      if (fallbackRow) {
+        parsedRows = [fallbackRow];
+        errors = ['Used fallback extraction due to OCR formatting issues.', ...errors];
+      }
+    }
+
+    const withSelectedHierarchy = parsedRows.map((item) => ({
+      ...item,
+      subject: hierarchyContext.subject,
+      part: hierarchyContext.part,
+      chapter: hierarchyContext.chapter,
+      section: hierarchyContext.section,
+      topic: hierarchyContext.topic,
+    }));
+
+    const limitedParsed = withSelectedHierarchy.slice(0, 15);
+    setBulkParsed(limitedParsed);
+    setBulkParseErrors(errors);
+    setShowParsedPreview(Boolean(limitedParsed.length));
+
+    if (!limitedParsed.length) {
+      toast.error(errors[0] || 'Could not detect complete MCQ fields from pasted content.');
+      return;
+    }
+
+    toast.success(`Filled ${limitedParsed.length} MCQ field(s).`);
   };
 
   const resolveDocumentHierarchyContext = (showToast = true) => {
