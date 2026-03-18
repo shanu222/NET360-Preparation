@@ -3630,38 +3630,56 @@ export default function AdminApp() {
 
   const fillFieldsFromPastedMcq = () => {
     const editor = document.getElementById('paste-single-mcq-input') as HTMLElement | null;
-    const htmlSources: string[] = [];
+    const htmlCandidates = [
+      String(editor?.innerHTML || '').trim(),
+      String(editor?.shadowRoot?.innerHTML || '').trim(),
+    ].filter(Boolean);
 
-    const collectImagesFromRoot = (root: ParentNode | null) => {
-      if (!root) return;
-      const images = Array.from(root.querySelectorAll('img')) as HTMLImageElement[];
-      images.forEach((image) => {
-        const src = String(image.getAttribute('src') || image.src || '').trim();
-        if (src) htmlSources.push(src);
-      });
-    };
+    if (!htmlCandidates.length) {
+      toast.error('No editable HTML content found in the Paste MCQ editor.');
+      return;
+    }
 
-    collectImagesFromRoot(editor);
-    collectImagesFromRoot(editor?.shadowRoot || null);
+    const labelMatchers: Array<{ key: string; pattern: string }> = [
+      { key: 'question', pattern: 'question' },
+      { key: 'optionA', pattern: 'option\\s*a|optiona' },
+      { key: 'optionB', pattern: 'option\\s*b|optionb' },
+      { key: 'optionC', pattern: 'option\\s*c|optionc' },
+      { key: 'optionD', pattern: 'option\\s*d|optiond' },
+      { key: 'correctAnswer', pattern: 'correct\\s*answer|correctanswer' },
+      { key: 'explanation', pattern: 'explanation' },
+    ];
 
-    if (!htmlSources.length && editor) {
-      const editorHtml = String(editor.innerHTML || '').trim();
-      if (editorHtml && typeof DOMParser !== 'undefined') {
-        const doc = new DOMParser().parseFromString(editorHtml, 'text/html');
-        collectImagesFromRoot(doc);
+    const mappedByLabel: Record<string, string> = {};
+    for (const html of htmlCandidates) {
+      for (const matcher of labelMatchers) {
+        if (mappedByLabel[matcher.key]) continue;
+        const regex = new RegExp(`(?:^|>|\\n)\\s*(?:${matcher.pattern})\\s*:?\\s*(?:<[^>]+>\\s*)*<img[^>]*?src=["']([^"']+)["'][^>]*>`, 'i');
+        const match = html.match(regex);
+        const src = String(match?.[1] || '').trim();
+        if (src) {
+          mappedByLabel[matcher.key] = src;
+        }
       }
     }
 
-    if (!htmlSources.length) {
-      toast.error('No pasted image segments found in the Paste MCQ editor.');
+    const missing = labelMatchers
+      .filter((item) => !mappedByLabel[item.key])
+      .map((item) => item.key);
+    if (missing.length) {
+      toast.error(`Missing labeled image segment(s): ${missing.join(', ')}.`);
       return;
     }
 
-    const mappedSources = htmlSources.slice(0, 7);
-    if (mappedSources.length < 7) {
-      toast.error('Found fewer than 7 image segments. Paste a segmented MCQ image first.');
-      return;
-    }
+    const mappedSources = [
+      mappedByLabel.question,
+      mappedByLabel.optionA,
+      mappedByLabel.optionB,
+      mappedByLabel.optionC,
+      mappedByLabel.optionD,
+      mappedByLabel.correctAnswer,
+      mappedByLabel.explanation,
+    ];
 
     const questionImage = parsedDataUrlToImage(mappedSources[0], 'question-image');
     const optionImages = [1, 2, 3, 4].map((idx) => parsedDataUrlToImage(mappedSources[idx], `option-${idx}-image`));
