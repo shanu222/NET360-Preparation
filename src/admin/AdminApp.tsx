@@ -3806,65 +3806,64 @@ export default function AdminApp() {
     const height = image.naturalHeight || image.height;
     if (!width || !height) return [];
 
-    const fullCanvas = document.createElement('canvas');
-    fullCanvas.width = width;
-    fullCanvas.height = height;
-    const fullCtx = fullCanvas.getContext('2d');
-    if (!fullCtx) return [];
-    fullCtx.drawImage(image, 0, 0, width, height);
+    const sourceCanvas = document.createElement('canvas');
+    sourceCanvas.width = width;
+    sourceCanvas.height = height;
+    const sourceCtx = sourceCanvas.getContext('2d');
+    if (!sourceCtx) return [];
 
-    const pixelData = fullCtx.getImageData(0, 0, width, height).data;
-    const rowInkThreshold = Math.max(2, Math.floor(width * 0.003));
-    const textRows: boolean[] = new Array(height).fill(false);
+    sourceCtx.drawImage(image, 0, 0, width, height);
+    const { data } = sourceCtx.getImageData(0, 0, width, height);
 
+    const rowInk = new Array<number>(height).fill(0);
     for (let y = 0; y < height; y += 1) {
-      let darkPixels = 0;
+      let inkCount = 0;
       const rowOffset = y * width * 4;
       for (let x = 0; x < width; x += 1) {
-        const offset = rowOffset + (x * 4);
-        const r = pixelData[offset];
-        const g = pixelData[offset + 1];
-        const b = pixelData[offset + 2];
-        const a = pixelData[offset + 3];
-        if (a < 10) continue;
-        const luminance = (0.299 * r) + (0.587 * g) + (0.114 * b);
-        if (luminance < 245) {
-          darkPixels += 1;
-          if (darkPixels >= rowInkThreshold) {
-            textRows[y] = true;
-            break;
-          }
+        const idx = rowOffset + (x * 4);
+        const r = data[idx];
+        const g = data[idx + 1];
+        const b = data[idx + 2];
+        const a = data[idx + 3];
+        const intensity = (r + g + b) / 3;
+        if (a > 10 && intensity < 245) {
+          inkCount += 1;
         }
       }
+      rowInk[y] = inkCount;
     }
 
-    const rowRanges: Array<{ startY: number; endY: number }> = [];
-    const minRowHeight = Math.max(2, Math.floor(height * 0.005));
-    let runStart = -1;
+    const minInkPixels = Math.max(2, Math.floor(width * 0.01));
+    const rowActive = rowInk.map((count) => count >= minInkPixels);
+
+    const rowRanges: Array<{ start: number; end: number }> = [];
+    let start = -1;
     for (let y = 0; y < height; y += 1) {
-      if (textRows[y] && runStart < 0) {
-        runStart = y;
+      if (rowActive[y] && start < 0) {
+        start = y;
       }
-      const isRunEnd = runStart >= 0 && (!textRows[y] || y === height - 1);
-      if (isRunEnd) {
-        const runEnd = textRows[y] && y === height - 1 ? y : y - 1;
-        if (runEnd - runStart + 1 >= minRowHeight) {
-          rowRanges.push({ startY: runStart, endY: runEnd });
-        }
-        runStart = -1;
+      if (!rowActive[y] && start >= 0) {
+        rowRanges.push({ start, end: y - 1 });
+        start = -1;
       }
+    }
+    if (start >= 0) {
+      rowRanges.push({ start, end: height - 1 });
     }
 
     if (!rowRanges.length) return [];
 
-    const padding = Math.max(2, Math.floor(height * 0.003));
-    const firstSeven = rowRanges.slice(0, 7);
+    const padding = 2;
+    const croppedRanges = rowRanges.map((range) => ({
+      start: Math.max(0, range.start - padding),
+      end: Math.min(height - 1, range.end + padding),
+    }));
 
     const segments: string[] = [];
-    for (const range of firstSeven) {
-      const startY = Math.max(0, range.startY - padding);
-      const endY = Math.min(height, range.endY + padding + 1);
-      const sliceHeight = Math.max(1, endY - startY);
+    for (let index = 0; index < croppedRanges.length; index += 1) {
+      const startY = croppedRanges[index].start;
+      const endY = croppedRanges[index].end;
+      const sliceHeight = Math.max(1, (endY - startY) + 1);
 
       const canvas = document.createElement('canvas');
       canvas.width = width;
@@ -3872,7 +3871,7 @@ export default function AdminApp() {
       const ctx = canvas.getContext('2d');
       if (!ctx) continue;
 
-      ctx.drawImage(image, 0, startY, width, sliceHeight, 0, 0, width, sliceHeight);
+      ctx.drawImage(sourceCanvas, 0, startY, width, sliceHeight, 0, 0, width, sliceHeight);
       segments.push(canvas.toDataURL('image/png'));
     }
 
