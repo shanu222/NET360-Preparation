@@ -3802,15 +3802,68 @@ export default function AdminApp() {
       node.src = source;
     });
 
-    const totalSegments = 7;
     const width = image.naturalWidth || image.width;
     const height = image.naturalHeight || image.height;
     if (!width || !height) return [];
 
+    const fullCanvas = document.createElement('canvas');
+    fullCanvas.width = width;
+    fullCanvas.height = height;
+    const fullCtx = fullCanvas.getContext('2d');
+    if (!fullCtx) return [];
+    fullCtx.drawImage(image, 0, 0, width, height);
+
+    const pixelData = fullCtx.getImageData(0, 0, width, height).data;
+    const rowInkThreshold = Math.max(2, Math.floor(width * 0.003));
+    const textRows: boolean[] = new Array(height).fill(false);
+
+    for (let y = 0; y < height; y += 1) {
+      let darkPixels = 0;
+      const rowOffset = y * width * 4;
+      for (let x = 0; x < width; x += 1) {
+        const offset = rowOffset + (x * 4);
+        const r = pixelData[offset];
+        const g = pixelData[offset + 1];
+        const b = pixelData[offset + 2];
+        const a = pixelData[offset + 3];
+        if (a < 10) continue;
+        const luminance = (0.299 * r) + (0.587 * g) + (0.114 * b);
+        if (luminance < 245) {
+          darkPixels += 1;
+          if (darkPixels >= rowInkThreshold) {
+            textRows[y] = true;
+            break;
+          }
+        }
+      }
+    }
+
+    const rowRanges: Array<{ startY: number; endY: number }> = [];
+    const minRowHeight = Math.max(2, Math.floor(height * 0.005));
+    let runStart = -1;
+    for (let y = 0; y < height; y += 1) {
+      if (textRows[y] && runStart < 0) {
+        runStart = y;
+      }
+      const isRunEnd = runStart >= 0 && (!textRows[y] || y === height - 1);
+      if (isRunEnd) {
+        const runEnd = textRows[y] && y === height - 1 ? y : y - 1;
+        if (runEnd - runStart + 1 >= minRowHeight) {
+          rowRanges.push({ startY: runStart, endY: runEnd });
+        }
+        runStart = -1;
+      }
+    }
+
+    if (!rowRanges.length) return [];
+
+    const padding = Math.max(2, Math.floor(height * 0.003));
+    const firstSeven = rowRanges.slice(0, 7);
+
     const segments: string[] = [];
-    for (let index = 0; index < totalSegments; index += 1) {
-      const startY = Math.floor((height * index) / totalSegments);
-      const endY = Math.floor((height * (index + 1)) / totalSegments);
+    for (const range of firstSeven) {
+      const startY = Math.max(0, range.startY - padding);
+      const endY = Math.min(height, range.endY + padding + 1);
       const sliceHeight = Math.max(1, endY - startY);
 
       const canvas = document.createElement('canvas');
@@ -3835,13 +3888,13 @@ export default function AdminApp() {
       }
 
       const formatted = [
-        `Question: ${segments[0]}`,
-        `OptionA: ${segments[1]}`,
-        `OptionB: ${segments[2]}`,
-        `OptionC: ${segments[3]}`,
-        `OptionD: ${segments[4]}`,
-        `Correct Answer: ${segments[5]}`,
-        `Explanation: ${segments[6]}`,
+        `Question: <img src="${segments[0]}" />`,
+        `OptionA: <img src="${segments[1]}" />`,
+        `OptionB: <img src="${segments[2]}" />`,
+        `OptionC: <img src="${segments[3]}" />`,
+        `OptionD: <img src="${segments[4]}" />`,
+        `Correct Answer: <img src="${segments[5]}" />`,
+        `Explanation: <img src="${segments[6]}" />`,
       ].join('\n');
 
       setSingleMcqInput(formatted);
