@@ -257,6 +257,7 @@ function MathEditorField({
   onValueChange,
   onImagePaste,
   insertImageTokenOnPaste,
+  onPasteIntercept,
 }: {
   id: string;
   label: string;
@@ -266,6 +267,7 @@ function MathEditorField({
   onValueChange: (nextValue: string) => void;
   onImagePaste?: (dataUrl: string) => void;
   insertImageTokenOnPaste?: boolean;
+  onPasteIntercept?: (event: ClipboardDataEvent) => boolean;
 }) {
   return (
     <div className="space-y-1.5">
@@ -300,6 +302,7 @@ function MathEditorField({
         onValueChange={onValueChange}
         onImagePaste={onImagePaste}
         insertImageTokenOnPaste={insertImageTokenOnPaste}
+        onPasteIntercept={onPasteIntercept}
       />
     </div>
   );
@@ -313,6 +316,7 @@ function MathLiveInput({
   onValueChange,
   onImagePaste,
   insertImageTokenOnPaste,
+  onPasteIntercept,
 }: {
   id: string;
   value: string;
@@ -321,6 +325,7 @@ function MathLiveInput({
   onValueChange: (nextValue: string) => void;
   onImagePaste?: (dataUrl: string) => void;
   insertImageTokenOnPaste?: boolean;
+  onPasteIntercept?: (event: ClipboardDataEvent) => boolean;
 }) {
   const fieldRef = useRef<MathFieldLikeElement | null>(null);
 
@@ -334,6 +339,10 @@ function MathLiveInput({
 
     const handlePaste = (event: Event) => {
       const clipboardEvent = event as unknown as ClipboardDataEvent;
+      if (onPasteIntercept?.(clipboardEvent)) {
+        return;
+      }
+
       const richText = extractRichBoldTextFromClipboard(clipboardEvent);
       if (richText) {
         clipboardEvent.preventDefault();
@@ -366,7 +375,7 @@ function MathLiveInput({
       field.removeEventListener('input', handleInput);
       field.removeEventListener('paste', handlePaste);
     };
-  }, [id, insertImageTokenOnPaste, onImagePaste, onValueChange]);
+  }, [id, insertImageTokenOnPaste, onImagePaste, onPasteIntercept, onValueChange]);
 
   useEffect(() => {
     const field = fieldRef.current;
@@ -3896,11 +3905,35 @@ export default function AdminApp() {
         `Explanation: <img src="${segments[6]}" />`,
       ].join('\n');
 
-      setSingleMcqInput(formatted);
+      setSingleMcqInput((previousValue) => {
+        const existing = String(previousValue || '').trimEnd();
+        return existing ? `${existing}\n${formatted}` : formatted;
+      });
       toast.success('Pasted image segmented into Question, A-D, Correct Answer, and Explanation fields.');
     } catch {
       toast.error('Could not process pasted image. Please try again.');
     }
+  };
+
+  const handlePasteMcqEditorPasteIntercept = (event: ClipboardDataEvent) => {
+    const hasImageClipboardItem = Array.from(event.clipboardData?.items || []).some((item) =>
+      String(item.type || '').toLowerCase().startsWith('image/'),
+    );
+    if (!hasImageClipboardItem) return false;
+
+    // Block direct image insertion so only segmented, labeled lines are inserted.
+    event.preventDefault();
+
+    void extractPastedImageDataUrl(event)
+      .then((dataUrl) => {
+        if (!dataUrl) return;
+        void handlePasteMcqImageSegmentation(dataUrl);
+      })
+      .catch(() => {
+        toast.error('Could not process pasted image. Please try again.');
+      });
+
+    return true;
   };
 
   const resolveDocumentHierarchyContext = (showToast = true) => {
@@ -6476,9 +6509,7 @@ export default function AdminApp() {
                                 label="Paste MCQ Content"
                                 value={singleMcqInput}
                                 onValueChange={(nextValue) => setSingleMcqInput(nextValue)}
-                                onImagePaste={(dataUrl) => {
-                                  void handlePasteMcqImageSegmentation(dataUrl);
-                                }}
+                                onPasteIntercept={handlePasteMcqEditorPasteIntercept}
                                 insertImageTokenOnPaste={false}
                                 className="min-h-[170px]"
                                 placeholder={[
