@@ -3630,10 +3630,16 @@ export default function AdminApp() {
 
   const fillFieldsFromPastedMcq = () => {
     const editor = document.getElementById('paste-single-mcq-input') as HTMLElement | null;
+    const normalizePastedEditorHtml = (value: string) => String(value || '')
+      .replace(/<\s*imgsrc\b/gi, '<img src')
+      .replace(/\bimgsrc\s*=/gi, 'img src=');
+
     const htmlCandidates = [
       String(editor?.innerHTML || '').trim(),
       String(editor?.shadowRoot?.innerHTML || '').trim(),
-    ].filter(Boolean);
+    ]
+      .map((html) => normalizePastedEditorHtml(html).trim())
+      .filter(Boolean);
 
     if (!htmlCandidates.length) {
       toast.error('No editable HTML content found in the Paste MCQ editor.');
