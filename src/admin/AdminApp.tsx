@@ -1605,6 +1605,7 @@ export default function AdminApp() {
   const [bulkInput, setBulkInput] = useState('');
   const [bulkFile, setBulkFile] = useState<File | null>(null);
   const [singleMcqInput, setSingleMcqInput] = useState('');
+  const [pasteMcqCorrectAnswerImage, setPasteMcqCorrectAnswerImage] = useState<AdminMcqImageFile | null>(null);
   const [bulkParsed, setBulkParsed] = useState<ParsedBulkMcq[]>([]);
   const [showParsedPreview, setShowParsedPreview] = useState(false);
   const [bulkParseErrors, setBulkParseErrors] = useState<string[]>([]);
@@ -3628,176 +3629,117 @@ export default function AdminApp() {
   };
 
   const fillFieldsFromPastedMcq = () => {
-    const rawText = String(singleMcqInput || '').trim();
-    if (!rawText) {
-      toast.error('Paste MCQ text first, then click Fill the Fields.');
+    const editor = document.getElementById('paste-single-mcq-input') as HTMLElement | null;
+    const htmlSources: string[] = [];
+
+    const collectImagesFromRoot = (root: ParentNode | null) => {
+      if (!root) return;
+      const images = Array.from(root.querySelectorAll('img')) as HTMLImageElement[];
+      images.forEach((image) => {
+        const src = String(image.getAttribute('src') || image.src || '').trim();
+        if (src) htmlSources.push(src);
+      });
+    };
+
+    collectImagesFromRoot(editor);
+    collectImagesFromRoot(editor?.shadowRoot || null);
+
+    if (!htmlSources.length && editor) {
+      const editorHtml = String(editor.innerHTML || '').trim();
+      if (editorHtml && typeof DOMParser !== 'undefined') {
+        const doc = new DOMParser().parseFromString(editorHtml, 'text/html');
+        collectImagesFromRoot(doc);
+      }
+    }
+
+    if (!htmlSources.length) {
+      toast.error('No pasted image segments found in the Paste MCQ editor.');
       return;
     }
 
-    const normalizePastedMcqText = (value: string) => String(value || '')
-      .replace(/\r\n/g, '\n')
-      .replace(/\u00a0/g, ' ')
-      .replace(/Correctanswer/gi, 'Correct answer')
-      .replace(/Correctans?wer/gi, 'Correct answer')
-      .replace(/Explanation\s*:/gi, 'Explanation:')
-      .replace(/([A-Da-d][\).:])(?=\S)/g, '$1 ')
-      .replace(/(^|\s)([A-Da-d])(?=\d)/g, '$1$2. ')
-      .replace(/\s+(Correct\s*answer\s*[:=-])/gi, '\n$1')
-      .replace(/\s+(Explanation\s*[:=-])/gi, '\n$1')
-      .replace(/\s+(Ans(?:wer)?\s*[:=-])/gi, '\n$1')
-      .replace(/([^\n])\s+((?:Option\s*)?[A-Da-d][\).:])\s*/g, '$1\n$2 ')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim();
+    const mappedSources = htmlSources.slice(0, 7);
+    if (mappedSources.length < 7) {
+      toast.error('Found fewer than 7 image segments. Paste a segmented MCQ image first.');
+      return;
+    }
 
-    const parseAnswerToken = (answerText: string, options: string[]) => {
-      const raw = String(answerText || '').trim();
-      if (!raw) return '';
-      const letter = raw.match(/^([A-Da-d])\b/);
-      if (letter) {
-        const idx = letter[1].toUpperCase().charCodeAt(0) - 65;
-        return options[idx] || letter[1].toUpperCase();
-      }
-      const number = raw.match(/^(\d)\b/);
-      if (number) {
-        const idx = Number(number[1]) - 1;
-        return options[idx] || raw;
-      }
-      const byText = options.find((opt) => String(opt || '').trim().toLowerCase() === raw.toLowerCase());
-      return byText || raw;
-    };
+    const questionImage = parsedDataUrlToImage(mappedSources[0], 'question-image');
+    const optionImages = [1, 2, 3, 4].map((idx) => parsedDataUrlToImage(mappedSources[idx], `option-${idx}-image`));
+    const correctAnswerImage = parsedDataUrlToImage(mappedSources[5], 'correct-answer-image');
+    const explanationImage = parsedDataUrlToImage(mappedSources[6], 'explanation-image');
 
-    const extractWithLabels = (value: string): ParsedBulkMcq | null => {
-      const text = String(value || '').trim();
-      if (!text) return null;
+    if (!questionImage || optionImages.some((image) => !image) || !correctAnswerImage || !explanationImage) {
+      toast.error('Could not map one or more pasted image segments. Ensure images are valid data URLs.');
+      return;
+    }
 
-      const optionRegex = /(?:^|\n)\s*(?:Option\s*)?([A-Da-d])[\).:\-]\s*(.*?)(?=(?:\n\s*(?:Option\s*)?[A-Da-d][\).:\-]\s*)|\n\s*(?:Correct\s*answer|Answer|Explanation)\b|$)/gis;
-      const optionsByKey: Record<string, string> = {};
-      let optionMatch: RegExpExecArray | null;
-      while ((optionMatch = optionRegex.exec(text)) !== null) {
-        const key = String(optionMatch[1] || '').toUpperCase();
-        const body = String(optionMatch[2] || '').trim();
-        if (key && body) optionsByKey[key] = body;
+    setPasteMcqCorrectAnswerImage(correctAnswerImage);
+
+    setForm((previous) => {
+      const optionMedia = [...previous.optionMedia];
+      while (optionMedia.length < 4) {
+        const nextKey = String.fromCharCode(65 + optionMedia.length);
+        optionMedia.push({ key: nextKey, text: '', image: null });
       }
 
-      const options = ['A', 'B', 'C', 'D'].map((key) => optionsByKey[key]).filter(Boolean);
-      const firstOptionIndex = text.search(/(?:^|\n)\s*(?:Option\s*)?[A-Da-d][\).:\-]\s*/i);
-      const question = String(firstOptionIndex >= 0 ? text.slice(0, firstOptionIndex) : '')
-        .replace(/(?:^|\n)\s*Question\s*[:=-]?\s*/i, '')
-        .trim();
-      const answerText = String(text.match(/(?:^|\n)\s*(?:Correct\s*answer|Answer|Ans(?:wer)?)\s*[:=-]\s*(.+?)(?:\n|$)/i)?.[1] || '').trim();
-      const answer = parseAnswerToken(answerText, options);
-      const tip = String(text.match(/(?:^|\n)\s*Explanation\s*[:=-]\s*([\s\S]*)$/i)?.[1] || '').trim();
+      for (let index = 0; index < 4; index += 1) {
+        optionMedia[index] = {
+          ...optionMedia[index],
+          text: '',
+          image: optionImages[index],
+        };
+      }
 
-      if (!question || options.length < 3 || !answer) return null;
+      const optionTypes = [...previous.optionTypes];
+      while (optionTypes.length < optionMedia.length) {
+        optionTypes.push('text');
+      }
+      for (let index = 0; index < 4; index += 1) {
+        optionTypes[index] = 'image';
+      }
+
       return {
-        question,
-        questionImageUrl: '',
-        questionImageDataUrl: '',
-        options,
-        optionImageDataUrls: [],
-        answer,
-        tip,
-        shortTrick: '',
-        explanationImageDataUrl: '',
-        difficulty: 'Medium',
+        ...previous,
+        questionType: 'image',
+        question: '',
+        questionImage,
+        optionMedia,
+        optionTypes,
+        answer: previous.answer || 'A',
+        explanationText: '',
+        explanationImage,
       };
-    };
+    });
 
-    const extractWithHeuristics = (value: string): ParsedBulkMcq | null => {
-      const lines = String(value || '')
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean);
-      if (!lines.length) return null;
-
-      const optionLineRe = /^(?:Option\s*)?([A-Da-d])[\).:\-]?\s*(.*)$/i;
-      const firstOptionIndex = lines.findIndex((line) => optionLineRe.test(line));
-      const questionLines = firstOptionIndex > 0 ? lines.slice(0, firstOptionIndex) : [lines[0]];
-      const question = questionLines.join(' ').replace(/^Question\s*[:=-]?\s*/i, '').trim();
-
-      const candidateLines = firstOptionIndex >= 0 ? lines.slice(firstOptionIndex) : lines.slice(1);
-      const optionsByKey: Record<string, string> = {};
-      const consumed = new Set<number>();
-      let optionCount = 0;
-      for (let idx = 0; idx < candidateLines.length; idx += 1) {
-        const match = candidateLines[idx].match(optionLineRe);
-        if (!match) {
-          if (optionCount >= 3) break;
-          continue;
-        }
-        const key = String(match[1] || '').toUpperCase();
-        if (!['A', 'B', 'C', 'D'].includes(key)) continue;
-        const text = String(match[2] || '').trim();
-        optionsByKey[key] = text;
-        consumed.add(idx);
-        optionCount += 1;
-      }
-
-      const options = ['A', 'B', 'C', 'D'].map((key) => optionsByKey[key]).filter(Boolean);
-      const remainingLines = candidateLines.filter((_, idx) => !consumed.has(idx));
-      const answerLine = remainingLines.find((line) => /(?:correct\s*answer|answer|ans(?:wer)?)/i.test(line)) || '';
-      const answerToken = answerLine
-        ? String(answerLine.replace(/^(?:correct\s*answer|answer|ans(?:wer)?)\s*[:=-]?\s*/i, '')).trim()
-        : (remainingLines.find((line) => /^[A-Da-d]$/.test(line)) || '');
-      const answer = parseAnswerToken(answerToken, options);
-
-      const explanation = remainingLines
-        .filter((line) => line !== answerLine && !/^[A-Da-d]$/.test(line))
-        .join('\n')
-        .replace(/^Explanation\s*[:=-]?\s*/i, '')
-        .trim();
-
-      if (!question || options.length < 3 || !answer) return null;
-      return {
-        question,
-        questionImageUrl: '',
-        questionImageDataUrl: '',
-        options,
-        optionImageDataUrls: [],
-        answer,
-        tip: explanation,
-        shortTrick: '',
-        explanationImageDataUrl: '',
-        difficulty: 'Medium',
-      };
-    };
-
-    const cleanedText = normalizePastedMcqText(rawText);
-    setSingleMcqInput(cleanedText);
-    setBulkInput(cleanedText);
+    setBulkInput('');
     setBulkFile(null);
 
     const hierarchyContext = resolveDocumentHierarchyContext(true);
     if (!hierarchyContext) return;
 
-    const labelExtracted = extractWithLabels(cleanedText);
-    const heuristicExtracted = labelExtracted ? null : extractWithHeuristics(cleanedText);
-    const parsedRows = labelExtracted ? [labelExtracted] : heuristicExtracted ? [heuristicExtracted] : [];
-    const errors: string[] = [];
-    if (!labelExtracted && heuristicExtracted) {
-      errors.push('Used heuristic extraction because expected labels were missing or incomplete.');
-    }
-
-    const withSelectedHierarchy = parsedRows.map((item) => ({
-      ...item,
+    const withSelectedHierarchy: ParsedBulkMcq[] = [{
       subject: hierarchyContext.subject,
       part: hierarchyContext.part,
       chapter: hierarchyContext.chapter,
       section: hierarchyContext.section,
       topic: hierarchyContext.topic,
-    }));
+      question: '',
+      questionImageUrl: '',
+      questionImageDataUrl: mappedSources[0],
+      options: ['', '', '', ''],
+      optionImageDataUrls: [mappedSources[1], mappedSources[2], mappedSources[3], mappedSources[4]],
+      answer: 'A',
+      tip: '',
+      shortTrick: `Correct Answer Image: <img src="${mappedSources[5]}" />`,
+      explanationImageDataUrl: mappedSources[6],
+      difficulty: 'Medium',
+    }];
 
-    const limitedParsed = withSelectedHierarchy.slice(0, 15);
-    setBulkParsed(limitedParsed);
-    setBulkParseErrors(errors);
-    setShowParsedPreview(Boolean(limitedParsed.length));
+    setBulkParsed(withSelectedHierarchy);
+    setBulkParseErrors([]);
+    setShowParsedPreview(true);
 
-    if (!limitedParsed.length) {
-      toast.error(errors[0] || 'Could not detect complete MCQ fields from pasted content.');
-      return;
-    }
-
-    toast.success(`Filled ${limitedParsed.length} MCQ field(s).`);
+    toast.success('Mapped pasted image segments to Question, Option A-D, Correct Answer, and Explanation fields.');
   };
 
   const splitPastedMcqImageIntoSegments = async (dataUrl: string) => {
