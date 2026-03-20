@@ -636,6 +636,23 @@
   display: none;
 }
 
+@media (hover: none) {
+  .admin-shell [data-slot='card']:hover,
+  .dark .admin-shell [data-slot='card']:hover,
+  .admin-shell [data-slot='button']:hover,
+  .admin-shell .admin-nav-item:hover::after {
+    transform: none;
+    box-shadow: inherit;
+    opacity: 0;
+  }
+
+  .admin-shell [data-slot='button']:active,
+  .admin-shell .admin-nav-item:active,
+  .admin-shell .admin-mobile-sidebar-toggle:active {
+    transform: scale(0.985);
+  }
+}
+
 @media (max-width: 1279px) {
   .admin-shell .admin-content {
     padding-bottom: 1rem;
@@ -650,7 +667,7 @@
   .admin-shell .admin-main {
     padding-left: max(0.65rem, env(safe-area-inset-left, 0px));
     padding-right: max(0.65rem, env(safe-area-inset-right, 0px));
-    padding-top: 0.75rem;
+    padding-top: max(3.9rem, calc(env(safe-area-inset-top, 0px) + 3.15rem));
   }
 
   .admin-shell .admin-content {
@@ -683,6 +700,83 @@
   .admin-shell .admin-main [data-slot='select-trigger'] {
     width: 100%;
     max-width: 100%;
+  }
+
+  .admin-shell .admin-sidebar {
+    width: min(85vw, 20rem);
+    max-width: 20rem;
+    padding-top: max(1rem, env(safe-area-inset-top, 0px));
+    padding-bottom: max(1rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  .admin-shell .admin-main [data-slot='button'],
+  .admin-shell .admin-main button,
+  .admin-shell .admin-main [data-slot='input'],
+  .admin-shell .admin-main input,
+  .admin-shell .admin-main [data-slot='textarea'],
+  .admin-shell .admin-main textarea,
+  .admin-shell .admin-main [data-slot='select-trigger'] {
+    min-height: 2.75rem;
+    font-size: 1rem;
+  }
+
+  .admin-shell .admin-main input[type='file'] {
+    padding-top: 0.55rem;
+    padding-bottom: 0.55rem;
+  }
+
+  .admin-shell .admin-main .inline-flex.overflow-hidden.rounded-md.border {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    width: 100%;
+  }
+
+  .admin-shell .admin-main .inline-flex.overflow-hidden.rounded-md.border > button {
+    width: 100%;
+    min-height: 2.5rem;
+  }
+
+  .admin-shell .admin-main .space-y-2.rounded-md.border.p-2,
+  .admin-shell .admin-main .space-y-3.rounded-lg.border.p-3 {
+    padding: 0.85rem;
+  }
+
+  .admin-shell .admin-main .space-y-2 .flex.items-center.justify-between.gap-2 {
+    align-items: stretch;
+  }
+
+  .admin-shell .admin-main [data-slot='tabs-list'] {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .admin-shell .admin-main [data-slot='tabs-trigger'] {
+    min-height: 2.5rem;
+    white-space: nowrap;
+  }
+
+  .admin-shell .admin-main math-field img,
+  .admin-shell .admin-main math-field::part(content) img,
+  .admin-shell .admin-main math-field::part(container) img {
+    max-width: min(100%, calc(100vw - 2.25rem));
+    height: auto;
+  }
+
+  .admin-shell .admin-main .mcq-inline-image-row {
+    display: flex;
+    width: 100%;
+    gap: 0.35rem;
+  }
+
+  .admin-shell .admin-main .mcq-inline-image-row .mcq-inline-image {
+    flex: 1 1 46%;
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .admin-shell .admin-main [class*='text-xs'] {
+    line-height: 1.35;
   }
 }
 
@@ -736,6 +830,9 @@
     top: max(0.75rem, env(safe-area-inset-top, 0px));
     left: max(0.75rem, env(safe-area-inset-left, 0px));
     z-index: 60;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+    touch-action: manipulation;
   }
 
   .admin-shell .admin-main [data-slot='input'],
@@ -753,6 +850,16 @@
   .admin-shell .admin-main [class*='max-h-\[72vh\]'],
   .admin-shell .admin-main [class*='max-h-\[80vh\]'] {
     max-height: 62vh !important;
+  }
+
+  .admin-shell .admin-gesture-editor {
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .admin-shell .admin-gesture-editor [data-slot='button'] {
+    min-height: 2.75rem;
+    min-width: 5.5rem;
   }
 }
 
@@ -774,5 +881,18 @@
 
   .admin-shell .admin-main [data-slot='card-content'] {
     padding: 0.75rem;
+  }
+
+  .admin-shell .admin-main .space-y-2 .flex.items-center.justify-between.gap-2,
+  .admin-shell .admin-main .space-y-2 .flex.flex-wrap.items-center.justify-between.gap-2 {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .admin-shell .admin-main .space-y-2 .flex.items-center.justify-between.gap-2 > [data-slot='button'],
+  .admin-shell .admin-main .space-y-2 .flex.flex-wrap.items-center.justify-between.gap-2 > [data-slot='button'],
+  .admin-shell .admin-main .space-y-2 .flex.items-center.justify-between.gap-2 > button,
+  .admin-shell .admin-main .space-y-2 .flex.flex-wrap.items-center.justify-between.gap-2 > button {
+    width: 100%;
   }
 }

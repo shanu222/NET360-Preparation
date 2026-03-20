@@ -5884,7 +5884,7 @@ export default function AdminApp() {
       <button
         type="button"
         onClick={toggleSidebar}
-        className="admin-mobile-sidebar-toggle inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300/75 bg-white/90 text-slate-700 shadow-lg backdrop-blur-md transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 dark:border-white/20 dark:bg-slate-900/80 dark:text-slate-100 dark:hover:bg-slate-900"
+        className="admin-mobile-sidebar-toggle inline-flex h-11 w-11 items-center justify-center rounded-xl border border-slate-300/75 bg-white/90 text-slate-700 shadow-lg backdrop-blur-md transition active:scale-[0.98] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 dark:border-white/20 dark:bg-slate-900/80 dark:text-slate-100 dark:hover:bg-slate-900"
         aria-label={isMobileSidebarOpen ? 'Close sidebar' : 'Open sidebar'}
         aria-controls="admin-sidebar"
         aria-expanded={isMobileSidebarOpen}
@@ -9063,12 +9063,12 @@ export default function AdminApp() {
       </main>
 
       {gestureImageEditor.isOpen ? (
-        <div className="fixed inset-0 z-[80] bg-black/95 text-white">
+        <div className="admin-gesture-editor fixed inset-0 z-[80] bg-black/95 text-white">
           <div className="flex h-full flex-col">
-            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
-              <Button type="button" size="sm" variant="outline" onClick={closeGestureImageEditor} disabled={isApplyingGestureCrop}>Cancel</Button>
-              <p className="text-xs text-white/80">Drag, resize, pinch to zoom, rotate</p>
-              <Button type="button" size="sm" onClick={() => void applyGestureImageEditor()} disabled={isApplyingGestureCrop}>
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-2.5 sm:flex-nowrap">
+              <Button type="button" size="sm" variant="outline" className="min-h-11 px-4" onClick={closeGestureImageEditor} disabled={isApplyingGestureCrop}>Cancel</Button>
+              <p className="grow text-center text-xs text-white/80 sm:grow-0">Drag, resize, pinch to zoom, rotate</p>
+              <Button type="button" size="sm" className="min-h-11 px-4" onClick={() => void applyGestureImageEditor()} disabled={isApplyingGestureCrop}>
                 {isApplyingGestureCrop ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -9092,6 +9092,7 @@ export default function AdminApp() {
                 style={{
                   width: `${gestureImageEditor.naturalWidth}px`,
                   height: `${gestureImageEditor.naturalHeight}px`,
+                  willChange: 'transform',
                   transformOrigin: 'center center',
                   transform: `translate(-50%, -50%) translate(${gestureImageEditor.translateX}px, ${gestureImageEditor.translateY}px) scale(${Math.min(
                     gestureImageEditor.viewportWidth / gestureImageEditor.naturalWidth,
@@ -9116,17 +9117,17 @@ export default function AdminApp() {
               >
                 <div className="pointer-events-none absolute inset-0 border border-white/75" />
 
-                <div className="absolute left-1/2 top-0 h-8 w-8 -translate-x-1/2 -translate-y-1/2" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'n'); }}>
-                  <div className="mx-auto h-5 w-5 rounded-full border-2 border-white bg-cyan-400" />
+                <div className="absolute left-1/2 top-0 h-10 w-10 -translate-x-1/2 -translate-y-1/2" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'n'); }}>
+                  <div className="mx-auto h-6 w-6 rounded-full border-2 border-white bg-cyan-400" />
                 </div>
-                <div className="absolute left-1/2 bottom-0 h-8 w-8 -translate-x-1/2 translate-y-1/2" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 's'); }}>
-                  <div className="mx-auto h-5 w-5 rounded-full border-2 border-white bg-cyan-400" />
+                <div className="absolute left-1/2 bottom-0 h-10 w-10 -translate-x-1/2 translate-y-1/2" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 's'); }}>
+                  <div className="mx-auto h-6 w-6 rounded-full border-2 border-white bg-cyan-400" />
                 </div>
-                <div className="absolute left-0 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'w'); }}>
-                  <div className="my-auto h-5 w-5 rounded-full border-2 border-white bg-cyan-400" />
+                <div className="absolute left-0 top-1/2 h-10 w-10 -translate-x-1/2 -translate-y-1/2" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'w'); }}>
+                  <div className="my-auto h-6 w-6 rounded-full border-2 border-white bg-cyan-400" />
                 </div>
-                <div className="absolute right-0 top-1/2 h-8 w-8 translate-x-1/2 -translate-y-1/2" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'e'); }}>
-                  <div className="my-auto h-5 w-5 rounded-full border-2 border-white bg-cyan-400" />
+                <div className="absolute right-0 top-1/2 h-10 w-10 translate-x-1/2 -translate-y-1/2" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'e'); }}>
+                  <div className="my-auto h-6 w-6 rounded-full border-2 border-white bg-cyan-400" />
                 </div>
 
                 <div className="absolute -left-3 -top-3 h-6 w-6 rounded-full border-2 border-white bg-cyan-400" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'nw'); }} />
