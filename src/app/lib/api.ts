@@ -8,6 +8,10 @@ type RuntimeEnv = {
   VITE_ADMIN_ONLY?: string;
 };
 
+type ApiRequestOptions = RequestInit & {
+  timeoutMs?: number;
+};
+
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
 const API_BASE_URL = env.VITE_API_BASE_URL || '';
 const MOBILE_API_BASE_URL = env.VITE_MOBILE_API_BASE_URL || '';
@@ -15,6 +19,9 @@ const TOKEN_STORAGE_KEY = 'net360-auth-token';
 const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
 const ADMIN_TOKEN_STORAGE_KEY = 'net360-admin-access-token';
 const ADMIN_REFRESH_TOKEN_STORAGE_KEY = 'net360-admin-refresh-token';
+const DEFAULT_API_TIMEOUT_MS = 35_000;
+const AI_PARSE_API_TIMEOUT_MS = 120_000;
+const MAX_API_TIMEOUT_MS = 240_000;
 
 function isNativeCapacitorRuntime() {
   const runtime = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
@@ -74,6 +81,77 @@ function resolveApiPath(path: string) {
     return path;
   }
   return `${effectiveBaseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+}
+
+function resolveRequestTimeoutMs(path: string, explicitTimeoutMs?: number) {
+  if (Number.isFinite(explicitTimeoutMs) && Number(explicitTimeoutMs) > 0) {
+    return Math.min(MAX_API_TIMEOUT_MS, Math.max(1_000, Math.floor(Number(explicitTimeoutMs))));
+  }
+  if (path.startsWith('/api/ai/parse-mcqs')) {
+    return AI_PARSE_API_TIMEOUT_MS;
+  }
+  return DEFAULT_API_TIMEOUT_MS;
+}
+
+async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: number) {
+  const externalSignal = init.signal;
+  const controller = new AbortController();
+  let didTimeout = false;
+
+  const timeoutHandle = window.setTimeout(() => {
+    didTimeout = true;
+    controller.abort();
+  }, timeoutMs);
+
+  const abortFromExternal = () => controller.abort();
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      window.clearTimeout(timeoutHandle);
+      throw new DOMException('Request aborted.', 'AbortError');
+    }
+    externalSignal.addEventListener('abort', abortFromExternal, { once: true });
+  }
+
+  try {
+    return await fetch(input, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (didTimeout) {
+      const timeoutError = new Error(`Request timed out after ${Math.ceil(timeoutMs / 1000)}s.`) as Error & { code?: string };
+      timeoutError.code = 'REQUEST_TIMEOUT';
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutHandle);
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', abortFromExternal);
+    }
+  }
+}
+
+function mapTransportError(path: string, error: unknown) {
+  const asError = error instanceof Error ? error : new Error(String(error));
+  const rawMessage = String(asError.message || '').trim();
+  const normalized = rawMessage.toLowerCase();
+
+  if ((asError as Error & { code?: string }).code === 'REQUEST_TIMEOUT') {
+    return new Error(`Request timeout for ${path}. The server took too long to respond. Please try again.`);
+  }
+
+  if (normalized.includes('failed to fetch') || normalized.includes('networkerror') || normalized.includes('load failed')) {
+    return new Error(
+      `Network error while calling ${path}. Check backend URL, CORS settings, and server availability, then retry.`,
+    );
+  }
+
+  if (normalized.includes('aborterror')) {
+    return new Error(`Request to ${path} was cancelled before completion.`);
+  }
+
+  return asError;
 }
 
 export function buildApiUrl(path: string) {
@@ -173,8 +251,9 @@ function buildMissingNativeApiBaseUrlError(path: string) {
   );
 }
 
-export async function apiRequest<T>(path: string, options: RequestInit = {}, token?: string | null): Promise<T> {
+export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}, token?: string | null): Promise<T> {
   const effectiveBaseUrl = getEffectiveApiBaseUrl();
+  const timeoutMs = resolveRequestTimeoutMs(path, options.timeoutMs);
 
   if (
     isNativeCapacitorRuntime()
@@ -214,6 +293,9 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
     const headers = new Headers(options.headers || {});
     const hasBody = options.body != null;
     const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData;
+    if (!headers.has('Accept')) {
+      headers.set('Accept', 'application/json');
+    }
     if (!headers.has('Content-Type') && hasBody && !isFormDataBody) {
       headers.set('Content-Type', 'application/json');
     }
@@ -230,11 +312,11 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
 
     for (const candidate of refreshCandidates) {
       try {
-        const response = await fetch(resolveApiPath('/api/auth/refresh'), {
+        const response = await fetchWithTimeout(resolveApiPath('/api/auth/refresh'), {
           method: 'POST',
           headers: new Headers({ 'Content-Type': 'application/json' }),
           body: JSON.stringify({ refreshToken: candidate.value }),
-        });
+        }, Math.min(timeoutMs, 20_000));
         if (!response.ok) continue;
 
         let payload: { token?: string; refreshToken?: string };
@@ -275,36 +357,37 @@ export async function apiRequest<T>(path: string, options: RequestInit = {}, tok
 
   let response: Response;
   try {
-    response = await fetch(resolveApiPath(path), {
+    response = await fetchWithTimeout(resolveApiPath(path), {
       ...options,
       headers: buildHeaders(initialToken),
-    });
+    }, timeoutMs);
   } catch (error) {
+    const mappedError = mapTransportError(path, error);
     // If backend is unreachable, transparently fall back to browser-local mode.
     if (canFallbackToLocalMode() && !(hasAuthToken && (isPremiumSensitivePath(path) || isAdminSensitivePath(path)))) {
       logApiConfigurationIssue('warn', 'Remote API request failed; switching to local fallback mode.', {
         path,
-        error: error instanceof Error ? error.message : String(error),
+        error: mappedError.message,
         phase: 'network-fallback',
       });
       return localApiRequest<T>(path, options, token);
     }
     logApiConfigurationIssue('error', 'Remote API request failed with no local fallback available.', {
       path,
-      error: error instanceof Error ? error.message : String(error),
+      error: mappedError.message,
       phase: 'network-failure',
     });
-    throw error;
+    throw mappedError;
   }
 
   if (!response.ok) {
     if (response.status === 401) {
       const refreshedToken = await tryRefreshAccessToken();
       if (refreshedToken) {
-        const retryResponse = await fetch(resolveApiPath(path), {
+        const retryResponse = await fetchWithTimeout(resolveApiPath(path), {
           ...options,
           headers: buildHeaders(refreshedToken),
-        });
+        }, timeoutMs);
 
         if (retryResponse.ok) {
           try {

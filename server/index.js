@@ -67,13 +67,15 @@ const NUST_UPDATES_CACHE_MS = Number(process.env.NUST_UPDATES_CACHE_MS || 60 * 1
 const NUST_ADMISSIONS_REFRESH_MS = clamp(Number(process.env.NUST_ADMISSIONS_REFRESH_MS || 3 * 60 * 60 * 1000), 15 * 60 * 1000, 24 * 60 * 60 * 1000);
 const MAX_JSON_BODY_MB = clamp(Number(process.env.MAX_JSON_BODY_MB || 10), 1, 20);
 const REQUEST_TIMEOUT_MS = clamp(Number(process.env.REQUEST_TIMEOUT_MS || 30_000), 5_000, 120_000);
+const AI_PARSE_MAX_FILE_MB = clamp(Number(process.env.AI_PARSE_MAX_FILE_MB || 20), 1, 50);
+const AI_PARSE_MAX_FILE_BYTES = AI_PARSE_MAX_FILE_MB * 1024 * 1024;
 const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .split(',')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
 const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || '')
   .split(',')
-  .map((item) => item.trim())
+  .map((item) => item.trim().replace(/\/+$/, '').toLowerCase())
   .filter(Boolean);
 
 const MOBILE_RUNTIME_ORIGINS = new Set([
@@ -172,7 +174,7 @@ const SUBSCRIPTION_PLANS = {
 const app = express();
 const aiParseUpload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 8 * 1024 * 1024 },
+  limits: { fileSize: AI_PARSE_MAX_FILE_BYTES },
 });
 
 const sseClients = {
@@ -318,11 +320,26 @@ function sanitizePayload(value) {
 }
 
 function isAllowedOrigin(origin) {
-  if (!origin) return true;
-  if (MOBILE_RUNTIME_ORIGINS.has(origin)) return true;
+  const normalizedOrigin = String(origin || '').trim().replace(/\/+$/, '').toLowerCase();
+  if (!normalizedOrigin) return true;
+  if (MOBILE_RUNTIME_ORIGINS.has(normalizedOrigin)) return true;
   if (!IS_PRODUCTION) return true;
   if (CORS_ALLOWED_ORIGINS.length === 0) return true;
-  return CORS_ALLOWED_ORIGINS.includes(origin);
+
+  const matches = CORS_ALLOWED_ORIGINS.some((allowedOrigin) => {
+    if (!allowedOrigin) return false;
+    if (allowedOrigin === '*') return true;
+    if (!allowedOrigin.includes('*')) {
+      return allowedOrigin === normalizedOrigin;
+    }
+
+    const escaped = allowedOrigin
+      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/\*/g, '.*');
+    return new RegExp(`^${escaped}$`, 'i').test(normalizedOrigin);
+  });
+
+  return matches;
 }
 
 app.use(cors({
@@ -2072,8 +2089,8 @@ async function extractTextFromUpload(filePayload) {
 
   const mimeType = String(filePayload?.mimeType || fileMeta.mimeType || '').toLowerCase().trim();
   const sizeBytes = Number(filePayload?.size || fileMeta.buffer.length || 0);
-  if (!sizeBytes || sizeBytes > 8 * 1024 * 1024) {
-    throw new Error('Uploaded file must be between 1 byte and 8 MB.');
+  if (!sizeBytes || sizeBytes > AI_PARSE_MAX_FILE_BYTES) {
+    throw new Error(`Uploaded file must be between 1 byte and ${AI_PARSE_MAX_FILE_MB} MB.`);
   }
 
   if (mimeType.includes('pdf') || extension === '.pdf') {
@@ -11515,8 +11532,25 @@ app.use((err, req, res, next) => {
     return;
   }
 
-  if (err?.type === 'entity.too.large' || err?.status === 413 || err?.statusCode === 413) {
-    res.status(413).json({ error: 'Uploaded file is too large. Upload a JPG, PNG, or PDF up to 5MB.' });
+  if (String(err?.message || '').toLowerCase().includes('cors origin denied')) {
+    res.status(403).json({
+      error: 'CORS origin denied. Add your frontend origin to CORS_ALLOWED_ORIGINS or use a matching wildcard entry.',
+    });
+    return;
+  }
+
+  if (
+    err?.code === 'LIMIT_FILE_SIZE'
+    || err?.type === 'entity.too.large'
+    || err?.status === 413
+    || err?.statusCode === 413
+  ) {
+    const isAiParseRoute = String(req?.path || '').includes('/api/ai/parse-mcqs');
+    res.status(413).json({
+      error: isAiParseRoute
+        ? `Uploaded file is too large. Upload PDF, DOC, DOCX, or TXT up to ${AI_PARSE_MAX_FILE_MB}MB.`
+        : 'Uploaded file is too large. Upload a JPG, PNG, or PDF up to 5MB.',
+    });
     return;
   }
 
