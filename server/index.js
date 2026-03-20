@@ -11313,10 +11313,6 @@ async function generateSingleMcqWithAi({
   const safeSourceText = String(sourceText || '').trim();
   const safeImageDataUrl = String(imageDataUrl || '').trim();
 
-  if (!safeSourceText && !safeImageDataUrl) {
-    return { mcq: null, errors: ['Provide source text or upload a document/image before generating MCQ.'] };
-  }
-
   const baseHierarchy = normalizeParsedHierarchyContext(hierarchy || {});
   const existingRows = Array.isArray(existingMcqs) ? existingMcqs : [];
   const existingFingerprints = existingRows.map((row, index) => buildMcqDuplicateFingerprint(row, index));
@@ -11339,6 +11335,7 @@ async function generateSingleMcqWithAi({
         `Topic: ${baseHierarchy.topic || ''}`,
         userInstructions ? `Instructions: ${userInstructions}` : '',
         safeSourceText ? `Source:\n${safeSourceText.slice(0, AI_PARSE_MAX_INPUT_CHARS)}` : '',
+        !safeSourceText && !safeImageDataUrl ? 'No source document uploaded. Generate from hierarchy, difficulty, and provided instructions/source text only.' : '',
         existingReference ? `Existing MCQs (reference, do not duplicate):\n${existingReference}` : '',
         rejectionHint,
       ].filter(Boolean).join('\n\n');
@@ -11509,11 +11506,6 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
       } else {
         sourceText = await extractTextFromUpload(filePayload);
       }
-    }
-
-    if (!sourceText && !imageDataUrl) {
-      res.status(400).json({ mcq: null, errors: ['Provide source text or upload a supported file.'] });
-      return;
     }
 
     const hierarchyContext = {

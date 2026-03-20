@@ -4858,10 +4858,6 @@ export default function AdminApp() {
     if (!hierarchyContext) return;
 
     const hasText = Boolean(String(aiGenSourceText || '').trim());
-    if (!aiGenFile && !hasText) {
-      toast.error('Upload a document/image or provide source text to generate AI MCQ.');
-      return;
-    }
 
     if (aiGenFile && aiGenFile.size > 20 * 1024 * 1024) {
       toast.error('Uploaded file is too large. Maximum size is 20 MB.');
@@ -8377,7 +8373,7 @@ export default function AdminApp() {
                             </div>
 
                             <div className="flex flex-wrap gap-2">
-                              <Button type="button" onClick={() => void generateAiMcq()} disabled={aiGenGenerating || aiGenUploading || (!aiGenFile && !aiGenSourceText.trim())}>
+                              <Button type="button" onClick={() => void generateAiMcq()} disabled={aiGenGenerating || aiGenUploading}>
                                 {aiGenGenerating ? (
                                   <>
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
