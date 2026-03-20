@@ -5070,37 +5070,59 @@ export default function AdminApp() {
         };
       });
 
-      const result = await apiRequest<{
-        success: boolean;
-        createdCount: number;
-        failedCount: number;
-        errors: string[];
-      }>('/api/admin/upload-mcqs-bulk', {
-        method: 'POST',
-        body: JSON.stringify({
-          subject: hierarchyContext.subject,
-          part: hierarchyContext.part,
-          chapter: hierarchyContext.chapter,
-          section: hierarchyContext.section,
-          topic: hierarchyContext.topic,
-          mcqs: mcqsPayload,
-        }),
-      }, authToken);
+      const uploadResults = await Promise.allSettled(
+        mcqsPayload.map((payload) => apiRequest<{ mcq?: AdminMCQ }>('/api/admin/mcqs', {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        }, authToken)),
+      );
 
-      if (!result?.success || !result.createdCount) {
-        throw new Error(result?.errors?.[0] || 'Bulk upload failed.');
+      const createdMcqs: AdminMCQ[] = [];
+      const errors: string[] = [];
+
+      uploadResults.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+          const created = result.value?.mcq;
+          if (created?.id) {
+            createdMcqs.push(created);
+          } else {
+            errors.push(`MCQ #${index + 1}: API did not return saved MCQ id.`);
+          }
+          return;
+        }
+
+        const reason = result.reason instanceof Error ? result.reason.message : 'Could not save.';
+        errors.push(`MCQ #${index + 1}: ${reason}`);
+      });
+
+      const createdCount = createdMcqs.length;
+      const failedCount = mcqsPayload.length - createdCount;
+
+      console.info('Admin bulk upload completed', {
+        attemptedCount: mcqsPayload.length,
+        createdCount,
+        failedCount,
+      });
+
+      if (!createdCount) {
+        throw new Error(errors[0] || 'Bulk upload failed.');
       }
 
-      if (result.failedCount > 0) {
-        toast.warning(`Uploaded ${result.createdCount} MCQ(s). ${result.failedCount} failed.`);
+      setMcqs((previous) => [
+        ...createdMcqs,
+        ...previous.filter((item) => !createdMcqs.some((created) => created.id === item.id)),
+      ]);
+
+      if (failedCount > 0) {
+        toast.warning(`Uploaded ${createdCount} MCQ(s). ${failedCount} failed.`);
       } else {
-        toast.success(`${result.createdCount} MCQ(s) uploaded successfully.`);
+        toast.success(`${createdCount} MCQ(s) uploaded successfully.`);
       }
 
       setBulkInput('');
       setBulkFile(null);
       setBulkParsed([]);
-      setBulkParseErrors([]);
+      setBulkParseErrors(errors);
       setShowParsedPreview(false);
       if (selectedHierarchy) {
         await loadSectionMcqs(authToken, selectedHierarchy);
