@@ -1237,6 +1237,9 @@ const AI_PARSE_CHUNK_OVERLAP = 1_200;
 const AI_PARSE_PARALLEL_CHUNKS = 3;
 const AI_PARSE_MAX_RETRIES = 3;
 const AI_PARSE_RETRY_BASE_DELAY_MS = 600;
+const AI_SINGLE_MCQ_MAX_REGENERATIONS = clamp(Number(process.env.AI_SINGLE_MCQ_MAX_REGENERATIONS || 4), 1, 8);
+const AI_SINGLE_MCQ_SIMILARITY_THRESHOLD = Math.max(0.6, Math.min(0.99, Number(process.env.AI_SINGLE_MCQ_SIMILARITY_THRESHOLD || 0.84)));
+const AI_SINGLE_MCQ_REFERENCE_MAX_TEXT = clamp(Number(process.env.AI_SINGLE_MCQ_REFERENCE_MAX_TEXT || 180_000), 50_000, 300_000);
 const MATHPIX_APP_ID = String(process.env.MATHPIX_APP_ID || '').trim();
 const MATHPIX_APP_KEY = String(process.env.MATHPIX_APP_KEY || '').trim();
 
@@ -11161,12 +11164,141 @@ async function parseMcqsFromSourceText(sourceText) {
   return { parsed, errors };
 }
 
+function normalizeMcqDedupText(value) {
+  return flattenRichMcqTextForMatch(value)
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildTextTokenSet(value) {
+  const normalized = normalizeMcqDedupText(value);
+  if (!normalized) return new Set();
+  return new Set(normalized.split(' ').filter((item) => item.length > 1));
+}
+
+function jaccardSimilarity(a, b) {
+  if (!(a instanceof Set) || !(b instanceof Set) || (!a.size && !b.size)) return 0;
+  let intersection = 0;
+  for (const token of a) {
+    if (b.has(token)) intersection += 1;
+  }
+  const union = a.size + b.size - intersection;
+  return union > 0 ? intersection / union : 0;
+}
+
+function buildMcqSignature(question, options) {
+  const normalizedQuestion = normalizeMcqDedupText(question);
+  const normalizedOptions = (Array.isArray(options) ? options : [])
+    .slice(0, 4)
+    .map((item) => normalizeMcqDedupText(item));
+  return `${normalizedQuestion}||${normalizedOptions.join('||')}`;
+}
+
+function buildMcqDuplicateFingerprint(row, index = 0) {
+  const question = String(row?.question || '').trim();
+  const options = (Array.isArray(row?.options) ? row.options : []).slice(0, 4).map((item) => String(item || '').trim());
+  return {
+    id: String(row?._id || row?.id || `ref-${index + 1}`),
+    signature: buildMcqSignature(question, options),
+    question,
+    options,
+    questionTokens: buildTextTokenSet(question),
+    optionsTokens: buildTextTokenSet(options.join(' ')),
+  };
+}
+
+function detectDuplicateGeneratedMcq(candidate, existingFingerprints) {
+  const candidateFingerprint = buildMcqDuplicateFingerprint(candidate);
+  if (!candidateFingerprint.signature) {
+    return { duplicate: true, reason: 'Generated MCQ is empty after normalization.', similarity: 1, matchedId: '' };
+  }
+
+  for (const existing of existingFingerprints) {
+    if (existing.signature && existing.signature === candidateFingerprint.signature) {
+      return { duplicate: true, reason: `Duplicate of existing MCQ ${existing.id} (exact normalized match).`, similarity: 1, matchedId: existing.id };
+    }
+
+    const questionSimilarity = jaccardSimilarity(candidateFingerprint.questionTokens, existing.questionTokens);
+    const optionsSimilarity = jaccardSimilarity(candidateFingerprint.optionsTokens, existing.optionsTokens);
+    const combinedSimilarity = (questionSimilarity * 0.7) + (optionsSimilarity * 0.3);
+    const highlySimilar = combinedSimilarity >= AI_SINGLE_MCQ_SIMILARITY_THRESHOLD
+      || (questionSimilarity >= 0.92 && optionsSimilarity >= 0.7);
+
+    if (highlySimilar) {
+      return {
+        duplicate: true,
+        reason: `Too similar to existing MCQ ${existing.id} (similarity ${(combinedSimilarity * 100).toFixed(1)}%).`,
+        similarity: combinedSimilarity,
+        matchedId: existing.id,
+      };
+    }
+  }
+
+  return { duplicate: false, reason: '', similarity: 0, matchedId: '' };
+}
+
+function buildExistingMcqReferenceForPrompt(existingRows) {
+  const lines = (Array.isArray(existingRows) ? existingRows : []).map((row, index) => {
+    const question = normalizeRichMcqText(row?.question || '').slice(0, 260);
+    const options = (Array.isArray(row?.options) ? row.options : [])
+      .slice(0, 4)
+      .map((item) => normalizeRichMcqText(item || '').slice(0, 160));
+    return [
+      `#${index + 1}`,
+      `Q: ${question}`,
+      `A: ${options[0] || ''}`,
+      `B: ${options[1] || ''}`,
+      `C: ${options[2] || ''}`,
+      `D: ${options[3] || ''}`,
+    ].join('\n');
+  });
+
+  const joined = lines.join('\n\n');
+  return joined.length > AI_SINGLE_MCQ_REFERENCE_MAX_TEXT
+    ? joined.slice(0, AI_SINGLE_MCQ_REFERENCE_MAX_TEXT)
+    : joined;
+}
+
+async function fetchExistingMcqsForHierarchy(hierarchy) {
+  const normalizedHierarchy = normalizeParsedHierarchyContext(hierarchy || {});
+  const subject = normalizeSubjectKey(normalizedHierarchy.subject || '');
+  if (!subject) return [];
+
+  const filter = { subject };
+  const isFlatTopicSubject = MCQ_FLAT_TOPIC_SUBJECTS.has(subject);
+  const requiresPartSelection = !isFlatTopicSubject && isPartSelectionRequiredSubject(subject);
+
+  if (requiresPartSelection && normalizedHierarchy.part) {
+    filter.part = normalizedHierarchy.part;
+  }
+
+  if (!isFlatTopicSubject && normalizedHierarchy.chapter) {
+    const escapedChapter = normalizedHierarchy.chapter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    filter.chapter = { $regex: `^${escapedChapter}$`, $options: 'i' };
+  }
+
+  const sectionOrTopic = String(normalizedHierarchy.section || normalizedHierarchy.topic || '').trim();
+  if (sectionOrTopic) {
+    const escaped = sectionOrTopic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    filter.$or = [
+      { section: { $regex: `^${escaped}$`, $options: 'i' } },
+      { topic: { $regex: `^${escaped}$`, $options: 'i' } },
+    ];
+  }
+
+  return MCQModel.find(filter)
+    .select({ _id: 1, question: 1, options: 1 })
+    .lean();
+}
+
 async function generateSingleMcqWithAi({
   sourceText,
   imageDataUrl,
   instructions,
   difficulty,
   hierarchy,
+  existingMcqs = [],
 }) {
   const openAiContext = await getOpenAiClientContext();
   const aiClient = openAiContext.client;
@@ -11186,84 +11318,129 @@ async function generateSingleMcqWithAi({
   }
 
   const baseHierarchy = normalizeParsedHierarchyContext(hierarchy || {});
+  const existingRows = Array.isArray(existingMcqs) ? existingMcqs : [];
+  const existingFingerprints = existingRows.map((row, index) => buildMcqDuplicateFingerprint(row, index));
+  const existingReference = buildExistingMcqReferenceForPrompt(existingRows);
+  const generatedSignatures = new Set();
+  const regenerationErrors = [];
 
-  const runCompletion = async () => {
-    const userContent = [
-      `Difficulty: ${requestedDifficulty}`,
-      `Subject: ${baseHierarchy.subject || ''}`,
-      `Part: ${baseHierarchy.part || ''}`,
-      `Chapter: ${baseHierarchy.chapter || ''}`,
-      `Section: ${baseHierarchy.section || ''}`,
-      `Topic: ${baseHierarchy.topic || ''}`,
-      userInstructions ? `Instructions: ${userInstructions}` : '',
-      safeSourceText ? `Source:\n${safeSourceText.slice(0, AI_PARSE_MAX_INPUT_CHARS)}` : '',
-    ].filter(Boolean).join('\n\n');
+  for (let generationAttempt = 1; generationAttempt <= AI_SINGLE_MCQ_MAX_REGENERATIONS; generationAttempt += 1) {
+    const rejectionHint = regenerationErrors.length
+      ? `Previous attempt was rejected: ${regenerationErrors[regenerationErrors.length - 1]}`
+      : '';
 
-    const messagePayload = safeImageDataUrl
-      ? [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: userContent || 'Generate one MCQ from this image.' },
-            { type: 'image_url', image_url: { url: safeImageDataUrl } },
-          ],
+    const runCompletion = async () => {
+      const userContent = [
+        `Difficulty: ${requestedDifficulty}`,
+        `Subject: ${baseHierarchy.subject || ''}`,
+        `Part: ${baseHierarchy.part || ''}`,
+        `Chapter: ${baseHierarchy.chapter || ''}`,
+        `Section: ${baseHierarchy.section || ''}`,
+        `Topic: ${baseHierarchy.topic || ''}`,
+        userInstructions ? `Instructions: ${userInstructions}` : '',
+        safeSourceText ? `Source:\n${safeSourceText.slice(0, AI_PARSE_MAX_INPUT_CHARS)}` : '',
+        existingReference ? `Existing MCQs (reference, do not duplicate):\n${existingReference}` : '',
+        rejectionHint,
+      ].filter(Boolean).join('\n\n');
+
+      const messagePayload = safeImageDataUrl
+        ? [
+          {
+            role: 'user',
+            content: [
+              { type: 'text', text: userContent || 'Generate one MCQ from this image.' },
+              { type: 'image_url', image_url: { url: safeImageDataUrl } },
+            ],
+          },
+        ]
+        : [
+          {
+            role: 'user',
+            content: userContent,
+          },
+        ];
+
+      const completion = await aiClient.chat.completions.create({
+        model: aiModel,
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content: [
+              'You are an MCQ generation engine. Return valid JSON only.',
+              'Generate exactly ONE MCQ using this schema:',
+              '{"mcq":{"question":"...","options":["A option","B option","C option","D option"],"correctAnswer":"A|B|C|D|option text","explanation":"...","difficulty":"Easy|Medium|Hard"},"errors":["..."]}',
+              'Rules:',
+              '- Return exactly 4 options in A-D order.',
+              '- Ensure exactly one correct answer.',
+              '- Keep output concise and educational.',
+              '- The MCQ must be completely NEW and unique versus every Existing MCQ reference.',
+              '- Do not match or closely resemble any provided Existing MCQ (stem, wording pattern, options, or concept framing).',
+              '- Never add markdown code fences.',
+            ].join('\n'),
+          },
+          ...messagePayload,
+        ],
+      });
+
+      const raw = completion.choices?.[0]?.message?.content || '';
+      const parsedJson = extractJsonObject(raw);
+      const row = parsedJson?.mcq || null;
+      const normalized = normalizeAiParsedRows(row ? [row] : [], baseHierarchy, 'ai-generate');
+      const extraErrors = Array.isArray(parsedJson?.errors)
+        ? parsedJson.errors.map((item) => String(item || '').trim()).filter(Boolean)
+        : [];
+
+      if (!normalized.parsed.length) {
+        throw new Error(normalized.errors[0] || extraErrors[0] || 'AI could not generate a valid MCQ.');
+      }
+
+      const first = normalized.parsed[0];
+      return {
+        mcq: {
+          question: first.question,
+          options: (first.options || []).slice(0, 4),
+          answer: first.answer,
+          explanation: first.tip || '',
+          difficulty: normalizeDifficulty(first.difficulty || requestedDifficulty),
         },
-      ]
-      : [
-        {
-          role: 'user',
-          content: userContent,
-        },
-      ];
+        errors: [...normalized.errors, ...extraErrors],
+      };
+    };
 
-    const completion = await aiClient.chat.completions.create({
-      model: aiModel,
-      temperature: 0.2,
-      response_format: { type: 'json_object' },
-      messages: [
-        {
-          role: 'system',
-          content: [
-            'You are an MCQ generation engine. Return valid JSON only.',
-            'Generate exactly ONE MCQ using this schema:',
-            '{"mcq":{"question":"...","options":["A option","B option","C option","D option"],"correctAnswer":"A|B|C|D|option text","explanation":"...","difficulty":"Easy|Medium|Hard"},"errors":["..."]}',
-            'Rules:',
-            '- Return exactly 4 options in A-D order.',
-            '- Ensure exactly one correct answer.',
-            '- Keep output concise and educational.',
-            '- Never add markdown code fences.',
-          ].join('\n'),
-        },
-        ...messagePayload,
-      ],
-    });
-
-    const raw = completion.choices?.[0]?.message?.content || '';
-    const parsedJson = extractJsonObject(raw);
-    const row = parsedJson?.mcq || null;
-    const normalized = normalizeAiParsedRows(row ? [row] : [], baseHierarchy, 'ai-generate');
-    const extraErrors = Array.isArray(parsedJson?.errors)
-      ? parsedJson.errors.map((item) => String(item || '').trim()).filter(Boolean)
-      : [];
-
-    if (!normalized.parsed.length) {
-      throw new Error(normalized.errors[0] || extraErrors[0] || 'AI could not generate a valid MCQ.');
+    const generatedResult = await withRetries(runCompletion, 2, AI_PARSE_RETRY_BASE_DELAY_MS);
+    const candidate = generatedResult?.mcq;
+    if (!candidate) {
+      regenerationErrors.push(`Attempt ${generationAttempt}: generated MCQ payload was empty.`);
+      continue;
     }
 
-    const first = normalized.parsed[0];
-    return {
-      mcq: {
-        question: first.question,
-        options: (first.options || []).slice(0, 4),
-        answer: first.answer,
-        explanation: first.tip || '',
-        difficulty: normalizeDifficulty(first.difficulty || requestedDifficulty),
-      },
-      errors: [...normalized.errors, ...extraErrors],
-    };
-  };
+    const signature = buildMcqSignature(candidate.question, candidate.options);
+    if (generatedSignatures.has(signature)) {
+      regenerationErrors.push(`Attempt ${generationAttempt}: AI repeated a previous generated MCQ.`);
+      continue;
+    }
+    generatedSignatures.add(signature);
 
-  return withRetries(runCompletion, 2, AI_PARSE_RETRY_BASE_DELAY_MS);
+    const duplicateResult = detectDuplicateGeneratedMcq(candidate, existingFingerprints);
+    if (duplicateResult.duplicate) {
+      regenerationErrors.push(`Attempt ${generationAttempt}: ${duplicateResult.reason}`);
+      continue;
+    }
+
+    return {
+      mcq: candidate,
+      errors: [...(generatedResult.errors || []), ...regenerationErrors],
+    };
+  }
+
+  return {
+    mcq: null,
+    errors: regenerationErrors.length
+      ? [`Could not generate a unique MCQ after ${AI_SINGLE_MCQ_MAX_REGENERATIONS} attempt(s).`, ...regenerationErrors]
+      : ['Could not generate a unique MCQ.'],
+  };
 }
 
 app.post('/api/ai/parse-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
@@ -11339,18 +11516,23 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
       return;
     }
 
+    const hierarchyContext = {
+      subject: String(req.body?.subject || '').trim().toLowerCase(),
+      part: String(req.body?.part || '').trim().toLowerCase(),
+      chapter: String(req.body?.chapter || '').trim(),
+      section: String(req.body?.section || '').trim(),
+      topic: String(req.body?.topic || '').trim(),
+    };
+
+    const existingMcqs = await fetchExistingMcqsForHierarchy(hierarchyContext);
+
     const result = await generateSingleMcqWithAi({
       sourceText,
       imageDataUrl,
       instructions,
       difficulty,
-      hierarchy: {
-        subject: String(req.body?.subject || '').trim().toLowerCase(),
-        part: String(req.body?.part || '').trim().toLowerCase(),
-        chapter: String(req.body?.chapter || '').trim(),
-        section: String(req.body?.section || '').trim(),
-        topic: String(req.body?.topic || '').trim(),
-      },
+      hierarchy: hierarchyContext,
+      existingMcqs,
     });
 
     if (!result?.mcq) {
