@@ -1136,8 +1136,6 @@ interface AiGeneratedMcqPayload {
 
 interface AiGeneratedMcqResponse {
   mcq?: AiGeneratedMcqPayload;
-  mcqs?: AiGeneratedMcqPayload[];
-  generatedCount?: number;
   errors?: string[];
 }
 
@@ -1148,7 +1146,6 @@ const BULK_ANALYZE_REQUEST_TIMEOUT_MS = 120_000;
 const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 8_000;
 const AI_PARSE_ENDPOINT = '/api/ai/parse-mcqs';
 const AI_GENERATE_ENDPOINT = '/api/admin/ai-generate-mcq';
-const AI_GENERATE_TARGET_COUNT = 10;
 
 interface AdminMcqPreviewQuestion {
   id: string;
@@ -4892,60 +4889,23 @@ export default function AdminApp() {
       const payload = await apiRequest<AiGeneratedMcqResponse>(AI_GENERATE_ENDPOINT, {
         method: 'POST',
         body: formData,
-        timeoutMs: 240_000,
+        timeoutMs: 120_000,
       }, authToken);
 
-      const generatedList = Array.isArray(payload?.mcqs) && payload.mcqs.length
-        ? payload.mcqs
-        : (payload?.mcq ? [payload.mcq] : []);
-
-      const normalizedGenerated: AiGeneratedMcqPayload[] = generatedList
-        .filter((item) => item && item.question && Array.isArray(item.options) && item.options.length >= 4 && item.answer)
-        .slice(0, AI_GENERATE_TARGET_COUNT)
-        .map((item): AiGeneratedMcqPayload => ({
-          question: String(item.question || '').trim(),
-          options: item.options.slice(0, 4).map((option) => String(option || '').trim()),
-          answer: String(item.answer || '').trim(),
-          explanation: String(item.explanation || '').trim(),
-          difficulty: item.difficulty === 'Easy' || item.difficulty === 'Hard' ? item.difficulty : 'Medium',
-        }));
-
-      if (normalizedGenerated.length < AI_GENERATE_TARGET_COUNT) {
+      const generated = payload?.mcq;
+      if (!generated?.question || !Array.isArray(generated.options) || generated.options.length < 4 || !generated.answer) {
         throw new Error(payload?.errors?.[0] || 'AI did not return a valid MCQ.');
       }
 
-      const parsedFromAi: ParsedBulkMcq[] = normalizedGenerated.map((item) => ({
-        subject: hierarchyContext.subject,
-        part: hierarchyContext.part,
-        chapter: hierarchyContext.chapter,
-        section: hierarchyContext.section,
-        topic: hierarchyContext.topic,
-        question: item.question,
-        questionImageUrl: '',
-        options: item.options,
-        answer: item.answer,
-        tip: item.explanation,
-        shortTrick: '',
-        difficulty: item.difficulty,
-      }));
-
-      setAiGenGenerated(normalizedGenerated[0] || null);
-      setBulkParsed(parsedFromAi);
-      setBulkParseErrors(Array.isArray(payload?.errors) ? payload.errors : []);
-      setShowParsedPreview(true);
-      setBulkAnalysisReady(true);
-      setForm((previous) => ({
-        ...previous,
-        subject: hierarchyContext.subject,
-        part: hierarchyContext.part,
-        chapter: hierarchyContext.chapter,
-        section: hierarchyContext.section,
-        topic: hierarchyContext.topic,
-      }));
-      setUploadChapterKey(aiGenChapterKey || '');
-      setUploadMode('document');
+      setAiGenGenerated({
+        question: String(generated.question || '').trim(),
+        options: generated.options.slice(0, 4).map((option) => String(option || '').trim()),
+        answer: String(generated.answer || '').trim(),
+        explanation: String(generated.explanation || '').trim(),
+        difficulty: generated.difficulty === 'Easy' || generated.difficulty === 'Hard' ? generated.difficulty : 'Medium',
+      });
       setAiGenGenerateErrors(Array.isArray(payload?.errors) ? payload.errors : []);
-      toast.success(`AI generated ${normalizedGenerated.length} MCQs. Review/edit the populated blocks and upload.`);
+      toast.success('AI generated one MCQ. Review and upload it.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not generate AI MCQ.';
       setAiGenGenerateErrors([message]);
@@ -8419,7 +8379,7 @@ export default function AdminApp() {
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                     Generating...
                                   </>
-                                ) : 'Generate 10 MCQs'}
+                                ) : 'Generate MCQ'}
                               </Button>
                               <Button
                                 type="button"
