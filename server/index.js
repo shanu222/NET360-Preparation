@@ -1175,6 +1175,43 @@ function normalizeDifficulty(value) {
 }
 
 function parseOptionsFromUnknown(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const optionObject = value;
+    const keyAliases = [
+      ['A', 'a', 'optionA', 'option_a', 'OptionA'],
+      ['B', 'b', 'optionB', 'option_b', 'OptionB'],
+      ['C', 'c', 'optionC', 'option_c', 'OptionC'],
+      ['D', 'd', 'optionD', 'option_d', 'OptionD'],
+      ['E', 'e', 'optionE', 'option_e', 'OptionE'],
+      ['F', 'f', 'optionF', 'option_f', 'OptionF'],
+      ['G', 'g', 'optionG', 'option_g', 'OptionG'],
+      ['H', 'h', 'optionH', 'option_h', 'OptionH'],
+    ];
+
+    const normalizedByKey = keyAliases
+      .map((aliases) => {
+        for (const alias of aliases) {
+          if (Object.prototype.hasOwnProperty.call(optionObject, alias)) {
+            return normalizeOptionText(optionObject[alias]);
+          }
+        }
+        return '';
+      })
+      .filter(Boolean);
+
+    if (normalizedByKey.length) {
+      return normalizedByKey;
+    }
+
+    const fallbackValues = Object.values(optionObject)
+      .map((item) => normalizeOptionText(item))
+      .filter(Boolean);
+
+    if (fallbackValues.length) {
+      return fallbackValues;
+    }
+  }
+
   if (Array.isArray(value)) {
     return value
       .map((item) => normalizeOptionText(item))
@@ -1240,6 +1277,7 @@ const AI_PARSE_MAX_RETRIES = 3;
 const AI_PARSE_RETRY_BASE_DELAY_MS = 600;
 const AI_MULTI_MCQ_GENERATION_COUNT = clamp(Number(process.env.AI_MULTI_MCQ_GENERATION_COUNT || 10), 1, 15);
 const AI_SINGLE_MCQ_MAX_REGENERATIONS = clamp(Number(process.env.AI_SINGLE_MCQ_MAX_REGENERATIONS || 4), 1, 8);
+const AI_MULTI_SINGLE_SLOT_RETRIES = clamp(Number(process.env.AI_MULTI_SINGLE_SLOT_RETRIES || 2), 1, 5);
 const AI_SINGLE_MCQ_SIMILARITY_THRESHOLD = Math.max(0.6, Math.min(0.99, Number(process.env.AI_SINGLE_MCQ_SIMILARITY_THRESHOLD || 0.84)));
 const AI_SINGLE_MCQ_REFERENCE_MAX_TEXT = clamp(Number(process.env.AI_SINGLE_MCQ_REFERENCE_MAX_TEXT || 180_000), 50_000, 300_000);
 const MATHPIX_APP_ID = String(process.env.MATHPIX_APP_ID || '').trim();
@@ -1499,16 +1537,17 @@ function splitQuestionAndConclusions(questionText, explicitConclusions = []) {
   };
 }
 
-function normalizeAiParsedRows(rows, baseHierarchy, chunkLabel = 'chunk') {
+function normalizeAiParsedRows(rows, baseHierarchy, chunkLabel = 'chunk', config = {}) {
   const parsed = [];
   const errors = [];
+  const minimumOptions = clamp(Number(config?.minimumOptions || 2), 1, 8);
 
   rows.forEach((row, idx) => {
     const splitContent = splitQuestionAndConclusions(String(row?.question || '').replace(/\s+/g, ' ').trim(), row?.conclusions);
     const question = splitContent.question;
     const conclusions = splitContent.conclusions;
     const options = parseOptionsFromUnknown(row?.options).slice(0, 4);
-    const answer = resolveAnswerToOption(row?.correctAnswer ?? row?.answer, options);
+    const answer = resolveAnswerToOption(row?.correctAnswer ?? row?.correct_answer ?? row?.answer, options);
     const tip = normalizeRichMcqText(row?.explanation || '');
     const difficulty = normalizeDifficulty(row?.difficulty);
     const questionImageRef = String(row?.questionImage || '').trim();
@@ -1528,8 +1567,10 @@ function normalizeAiParsedRows(rows, baseHierarchy, chunkLabel = 'chunk') {
       errors.push(`${chunkLabel} Q${idx + 1}: question text is missing.`);
       return;
     }
-    if (options.length < 2) {
-      errors.push(`${chunkLabel} Q${idx + 1}: at least 2 options are required.`);
+    if (options.length < minimumOptions) {
+      errors.push(minimumOptions >= 4
+        ? `${chunkLabel} Q${idx + 1}: exactly 4 options (A-D) are required.`
+        : `${chunkLabel} Q${idx + 1}: at least ${minimumOptions} options are required.`);
       return;
     }
     if (!answer) {
@@ -11207,7 +11248,7 @@ function buildMcqSignature(question, options) {
 
 function validateGeneratedMcqStructure(candidate, requestedDifficulty = 'Medium') {
   const question = normalizeRichMcqText(String(candidate?.question || ''));
-  const options = (Array.isArray(candidate?.options) ? candidate.options : [])
+  const options = parseOptionsFromUnknown(candidate?.options)
     .slice(0, 4)
     .map((item) => normalizeRichMcqText(String(item || '')))
     .filter(Boolean);
@@ -11226,7 +11267,8 @@ function validateGeneratedMcqStructure(candidate, requestedDifficulty = 'Medium'
   }
 
   const answer = resolveAnswerToOption(candidate?.answer, options);
-  if (!answer) {
+  const normalizedAnswer = options.find((item) => flattenRichMcqTextForMatch(item) === flattenRichMcqTextForMatch(answer || '')) || '';
+  if (!normalizedAnswer) {
     return { valid: false, reason: 'Correct answer does not match options A-D.', mcq: null };
   }
 
@@ -11241,7 +11283,7 @@ function validateGeneratedMcqStructure(candidate, requestedDifficulty = 'Medium'
     mcq: {
       question,
       options,
-      answer,
+      answer: normalizedAnswer,
       explanation,
       difficulty: normalizeDifficulty(String(candidate?.difficulty || requestedDifficulty || 'Medium')),
     },
@@ -11576,8 +11618,10 @@ async function generateSingleMcqWithAi({
 
       const raw = completion.choices?.[0]?.message?.content || '';
       const parsedJson = extractJsonObject(raw);
-      const row = parsedJson?.mcq || null;
-      const normalized = normalizeAiParsedRows(row ? [row] : [], baseHierarchy, 'ai-generate');
+      const row = parsedJson?.mcq
+        || (Array.isArray(parsedJson?.mcqs) ? parsedJson.mcqs[0] : null)
+        || (parsedJson?.question ? parsedJson : null);
+      const normalized = normalizeAiParsedRows(row ? [row] : [], baseHierarchy, 'ai-generate', { minimumOptions: 4 });
       const extraErrors = Array.isArray(parsedJson?.errors)
         ? parsedJson.errors.map((item) => String(item || '').trim()).filter(Boolean)
         : [];
@@ -11599,7 +11643,14 @@ async function generateSingleMcqWithAi({
       };
     };
 
-    const generatedResult = await withRetries(runCompletion, 2, AI_PARSE_RETRY_BASE_DELAY_MS);
+    let generatedResult = null;
+    try {
+      generatedResult = await withRetries(runCompletion, 2, AI_PARSE_RETRY_BASE_DELAY_MS);
+    } catch (error) {
+      regenerationErrors.push(`Attempt ${generationAttempt}: ${error instanceof Error ? error.message : 'AI generation failed.'}`);
+      continue;
+    }
+
     const candidate = generatedResult?.mcq;
     if (!candidate) {
       regenerationErrors.push(`Attempt ${generationAttempt}: generated MCQ payload was empty.`);
@@ -11656,38 +11707,42 @@ async function generateMultipleMcqsWithAi({
   const comparisonPool = Array.isArray(existingMcqs) ? [...existingMcqs] : [];
 
   for (let index = 0; index < targetCount; index += 1) {
-    const result = await generateSingleMcqWithAi({
-      sourceText,
-      imageDataUrl,
-      instructions,
-      difficulty,
-      requestedCount: targetCount,
-      hierarchy,
-      existingMcqs: comparisonPool,
-    });
+    let accepted = false;
+    for (let slotAttempt = 1; slotAttempt <= AI_MULTI_SINGLE_SLOT_RETRIES; slotAttempt += 1) {
+      const result = await generateSingleMcqWithAi({
+        sourceText,
+        imageDataUrl,
+        instructions,
+        difficulty,
+        requestedCount: targetCount,
+        hierarchy,
+        existingMcqs: comparisonPool,
+      });
 
-    if (!result?.mcq) {
-      return {
-        mcqs: generated,
-        generatedCount: generated.length,
-        errors: [
-          `Could not generate ${targetCount} unique MCQs in one run. Stopped at MCQ #${index + 1}.`,
-          ...(result?.errors || []),
-          ...errors,
-        ],
-      };
+      if (!result?.mcq) {
+        if (Array.isArray(result?.errors) && result.errors.length) {
+          errors.push(...result.errors.map((item) => `MCQ #${index + 1} retry ${slotAttempt}: ${item}`));
+        }
+        continue;
+      }
+
+      generated.push(result.mcq);
+      if (Array.isArray(result.errors) && result.errors.length) {
+        errors.push(...result.errors);
+      }
+
+      comparisonPool.push({
+        _id: `generated-${index + 1}`,
+        question: result.mcq.question,
+        options: result.mcq.options,
+      });
+      accepted = true;
+      break;
     }
 
-    generated.push(result.mcq);
-    if (Array.isArray(result.errors) && result.errors.length) {
-      errors.push(...result.errors);
+    if (!accepted) {
+      errors.push(`Failed to generate a valid MCQ for slot #${index + 1} after ${AI_MULTI_SINGLE_SLOT_RETRIES} retry cycle(s).`);
     }
-
-    comparisonPool.push({
-      _id: `generated-${index + 1}`,
-      question: result.mcq.question,
-      options: result.mcq.options,
-    });
   }
 
   return {
