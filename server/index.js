@@ -1391,6 +1391,12 @@ function splitTextIntoParseChunks(text, chunkSize = AI_PARSE_CHUNK_CHARS, overla
   return chunks.filter(Boolean);
 }
 
+function delayMs(ms = 0) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, Math.max(0, Number(ms) || 0));
+  });
+}
+
 async function withRetries(task, attempts = AI_PARSE_MAX_RETRIES, baseDelayMs = AI_PARSE_RETRY_BASE_DELAY_MS) {
   let lastError = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -11665,16 +11671,6 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
 
     if (!String(normalizedHierarchy.section || normalizedHierarchy.topic || '').trim()) {
       res.status(400).json({ mcq: null, error: 'Missing required field: section/topic.', errors: ['Missing required field: section/topic.'] });
-      return;
-    }
-
-    const hasInputSource = Boolean(String(sourceText || '').trim() || String(instructions || '').trim() || String(imageDataUrl || '').trim());
-    if (!hasInputSource) {
-      res.status(400).json({
-        mcq: null,
-        error: 'Provide at least one input source: image file, source text, or instructions.',
-        errors: ['Provide at least one input source: image file, source text, or instructions.'],
-      });
       return;
     }
 
