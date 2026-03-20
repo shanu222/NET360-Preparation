@@ -6,7 +6,7 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "start": "vite preview --host 0.0.0.0 --port $PORT",
+    "start": "npm run start:web",
     "start:web": "node server/web.js",
     "dev:server": "node server/index.js",
     "start:server": "node server/index.js",
