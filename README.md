@@ -15,6 +15,9 @@ https://www.figma.com/design/y9bYMsJLVtoN2SMwfEKBLc/NET360-Preparation-App
 3. Start backend API:
 `npm run dev:server`
 
+Note: Vite dev proxy forwards `/api/*` to `VITE_DEV_API_ORIGIN` (or `VITE_API_BASE_URL`) and defaults to `http://localhost:4000`.
+If your backend runs on a different port (for example `5000`), set `VITE_DEV_API_ORIGIN=http://localhost:5000`.
+
 Frontend runs on Vite, backend runs on Express.
 
 ## Android App (Capacitor)
@@ -68,6 +71,7 @@ Frontend environment variable:
 
 - `VITE_API_BASE_URL` = full backend URL in production, for example `https://net360-api.onrender.com`
 - `VITE_MOBILE_API_BASE_URL` = optional native override for Android/iOS builds
+- `VITE_DEV_API_ORIGIN` = optional local backend origin override for browser dev mode, default `http://localhost:4000`
 - `VITE_DISABLE_LOCAL_API_FALLBACK` = set `true` for production mobile builds to require live backend
 
 For Android packaging, create `.env.android` from `.env.android.example`.

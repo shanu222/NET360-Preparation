@@ -11670,6 +11670,12 @@ app.delete('/api/admin/practice-board/questions/:questionId', authMiddleware, re
   res.json({ ok: true, removedQuestionId: questionId });
 });
 
+app.use('/api', (req, res) => {
+  res.status(404).json({
+    error: `API route not found: ${String(req.method || 'GET').toUpperCase()} ${String(req.originalUrl || req.path || '').trim()}`,
+  });
+});
+
 app.use((err, req, res, next) => {
   console.error('Unhandled API error:', {
     path: req.path,

@@ -1130,6 +1130,7 @@ const BULK_ANALYZE_DEBOUNCE_MS = 700;
 const BULK_ANALYZE_MAX_ATTEMPTS = 3;
 const BULK_ANALYZE_RETRY_DELAY_MS = 650;
 const BULK_ANALYZE_REQUEST_TIMEOUT_MS = 120_000;
+const AI_PARSE_ENDPOINT = '/api/ai/parse-mcqs';
 
 interface AdminMcqPreviewQuestion {
   id: string;
@@ -4267,14 +4268,14 @@ export default function AdminApp() {
         const formData = new FormData();
         formData.append('sourceType', 'file');
         formData.append('file', effectiveFile);
-        return apiRequest<ParsedBulkResponse>('/api/ai/parse-mcqs', {
+        return apiRequest<ParsedBulkResponse>(AI_PARSE_ENDPOINT, {
           method: 'POST',
           body: formData,
           timeoutMs: BULK_ANALYZE_REQUEST_TIMEOUT_MS,
         }, authToken);
       }
 
-      return apiRequest<ParsedBulkResponse>('/api/ai/parse-mcqs', {
+      return apiRequest<ParsedBulkResponse>(AI_PARSE_ENDPOINT, {
         method: 'POST',
         body: JSON.stringify({
           sourceType: 'text',
@@ -4288,7 +4289,9 @@ export default function AdminApp() {
       setBulkProcessing(true);
       setBulkProcessingLabel('Analysing MCQs...');
       setBulkAnalysisReady(false);
+      const aiParseUrl = buildApiUrl(AI_PARSE_ENDPOINT);
       console.info('Admin Analyse by AI started', {
+        endpoint: aiParseUrl,
         hasFile: Boolean(effectiveFile),
         sourceType: effectiveFile ? 'file' : 'text',
         subject: hierarchyContext.subject,
@@ -4386,12 +4389,13 @@ export default function AdminApp() {
         setBulkParseErrors([error instanceof Error ? error.message : 'AI analysis failed. Please try again.']);
       }
       const status = Number((error as { status?: number } | null)?.status || 0);
+      const aiParseUrl = buildApiUrl(AI_PARSE_ENDPOINT);
       if (status === 401 || status === 403) {
         toast.error('Admin session expired. Please log in again to continue AI analysis.');
       } else if (status >= 500) {
         toast.error('AI parser service is temporarily unavailable. Please retry in a moment.');
       } else if (error instanceof Error && /timeout|network error|failed to fetch|cors|backend url/i.test(error.message)) {
-        toast.error('Could not reach AI parser. Check internet/backend URL/CORS, then retry.');
+        toast.error(`Could not reach AI parser at ${aiParseUrl}. Ensure backend server is running, URL/port is correct, and CORS allows this origin.`);
       } else {
         toast.error(error instanceof Error ? error.message : 'AI analysis failed after retries. Please try again.');
       }

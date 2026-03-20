@@ -3,9 +3,11 @@ import { localApiRequest, localDownloadReport } from './localApi';
 type RuntimeEnv = {
   VITE_API_BASE_URL?: string;
   VITE_MOBILE_API_BASE_URL?: string;
+  VITE_DEV_API_ORIGIN?: string;
   VITE_FORCE_LOCAL_API?: string;
   VITE_DISABLE_LOCAL_API_FALLBACK?: string;
   VITE_ADMIN_ONLY?: string;
+  DEV?: boolean;
 };
 
 type ApiRequestOptions = RequestInit & {
@@ -15,6 +17,7 @@ type ApiRequestOptions = RequestInit & {
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
 const API_BASE_URL = env.VITE_API_BASE_URL || '';
 const MOBILE_API_BASE_URL = env.VITE_MOBILE_API_BASE_URL || '';
+const DEV_API_ORIGIN = env.VITE_DEV_API_ORIGIN || 'http://localhost:4000';
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
 const ADMIN_TOKEN_STORAGE_KEY = 'net360-admin-access-token';
@@ -57,6 +60,17 @@ function getEffectiveApiBaseUrl() {
   if (isNativeCapacitorRuntime()) {
     return MOBILE_API_BASE_URL || API_BASE_URL;
   }
+
+  const isLocalBrowserDev = Boolean(env.DEV)
+    && typeof window !== 'undefined'
+    && /^(localhost|127\.0\.0\.1)$/i.test(String(window.location.hostname || ''));
+
+  // In local browser development, default to explicit backend origin
+  // so API calls remain stable even if Vite proxy is unavailable.
+  if (!API_BASE_URL && isLocalBrowserDev) {
+    return DEV_API_ORIGIN;
+  }
+
   return API_BASE_URL;
 }
 
@@ -132,23 +146,23 @@ async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: num
   }
 }
 
-function mapTransportError(path: string, error: unknown) {
+function mapTransportError(path: string, resolvedUrl: string, error: unknown) {
   const asError = error instanceof Error ? error : new Error(String(error));
   const rawMessage = String(asError.message || '').trim();
   const normalized = rawMessage.toLowerCase();
 
   if ((asError as Error & { code?: string }).code === 'REQUEST_TIMEOUT') {
-    return new Error(`Request timeout for ${path}. The server took too long to respond. Please try again.`);
+    return new Error(`Request timeout for ${resolvedUrl}. The server took too long to respond. Please try again.`);
   }
 
   if (normalized.includes('failed to fetch') || normalized.includes('networkerror') || normalized.includes('load failed')) {
     return new Error(
-      `Network error while calling ${path}. Check backend URL, CORS settings, and server availability, then retry.`,
+      `Network error while calling ${resolvedUrl}. Check backend URL/port, CORS settings, and confirm the API server is running.`,
     );
   }
 
   if (normalized.includes('aborterror')) {
-    return new Error(`Request to ${path} was cancelled before completion.`);
+    return new Error(`Request to ${resolvedUrl} was cancelled before completion.`);
   }
 
   return asError;
@@ -254,6 +268,7 @@ function buildMissingNativeApiBaseUrlError(path: string) {
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}, token?: string | null): Promise<T> {
   const effectiveBaseUrl = getEffectiveApiBaseUrl();
   const timeoutMs = resolveRequestTimeoutMs(path, options.timeoutMs);
+  const resolvedPath = resolveApiPath(path);
 
   if (
     isNativeCapacitorRuntime()
@@ -357,12 +372,12 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 
   let response: Response;
   try {
-    response = await fetchWithTimeout(resolveApiPath(path), {
+    response = await fetchWithTimeout(resolvedPath, {
       ...options,
       headers: buildHeaders(initialToken),
     }, timeoutMs);
   } catch (error) {
-    const mappedError = mapTransportError(path, error);
+    const mappedError = mapTransportError(path, resolvedPath, error);
     // If backend is unreachable, transparently fall back to browser-local mode.
     if (canFallbackToLocalMode() && !(hasAuthToken && (isPremiumSensitivePath(path) || isAdminSensitivePath(path)))) {
       logApiConfigurationIssue('warn', 'Remote API request failed; switching to local fallback mode.', {
@@ -384,7 +399,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     if (response.status === 401) {
       const refreshedToken = await tryRefreshAccessToken();
       if (refreshedToken) {
-        const retryResponse = await fetchWithTimeout(resolveApiPath(path), {
+        const retryResponse = await fetchWithTimeout(resolvedPath, {
           ...options,
           headers: buildHeaders(refreshedToken),
         }, timeoutMs);
