@@ -1238,6 +1238,7 @@ const AI_PARSE_CHUNK_OVERLAP = 1_200;
 const AI_PARSE_PARALLEL_CHUNKS = 3;
 const AI_PARSE_MAX_RETRIES = 3;
 const AI_PARSE_RETRY_BASE_DELAY_MS = 600;
+const AI_MULTI_MCQ_GENERATION_COUNT = clamp(Number(process.env.AI_MULTI_MCQ_GENERATION_COUNT || 10), 1, 15);
 const AI_SINGLE_MCQ_MAX_REGENERATIONS = clamp(Number(process.env.AI_SINGLE_MCQ_MAX_REGENERATIONS || 4), 1, 8);
 const AI_SINGLE_MCQ_SIMILARITY_THRESHOLD = Math.max(0.6, Math.min(0.99, Number(process.env.AI_SINGLE_MCQ_SIMILARITY_THRESHOLD || 0.84)));
 const AI_SINGLE_MCQ_REFERENCE_MAX_TEXT = clamp(Number(process.env.AI_SINGLE_MCQ_REFERENCE_MAX_TEXT || 180_000), 50_000, 300_000);
@@ -11459,6 +11460,61 @@ async function generateSingleMcqWithAi({
   };
 }
 
+async function generateMultipleMcqsWithAi({
+  sourceText,
+  imageDataUrl,
+  instructions,
+  difficulty,
+  hierarchy,
+  existingMcqs = [],
+  count = AI_MULTI_MCQ_GENERATION_COUNT,
+}) {
+  const targetCount = clamp(Number(count || AI_MULTI_MCQ_GENERATION_COUNT), 1, 15);
+  const generated = [];
+  const errors = [];
+  const comparisonPool = Array.isArray(existingMcqs) ? [...existingMcqs] : [];
+
+  for (let index = 0; index < targetCount; index += 1) {
+    const result = await generateSingleMcqWithAi({
+      sourceText,
+      imageDataUrl,
+      instructions,
+      difficulty,
+      hierarchy,
+      existingMcqs: comparisonPool,
+    });
+
+    if (!result?.mcq) {
+      return {
+        mcqs: generated,
+        generatedCount: generated.length,
+        errors: [
+          `Could not generate ${targetCount} unique MCQs in one run. Stopped at MCQ #${index + 1}.`,
+          ...(result?.errors || []),
+          ...errors,
+        ],
+      };
+    }
+
+    generated.push(result.mcq);
+    if (Array.isArray(result.errors) && result.errors.length) {
+      errors.push(...result.errors);
+    }
+
+    comparisonPool.push({
+      _id: `generated-${index + 1}`,
+      question: result.mcq.question,
+      options: result.mcq.options,
+    });
+  }
+
+  return {
+    mcqs: generated,
+    generatedCount: generated.length,
+    errors,
+  };
+}
+
 app.post('/api/ai/parse-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
   try {
     const sourceType = String(req.body?.sourceType || 'file').trim().toLowerCase();
@@ -11568,21 +11624,34 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
 
     const existingMcqs = await fetchExistingMcqsForHierarchy(normalizedHierarchy);
 
-    const result = await generateSingleMcqWithAi({
+    const result = await generateMultipleMcqsWithAi({
       sourceText,
       imageDataUrl,
       instructions,
       difficulty,
       hierarchy: normalizedHierarchy,
       existingMcqs,
+      count: AI_MULTI_MCQ_GENERATION_COUNT,
     });
 
-    if (!result?.mcq) {
-      res.status(400).json({ mcq: null, errors: result?.errors?.length ? result.errors : ['AI could not generate MCQ.'] });
+    if (!Array.isArray(result?.mcqs) || result.mcqs.length < AI_MULTI_MCQ_GENERATION_COUNT) {
+      res.status(400).json({
+        mcq: null,
+        mcqs: Array.isArray(result?.mcqs) ? result.mcqs : [],
+        generatedCount: Number(result?.generatedCount || 0),
+        errors: result?.errors?.length
+          ? result.errors
+          : [`AI could not generate ${AI_MULTI_MCQ_GENERATION_COUNT} MCQs.`],
+      });
       return;
     }
 
-    res.json({ mcq: result.mcq, errors: result.errors || [] });
+    res.json({
+      mcq: result.mcqs[0],
+      mcqs: result.mcqs,
+      generatedCount: result.generatedCount,
+      errors: result.errors || [],
+    });
   } catch (error) {
     console.error('AI single MCQ generation failed:', {
       message: error?.message || error,
