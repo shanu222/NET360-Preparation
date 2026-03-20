@@ -301,12 +301,43 @@
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-x: contain;
-    touch-action: pan-x;
+    overscroll-behavior-y: auto;
+    touch-action: pan-x pan-y;
     scrollbar-width: thin;
   }
 
   .net360-horizontal-scroll > * {
     min-width: max-content;
+  }
+
+  .net360-swipe-row {
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    overscroll-behavior-y: auto;
+    touch-action: pan-x pan-y;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+    scrollbar-gutter: stable;
+  }
+
+  .net360-swipe-row::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
+  .net360-swipe-row > [data-slot='tabs-list'],
+  .net360-swipe-row > .inline-flex,
+  .net360-swipe-row > .flex {
+    min-width: max-content;
+    flex-wrap: nowrap;
+  }
+
+  .net360-swipe-row [data-slot='tabs-trigger'] {
+    white-space: nowrap;
+    flex: 0 0 auto;
   }
 
   .net360-page .recharts-responsive-container,
@@ -800,6 +831,10 @@
 
     .net360-page [data-slot='tabs-trigger'] {
       white-space: normal;
+    }
+
+    .net360-swipe-row [data-slot='tabs-trigger'] {
+      white-space: nowrap;
     }
   }
 

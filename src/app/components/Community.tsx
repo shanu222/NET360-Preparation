@@ -1237,7 +1237,7 @@ export function Community() {
   return (
     <div className="min-w-0 space-y-4">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-4">
-        <div className="net360-horizontal-scroll -mx-1 px-1 pb-1 [scrollbar-gutter:stable]">
+        <div className="net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1 [scrollbar-gutter:stable]">
           <TabsList className="inline-flex h-auto w-max min-w-max flex-nowrap gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 via-indigo-50 to-fuchsia-50 p-1.5 shadow-[0_10px_20px_rgba(99,102,241,0.12)]">
             <TabsTrigger value="discover-students" className={sectionTabTriggerClassName}>Discover Students</TabsTrigger>
             <TabsTrigger value="study-partners" className={sectionTabTriggerClassName}>Study Partners</TabsTrigger>
