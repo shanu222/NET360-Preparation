@@ -26,7 +26,7 @@ function sanitizeLatexScripts(value: string) {
   return normalized.replace(/(^|[^\\])([_^])(?!\{)/g, '$1\\$2');
 }
 
-const INLINE_IMAGE_TOKEN_REGEX = /\[\[img:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\]\]/gi;
+const INLINE_MEDIA_TOKEN_REGEX = /\[\[(?:imgrow:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\|(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)|img:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+))\]\]/gi;
 const INLINE_FORMAT_TAG_REGEX = /<(strong|b|em|i)>([\s\S]*?)<\/\s*(strong|b|em|i)\s*>/gi;
 
 function normalizeMathSegment(value: string) {
@@ -59,9 +59,9 @@ export function McqMathText({
 
   const segments = useMemo(() => {
     const raw = String(value || '');
-    if (!raw.trim()) return [] as Array<{ kind: 'text' | 'image' | 'bold' | 'italic'; value: string }>;
+    if (!raw.trim()) return [] as Array<{ kind: 'text' | 'image' | 'image-row' | 'bold' | 'italic'; value: string }>;
 
-    const parts: Array<{ kind: 'text' | 'image' | 'bold' | 'italic'; value: string }> = [];
+    const parts: Array<{ kind: 'text' | 'image' | 'image-row' | 'bold' | 'italic'; value: string }> = [];
     const pushRichTextParts = (input: string) => {
       const plain = String(input || '');
       if (!plain) return;
@@ -96,7 +96,7 @@ export function McqMathText({
     };
     let lastIndex = 0;
     let match: RegExpExecArray | null;
-    const regex = new RegExp(INLINE_IMAGE_TOKEN_REGEX.source, 'gi');
+    const regex = new RegExp(INLINE_MEDIA_TOKEN_REGEX.source, 'gi');
 
     while ((match = regex.exec(raw))) {
       const tokenStart = match.index;
@@ -104,9 +104,13 @@ export function McqMathText({
         pushRichTextParts(raw.slice(lastIndex, tokenStart));
       }
 
-      const imageSrc = normalizeMcqImageSrc(match[1]);
-      if (imageSrc) {
-        parts.push({ kind: 'image', value: imageSrc });
+      const rowLeft = normalizeMcqImageSrc(match[1]);
+      const rowRight = normalizeMcqImageSrc(match[2]);
+      const singleImage = normalizeMcqImageSrc(match[3]);
+      if (rowLeft && rowRight) {
+        parts.push({ kind: 'image-row', value: `${rowLeft}|${rowRight}` });
+      } else if (singleImage) {
+        parts.push({ kind: 'image', value: singleImage });
       }
 
       lastIndex = regex.lastIndex;
@@ -125,7 +129,7 @@ export function McqMathText({
 
   const shouldTypeset = useMemo(() => {
     return segments.some((segment) => {
-      if (segment.kind === 'image') return false;
+      if (segment.kind === 'image' || segment.kind === 'image-row') return false;
       return hasMathDelimiters(segment.value);
     });
   }, [segments]);
@@ -151,6 +155,17 @@ export function McqMathText({
       style={{ whiteSpace: 'pre-wrap' }}
     >
       {segments.map((segment, index) => {
+        if (segment.kind === 'image-row') {
+          const [leftSrc, rightSrc] = String(segment.value || '').split('|');
+          if (!leftSrc || !rightSrc) return null;
+          return (
+            <span key={`math-image-row-${index}`} className="mcq-inline-image-row">
+              <img src={leftSrc} alt={`Embedded MCQ visual ${index + 1} left`} className="mcq-inline-image" />
+              <img src={rightSrc} alt={`Embedded MCQ visual ${index + 1} right`} className="mcq-inline-image" />
+            </span>
+          );
+        }
+
         if (segment.kind === 'image') {
           return (
             <img

@@ -185,13 +185,130 @@ function insertImageTokenToField(targetId: string, dataUrl: string) {
   insertTextToField(targetId, `[[img:${normalized}]]`);
 }
 
+const INLINE_IMAGE_TOKEN_PATTERN = /\[\[img:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\]\]/gi;
+const INLINE_IMAGE_ROW_TOKEN_PATTERN = /\[\[imgrow:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\|(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\]\]/gi;
+
+function replaceFieldValue(targetId: string, nextValue: string) {
+  const field = document.getElementById(targetId) as MathFieldLikeElement | null;
+  if (!field) return false;
+
+  field.setValue(String(nextValue || ''), { silenceNotifications: false });
+  field.dispatchEvent(new Event('input', { bubbles: true }));
+  field.focus();
+  return true;
+}
+
+function findLastInlineImageToken(value: string):
+  | { kind: 'img'; start: number; end: number; raw: string; image: string }
+  | { kind: 'row'; start: number; end: number; raw: string; left: string; right: string }
+  | null {
+  const raw = String(value || '');
+
+  let last:
+    | { kind: 'img'; start: number; end: number; raw: string; image: string }
+    | { kind: 'row'; start: number; end: number; raw: string; left: string; right: string }
+    | null = null;
+
+  const imageRegex = new RegExp(INLINE_IMAGE_TOKEN_PATTERN.source, 'gi');
+  let imageMatch: RegExpExecArray | null;
+  while ((imageMatch = imageRegex.exec(raw))) {
+    last = {
+      kind: 'img',
+      start: imageMatch.index,
+      end: imageRegex.lastIndex,
+      raw: imageMatch[0],
+      image: String(imageMatch[1] || ''),
+    };
+  }
+
+  const rowRegex = new RegExp(INLINE_IMAGE_ROW_TOKEN_PATTERN.source, 'gi');
+  let rowMatch: RegExpExecArray | null;
+  while ((rowMatch = rowRegex.exec(raw))) {
+    const candidate = {
+      kind: 'row' as const,
+      start: rowMatch.index,
+      end: rowRegex.lastIndex,
+      raw: rowMatch[0],
+      left: String(rowMatch[1] || ''),
+      right: String(rowMatch[2] || ''),
+    };
+    if (!last || candidate.start >= last.start) {
+      last = candidate;
+    }
+  }
+
+  return last;
+}
+
+function resolveImagePlacementChoice(): 'cursor' | 'below' | 'above' | 'left' | 'right' {
+  const raw = String(window.prompt(
+    'Place new image: 1 Cursor, 2 Below previous, 3 Above previous, 4 Left of previous, 5 Right of previous',
+    '1',
+  ) || '').trim().toLowerCase();
+
+  if (raw === '2' || raw === 'below' || raw === 'b') return 'below';
+  if (raw === '3' || raw === 'above' || raw === 'a') return 'above';
+  if (raw === '4' || raw === 'left' || raw === 'l') return 'left';
+  if (raw === '5' || raw === 'right' || raw === 'r') return 'right';
+  return 'cursor';
+}
+
+function insertImageTokenSmartToField(targetId: string, dataUrl: string) {
+  const normalized = String(dataUrl || '').trim();
+  if (!normalized) return;
+
+  const field = document.getElementById(targetId) as MathFieldLikeElement | null;
+  if (!field) return;
+
+  const currentValue = String(field.getValue('latex') || '');
+  const previousToken = findLastInlineImageToken(currentValue);
+
+  if (!previousToken) {
+    insertImageTokenToField(targetId, normalized);
+    return;
+  }
+
+  const choice = resolveImagePlacementChoice();
+  const newToken = `[[img:${normalized}]]`;
+
+  if (choice === 'cursor') {
+    insertImageTokenToField(targetId, normalized);
+    return;
+  }
+
+  if (choice === 'left' || choice === 'right') {
+    if (previousToken.kind === 'img') {
+      const rowToken = choice === 'left'
+        ? `[[imgrow:${normalized}|${previousToken.image}]]`
+        : `[[imgrow:${previousToken.image}|${normalized}]]`;
+      const merged = `${currentValue.slice(0, previousToken.start)}${rowToken}${currentValue.slice(previousToken.end)}`;
+      replaceFieldValue(targetId, merged);
+      return;
+    }
+
+    // Keep existing row intact and avoid destructive replacement when the previous token is already a row.
+    const fallback = `${currentValue}\n${newToken}`;
+    replaceFieldValue(targetId, fallback);
+    return;
+  }
+
+  if (choice === 'above') {
+    const nextValue = `${currentValue.slice(0, previousToken.start)}${newToken}\n${previousToken.raw}${currentValue.slice(previousToken.end)}`;
+    replaceFieldValue(targetId, nextValue);
+    return;
+  }
+
+  const nextValue = `${currentValue.slice(0, previousToken.end)}\n${newToken}${currentValue.slice(previousToken.end)}`;
+  replaceFieldValue(targetId, nextValue);
+}
+
 function insertImageTokenToFieldWithRetry(targetId: string, dataUrl: string, attempt = 0) {
   const normalized = String(dataUrl || '').trim();
   if (!normalized) return;
 
   const field = document.getElementById(targetId) as MathFieldLikeElement | null;
   if (field) {
-    insertImageTokenToField(targetId, normalized);
+    insertImageTokenSmartToField(targetId, normalized);
     return;
   }
 
@@ -408,7 +525,7 @@ function MathLiveInput({
             if (!dataUrl) return;
             onImagePaste?.(dataUrl);
             if (insertImageTokenOnPaste !== false) {
-              insertImageTokenToField(id, dataUrl);
+              insertImageTokenSmartToField(id, dataUrl);
             }
           })
           .catch(() => {

@@ -719,6 +719,21 @@
     margin-top: 0.35rem;
   }
 
+  .mcq-inline-image-row {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.45rem;
+    max-width: 100%;
+    vertical-align: middle;
+  }
+
+  .mcq-inline-image-row .mcq-inline-image {
+    flex: 1 1 180px;
+    width: min(100%, 240px);
+    margin-top: 0;
+  }
+
   .mcq-preview-image {
     max-width: 350px;
     margin-top: 8px;
