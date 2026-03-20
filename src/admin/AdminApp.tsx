@@ -5155,6 +5155,55 @@ export default function AdminApp() {
     });
   };
 
+  const openAiGeneratedMcqPreview = () => {
+    if (!aiGenGenerated) {
+      toast.error('Generate an AI MCQ first, then open preview.');
+      return;
+    }
+
+    const hierarchyContext = resolveAiGenHierarchyContext(true);
+    if (!hierarchyContext) return;
+
+    const optionMedia = (aiGenGenerated.options || []).slice(0, 4).map((text, index) => ({
+      key: String.fromCharCode(65 + index),
+      text: String(text || ''),
+      image: null,
+    }));
+
+    const hasQuestionContent = Boolean(String(aiGenGenerated.question || '').trim());
+    const hasOptionContent = optionMedia.some((option) => option.text);
+    if (!hasQuestionContent || !hasOptionContent) {
+      toast.error('Add question and options before opening preview.');
+      return;
+    }
+
+    const answerKey = resolveAnswerKeyFromInput(optionMedia, aiGenGenerated.answer);
+    if (!answerKey) {
+      toast.error('Choose a valid correct answer before opening preview.');
+      return;
+    }
+
+    openMcqTestPreview({
+      source: 'admin-mcq-upload-preview',
+      createdAt: Date.now(),
+      topic: hierarchyContext.topic || hierarchyContext.section || 'AI Generated MCQ Preview',
+      durationMinutes: 60,
+      questions: [
+        {
+          id: 'ai-generated-preview-1',
+          subject: hierarchyContext.subject,
+          topic: hierarchyContext.topic || hierarchyContext.section || 'AI Generated MCQ Preview',
+          question: String(aiGenGenerated.question || ''),
+          options: optionMedia.map((option) => option.text || `[${option.key}]`),
+          optionMedia,
+          questionImage: null,
+          answerKey,
+          difficulty: aiGenGenerated.difficulty === 'Easy' || aiGenGenerated.difficulty === 'Hard' ? aiGenGenerated.difficulty : 'Medium',
+        },
+      ],
+    });
+  };
+
   const openDocumentMcqPreview = () => {
     if (!bulkParsed.length) {
       toast.error('Parse MCQs first, then open preview.');
@@ -8422,14 +8471,19 @@ export default function AdminApp() {
                                   onValueChange={(nextValue) => setAiGenGenerated((prev) => (prev ? { ...prev, explanation: nextValue } : prev))}
                                 />
 
-                                <Button type="button" onClick={() => void uploadGeneratedAiMcq()} disabled={aiGenUploading || aiGenGenerating}>
-                                  {aiGenUploading ? (
-                                    <>
-                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                      Uploading...
-                                    </>
-                                  ) : 'Upload MCQ'}
-                                </Button>
+                                <div className="flex flex-wrap gap-2">
+                                  <Button type="button" variant="outline" onClick={openAiGeneratedMcqPreview} disabled={aiGenGenerating || aiGenUploading}>
+                                    Preview MCQ
+                                  </Button>
+                                  <Button type="button" onClick={() => void uploadGeneratedAiMcq()} disabled={aiGenUploading || aiGenGenerating}>
+                                    {aiGenUploading ? (
+                                      <>
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        Uploading...
+                                      </>
+                                    ) : 'Upload MCQ'}
+                                  </Button>
+                                </div>
                               </div>
                             ) : null}
                           </div>
