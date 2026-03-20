@@ -260,13 +260,15 @@
   .net360-main {
     scrollbar-gutter: stable both-edges;
     padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+    touch-action: pan-y;
   }
 
   .net360-page {
     padding-top: 0.25rem;
     min-width: 0;
     max-width: 100%;
-    overflow-x: clip;
+    overflow-x: visible;
+    touch-action: pan-y;
   }
 
   .net360-page > * {
@@ -292,7 +294,8 @@
     max-width: 100%;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-x: contain;
-    touch-action: pan-x;
+    overscroll-behavior-y: auto;
+    touch-action: pan-x pan-y;
     scrollbar-width: thin;
   }
 

@@ -416,7 +416,7 @@ export default function App() {
             </header>
 
             {/* Main Content */}
-            <main className="net360-main min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-clip px-2 py-2.5 sm:px-5 sm:py-5">
+            <main className="net360-main min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-visible px-2 py-2.5 sm:px-5 sm:py-5">
               {activeTab === 'home' ? (
                 <div className="mt-0 net360-page">
                   <Dashboard onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} />
