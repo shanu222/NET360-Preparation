@@ -11205,6 +11205,49 @@ function buildMcqSignature(question, options) {
   return `${normalizedQuestion}||${normalizedOptions.join('||')}`;
 }
 
+function validateGeneratedMcqStructure(candidate, requestedDifficulty = 'Medium') {
+  const question = normalizeRichMcqText(String(candidate?.question || ''));
+  const options = (Array.isArray(candidate?.options) ? candidate.options : [])
+    .slice(0, 4)
+    .map((item) => normalizeRichMcqText(String(item || '')))
+    .filter(Boolean);
+
+  if (!question) {
+    return { valid: false, reason: 'Question text is missing.', mcq: null };
+  }
+
+  if (options.length !== 4) {
+    return { valid: false, reason: `Expected exactly 4 options (A-D), got ${options.length}.`, mcq: null };
+  }
+
+  const distinctOptions = new Set(options.map((item) => normalizeMcqDedupText(item))).size;
+  if (distinctOptions !== 4) {
+    return { valid: false, reason: 'Options must be distinct. Duplicate options were generated.', mcq: null };
+  }
+
+  const answer = resolveAnswerToOption(candidate?.answer, options);
+  if (!answer) {
+    return { valid: false, reason: 'Correct answer does not match options A-D.', mcq: null };
+  }
+
+  const explanation = normalizeRichMcqText(String(candidate?.explanation || ''));
+  if (!explanation) {
+    return { valid: false, reason: 'Explanation is missing.', mcq: null };
+  }
+
+  return {
+    valid: true,
+    reason: '',
+    mcq: {
+      question,
+      options,
+      answer,
+      explanation,
+      difficulty: normalizeDifficulty(String(candidate?.difficulty || requestedDifficulty || 'Medium')),
+    },
+  };
+}
+
 function buildMcqDuplicateFingerprint(row, index = 0) {
   const question = String(row?.question || '').trim();
   const options = (Array.isArray(row?.options) ? row.options : []).slice(0, 4).map((item) => String(item || '').trim());
@@ -11395,8 +11438,9 @@ async function generateSingleMcqWithAi({
               'Generate exactly ONE MCQ using this schema:',
               '{"mcq":{"question":"...","options":["A option","B option","C option","D option"],"correctAnswer":"A|B|C|D|option text","explanation":"...","difficulty":"Easy|Medium|Hard"},"errors":["..."]}',
               'Rules:',
-              '- Return exactly 4 options in A-D order.',
+              '- Return exactly 4 DISTINCT options in A-D order.',
               '- Ensure exactly one correct answer.',
+              '- Explanation is required and must be non-empty.',
               '- Keep output concise and educational.',
               '- The MCQ must be completely NEW and unique versus every Existing MCQ reference.',
               '- Do not match or closely resemble any provided Existing MCQ (stem, wording pattern, options, or concept framing).',
@@ -11439,21 +11483,29 @@ async function generateSingleMcqWithAi({
       continue;
     }
 
-    const signature = buildMcqSignature(candidate.question, candidate.options);
+    const structureValidation = validateGeneratedMcqStructure(candidate, requestedDifficulty);
+    if (!structureValidation.valid || !structureValidation.mcq) {
+      regenerationErrors.push(`Attempt ${generationAttempt}: ${structureValidation.reason}`);
+      continue;
+    }
+
+    const normalizedCandidate = structureValidation.mcq;
+
+    const signature = buildMcqSignature(normalizedCandidate.question, normalizedCandidate.options);
     if (generatedSignatures.has(signature)) {
       regenerationErrors.push(`Attempt ${generationAttempt}: AI repeated a previous generated MCQ.`);
       continue;
     }
     generatedSignatures.add(signature);
 
-    const duplicateResult = detectDuplicateGeneratedMcq(candidate, existingFingerprints);
+    const duplicateResult = detectDuplicateGeneratedMcq(normalizedCandidate, existingFingerprints);
     if (duplicateResult.duplicate) {
       regenerationErrors.push(`Attempt ${generationAttempt}: ${duplicateResult.reason}`);
       continue;
     }
 
     return {
-      mcq: candidate,
+      mcq: normalizedCandidate,
       errors: [...(generatedResult.errors || []), ...regenerationErrors],
     };
   }
