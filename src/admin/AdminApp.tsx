@@ -1,4 +1,4 @@
-import { createElement, type ChangeEvent, type FormEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, type ChangeEvent, type FormEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -754,32 +754,6 @@ interface EditableBankMcq {
   shortTrickImage: AdminMcqImageFile | null;
 }
 
-type MobileImageEditorTarget =
-  | { kind: 'manual-question' }
-  | { kind: 'manual-option'; optionIndex: number; optionKey: string }
-  | { kind: 'manual-explanation' }
-  | { kind: 'bank-question'; mcqId: string }
-  | { kind: 'bank-option'; mcqId: string; optionIndex: number; optionKey: string }
-  | { kind: 'bank-explanation'; mcqId: string }
-  | { kind: 'bank-short-trick'; mcqId: string };
-
-type MobileImageCropRect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-type MobileCropDragMode = 'move' | 'nw' | 'ne' | 'sw' | 'se';
-
-type MobileImageEditorState = {
-  isOpen: boolean;
-  target: MobileImageEditorTarget | null;
-  fileName: string;
-  sourceDataUrl: string;
-  crop: MobileImageCropRect;
-};
-
 interface AdminMcqBankStructureItem {
   subject: string;
   part?: string;
@@ -1378,89 +1352,10 @@ function fileToDataUrl(file: File): Promise<string> {
 const MCQ_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif']);
 const MCQ_IMAGE_NAME_PATTERN = /\.(jpe?g|png|webp|svg|gif)$/i;
 const MCQ_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
-const MOBILE_CROP_MIN_SIZE = 0.12;
-const MOBILE_CROP_DEFAULT: MobileImageCropRect = {
-  x: 0.08,
-  y: 0.1,
-  width: 0.84,
-  height: 0.8,
-};
 
 function isSupportedMcqImage(file: File) {
   const mime = String(file.type || '').toLowerCase();
   return MCQ_IMAGE_MIME_TYPES.has(mime) || MCQ_IMAGE_NAME_PATTERN.test(file.name || '');
-}
-
-function clampNormalized(value: number, min = 0, max = 1) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function clampCropRect(crop: MobileImageCropRect): MobileImageCropRect {
-  const width = clampNormalized(crop.width, MOBILE_CROP_MIN_SIZE, 1);
-  const height = clampNormalized(crop.height, MOBILE_CROP_MIN_SIZE, 1);
-  const x = clampNormalized(crop.x, 0, 1 - width);
-  const y = clampNormalized(crop.y, 0, 1 - height);
-  return { x, y, width, height };
-}
-
-function inferOutputMimeTypeFromName(fileName: string) {
-  const lowered = String(fileName || '').toLowerCase();
-  if (lowered.endsWith('.png')) return 'image/png';
-  if (lowered.endsWith('.webp')) return 'image/webp';
-  if (lowered.endsWith('.gif')) return 'image/gif';
-  return 'image/jpeg';
-}
-
-function loadImageForEditor(dataUrl: string): Promise<HTMLImageElement> {
-  return new Promise((resolve, reject) => {
-    const image = new Image();
-    image.onload = () => resolve(image);
-    image.onerror = () => reject(new Error('Could not decode image.'));
-    image.src = dataUrl;
-  });
-}
-
-async function cropImageToDataUrl(
-  sourceDataUrl: string,
-  crop: MobileImageCropRect,
-  fileName: string,
-): Promise<string> {
-  const image = await loadImageForEditor(sourceDataUrl);
-  const safeCrop = clampCropRect(crop);
-
-  const sourceWidth = Math.max(1, image.naturalWidth || image.width || 1);
-  const sourceHeight = Math.max(1, image.naturalHeight || image.height || 1);
-
-  const sx = Math.round(safeCrop.x * sourceWidth);
-  const sy = Math.round(safeCrop.y * sourceHeight);
-  const sw = Math.max(1, Math.round(safeCrop.width * sourceWidth));
-  const sh = Math.max(1, Math.round(safeCrop.height * sourceHeight));
-
-  const boundedSx = Math.min(sourceWidth - 1, sx);
-  const boundedSy = Math.min(sourceHeight - 1, sy);
-  const boundedSw = Math.min(sw, sourceWidth - boundedSx);
-  const boundedSh = Math.min(sh, sourceHeight - boundedSy);
-
-  const maxEdge = 1600;
-  const scale = Math.min(1, maxEdge / Math.max(boundedSw, boundedSh));
-  const targetWidth = Math.max(1, Math.round(boundedSw * scale));
-  const targetHeight = Math.max(1, Math.round(boundedSh * scale));
-
-  const canvas = document.createElement('canvas');
-  canvas.width = targetWidth;
-  canvas.height = targetHeight;
-  const context = canvas.getContext('2d');
-  if (!context) {
-    throw new Error('Could not initialize image crop context.');
-  }
-
-  context.imageSmoothingEnabled = true;
-  context.imageSmoothingQuality = 'high';
-  context.drawImage(image, boundedSx, boundedSy, boundedSw, boundedSh, 0, 0, targetWidth, targetHeight);
-
-  const outputMime = inferOutputMimeTypeFromName(fileName);
-  const quality = outputMime === 'image/jpeg' || outputMime === 'image/webp' ? 0.9 : undefined;
-  return canvas.toDataURL(outputMime, quality);
 }
 
 async function fileToMcqImage(file: File): Promise<AdminMcqImageFile> {
@@ -1680,14 +1575,6 @@ export default function AdminApp() {
   const [issuedTokens, setIssuedTokens] = useState<Record<string, string>>({});
   const [query, setQuery] = useState('');
   const [form, setForm] = useState(emptyForm());
-  const [mobileImageEditor, setMobileImageEditor] = useState<MobileImageEditorState>({
-    isOpen: false,
-    target: null,
-    fileName: '',
-    sourceDataUrl: '',
-    crop: MOBILE_CROP_DEFAULT,
-  });
-  const [isApplyingMobileCrop, setIsApplyingMobileCrop] = useState(false);
   const [selectedHierarchy, setSelectedHierarchy] = useState<SelectedHierarchy | null>(null);
   const [activeMcqPanel, setActiveMcqPanel] = useState<'upload' | 'deleter' | 'bank' | null>(null);
   const [uploadMode, setUploadMode] = useState<'manual' | 'document'>('manual');
@@ -1766,13 +1653,6 @@ export default function AdminApp() {
   const supportReplyFileInputRef = useRef<HTMLInputElement | null>(null);
   const bulkDocumentInputRef = useRef<HTMLInputElement | null>(null);
   const explanationImageInputRef = useRef<HTMLInputElement | null>(null);
-  const mobileCropContainerRef = useRef<HTMLDivElement | null>(null);
-  const mobileCropDragRef = useRef<{
-    mode: MobileCropDragMode;
-    startX: number;
-    startY: number;
-    startCrop: MobileImageCropRect;
-  } | null>(null);
   const didHydrateSupportRef = useRef(false);
   const lastUnreadTotalRef = useRef(0);
   const lastUserMessageInThreadRef = useRef('');
@@ -3424,226 +3304,6 @@ export default function AdminApp() {
 
     return () => window.clearInterval(timer);
   }, [authToken, selectedSupportUserId]);
-
-  const openMobileImageEditorForFile = async (file: File, target: MobileImageEditorTarget) => {
-    if (!isSupportedMcqImage(file)) {
-      toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
-      return;
-    }
-    if (file.size > MCQ_IMAGE_MAX_BYTES) {
-      toast.error('Image is too large. Maximum size is 5 MB.');
-      return;
-    }
-
-    try {
-      const sourceDataUrl = await fileToDataUrl(file);
-      setMobileImageEditor({
-        isOpen: true,
-        target,
-        fileName: file.name || 'image.jpg',
-        sourceDataUrl,
-        crop: MOBILE_CROP_DEFAULT,
-      });
-    } catch {
-      toast.error('Could not read selected image.');
-    }
-  };
-
-  const closeMobileImageEditor = () => {
-    if (isApplyingMobileCrop) return;
-    mobileCropDragRef.current = null;
-    setMobileImageEditor((prev) => ({
-      ...prev,
-      isOpen: false,
-      target: null,
-      sourceDataUrl: '',
-    }));
-  };
-
-  const appendImageTokenOnce = (currentText: string, dataUrl: string) => {
-    const token = `[[img:${dataUrl}]]`;
-    if (String(currentText || '').includes(token)) return String(currentText || '');
-    return String(currentText || '').trim() ? `${String(currentText || '')} ${token}` : token;
-  };
-
-  const applyMobileCroppedPhoto = async () => {
-    if (!mobileImageEditor.isOpen || !mobileImageEditor.target || !mobileImageEditor.sourceDataUrl) return;
-
-    setIsApplyingMobileCrop(true);
-    try {
-      const croppedDataUrl = await cropImageToDataUrl(
-        mobileImageEditor.sourceDataUrl,
-        mobileImageEditor.crop,
-        mobileImageEditor.fileName,
-      );
-      const baseName = String(mobileImageEditor.fileName || 'image').replace(/\.[^.]+$/, '') || 'image';
-      const parsed = parsedDataUrlToImage(croppedDataUrl, baseName);
-      if (!parsed) {
-        throw new Error('Invalid cropped image payload.');
-      }
-
-      if (mobileImageEditor.target.kind === 'manual-question') {
-        setForm((prev) => ({
-          ...prev,
-          questionImage: parsed,
-          question: appendImageTokenOnce(prev.question, parsed.dataUrl),
-        }));
-        insertImageTokenToField('questionInput', parsed.dataUrl);
-      } else if (mobileImageEditor.target.kind === 'manual-option') {
-        const optionTarget = mobileImageEditor.target;
-        const optionKey = optionTarget.optionKey;
-        const optionId = `option-input-${normalizeMathInputId(optionKey)}`;
-        setForm((prev) => {
-          const optionMedia = [...prev.optionMedia];
-          const resolvedIndex = optionMedia.findIndex((item) => item.key === optionKey);
-          const optionIndex = resolvedIndex >= 0 ? resolvedIndex : optionTarget.optionIndex;
-          if (optionIndex < 0 || optionIndex >= optionMedia.length) return prev;
-          const existing = optionMedia[optionIndex];
-          optionMedia[optionIndex] = {
-            ...existing,
-            image: parsed,
-            text: appendImageTokenOnce(existing.text, parsed.dataUrl),
-          };
-          return { ...prev, optionMedia };
-        });
-        insertImageTokenToField(optionId, parsed.dataUrl);
-      } else if (mobileImageEditor.target.kind === 'manual-explanation') {
-        setForm((prev) => ({
-          ...prev,
-          explanationImage: parsed,
-          shortTrickImage: null,
-          explanationText: appendImageTokenOnce(prev.explanationText, parsed.dataUrl),
-        }));
-        insertImageTokenToField('explanationInput', parsed.dataUrl);
-      } else if (mobileImageEditor.target.kind === 'bank-question') {
-        const bankQuestionFieldId = `bank-question-${normalizeMathInputId(mobileImageEditor.target.mcqId)}`;
-        updateBankEditDraft(mobileImageEditor.target.mcqId, (current) => ({
-          ...current,
-          questionImage: parsed,
-          question: appendImageTokenOnce(current.question, parsed.dataUrl),
-        }));
-        insertImageTokenToField(bankQuestionFieldId, parsed.dataUrl);
-      } else if (mobileImageEditor.target.kind === 'bank-option') {
-        const target = mobileImageEditor.target;
-        const bankOptionFieldId = `bank-option-${normalizeMathInputId(target.mcqId)}-${normalizeMathInputId(target.optionKey)}`;
-        updateBankEditDraft(target.mcqId, (current) => {
-          const optionMedia = [...current.optionMedia];
-          const resolvedIndex = optionMedia.findIndex((item) => item.key === target.optionKey);
-          const optionIndex = resolvedIndex >= 0 ? resolvedIndex : target.optionIndex;
-          if (optionIndex < 0 || optionIndex >= optionMedia.length) return current;
-          const existing = optionMedia[optionIndex];
-          optionMedia[optionIndex] = {
-            ...existing,
-            image: parsed,
-            text: appendImageTokenOnce(existing.text, parsed.dataUrl),
-          };
-          return { ...current, optionMedia };
-        });
-        insertImageTokenToField(bankOptionFieldId, parsed.dataUrl);
-      } else if (mobileImageEditor.target.kind === 'bank-explanation') {
-        updateBankEditDraft(mobileImageEditor.target.mcqId, (current) => ({
-          ...current,
-          explanationImage: parsed,
-          explanationText: appendImageTokenOnce(current.explanationText, parsed.dataUrl),
-        }));
-      } else if (mobileImageEditor.target.kind === 'bank-short-trick') {
-        updateBankEditDraft(mobileImageEditor.target.mcqId, (current) => ({
-          ...current,
-          shortTrickImage: parsed,
-          shortTrickText: appendImageTokenOnce(current.shortTrickText, parsed.dataUrl),
-        }));
-      }
-
-      closeMobileImageEditor();
-      toast.success('Photo cropped and inserted.');
-    } catch {
-      toast.error('Could not apply cropped photo.');
-    } finally {
-      setIsApplyingMobileCrop(false);
-    }
-  };
-
-  const beginMobileCropDrag = (event: ReactPointerEvent<HTMLDivElement>, mode: MobileCropDragMode) => {
-    if (!mobileCropContainerRef.current) return;
-    const rect = mobileCropContainerRef.current.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-
-    mobileCropDragRef.current = {
-      mode,
-      startX: (event.clientX - rect.left) / rect.width,
-      startY: (event.clientY - rect.top) / rect.height,
-      startCrop: { ...mobileImageEditor.crop },
-    };
-  };
-
-  useEffect(() => {
-    if (!mobileImageEditor.isOpen) return;
-
-    const handlePointerMove = (event: PointerEvent) => {
-      const dragState = mobileCropDragRef.current;
-      const container = mobileCropContainerRef.current;
-      if (!dragState || !container) return;
-
-      const rect = container.getBoundingClientRect();
-      if (!rect.width || !rect.height) return;
-
-      event.preventDefault();
-      const currentX = (event.clientX - rect.left) / rect.width;
-      const currentY = (event.clientY - rect.top) / rect.height;
-      const deltaX = currentX - dragState.startX;
-      const deltaY = currentY - dragState.startY;
-      const start = dragState.startCrop;
-      let next: MobileImageCropRect = { ...start };
-
-      if (dragState.mode === 'move') {
-        next = { ...start, x: start.x + deltaX, y: start.y + deltaY };
-      } else if (dragState.mode === 'nw') {
-        next = {
-          x: start.x + deltaX,
-          y: start.y + deltaY,
-          width: start.width - deltaX,
-          height: start.height - deltaY,
-        };
-      } else if (dragState.mode === 'ne') {
-        next = {
-          x: start.x,
-          y: start.y + deltaY,
-          width: start.width + deltaX,
-          height: start.height - deltaY,
-        };
-      } else if (dragState.mode === 'sw') {
-        next = {
-          x: start.x + deltaX,
-          y: start.y,
-          width: start.width - deltaX,
-          height: start.height + deltaY,
-        };
-      } else if (dragState.mode === 'se') {
-        next = {
-          x: start.x,
-          y: start.y,
-          width: start.width + deltaX,
-          height: start.height + deltaY,
-        };
-      }
-
-      setMobileImageEditor((prev) => ({ ...prev, crop: clampCropRect(next) }));
-    };
-
-    const endDrag = () => {
-      mobileCropDragRef.current = null;
-    };
-
-    window.addEventListener('pointermove', handlePointerMove, { passive: false });
-    window.addEventListener('pointerup', endDrag);
-    window.addEventListener('pointercancel', endDrag);
-
-    return () => {
-      window.removeEventListener('pointermove', handlePointerMove);
-      window.removeEventListener('pointerup', endDrag);
-      window.removeEventListener('pointercancel', endDrag);
-    };
-  }, [mobileImageEditor.isOpen]);
 
   const resetForm = () => {
     const fresh = emptyForm();
@@ -7217,11 +6877,22 @@ export default function AdminApp() {
                             id="mcq-question-image-upload"
                             type="file"
                             accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-                            capture="environment"
                             onChange={(e) => {
                               const file = e.target.files?.[0] || null;
                               if (!file) return;
-                              void openMobileImageEditorForFile(file, { kind: 'manual-question' });
+                              if (!isSupportedMcqImage(file)) {
+                                toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
+                                e.currentTarget.value = '';
+                                return;
+                              }
+                              if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                toast.error('Image is too large. Maximum size is 5 MB.');
+                                e.currentTarget.value = '';
+                                return;
+                              }
+                              void fileToMcqImage(file)
+                                .then((image) => setForm((prev) => ({ ...prev, questionImage: image })))
+                                .catch(() => toast.error('Could not read selected image.'));
                               e.currentTarget.value = '';
                             }}
                           />
@@ -7313,15 +6984,28 @@ export default function AdminApp() {
                                   <Input
                                     type="file"
                                     accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
-                                    capture="environment"
                                     onChange={(e) => {
                                       const file = e.target.files?.[0] || null;
                                       if (!file) return;
-                                      void openMobileImageEditorForFile(file, {
-                                        kind: 'manual-option',
-                                        optionIndex: optionIdx,
-                                        optionKey: option.key,
-                                      });
+                                      if (!isSupportedMcqImage(file)) {
+                                        toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
+                                        e.currentTarget.value = '';
+                                        return;
+                                      }
+                                      if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                        toast.error('Image is too large. Maximum size is 5 MB.');
+                                        e.currentTarget.value = '';
+                                        return;
+                                      }
+                                      void fileToMcqImage(file)
+                                        .then((image) => {
+                                          setForm((prev) => {
+                                            const optionMedia = [...prev.optionMedia];
+                                            optionMedia[optionIdx] = { ...optionMedia[optionIdx], image };
+                                            return { ...prev, optionMedia };
+                                          });
+                                        })
+                                        .catch(() => toast.error('Could not read selected image.'));
                                       e.currentTarget.value = '';
                                     }}
                                   />
@@ -7403,11 +7087,22 @@ export default function AdminApp() {
                                 type="file"
                                 className="hidden"
                                 accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
-                                capture="environment"
                                 onChange={(e) => {
                                   const file = e.target.files?.[0] || null;
                                   if (!file) return;
-                                  void openMobileImageEditorForFile(file, { kind: 'manual-explanation' });
+                                  if (!isSupportedMcqImage(file)) {
+                                    toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                    e.currentTarget.value = '';
+                                    return;
+                                  }
+                                  if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                    toast.error('Image is too large. Maximum size is 5 MB.');
+                                    e.currentTarget.value = '';
+                                    return;
+                                  }
+                                  void fileToMcqImage(file)
+                                    .then((image) => setForm((prev) => ({ ...prev, explanationImage: image, shortTrickImage: null })))
+                                    .catch(() => toast.error('Could not read selected image.'));
                                   e.currentTarget.value = '';
                                 }}
                               />
@@ -7644,11 +7339,22 @@ export default function AdminApp() {
                             <Input
                               type="file"
                               accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
-                              capture="environment"
                               onChange={(e) => {
                                 const file = e.target.files?.[0] || null;
                                 if (!file) return;
-                                void openMobileImageEditorForFile(file, { kind: 'bank-question', mcqId: item.id });
+                                if (!isSupportedMcqImage(file)) {
+                                  toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                  toast.error('Image is too large. Maximum size is 5 MB.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                void fileToMcqImage(file)
+                                  .then((image) => updateBankEditDraft(item.id, (current) => ({ ...current, questionImage: image })))
+                                  .catch(() => toast.error('Could not read selected image.'));
                                 e.currentTarget.value = '';
                               }}
                             />
@@ -7749,16 +7455,28 @@ export default function AdminApp() {
                                   <Input
                                     type="file"
                                     accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
-                                    capture="environment"
                                     onChange={(e) => {
                                       const file = e.target.files?.[0] || null;
                                       if (!file) return;
-                                      void openMobileImageEditorForFile(file, {
-                                        kind: 'bank-option',
-                                        mcqId: item.id,
-                                        optionIndex: optionIdx,
-                                        optionKey: option.key,
-                                      });
+                                      if (!isSupportedMcqImage(file)) {
+                                        toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                        e.currentTarget.value = '';
+                                        return;
+                                      }
+                                      if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                        toast.error('Image is too large. Maximum size is 5 MB.');
+                                        e.currentTarget.value = '';
+                                        return;
+                                      }
+                                      void fileToMcqImage(file)
+                                        .then((image) => {
+                                          updateBankEditDraft(item.id, (current) => {
+                                            const optionMedia = [...current.optionMedia];
+                                            optionMedia[optionIdx] = { ...optionMedia[optionIdx], image };
+                                            return { ...current, optionMedia };
+                                          });
+                                        })
+                                        .catch(() => toast.error('Could not read selected image.'));
                                       e.currentTarget.value = '';
                                     }}
                                   />
@@ -7863,11 +7581,22 @@ export default function AdminApp() {
                             <Input
                               type="file"
                               accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
-                              capture="environment"
                               onChange={(e) => {
                                 const file = e.target.files?.[0] || null;
                                 if (!file) return;
-                                void openMobileImageEditorForFile(file, { kind: 'bank-explanation', mcqId: item.id });
+                                if (!isSupportedMcqImage(file)) {
+                                  toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                  toast.error('Image is too large. Maximum size is 5 MB.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                void fileToMcqImage(file)
+                                  .then((image) => updateBankEditDraft(item.id, (current) => ({ ...current, explanationImage: image })))
+                                  .catch(() => toast.error('Could not read selected image.'));
                                 e.currentTarget.value = '';
                               }}
                             />
@@ -7900,11 +7629,22 @@ export default function AdminApp() {
                             <Input
                               type="file"
                               accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
-                              capture="environment"
                               onChange={(e) => {
                                 const file = e.target.files?.[0] || null;
                                 if (!file) return;
-                                void openMobileImageEditorForFile(file, { kind: 'bank-short-trick', mcqId: item.id });
+                                if (!isSupportedMcqImage(file)) {
+                                  toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                if (file.size > MCQ_IMAGE_MAX_BYTES) {
+                                  toast.error('Image is too large. Maximum size is 5 MB.');
+                                  e.currentTarget.value = '';
+                                  return;
+                                }
+                                void fileToMcqImage(file)
+                                  .then((image) => updateBankEditDraft(item.id, (current) => ({ ...current, shortTrickImage: image })))
+                                  .catch(() => toast.error('Could not read selected image.'));
                                 e.currentTarget.value = '';
                               }}
                             />
@@ -8697,92 +8437,6 @@ export default function AdminApp() {
           </Tabs>
         </div>
       </main>
-
-      {mobileImageEditor.isOpen ? (
-        <div className="fixed inset-0 z-[80] bg-black text-white">
-          <div className="flex h-full flex-col">
-            <div className="flex items-center justify-between gap-3 px-3 py-2">
-              <Button type="button" size="sm" variant="outline" onClick={closeMobileImageEditor} disabled={isApplyingMobileCrop}>
-                Cancel
-              </Button>
-              <p className="text-xs text-white/80">Drag and resize the crop area</p>
-              <Button type="button" size="sm" onClick={() => void applyMobileCroppedPhoto()} disabled={isApplyingMobileCrop}>
-                {isApplyingMobileCrop ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Processing
-                  </>
-                ) : 'Use Photo'}
-              </Button>
-            </div>
-
-            <div className="relative flex-1 overflow-hidden">
-              <div
-                ref={mobileCropContainerRef}
-                className="relative h-full w-full touch-none select-none"
-                style={{ touchAction: 'none' }}
-              >
-                <img
-                  src={mobileImageEditor.sourceDataUrl}
-                  alt="Crop source"
-                  className="h-full w-full object-contain"
-                  draggable={false}
-                />
-
-                <div
-                  className="absolute border-2 border-cyan-300"
-                  style={{
-                    left: `${mobileImageEditor.crop.x * 100}%`,
-                    top: `${mobileImageEditor.crop.y * 100}%`,
-                    width: `${mobileImageEditor.crop.width * 100}%`,
-                    height: `${mobileImageEditor.crop.height * 100}%`,
-                    boxShadow: '0 0 0 9999px rgba(0,0,0,0.5)',
-                  }}
-                  onPointerDown={(event) => {
-                    event.preventDefault();
-                    beginMobileCropDrag(event, 'move');
-                  }}
-                >
-                  <div className="pointer-events-none absolute inset-0 border border-white/80" />
-
-                  <div
-                    className="absolute -left-3 -top-3 h-6 w-6 rounded-full border-2 border-white bg-cyan-400"
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      beginMobileCropDrag(event, 'nw');
-                    }}
-                  />
-                  <div
-                    className="absolute -right-3 -top-3 h-6 w-6 rounded-full border-2 border-white bg-cyan-400"
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      beginMobileCropDrag(event, 'ne');
-                    }}
-                  />
-                  <div
-                    className="absolute -bottom-3 -left-3 h-6 w-6 rounded-full border-2 border-white bg-cyan-400"
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      beginMobileCropDrag(event, 'sw');
-                    }}
-                  />
-                  <div
-                    className="absolute -bottom-3 -right-3 h-6 w-6 rounded-full border-2 border-white bg-cyan-400"
-                    onPointerDown={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      beginMobileCropDrag(event, 'se');
-                    }}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
