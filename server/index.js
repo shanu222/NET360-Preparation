@@ -1217,6 +1217,15 @@ function extractJsonObject(text) {
 }
 
 const BULK_PARSE_LIMIT = 15;
+const AI_PARSE_DEFAULT_MODEL = 'gpt-4o';
+const AI_PARSE_MAX_INPUT_CHARS = 240_000;
+const AI_PARSE_CHUNK_CHARS = 14_000;
+const AI_PARSE_CHUNK_OVERLAP = 1_200;
+const AI_PARSE_PARALLEL_CHUNKS = 3;
+const AI_PARSE_MAX_RETRIES = 3;
+const AI_PARSE_RETRY_BASE_DELAY_MS = 600;
+const MATHPIX_APP_ID = String(process.env.MATHPIX_APP_ID || '').trim();
+const MATHPIX_APP_KEY = String(process.env.MATHPIX_APP_KEY || '').trim();
 
 function normalizeParsedHierarchyContext(context) {
   const subjectRaw = String(context?.subject || '').trim().toLowerCase();
@@ -1326,9 +1335,168 @@ function splitQuestionBlocks(text) {
   });
 }
 
+function splitTextIntoParseChunks(text, chunkSize = AI_PARSE_CHUNK_CHARS, overlap = AI_PARSE_CHUNK_OVERLAP) {
+  const source = String(text || '').trim();
+  if (!source) return [];
+
+  const chunks = [];
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    const hardEnd = Math.min(source.length, cursor + chunkSize);
+    let end = hardEnd;
+
+    if (hardEnd < source.length) {
+      const searchStart = Math.max(cursor, hardEnd - 900);
+      const boundaryWindow = source.slice(searchStart, hardEnd);
+      const candidates = [
+        boundaryWindow.lastIndexOf('\n\nQ'),
+        boundaryWindow.lastIndexOf('\n\nQuestion'),
+        boundaryWindow.lastIndexOf('\n\n1.'),
+        boundaryWindow.lastIndexOf('\n\n'),
+      ].filter((idx) => idx >= 0);
+
+      if (candidates.length) {
+        end = searchStart + Math.max(...candidates);
+      }
+
+      if (end <= cursor + 1000) {
+        end = hardEnd;
+      }
+    }
+
+    chunks.push(source.slice(cursor, end).trim());
+    if (end >= source.length) break;
+    cursor = Math.max(end - overlap, cursor + 1);
+  }
+
+  return chunks.filter(Boolean);
+}
+
+async function withRetries(task, attempts = AI_PARSE_MAX_RETRIES, baseDelayMs = AI_PARSE_RETRY_BASE_DELAY_MS) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await task(attempt);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await delayMs(baseDelayMs * attempt);
+      }
+    }
+  }
+  throw (lastError instanceof Error ? lastError : new Error('AI parsing failed.'));
+}
+
+async function maybeEnrichWithOcrHints(rawText) {
+  const text = String(rawText || '');
+  const dataUrlMatches = Array.from(text.matchAll(/data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+/gi))
+    .map((match) => String(match?.[0] || '').replace(/\s+/g, ''))
+    .filter(Boolean)
+    .slice(0, 3);
+
+  if (!dataUrlMatches.length) return text;
+  if (!MATHPIX_APP_ID || !MATHPIX_APP_KEY) {
+    return `${text}\n\n[OCR-HINT] Embedded images detected. Configure Mathpix (MATHPIX_APP_ID/MATHPIX_APP_KEY) for OCR pre-processing of complex math/image-only content.`;
+  }
+
+  const ocrSnippets = [];
+  for (const dataUrl of dataUrlMatches) {
+    try {
+      const controller = new AbortController();
+      const timeout = globalThis.setTimeout(() => controller.abort(), 15_000);
+      const response = await fetch('https://api.mathpix.com/v3/text', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          app_id: MATHPIX_APP_ID,
+          app_key: MATHPIX_APP_KEY,
+        },
+        body: JSON.stringify({
+          src: dataUrl,
+          formats: ['text'],
+          data_options: { include_asciimath: true },
+        }),
+        signal: controller.signal,
+      });
+      globalThis.clearTimeout(timeout);
+      if (!response.ok) continue;
+      const payload = await response.json();
+      const snippet = String(payload?.text || '').trim();
+      if (snippet) ocrSnippets.push(snippet.slice(0, 5000));
+    } catch {
+      // OCR is optional; skip failures silently.
+    }
+  }
+
+  if (!ocrSnippets.length) return text;
+  return `${text}\n\n[OCR-EXTRACTED-TEXT]\n${ocrSnippets.join('\n\n---\n\n')}`;
+}
+
+function normalizeAiParsedRows(rows, baseHierarchy, chunkLabel = 'chunk') {
+  const parsed = [];
+  const errors = [];
+
+  rows.forEach((row, idx) => {
+    const question = normalizeRichMcqText(String(row?.question || '').replace(/\s+/g, ' ').trim());
+    const options = parseOptionsFromUnknown(row?.options).slice(0, 4);
+    const answer = resolveAnswerToOption(row?.correctAnswer ?? row?.answer, options);
+    const tip = normalizeRichMcqText(row?.explanation || '');
+    const difficulty = normalizeDifficulty(row?.difficulty);
+    const questionImageRef = String(row?.questionImage || '').trim();
+    const explanationImageRef = String(row?.explanationImage || '').trim();
+    const optionImageRefs = Array.isArray(row?.optionImages)
+      ? row.optionImages.map((item) => String(item || '').trim())
+      : [];
+    const rowHierarchy = normalizeParsedHierarchyContext({
+      subject: row?.subject || baseHierarchy.subject,
+      part: row?.part || baseHierarchy.part,
+      chapter: row?.chapter || baseHierarchy.chapter,
+      section: row?.section || baseHierarchy.section,
+      topic: row?.topic || baseHierarchy.topic,
+    });
+
+    if (!question) {
+      errors.push(`${chunkLabel} Q${idx + 1}: question text is missing.`);
+      return;
+    }
+    if (options.length < 2) {
+      errors.push(`${chunkLabel} Q${idx + 1}: at least 2 options are required.`);
+      return;
+    }
+    if (!answer) {
+      errors.push(`${chunkLabel} Q${idx + 1}: correct answer is missing.`);
+      return;
+    }
+
+    parsed.push({
+      subject: rowHierarchy.subject,
+      part: rowHierarchy.part,
+      chapter: rowHierarchy.chapter,
+      section: rowHierarchy.section,
+      topic: rowHierarchy.topic,
+      question,
+      questionImageUrl: /^https?:\/\//i.test(questionImageRef) ? questionImageRef : '',
+      questionImageDataUrl: /^data:image\//i.test(questionImageRef) ? questionImageRef : '',
+      options,
+      optionImageDataUrls: optionImageRefs.slice(0, 4).map((ref) => (/^data:image\//i.test(ref) ? ref : '')),
+      answer,
+      tip,
+      explanationImageDataUrl: /^data:image\//i.test(explanationImageRef) ? explanationImageRef : '',
+      difficulty,
+    });
+  });
+
+  return { parsed, errors };
+}
+
 async function parseBulkMcqsWithAi(rawText) {
-  if (!openai) {
-    return { parsed: [], errors: ['AI parser is unavailable.'] };
+  const openAiContext = await getOpenAiClientContext();
+  const aiClient = openAiContext.client;
+  const aiModel = String(openAiContext.model || AI_PARSE_DEFAULT_MODEL).trim() || AI_PARSE_DEFAULT_MODEL;
+
+  if (!aiClient) {
+    return { parsed: [], errors: ['OpenAI API is not configured for document parsing. Set OPENAI_API_KEY to continue.'] };
   }
 
   const inputText = String(rawText || '').trim();
@@ -1337,36 +1505,39 @@ async function parseBulkMcqsWithAi(rawText) {
   }
 
   const baseHierarchy = extractHierarchyContextFromText(inputText);
+  const clippedText = inputText.length > AI_PARSE_MAX_INPUT_CHARS ? inputText.slice(0, AI_PARSE_MAX_INPUT_CHARS) : inputText;
+  const enrichedText = await maybeEnrichWithOcrHints(clippedText);
+  const chunks = splitTextIntoParseChunks(enrichedText, AI_PARSE_CHUNK_CHARS, AI_PARSE_CHUNK_OVERLAP);
+  if (!chunks.length) {
+    return { parsed: [], errors: ['No readable text chunks were generated from this document.'] };
+  }
 
-  const clippedText = inputText.length > 120000 ? inputText.slice(0, 120000) : inputText;
-
-  try {
-    const completion = await openai.chat.completions.create({
-      model: OPENAI_MODEL,
+  const chunkTasks = chunks.map((chunk, chunkIndex) => async () => withRetries(async () => {
+    const completion = await aiClient.chat.completions.create({
+      model: aiModel,
       temperature: 0,
       response_format: { type: 'json_object' },
       messages: [
         {
           role: 'system',
           content: [
-            'You extract ALL MCQs from messy educational documents.',
-            'Return strict JSON only in this schema:',
-            '{"mcqs":[{"subject":"","part":"part1|part2|","chapter":"","section":"","topic":"","question":"...","questionImage":"","options":["..."],"optionImages":[""],"answer":"...","explanation":"...","explanationImage":"","difficulty":"Easy|Medium|Hard"}]}',
+            'You are an MCQ extraction engine. Return valid JSON only.',
+            'Extract ALL MCQs from the chunk using this schema:',
+            '{"mcqs":[{"question":"...","options":["A option","B option","C option","D option"],"correctAnswer":"A|B|C|D|option text","explanation":"...","difficulty":"Easy|Medium|Hard","subject":"","part":"","chapter":"","section":"","topic":"","questionImage":"","optionImages":[""],"explanationImage":""}],"errors":["..."]}',
             'Rules:',
-            '- Detect all question boundaries (1., 1), Q1, Question 1, etc.).',
-            '- Support mixed option formats: A) A. A, Option 1, 1) and inline options in one line.',
-            '- Keep options separated as array items.',
-            '- Input may already include inline HTML formatting tags such as <strong>, <b>, <em>, and <i>. Keep these tags unchanged in question, options, and explanation fields.',
-            '- Do not convert existing formatting tags into plain text, markdown, or escaped entities.',
-            '- Capture image references (data URLs or http URLs) near question/options/explanation when available.',
-            '- answer may be letter/number/text; provide best available answer token from source.',
-            '- If explanation is not present, use empty string.',
-            `- Return at most ${BULK_PARSE_LIMIT} MCQs.`,
+            '- Keep exactly 4 options whenever available; map mixed formats to A-D order.',
+            '- Preserve inline formatting tags like <strong>, <em>, <b>, <i> if present.',
+            '- If answer is textual, map it to the closest option.',
+            '- Use empty string when explanation is unavailable.',
+            '- Never add markdown code fences.',
           ].join('\n'),
         },
         {
           role: 'user',
-          content: clippedText,
+          content: [
+            `Chunk ${chunkIndex + 1} of ${chunks.length}`,
+            chunk,
+          ].join('\n\n'),
         },
       ],
     });
@@ -1374,68 +1545,51 @@ async function parseBulkMcqsWithAi(rawText) {
     const raw = completion.choices?.[0]?.message?.content || '';
     const parsedJson = extractJsonObject(raw);
     const rows = Array.isArray(parsedJson?.mcqs) ? parsedJson.mcqs : [];
+    const normalized = normalizeAiParsedRows(rows, baseHierarchy, `chunk-${chunkIndex + 1}`);
+    const chunkErrors = Array.isArray(parsedJson?.errors)
+      ? parsedJson.errors.map((item) => String(item || '').trim()).filter(Boolean)
+      : [];
+    return {
+      parsed: normalized.parsed,
+      errors: [...normalized.errors, ...chunkErrors],
+    };
+  }, AI_PARSE_MAX_RETRIES, AI_PARSE_RETRY_BASE_DELAY_MS));
 
-    const parsed = [];
-    const errors = [];
+  const parsedMerged = [];
+  const errorsMerged = [];
 
-    rows.slice(0, BULK_PARSE_LIMIT).forEach((row, idx) => {
-      const question = normalizeRichMcqText(String(row?.question || '').replace(/\s+/g, ' ').trim());
-      const options = parseOptionsFromUnknown(row?.options);
-      const answer = resolveAnswerToOption(row?.answer, options);
-      const tip = normalizeRichMcqText(row?.explanation || '');
-      const difficulty = normalizeDifficulty(row?.difficulty);
-      const questionImageRef = String(row?.questionImage || '').trim();
-      const explanationImageRef = String(row?.explanationImage || '').trim();
-      const optionImageRefs = Array.isArray(row?.optionImages)
-        ? row.optionImages.map((item) => String(item || '').trim())
-        : [];
-      const rowHierarchy = normalizeParsedHierarchyContext({
-        subject: row?.subject || baseHierarchy.subject,
-        part: row?.part || baseHierarchy.part,
-        chapter: row?.chapter || baseHierarchy.chapter,
-        section: row?.section || baseHierarchy.section,
-        topic: row?.topic || baseHierarchy.topic,
-      });
+  for (let index = 0; index < chunkTasks.length; index += AI_PARSE_PARALLEL_CHUNKS) {
+    const batch = chunkTasks.slice(index, index + AI_PARSE_PARALLEL_CHUNKS);
+    const results = await Promise.all(batch.map((task) => task().catch((error) => ({
+      parsed: [],
+      errors: [error instanceof Error ? error.message : 'Chunk parsing failed.'],
+    }))));
 
-      if (!question) {
-        errors.push(`Q${idx + 1}: question text is missing.`);
-        return;
-      }
-      if (options.length < 2) {
-        errors.push(`Q${idx + 1}: at least 2 options are required.`);
-        return;
-      }
-      if (!answer) {
-        errors.push(`Q${idx + 1}: correct answer is missing.`);
-        return;
-      }
-
-      parsed.push({
-        subject: rowHierarchy.subject,
-        part: rowHierarchy.part,
-        chapter: rowHierarchy.chapter,
-        section: rowHierarchy.section,
-        topic: rowHierarchy.topic,
-        question,
-        questionImageUrl: /^https?:\/\//i.test(questionImageRef) ? questionImageRef : '',
-        questionImageDataUrl: /^data:image\//i.test(questionImageRef) ? questionImageRef : '',
-        options,
-        optionImageDataUrls: optionImageRefs.map((ref) => (/^data:image\//i.test(ref) ? ref : '')),
-        answer,
-        tip,
-        explanationImageDataUrl: /^data:image\//i.test(explanationImageRef) ? explanationImageRef : '',
-        difficulty,
-      });
+    results.forEach((result) => {
+      parsedMerged.push(...(result.parsed || []));
+      errorsMerged.push(...(result.errors || []));
     });
-
-    if (!parsed.length) {
-      return { parsed: [], errors: ['AI parser could not extract valid MCQs.'] };
-    }
-
-    return { parsed, errors };
-  } catch {
-    return { parsed: [], errors: ['AI parser failed for this document.'] };
   }
+
+  const deduped = [];
+  const seen = new Set();
+  for (const row of parsedMerged) {
+    const signature = hashToken([
+      row.question,
+      ...(Array.isArray(row.options) ? row.options : []),
+      row.answer,
+    ].join('|').toLowerCase());
+    if (seen.has(signature)) continue;
+    seen.add(signature);
+    deduped.push(row);
+    if (deduped.length >= BULK_PARSE_LIMIT) break;
+  }
+
+  if (!deduped.length) {
+    return { parsed: [], errors: errorsMerged.length ? errorsMerged : ['AI parser could not extract valid MCQs.'] };
+  }
+
+  return { parsed: deduped, errors: errorsMerged };
 }
 
 function parseBulkMcqsFromText(raw) {
@@ -10758,39 +10912,30 @@ app.delete('/api/admin/mcqs/purge-all', authMiddleware, requireAdmin, async (_re
 });
 
 async function parseMcqsFromSourceText(sourceText) {
-  const heuristicResult = parseBulkMcqsFromText(sourceText);
-  let finalResult = heuristicResult;
-
-  const countDetectedImages = (result) => {
-    const rows = Array.isArray(result?.parsed) ? result.parsed : [];
-    return rows.reduce((total, row) => {
-      const questionImage = /^data:image\//i.test(String(row?.questionImageDataUrl || '')) ? 1 : 0;
-      const optionImages = Array.isArray(row?.optionImageDataUrls)
-        ? row.optionImageDataUrls.filter((item) => /^data:image\//i.test(String(item || ''))).length
-        : 0;
-      const explanationImage = /^data:image\//i.test(String(row?.explanationImageDataUrl || '')) ? 1 : 0;
-      return total + questionImage + optionImages + explanationImage;
-    }, 0);
-  };
-
-  if (openai) {
-    const aiResult = await parseBulkMcqsWithAi(sourceText);
-    const heuristicScore = (heuristicResult.parsed?.length || 0) - (heuristicResult.errors?.length || 0);
-    const aiScore = (aiResult.parsed?.length || 0) - (aiResult.errors?.length || 0);
-    const heuristicImageScore = countDetectedImages(heuristicResult);
-    const aiImageScore = countDetectedImages(aiResult);
-
-    const preferHeuristicForImages = heuristicImageScore > 0 && aiImageScore < heuristicImageScore;
-
-    if (aiResult.parsed.length > 0 && aiScore >= heuristicScore && !preferHeuristicForImages) {
-      finalResult = aiResult;
-    }
+  const text = String(sourceText || '').trim();
+  if (!text) {
+    return { parsed: [], errors: ['No readable content found to parse.'] };
   }
 
-  const parsed = Array.isArray(finalResult.parsed) ? finalResult.parsed.slice(0, BULK_PARSE_LIMIT) : [];
-  const errors = Array.isArray(finalResult.errors) ? [...finalResult.errors] : [];
-  if ((finalResult.parsed?.length || 0) > BULK_PARSE_LIMIT && !errors.some((item) => /first 15 mcqs/i.test(String(item)))) {
+  const aiResult = await withRetries(async () => {
+    const result = await parseBulkMcqsWithAi(text);
+    if (!Array.isArray(result?.parsed) || result.parsed.length === 0) {
+      throw new Error(result?.errors?.[0] || 'No MCQs were extracted from this document.');
+    }
+    return result;
+  }, AI_PARSE_MAX_RETRIES, AI_PARSE_RETRY_BASE_DELAY_MS);
+
+  const parsed = Array.isArray(aiResult.parsed) ? aiResult.parsed.slice(0, BULK_PARSE_LIMIT) : [];
+  const errors = Array.isArray(aiResult.errors) ? [...aiResult.errors] : [];
+  if ((aiResult.parsed?.length || 0) > BULK_PARSE_LIMIT && !errors.some((item) => /first 15 mcqs/i.test(String(item)))) {
     errors.unshift(`Only the first ${BULK_PARSE_LIMIT} MCQs were kept from this import.`);
+  }
+
+  if (!parsed.length) {
+    return {
+      parsed: [],
+      errors: errors.length ? errors : ['No valid MCQs were extracted after retries.'],
+    };
   }
 
   return { parsed, errors };
