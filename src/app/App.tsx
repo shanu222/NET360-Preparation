@@ -273,6 +273,109 @@ export default function App() {
     };
   }, [activeTab, navigate]);
 
+  useEffect(() => {
+    const rows = Array.from(document.querySelectorAll<HTMLElement>('.net360-swipe-row'));
+    if (!rows.length) return;
+
+    const cleanupFns: Array<() => void> = [];
+
+    const syncRowLayout = () => {
+      rows.forEach((row) => {
+        const maxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
+        if (row.scrollLeft > maxScrollLeft) {
+          row.scrollLeft = maxScrollLeft;
+        }
+        row.dataset.scrollable = maxScrollLeft > 1 ? 'true' : 'false';
+      });
+    };
+
+    const enableDragFallback = (row: HTMLElement) => {
+      let isPointerDown = false;
+      let isDragging = false;
+      let startX = 0;
+      let startScrollLeft = 0;
+
+      const shouldSkipTarget = (target: EventTarget | null) => {
+        if (!(target instanceof Element)) return false;
+        return Boolean(target.closest('button, a, input, textarea, select, [role="button"], [data-no-drag-scroll]'));
+      };
+
+      const onPointerDown = (event: PointerEvent) => {
+        if (event.pointerType === 'mouse' && event.button !== 0) return;
+        if (shouldSkipTarget(event.target)) return;
+        isPointerDown = true;
+        isDragging = false;
+        startX = event.clientX;
+        startScrollLeft = row.scrollLeft;
+        row.setPointerCapture?.(event.pointerId);
+      };
+
+      const onPointerMove = (event: PointerEvent) => {
+        if (!isPointerDown) return;
+        const deltaX = event.clientX - startX;
+        if (!isDragging && Math.abs(deltaX) > 6) {
+          isDragging = true;
+        }
+        if (!isDragging) return;
+        row.scrollLeft = startScrollLeft - deltaX;
+      };
+
+      const onPointerUp = (event: PointerEvent) => {
+        if (isPointerDown) {
+          row.releasePointerCapture?.(event.pointerId);
+        }
+        isPointerDown = false;
+        window.setTimeout(() => {
+          isDragging = false;
+        }, 0);
+      };
+
+      const onClickCapture = (event: MouseEvent) => {
+        if (!isDragging) return;
+        event.preventDefault();
+        event.stopPropagation();
+      };
+
+      row.addEventListener('pointerdown', onPointerDown, { passive: true });
+      row.addEventListener('pointermove', onPointerMove, { passive: true });
+      row.addEventListener('pointerup', onPointerUp, { passive: true });
+      row.addEventListener('pointercancel', onPointerUp, { passive: true });
+      row.addEventListener('click', onClickCapture, true);
+
+      return () => {
+        row.removeEventListener('pointerdown', onPointerDown);
+        row.removeEventListener('pointermove', onPointerMove);
+        row.removeEventListener('pointerup', onPointerUp);
+        row.removeEventListener('pointercancel', onPointerUp);
+        row.removeEventListener('click', onClickCapture, true);
+      };
+    };
+
+    rows.forEach((row) => {
+      cleanupFns.push(enableDragFallback(row));
+    });
+
+    const onResize = () => syncRowLayout();
+    const onOrientationChange = () => {
+      syncRowLayout();
+      window.setTimeout(syncRowLayout, 120);
+    };
+
+    window.addEventListener('resize', onResize, { passive: true });
+    window.addEventListener('orientationchange', onOrientationChange, { passive: true });
+    window.visualViewport?.addEventListener('resize', onResize);
+
+    syncRowLayout();
+    window.setTimeout(syncRowLayout, 80);
+
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onOrientationChange);
+      window.visualViewport?.removeEventListener('resize', onResize);
+      cleanupFns.forEach((fn) => fn());
+    };
+  }, [activeTab]);
+
   if (!setupCompleted) {
     return <FirstTimeSetup onComplete={() => setSetupCompleted(true)} />;
   }

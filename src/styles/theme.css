@@ -314,6 +314,9 @@
   }
 
   .net360-swipe-row {
+    display: block;
+    width: 100%;
+    max-width: 100%;
     overflow-x: auto;
     overflow-y: hidden;
     -webkit-overflow-scrolling: touch;
@@ -334,6 +337,8 @@
   .net360-swipe-row > [data-slot='tabs-list'],
   .net360-swipe-row > .inline-flex,
   .net360-swipe-row > .flex {
+    width: max-content;
+    max-width: none;
     min-width: max-content;
     flex-wrap: nowrap;
   }
@@ -341,6 +346,14 @@
   .net360-swipe-row [data-slot='tabs-trigger'] {
     white-space: nowrap;
     flex: 0 0 auto;
+  }
+
+  .net360-swipe-row[data-scrollable='true'] {
+    cursor: grab;
+  }
+
+  .net360-swipe-row[data-scrollable='true']:active {
+    cursor: grabbing;
   }
 
   .net360-page .recharts-responsive-container,
