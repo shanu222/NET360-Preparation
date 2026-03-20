@@ -90,6 +90,28 @@ Deploy as two Render services:
 - Start: `npx vite preview --host 0.0.0.0 --port $PORT`
 - Add `VITE_API_BASE_URL` pointing to backend service URL
 
+## Production API Connectivity Checklist
+
+If admin/client requests fail with network errors in production:
+
+1. Verify frontend base URL variables
+- `VITE_API_BASE_URL` must point to API service (for example `https://net360-api.onrender.com`)
+- `VITE_MOBILE_API_BASE_URL` should point to the same API service for native builds
+- Set `VITE_DISABLE_LOCAL_API_FALLBACK=true` in production to avoid silent local fallback
+
+2. Verify backend CORS variables
+- Set `CORS_ALLOWED_ORIGINS` to comma-separated frontend origins (for example `https://net360-preparation.onrender.com,https://net360-admin.onrender.com`)
+- Optional aliases supported by backend: `FRONTEND_URL`, `FRONTEND_ORIGIN`, `WEB_ORIGIN`
+
+3. Verify API routes and health
+- Admin AI generation route: `POST /api/admin/ai-generate-mcq`
+- Health route: `GET /api/health` (must return JSON)
+
+4. Render cold-start behavior (free tier)
+- First request can take longer while backend wakes up
+- Frontend includes retry/backoff for transient timeouts and `5xx` responses
+- If cold starts are frequent, consider an always-on plan for API service
+
 ## New Production Features Added
 
 - MongoDB model-based persistence with indexes

@@ -12,6 +12,9 @@ type RuntimeEnv = {
 
 type ApiRequestOptions = RequestInit & {
   timeoutMs?: number;
+  retryCount?: number;
+  retryDelayMs?: number;
+  retryOnStatuses?: number[];
 };
 
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
@@ -25,6 +28,10 @@ const ADMIN_REFRESH_TOKEN_STORAGE_KEY = 'net360-admin-refresh-token';
 const DEFAULT_API_TIMEOUT_MS = 35_000;
 const AI_PARSE_API_TIMEOUT_MS = 120_000;
 const MAX_API_TIMEOUT_MS = 240_000;
+const DEFAULT_API_RETRY_DELAY_MS = 1_250;
+const MAX_API_RETRY_COUNT = 3;
+
+const DEFAULT_RETRIABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
 function isNativeCapacitorRuntime() {
   const runtime = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
@@ -105,6 +112,59 @@ function resolveRequestTimeoutMs(path: string, explicitTimeoutMs?: number) {
     return AI_PARSE_API_TIMEOUT_MS;
   }
   return DEFAULT_API_TIMEOUT_MS;
+}
+
+function delayMs(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, Math.max(0, Math.floor(ms)));
+  });
+}
+
+function resolveRetryCount(explicitRetryCount?: number) {
+  if (!Number.isFinite(explicitRetryCount)) return 0;
+  return Math.max(0, Math.min(MAX_API_RETRY_COUNT, Math.floor(Number(explicitRetryCount))));
+}
+
+function resolveRetryDelayMs(explicitRetryDelayMs?: number) {
+  if (!Number.isFinite(explicitRetryDelayMs) || Number(explicitRetryDelayMs) <= 0) {
+    return DEFAULT_API_RETRY_DELAY_MS;
+  }
+  return Math.max(250, Math.min(15_000, Math.floor(Number(explicitRetryDelayMs))));
+}
+
+function shouldRetryTransportError(error: Error) {
+  const code = String((error as Error & { code?: string }).code || '').toUpperCase();
+  const message = String(error.message || '').toLowerCase();
+
+  return code === 'REQUEST_TIMEOUT'
+    || message.includes('network error')
+    || message.includes('failed to fetch')
+    || message.includes('backend offline')
+    || message.includes('cors')
+    || message.includes('timed out');
+}
+
+function shouldRetryHttpStatus(status: number, options: ApiRequestOptions) {
+  if (!Number.isFinite(status) || status <= 0) return false;
+  const customStatuses = Array.isArray(options.retryOnStatuses)
+    ? options.retryOnStatuses.filter((item) => Number.isFinite(item)).map((item) => Number(item))
+    : [];
+
+  if (customStatuses.length > 0) {
+    return customStatuses.includes(status);
+  }
+
+  return DEFAULT_RETRIABLE_STATUS_CODES.has(status);
+}
+
+function computeRetryDelayMs(attemptIndex: number, baseDelayMs: number, retryAfterSeconds?: number) {
+  if (Number.isFinite(retryAfterSeconds) && Number(retryAfterSeconds) > 0) {
+    return Math.max(baseDelayMs, Math.floor(Number(retryAfterSeconds) * 1000));
+  }
+
+  const exponential = baseDelayMs * (2 ** Math.max(0, attemptIndex));
+  const jitter = Math.floor(Math.random() * 250);
+  return Math.min(20_000, exponential + jitter);
 }
 
 async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: number) {
@@ -268,6 +328,8 @@ function buildMissingNativeApiBaseUrlError(path: string) {
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}, token?: string | null): Promise<T> {
   const effectiveBaseUrl = getEffectiveApiBaseUrl();
   const timeoutMs = resolveRequestTimeoutMs(path, options.timeoutMs);
+  const retryCount = resolveRetryCount(options.retryCount);
+  const retryDelayMs = resolveRetryDelayMs(options.retryDelayMs);
   const resolvedPath = resolveApiPath(path);
 
   if (
@@ -371,28 +433,52 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   const hasAuthToken = Boolean(initialToken);
 
   let response: Response;
-  try {
-    response = await fetchWithTimeout(resolvedPath, {
-      ...options,
-      headers: buildHeaders(initialToken),
-    }, timeoutMs);
-  } catch (error) {
-    const mappedError = mapTransportError(path, resolvedPath, error);
-    // If backend is unreachable, transparently fall back to browser-local mode.
-    if (canFallbackToLocalMode() && !(hasAuthToken && (isPremiumSensitivePath(path) || isAdminSensitivePath(path)))) {
-      logApiConfigurationIssue('warn', 'Remote API request failed; switching to local fallback mode.', {
+  let attempt = 0;
+  // Retry transient transport/HTTP failures to absorb Render cold starts.
+  for (;;) {
+    try {
+      response = await fetchWithTimeout(resolvedPath, {
+        ...options,
+        headers: buildHeaders(initialToken),
+      }, timeoutMs);
+    } catch (error) {
+      const mappedError = mapTransportError(path, resolvedPath, error);
+      if (attempt < retryCount && shouldRetryTransportError(mappedError)) {
+        const retryDelay = computeRetryDelayMs(attempt, retryDelayMs);
+        attempt += 1;
+        await delayMs(retryDelay);
+        continue;
+      }
+
+      // If backend is unreachable, transparently fall back to browser-local mode.
+      if (canFallbackToLocalMode() && !(hasAuthToken && (isPremiumSensitivePath(path) || isAdminSensitivePath(path)))) {
+        logApiConfigurationIssue('warn', 'Remote API request failed; switching to local fallback mode.', {
+          path,
+          error: mappedError.message,
+          phase: 'network-fallback',
+        });
+        return localApiRequest<T>(path, options, token);
+      }
+      logApiConfigurationIssue('error', 'Remote API request failed with no local fallback available.', {
         path,
         error: mappedError.message,
-        phase: 'network-fallback',
+        phase: 'network-failure',
       });
-      return localApiRequest<T>(path, options, token);
+      throw mappedError;
     }
-    logApiConfigurationIssue('error', 'Remote API request failed with no local fallback available.', {
-      path,
-      error: mappedError.message,
-      phase: 'network-failure',
-    });
-    throw mappedError;
+
+    if (!response.ok && attempt < retryCount && shouldRetryHttpStatus(response.status, options)) {
+      const retryDelay = computeRetryDelayMs(
+        attempt,
+        retryDelayMs,
+        parseRetryAfterSeconds(response.headers.get('Retry-After')),
+      );
+      attempt += 1;
+      await delayMs(retryDelay);
+      continue;
+    }
+
+    break;
   }
 
   if (!response.ok) {
@@ -433,7 +519,10 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       payload = await response.json();
       errorMessage = payload?.error || errorMessage;
     } catch {
-      // Keep fallback message.
+      const bodyText = await response.text().catch(() => '');
+      if (isLikelyHtmlResponse(response, bodyText)) {
+        errorMessage = buildHtmlInsteadOfJsonError(path).message;
+      }
     }
 
     if (response.status === 413 && errorMessage === `Request failed (${response.status})`) {
@@ -489,7 +578,10 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       throw buildHtmlInsteadOfJsonError(path);
     }
 
-    throw new Error(`Unexpected API response format for ${path}. Expected JSON.`);
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    throw new Error(
+      `Unexpected API response format for ${path}. Expected JSON but received ${contentType || 'unknown content type'}.`,
+    );
   }
 }
 

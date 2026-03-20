@@ -1149,6 +1149,8 @@ const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 8_000;
 const AI_PARSE_ENDPOINT = '/api/ai/parse-mcqs';
 const AI_GENERATE_ENDPOINT = '/api/admin/ai-generate-mcq';
 const AI_GENERATE_TARGET_COUNT = 10;
+const AI_GENERATE_RETRY_COUNT = 2;
+const AI_GENERATE_RETRY_DELAY_MS = 1_500;
 
 interface AdminMcqPreviewQuestion {
   id: string;
@@ -4893,6 +4895,9 @@ export default function AdminApp() {
         method: 'POST',
         body: formData,
         timeoutMs: 240_000,
+        retryCount: AI_GENERATE_RETRY_COUNT,
+        retryDelayMs: AI_GENERATE_RETRY_DELAY_MS,
+        retryOnStatuses: [408, 425, 429, 500, 502, 503, 504],
       }, authToken);
 
       const generatedList = Array.isArray(payload?.mcqs) && payload.mcqs.length
@@ -4947,7 +4952,16 @@ export default function AdminApp() {
       setAiGenGenerateErrors(Array.isArray(payload?.errors) ? payload.errors : []);
       toast.success(`AI generated ${normalizedGenerated.length} MCQ(s). Review/edit the populated blocks and upload.`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Could not generate AI MCQ.';
+      const status = Number((error as { status?: number } | null)?.status || 0);
+      const endpoint = buildApiUrl(AI_GENERATE_ENDPOINT);
+      let message = error instanceof Error ? error.message : 'Could not generate AI MCQ.';
+
+      if (status === 401 || status === 403) {
+        message = 'Admin session expired. Please log in again and retry AI generation.';
+      } else if (status >= 500 || /timeout|network error|failed to fetch|backend offline|cors/i.test(message)) {
+        message = `Could not reach AI generation service at ${endpoint}. The backend may be cold-starting on Render. Please retry in a few seconds.`;
+      }
+
       setAiGenGenerateErrors([message]);
       toast.error(message);
     } finally {

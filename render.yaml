@@ -6,6 +6,12 @@ services:
     buildCommand: npm install && npm run build
     startCommand: npm run start:web
     autoDeploy: true
+    envVars:
+      - key: VITE_API_BASE_URL
+        # Replace with your live backend API URL.
+        value: https://net360-api.onrender.com
+      - key: VITE_DISABLE_LOCAL_API_FALLBACK
+        value: "true"
 
   - type: web
     name: net360-admin

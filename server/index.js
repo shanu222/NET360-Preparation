@@ -45,6 +45,13 @@ import { SupportChatMessageModel } from './models/SupportChatMessage.js';
 import { SecurityAuditEventModel } from './models/SecurityAuditEvent.js';
 import { RuntimeConfigModel } from './models/RuntimeConfig.js';
 
+function parseOriginList(rawValue) {
+  return String(rawValue || '')
+    .split(',')
+    .map((item) => item.trim().replace(/\/+$/, '').toLowerCase())
+    .filter(Boolean);
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -74,9 +81,12 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .split(',')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
-const CORS_ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((item) => item.trim().replace(/\/+$/, '').toLowerCase())
+const CORS_ALLOWED_ORIGINS = Array.from(new Set([
+  ...parseOriginList(process.env.CORS_ALLOWED_ORIGINS || ''),
+  ...parseOriginList(process.env.FRONTEND_URL || ''),
+  ...parseOriginList(process.env.FRONTEND_ORIGIN || ''),
+  ...parseOriginList(process.env.WEB_ORIGIN || ''),
+]))
   .filter(Boolean);
 
 const MOBILE_RUNTIME_ORIGINS = new Set([
@@ -339,7 +349,7 @@ function isAllowedOrigin(origin) {
   return matches;
 }
 
-app.use(cors({
+const corsOptions = {
   origin(origin, callback) {
     if (isAllowedOrigin(origin)) {
       callback(null, true);
@@ -350,7 +360,12 @@ app.use(cors({
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+  optionsSuccessStatus: 204,
+  maxAge: 24 * 60 * 60,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json({ limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use(express.urlencoded({ extended: false, limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use((req, res, next) => {
@@ -5403,7 +5418,20 @@ async function refreshUserProgress(userId) {
 }
 
 app.get('/api/health', async (req, res) => {
-  res.json({ status: 'ok', service: 'net360-api', mongo: 'connected' });
+  const configuredCorsOrigins = CORS_ALLOWED_ORIGINS.length;
+  res.json({
+    status: 'ok',
+    service: 'net360-api',
+    env: NODE_ENV,
+    mongo: 'connected',
+    uptimeSeconds: Math.floor(process.uptime()),
+    now: new Date().toISOString(),
+    requestTimeoutMs: REQUEST_TIMEOUT_MS,
+    cors: {
+      configuredOrigins: configuredCorsOrigins,
+      allowAll: IS_PRODUCTION && configuredCorsOrigins === 0,
+    },
+  });
 });
 
 app.get('/api/admin/system-status', authMiddleware, requireAdmin, async (_req, res) => {
