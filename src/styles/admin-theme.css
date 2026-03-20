@@ -68,6 +68,20 @@
   min-width: 100%;
 }
 
+.admin-shell math-field img,
+.admin-shell math-field::part(content) img,
+.admin-shell math-field::part(container) img {
+  display: inline-block;
+  max-width: min(100%, 320px);
+  width: auto;
+  height: auto;
+  vertical-align: middle;
+  border: 0;
+  box-shadow: none;
+  background: transparent;
+  object-fit: contain;
+}
+
 .admin-shell .admin-header-panel,
 .admin-shell .admin-sidebar,
 .admin-shell [data-slot='card'] {

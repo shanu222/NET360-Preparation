@@ -1,4 +1,4 @@
-import { createElement, type ChangeEvent, type FormEvent, type MouseEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, type ChangeEvent, type FormEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -81,6 +81,36 @@ type MathFieldLikeElement = HTMLElement & {
 type ClipboardDataEvent = {
   clipboardData: DataTransfer | null;
   preventDefault: () => void;
+};
+
+type ManualImageEditorTarget =
+  | { kind: 'question' }
+  | { kind: 'option'; optionIndex: number; optionKey: string }
+  | { kind: 'explanation' };
+
+type GestureCropRect = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+type GestureCropHandle = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
+
+type GestureImageEditorState = {
+  isOpen: boolean;
+  sourceDataUrl: string;
+  fileName: string;
+  target: ManualImageEditorTarget | null;
+  naturalWidth: number;
+  naturalHeight: number;
+  viewportWidth: number;
+  viewportHeight: number;
+  zoom: number;
+  rotation: number;
+  translateX: number;
+  translateY: number;
+  crop: GestureCropRect;
 };
 
 function normalizeMathInputId(value: string) {
@@ -1403,10 +1433,93 @@ function fileToDataUrl(file: File): Promise<string> {
 const MCQ_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif']);
 const MCQ_IMAGE_NAME_PATTERN = /\.(jpe?g|png|webp|svg|gif)$/i;
 const MCQ_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const GESTURE_EDITOR_MIN_ZOOM = 1;
+const GESTURE_EDITOR_MAX_ZOOM = 6;
+const GESTURE_EDITOR_MIN_CROP_EDGE = 72;
 
 function isSupportedMcqImage(file: File) {
   const mime = String(file.type || '').toLowerCase();
   return MCQ_IMAGE_MIME_TYPES.has(mime) || MCQ_IMAGE_NAME_PATTERN.test(file.name || '');
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeEditorCrop(crop: GestureCropRect, viewportWidth: number, viewportHeight: number): GestureCropRect {
+  const maxWidth = Math.max(GESTURE_EDITOR_MIN_CROP_EDGE, viewportWidth);
+  const maxHeight = Math.max(GESTURE_EDITOR_MIN_CROP_EDGE, viewportHeight);
+  const width = clampNumber(crop.width, GESTURE_EDITOR_MIN_CROP_EDGE, maxWidth);
+  const height = clampNumber(crop.height, GESTURE_EDITOR_MIN_CROP_EDGE, maxHeight);
+  const x = clampNumber(crop.x, 0, Math.max(0, viewportWidth - width));
+  const y = clampNumber(crop.y, 0, Math.max(0, viewportHeight - height));
+  return { x, y, width, height };
+}
+
+function createInitialGestureCrop(viewportWidth: number, viewportHeight: number): GestureCropRect {
+  const width = Math.max(GESTURE_EDITOR_MIN_CROP_EDGE, Math.round(viewportWidth * 0.82));
+  const height = Math.max(GESTURE_EDITOR_MIN_CROP_EDGE, Math.round(viewportHeight * 0.6));
+  return normalizeEditorCrop({
+    x: Math.round((viewportWidth - width) / 2),
+    y: Math.round((viewportHeight - height) / 2),
+    width,
+    height,
+  }, viewportWidth, viewportHeight);
+}
+
+function getImageNaturalSize(dataUrl: string): Promise<{ width: number; height: number }> {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => {
+      resolve({
+        width: Math.max(1, image.naturalWidth || image.width || 1),
+        height: Math.max(1, image.naturalHeight || image.height || 1),
+      });
+    };
+    image.onerror = () => reject(new Error('Could not load image dimensions.'));
+    image.src = dataUrl;
+  });
+}
+
+async function renderGestureCropToDataUrl(editor: GestureImageEditorState): Promise<string> {
+  const image = new Image();
+  await new Promise<void>((resolve, reject) => {
+    image.onload = () => resolve();
+    image.onerror = () => reject(new Error('Could not decode image for crop.'));
+    image.src = editor.sourceDataUrl;
+  });
+
+  const fitScale = Math.min(
+    editor.viewportWidth / editor.naturalWidth,
+    editor.viewportHeight / editor.naturalHeight,
+  );
+  const transformScale = fitScale * editor.zoom;
+  const safeCrop = normalizeEditorCrop(editor.crop, editor.viewportWidth, editor.viewportHeight);
+  const exportScale = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(safeCrop.width * exportScale));
+  canvas.height = Math.max(1, Math.round(safeCrop.height * exportScale));
+  const context = canvas.getContext('2d');
+  if (!context) {
+    throw new Error('Could not create crop context.');
+  }
+
+  context.scale(exportScale, exportScale);
+  context.translate(-safeCrop.x, -safeCrop.y);
+  context.translate(editor.viewportWidth / 2 + editor.translateX, editor.viewportHeight / 2 + editor.translateY);
+  context.rotate(editor.rotation);
+  context.scale(transformScale, transformScale);
+  context.filter = 'brightness(1.01) contrast(1.01)';
+  context.drawImage(
+    image,
+    -editor.naturalWidth / 2,
+    -editor.naturalHeight / 2,
+    editor.naturalWidth,
+    editor.naturalHeight,
+  );
+
+  return canvas.toDataURL('image/jpeg', 0.92);
 }
 
 async function fileToMcqImage(file: File): Promise<AdminMcqImageFile> {
@@ -1626,6 +1739,22 @@ export default function AdminApp() {
   const [issuedTokens, setIssuedTokens] = useState<Record<string, string>>({});
   const [query, setQuery] = useState('');
   const [form, setForm] = useState(emptyForm());
+  const [gestureImageEditor, setGestureImageEditor] = useState<GestureImageEditorState>({
+    isOpen: false,
+    sourceDataUrl: '',
+    fileName: '',
+    target: null,
+    naturalWidth: 1,
+    naturalHeight: 1,
+    viewportWidth: 1,
+    viewportHeight: 1,
+    zoom: 1,
+    rotation: 0,
+    translateX: 0,
+    translateY: 0,
+    crop: { x: 0, y: 0, width: GESTURE_EDITOR_MIN_CROP_EDGE, height: GESTURE_EDITOR_MIN_CROP_EDGE },
+  });
+  const [isApplyingGestureCrop, setIsApplyingGestureCrop] = useState(false);
   const [selectedHierarchy, setSelectedHierarchy] = useState<SelectedHierarchy | null>(null);
   const [activeMcqPanel, setActiveMcqPanel] = useState<'upload' | 'deleter' | 'bank' | null>(null);
   const [uploadMode, setUploadMode] = useState<'manual' | 'document'>('manual');
@@ -1704,6 +1833,38 @@ export default function AdminApp() {
   const supportReplyFileInputRef = useRef<HTMLInputElement | null>(null);
   const bulkDocumentInputRef = useRef<HTMLInputElement | null>(null);
   const explanationImageInputRef = useRef<HTMLInputElement | null>(null);
+  const gestureSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const cropDragStateRef = useRef<{
+    handle: GestureCropHandle;
+    startX: number;
+    startY: number;
+    startCrop: GestureCropRect;
+  } | null>(null);
+  const pointerMapRef = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const imageGestureRef = useRef<
+    | {
+      mode: 'pan';
+      pointerId: number;
+      startX: number;
+      startY: number;
+      startTranslateX: number;
+      startTranslateY: number;
+    }
+    | {
+      mode: 'pinch';
+      pointerA: number;
+      pointerB: number;
+      startDistance: number;
+      startAngle: number;
+      startMidX: number;
+      startMidY: number;
+      startZoom: number;
+      startRotation: number;
+      startTranslateX: number;
+      startTranslateY: number;
+    }
+    | null
+  >(null);
   const didHydrateSupportRef = useRef(false);
   const lastUnreadTotalRef = useRef(0);
   const lastUserMessageInThreadRef = useRef('');
@@ -3355,6 +3516,327 @@ export default function AdminApp() {
 
     return () => window.clearInterval(timer);
   }, [authToken, selectedSupportUserId]);
+
+  const openGestureImageEditorForFile = async (file: File, target: ManualImageEditorTarget) => {
+    if (!isSupportedMcqImage(file)) {
+      toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+      return;
+    }
+    if (file.size > MCQ_IMAGE_MAX_BYTES) {
+      toast.error('Image is too large. Maximum size is 5 MB.');
+      return;
+    }
+
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      const natural = await getImageNaturalSize(dataUrl);
+      const viewportWidth = Math.max(1, window.innerWidth);
+      const viewportHeight = Math.max(1, window.innerHeight - 56);
+
+      setGestureImageEditor({
+        isOpen: true,
+        sourceDataUrl: dataUrl,
+        fileName: file.name || 'image.jpg',
+        target,
+        naturalWidth: natural.width,
+        naturalHeight: natural.height,
+        viewportWidth,
+        viewportHeight,
+        zoom: 1,
+        rotation: 0,
+        translateX: 0,
+        translateY: 0,
+        crop: createInitialGestureCrop(viewportWidth, viewportHeight),
+      });
+      pointerMapRef.current.clear();
+      imageGestureRef.current = null;
+      cropDragStateRef.current = null;
+    } catch {
+      toast.error('Could not open image editor.');
+    }
+  };
+
+  const closeGestureImageEditor = () => {
+    if (isApplyingGestureCrop) return;
+    setGestureImageEditor((prev) => ({ ...prev, isOpen: false, target: null, sourceDataUrl: '' }));
+    pointerMapRef.current.clear();
+    imageGestureRef.current = null;
+    cropDragStateRef.current = null;
+  };
+
+  const appendImageTokenToText = (value: string, dataUrl: string) => {
+    const token = `[[img:${String(dataUrl || '').trim()}]]`;
+    const normalized = String(value || '');
+    if (!token.trim() || normalized.includes(token)) return normalized;
+    return normalized.trim() ? `${normalized} ${token}` : token;
+  };
+
+  const applyGestureImageEditor = async () => {
+    if (!gestureImageEditor.isOpen || !gestureImageEditor.target || !gestureImageEditor.sourceDataUrl) return;
+
+    setIsApplyingGestureCrop(true);
+    try {
+      const croppedDataUrl = await renderGestureCropToDataUrl(gestureImageEditor);
+      const parsedImage = parsedDataUrlToImage(croppedDataUrl, String(gestureImageEditor.fileName || 'editor-image').replace(/\.[^.]+$/, '') || 'editor-image');
+      if (!parsedImage) {
+        throw new Error('Could not prepare cropped image.');
+      }
+
+      const target = gestureImageEditor.target;
+      if (target.kind === 'question') {
+        setForm((prev) => ({
+          ...prev,
+          questionImage: parsedImage,
+          question: appendImageTokenToText(prev.question, parsedImage.dataUrl),
+        }));
+        insertImageTokenToField('questionInput', parsedImage.dataUrl);
+      } else if (target.kind === 'option') {
+        const optionFieldId = `option-input-${normalizeMathInputId(target.optionKey)}`;
+        setForm((prev) => {
+          if (target.optionIndex < 0 || target.optionIndex >= prev.optionMedia.length) return prev;
+          const optionMedia = [...prev.optionMedia];
+          const existing = optionMedia[target.optionIndex];
+          optionMedia[target.optionIndex] = {
+            ...existing,
+            image: parsedImage,
+            text: appendImageTokenToText(existing.text, parsedImage.dataUrl),
+          };
+          return { ...prev, optionMedia };
+        });
+        insertImageTokenToField(optionFieldId, parsedImage.dataUrl);
+      } else if (target.kind === 'explanation') {
+        setForm((prev) => ({
+          ...prev,
+          explanationImage: parsedImage,
+          explanationText: appendImageTokenToText(prev.explanationText, parsedImage.dataUrl),
+          shortTrickImage: null,
+        }));
+        insertImageTokenToField('explanationInput', parsedImage.dataUrl);
+      }
+
+      closeGestureImageEditor();
+      toast.success('Photo inserted into editor.');
+    } catch {
+      toast.error('Could not apply photo edits.');
+    } finally {
+      setIsApplyingGestureCrop(false);
+    }
+  };
+
+  const beginCropDrag = (event: ReactPointerEvent<HTMLDivElement>, handle: GestureCropHandle) => {
+    if (!gestureImageEditor.isOpen) return;
+    cropDragStateRef.current = {
+      handle,
+      startX: event.clientX,
+      startY: event.clientY,
+      startCrop: { ...gestureImageEditor.crop },
+    };
+  };
+
+  const beginImagePointerGesture = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!gestureImageEditor.isOpen) return;
+    pointerMapRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+
+    const entries = Array.from(pointerMapRef.current.entries());
+    if (entries.length === 1) {
+      imageGestureRef.current = {
+        mode: 'pan',
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        startTranslateX: gestureImageEditor.translateX,
+        startTranslateY: gestureImageEditor.translateY,
+      };
+      return;
+    }
+
+    if (entries.length >= 2) {
+      const [a, b] = entries;
+      const dx = b[1].x - a[1].x;
+      const dy = b[1].y - a[1].y;
+      imageGestureRef.current = {
+        mode: 'pinch',
+        pointerA: a[0],
+        pointerB: b[0],
+        startDistance: Math.hypot(dx, dy),
+        startAngle: Math.atan2(dy, dx),
+        startMidX: (a[1].x + b[1].x) / 2,
+        startMidY: (a[1].y + b[1].y) / 2,
+        startZoom: gestureImageEditor.zoom,
+        startRotation: gestureImageEditor.rotation,
+        startTranslateX: gestureImageEditor.translateX,
+        startTranslateY: gestureImageEditor.translateY,
+      };
+    }
+  };
+
+  useEffect(() => {
+    if (!gestureImageEditor.isOpen) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const surface = gestureSurfaceRef.current;
+      if (!surface) return;
+
+      if (pointerMapRef.current.has(event.pointerId)) {
+        pointerMapRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      }
+
+      const cropDrag = cropDragStateRef.current;
+      if (cropDrag) {
+        event.preventDefault();
+        const dx = event.clientX - cropDrag.startX;
+        const dy = event.clientY - cropDrag.startY;
+        const start = cropDrag.startCrop;
+        let next: GestureCropRect = { ...start };
+
+        if (cropDrag.handle === 'move') {
+          next.x = start.x + dx;
+          next.y = start.y + dy;
+        } else {
+          if (cropDrag.handle.includes('e')) next.width = start.width + dx;
+          if (cropDrag.handle.includes('s')) next.height = start.height + dy;
+          if (cropDrag.handle.includes('w')) {
+            next.x = start.x + dx;
+            next.width = start.width - dx;
+          }
+          if (cropDrag.handle.includes('n')) {
+            next.y = start.y + dy;
+            next.height = start.height - dy;
+          }
+        }
+
+        setGestureImageEditor((prev) => ({
+          ...prev,
+          crop: normalizeEditorCrop(next, prev.viewportWidth, prev.viewportHeight),
+        }));
+        return;
+      }
+
+      const gesture = imageGestureRef.current;
+      if (!gesture) return;
+
+      if (gesture.mode === 'pan') {
+        if (gesture.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        const dx = event.clientX - gesture.startX;
+        const dy = event.clientY - gesture.startY;
+        setGestureImageEditor((prev) => ({
+          ...prev,
+          translateX: gesture.startTranslateX + dx,
+          translateY: gesture.startTranslateY + dy,
+        }));
+        return;
+      }
+
+      if (gesture.mode === 'pinch') {
+        const pointA = pointerMapRef.current.get(gesture.pointerA);
+        const pointB = pointerMapRef.current.get(gesture.pointerB);
+        if (!pointA || !pointB) return;
+        event.preventDefault();
+
+        const dx = pointB.x - pointA.x;
+        const dy = pointB.y - pointA.y;
+        const distance = Math.max(1, Math.hypot(dx, dy));
+        const angle = Math.atan2(dy, dx);
+        const midX = (pointA.x + pointB.x) / 2;
+        const midY = (pointA.y + pointB.y) / 2;
+
+        const zoom = clampNumber(
+          gesture.startZoom * (distance / Math.max(1, gesture.startDistance)),
+          GESTURE_EDITOR_MIN_ZOOM,
+          GESTURE_EDITOR_MAX_ZOOM,
+        );
+
+        setGestureImageEditor((prev) => ({
+          ...prev,
+          zoom,
+          rotation: gesture.startRotation + (angle - gesture.startAngle),
+          translateX: gesture.startTranslateX + (midX - gesture.startMidX),
+          translateY: gesture.startTranslateY + (midY - gesture.startMidY),
+        }));
+      }
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      pointerMapRef.current.delete(event.pointerId);
+
+      if (cropDragStateRef.current) {
+        cropDragStateRef.current = null;
+      }
+
+      const gesture = imageGestureRef.current;
+      if (!gesture) return;
+
+      const entries = Array.from(pointerMapRef.current.entries());
+      if (!entries.length) {
+        imageGestureRef.current = null;
+        return;
+      }
+
+      if (entries.length === 1) {
+        const [only] = entries;
+        setGestureImageEditor((prev) => {
+          imageGestureRef.current = {
+            mode: 'pan',
+            pointerId: only[0],
+            startX: only[1].x,
+            startY: only[1].y,
+            startTranslateX: prev.translateX,
+            startTranslateY: prev.translateY,
+          };
+          return prev;
+        });
+      } else {
+        const [a, b] = entries;
+        setGestureImageEditor((prev) => {
+          const dx = b[1].x - a[1].x;
+          const dy = b[1].y - a[1].y;
+          imageGestureRef.current = {
+            mode: 'pinch',
+            pointerA: a[0],
+            pointerB: b[0],
+            startDistance: Math.max(1, Math.hypot(dx, dy)),
+            startAngle: Math.atan2(dy, dx),
+            startMidX: (a[1].x + b[1].x) / 2,
+            startMidY: (a[1].y + b[1].y) / 2,
+            startZoom: prev.zoom,
+            startRotation: prev.rotation,
+            startTranslateX: prev.translateX,
+            startTranslateY: prev.translateY,
+          };
+          return prev;
+        });
+      }
+    };
+
+    window.addEventListener('pointermove', handlePointerMove, { passive: false });
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+    };
+  }, [gestureImageEditor.isOpen]);
+
+  useEffect(() => {
+    if (!gestureImageEditor.isOpen) return;
+    const handleResize = () => {
+      setGestureImageEditor((prev) => {
+        const viewportWidth = Math.max(1, window.innerWidth);
+        const viewportHeight = Math.max(1, window.innerHeight - 56);
+        return {
+          ...prev,
+          viewportWidth,
+          viewportHeight,
+          crop: normalizeEditorCrop(prev.crop, viewportWidth, viewportHeight),
+        };
+      });
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [gestureImageEditor.isOpen]);
 
   const resetForm = () => {
     const fresh = emptyForm();
@@ -6928,22 +7410,11 @@ export default function AdminApp() {
                             id="mcq-question-image-upload"
                             type="file"
                             accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                            capture="environment"
                             onChange={(e) => {
                               const file = e.target.files?.[0] || null;
                               if (!file) return;
-                              if (!isSupportedMcqImage(file)) {
-                                toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
-                                e.currentTarget.value = '';
-                                return;
-                              }
-                              if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                                toast.error('Image is too large. Maximum size is 5 MB.');
-                                e.currentTarget.value = '';
-                                return;
-                              }
-                              void fileToMcqImage(file)
-                                .then((image) => setForm((prev) => ({ ...prev, questionImage: image })))
-                                .catch(() => toast.error('Could not read selected image.'));
+                              void openGestureImageEditorForFile(file, { kind: 'question' });
                               e.currentTarget.value = '';
                             }}
                           />
@@ -7035,28 +7506,15 @@ export default function AdminApp() {
                                   <Input
                                     type="file"
                                     accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                                    capture="environment"
                                     onChange={(e) => {
                                       const file = e.target.files?.[0] || null;
                                       if (!file) return;
-                                      if (!isSupportedMcqImage(file)) {
-                                        toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
-                                        e.currentTarget.value = '';
-                                        return;
-                                      }
-                                      if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                                        toast.error('Image is too large. Maximum size is 5 MB.');
-                                        e.currentTarget.value = '';
-                                        return;
-                                      }
-                                      void fileToMcqImage(file)
-                                        .then((image) => {
-                                          setForm((prev) => {
-                                            const optionMedia = [...prev.optionMedia];
-                                            optionMedia[optionIdx] = { ...optionMedia[optionIdx], image };
-                                            return { ...prev, optionMedia };
-                                          });
-                                        })
-                                        .catch(() => toast.error('Could not read selected image.'));
+                                      void openGestureImageEditorForFile(file, {
+                                        kind: 'option',
+                                        optionIndex: optionIdx,
+                                        optionKey: option.key,
+                                      });
                                       e.currentTarget.value = '';
                                     }}
                                   />
@@ -7138,22 +7596,11 @@ export default function AdminApp() {
                                 type="file"
                                 className="hidden"
                                 accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
+                                capture="environment"
                                 onChange={(e) => {
                                   const file = e.target.files?.[0] || null;
                                   if (!file) return;
-                                  if (!isSupportedMcqImage(file)) {
-                                    toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
-                                    e.currentTarget.value = '';
-                                    return;
-                                  }
-                                  if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                                    toast.error('Image is too large. Maximum size is 5 MB.');
-                                    e.currentTarget.value = '';
-                                    return;
-                                  }
-                                  void fileToMcqImage(file)
-                                    .then((image) => setForm((prev) => ({ ...prev, explanationImage: image, shortTrickImage: null })))
-                                    .catch(() => toast.error('Could not read selected image.'));
+                                  void openGestureImageEditorForFile(file, { kind: 'explanation' });
                                   e.currentTarget.value = '';
                                 }}
                               />
@@ -8488,6 +8935,83 @@ export default function AdminApp() {
           </Tabs>
         </div>
       </main>
+
+      {gestureImageEditor.isOpen ? (
+        <div className="fixed inset-0 z-[80] bg-black/95 text-white">
+          <div className="flex h-full flex-col">
+            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+              <Button type="button" size="sm" variant="outline" onClick={closeGestureImageEditor} disabled={isApplyingGestureCrop}>Cancel</Button>
+              <p className="text-xs text-white/80">Drag, resize, pinch to zoom, rotate</p>
+              <Button type="button" size="sm" onClick={() => void applyGestureImageEditor()} disabled={isApplyingGestureCrop}>
+                {isApplyingGestureCrop ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Using...
+                  </>
+                ) : 'Use Photo'}
+              </Button>
+            </div>
+
+            <div
+              ref={gestureSurfaceRef}
+              className="relative flex-1 overflow-hidden touch-none"
+              style={{ touchAction: 'none' }}
+              onPointerDown={beginImagePointerGesture}
+            >
+              <img
+                src={gestureImageEditor.sourceDataUrl}
+                alt="Edit preview"
+                draggable={false}
+                className="absolute left-1/2 top-1/2 max-w-none select-none"
+                style={{
+                  width: `${gestureImageEditor.naturalWidth}px`,
+                  height: `${gestureImageEditor.naturalHeight}px`,
+                  transformOrigin: 'center center',
+                  transform: `translate(-50%, -50%) translate(${gestureImageEditor.translateX}px, ${gestureImageEditor.translateY}px) scale(${Math.min(
+                    gestureImageEditor.viewportWidth / gestureImageEditor.naturalWidth,
+                    gestureImageEditor.viewportHeight / gestureImageEditor.naturalHeight,
+                  ) * gestureImageEditor.zoom}) rotate(${gestureImageEditor.rotation}rad)`,
+                }}
+              />
+
+              <div
+                className="absolute border-2 border-cyan-300"
+                style={{
+                  left: `${gestureImageEditor.crop.x}px`,
+                  top: `${gestureImageEditor.crop.y}px`,
+                  width: `${gestureImageEditor.crop.width}px`,
+                  height: `${gestureImageEditor.crop.height}px`,
+                  boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.55)',
+                }}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                  beginCropDrag(event, 'move');
+                }}
+              >
+                <div className="pointer-events-none absolute inset-0 border border-white/75" />
+
+                <div className="absolute left-1/2 top-0 h-8 w-8 -translate-x-1/2 -translate-y-1/2" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'n'); }}>
+                  <div className="mx-auto h-5 w-5 rounded-full border-2 border-white bg-cyan-400" />
+                </div>
+                <div className="absolute left-1/2 bottom-0 h-8 w-8 -translate-x-1/2 translate-y-1/2" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 's'); }}>
+                  <div className="mx-auto h-5 w-5 rounded-full border-2 border-white bg-cyan-400" />
+                </div>
+                <div className="absolute left-0 top-1/2 h-8 w-8 -translate-x-1/2 -translate-y-1/2" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'w'); }}>
+                  <div className="my-auto h-5 w-5 rounded-full border-2 border-white bg-cyan-400" />
+                </div>
+                <div className="absolute right-0 top-1/2 h-8 w-8 translate-x-1/2 -translate-y-1/2" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'e'); }}>
+                  <div className="my-auto h-5 w-5 rounded-full border-2 border-white bg-cyan-400" />
+                </div>
+
+                <div className="absolute -left-3 -top-3 h-6 w-6 rounded-full border-2 border-white bg-cyan-400" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'nw'); }} />
+                <div className="absolute -right-3 -top-3 h-6 w-6 rounded-full border-2 border-white bg-cyan-400" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'ne'); }} />
+                <div className="absolute -left-3 -bottom-3 h-6 w-6 rounded-full border-2 border-white bg-cyan-400" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'sw'); }} />
+                <div className="absolute -right-3 -bottom-3 h-6 w-6 rounded-full border-2 border-white bg-cyan-400" onPointerDown={(event) => { event.stopPropagation(); beginCropDrag(event, 'se'); }} />
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
