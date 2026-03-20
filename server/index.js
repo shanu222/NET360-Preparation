@@ -101,10 +101,6 @@ const CONFIG_CRYPTO_KEY = CONFIG_ENCRYPTION_KEY
   ? crypto.createHash('sha256').update(CONFIG_ENCRYPTION_KEY).digest()
   : null;
 
-const openai = MODEL_PROVIDER_KEY
-  ? new OpenAI({ apiKey: MODEL_PROVIDER_KEY })
-  : null;
-
 const runtimeConfigCache = {
   valueByKey: new Map(),
   fetchedAt: 0,
@@ -2742,6 +2738,129 @@ async function getOpenAiClientContext() {
   };
 }
 
+function classifyOpenAiError(error) {
+  const status = Number(error?.status || error?.statusCode || 0) || undefined;
+  const code = String(error?.code || error?.error?.code || '').trim();
+  const type = String(error?.type || error?.error?.type || '').trim();
+  const message = String(error?.message || 'OpenAI request failed.').trim();
+  const lowered = `${code} ${type} ${message}`.toLowerCase();
+
+  if (status === 401 || lowered.includes('invalid_api_key') || lowered.includes('incorrect api key') || lowered.includes('authentication')) {
+    return {
+      category: 'auth',
+      status: 401,
+      code: code || 'invalid_api_key',
+      message: 'OpenAI authentication failed. Verify OPENAI_API_KEY on the backend .env/runtime config.',
+      detail: message,
+    };
+  }
+
+  if (status === 429 || lowered.includes('insufficient_quota') || lowered.includes('quota') || lowered.includes('rate limit')) {
+    return {
+      category: 'quota',
+      status: 429,
+      code: code || 'insufficient_quota',
+      message: 'OpenAI quota/rate limit reached. Check billing, quota limits, and retry policy.',
+      detail: message,
+    };
+  }
+
+  return {
+    category: 'unknown',
+    status: status || 502,
+    code: code || undefined,
+    message: 'OpenAI connection failed. Check API key, model, and network connectivity.',
+    detail: message,
+  };
+}
+
+async function runOpenAiConnectionProbe(reason = 'runtime-check') {
+  const openAiContext = await getOpenAiClientContext();
+  const configured = Boolean(openAiContext.client);
+  const keySource = openAiContext.keySource;
+  const model = String(openAiContext.model || OPENAI_MODEL || 'gpt-4o-mini').trim() || 'gpt-4o-mini';
+
+  if (!configured) {
+    return {
+      ok: false,
+      configured: false,
+      keySource,
+      model,
+      category: 'missing-key',
+      status: 503,
+      message: 'OpenAI API key is missing. Set process.env.OPENAI_API_KEY (or MODEL_PROVIDER_API_KEY) on the backend.',
+      detail: 'No OpenAI API key is currently loaded from runtime config or environment variables.',
+      checkedAt: new Date().toISOString(),
+      reason,
+    };
+  }
+
+  try {
+    await openAiContext.client.chat.completions.create({
+      model,
+      temperature: 0,
+      max_tokens: 5,
+      messages: [
+        { role: 'system', content: 'Respond with one short token: ok' },
+        { role: 'user', content: 'ping' },
+      ],
+    });
+
+    return {
+      ok: true,
+      configured: true,
+      keySource,
+      model,
+      category: 'ok',
+      status: 200,
+      message: 'OpenAI API key loaded and API connection successful.',
+      detail: 'Probe request completed successfully.',
+      checkedAt: new Date().toISOString(),
+      reason,
+    };
+  } catch (error) {
+    const classified = classifyOpenAiError(error);
+    return {
+      ok: false,
+      configured: true,
+      keySource,
+      model,
+      category: classified.category,
+      status: classified.status,
+      code: classified.code,
+      message: classified.message,
+      detail: classified.detail,
+      checkedAt: new Date().toISOString(),
+      reason,
+    };
+  }
+}
+
+function logOpenAiProbeStatus(probeResult) {
+  if (probeResult.ok) {
+    console.log(`[openai] API key loaded successfully (source: ${probeResult.keySource}).`);
+    console.log(`[openai] API connection successful (model: ${probeResult.model}).`);
+    return;
+  }
+
+  if (probeResult.category === 'missing-key') {
+    console.error('[openai] API key missing or not loaded. Set OPENAI_API_KEY (or MODEL_PROVIDER_API_KEY) in backend env/runtime config.');
+    return;
+  }
+
+  if (probeResult.category === 'auth') {
+    console.error(`[openai] Authentication error: ${probeResult.detail}`);
+    return;
+  }
+
+  if (probeResult.category === 'quota') {
+    console.error(`[openai] Quota/rate-limit error: ${probeResult.detail}`);
+    return;
+  }
+
+  console.error(`[openai] Connection error: ${probeResult.detail}`);
+}
+
 function buildSafeDownloadName(rawName, fallback = 'payment-proof') {
   const base = String(rawName || '').trim() || fallback;
   return base.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
@@ -5246,6 +5365,37 @@ app.get('/api/admin/system-status', authMiddleware, requireAdmin, async (_req, r
     },
     serverTime: new Date().toISOString(),
   });
+});
+
+app.get('/api/admin/openai-health', authMiddleware, requireAdmin, async (_req, res) => {
+  try {
+    const probe = await runOpenAiConnectionProbe('admin-health-endpoint');
+    res.status(Number(probe.status || (probe.ok ? 200 : 500))).json({
+      openai: {
+        configured: probe.configured,
+        keySource: probe.keySource,
+        model: probe.model,
+        ok: probe.ok,
+        category: probe.category,
+        code: probe.code || null,
+        message: probe.message,
+        detail: probe.detail,
+      },
+      checkedAt: probe.checkedAt,
+    });
+  } catch (error) {
+    res.status(500).json({
+      openai: {
+        configured: false,
+        ok: false,
+        category: 'endpoint-failure',
+        code: null,
+        message: 'OpenAI health check endpoint failed unexpectedly.',
+        detail: error instanceof Error ? error.message : 'Unknown error.',
+      },
+      checkedAt: new Date().toISOString(),
+    });
+  }
 });
 
 app.get('/api/recommendations/adaptive', authMiddleware, async (req, res) => {
@@ -11624,6 +11774,13 @@ async function bootstrap() {
   // Run potentially slow external startup tasks after the server is listening
   // so deployment health checks are not blocked by Mongo/network latency.
   void (async () => {
+    try {
+      const openAiProbe = await runOpenAiConnectionProbe('startup');
+      logOpenAiProbeStatus(openAiProbe);
+    } catch (error) {
+      console.error('[openai] Startup probe failed unexpectedly:', error?.message || error);
+    }
+
     await connectMongo(MONGODB_URI);
     try {
       await bootstrapAdminAccounts();
