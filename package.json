@@ -10,6 +10,7 @@
     "start:web": "node server/web.js",
     "dev:server": "node server/index.js",
     "start:server": "node server/index.js",
+    "mcq:backfill-ids": "node scripts/backfill-mcq-unique-ids.mjs",
     "brand:assets": "node scripts/generate-brand-assets.mjs",
     "purge:students": "node scripts/purge-student-accounts.mjs",
     "mobile:build": "node scripts/validate-mobile-env.mjs && vite build --mode android && npx cap sync android",

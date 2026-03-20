@@ -18,6 +18,7 @@ import mammoth from 'mammoth';
 import multer from 'multer';
 import * as cheerio from 'cheerio';
 import { connectMongo } from './lib/mongo.js';
+import { buildMcqContentFingerprint } from './lib/mcqIdentity.js';
 import { UserModel } from './models/User.js';
 import { MCQModel } from './models/MCQ.js';
 import { TestSessionModel } from './models/TestSession.js';
@@ -542,7 +543,7 @@ const COMMUNITY_CONNECTION_SELECT = 'participantA participantB createdAt blocked
 const COMMUNITY_REQUEST_SELECT = 'fromUserId toUserId status createdAt';
 const COMMUNITY_MESSAGE_SELECT = 'connectionId senderUserId messageType text attachment voiceMeta callInvite reactions createdAt readByUserIds';
 const COMMUNITY_ROOM_POST_SELECT = 'roomId authorUserId type title text subject upvotes answers flagged createdAt';
-const MCQ_SELECT = 'subject part chapter section topic question questionImageUrl questionImage options optionMedia answer tip explanationText explanationImage shortTrickText shortTrickImage difficulty source createdAt';
+const MCQ_SELECT = 'externalId contentFingerprint subject part chapter section topic question questionImageUrl questionImage options optionMedia answer tip explanationText explanationImage shortTrickText shortTrickImage difficulty source createdAt';
 const PRACTICE_BOARD_SELECT = 'subject difficulty questionText questionFile questionImageUrl solutionText solutionFile solutionImageUrl source createdAt';
 
 const CHAT_ATTACHMENT_MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -3722,6 +3723,8 @@ function serializeMcq(item) {
 
   return {
     id: String(item._id),
+    externalId: String(item.externalId || '').trim(),
+    contentFingerprint: String(item.contentFingerprint || '').trim(),
     subject: item.subject,
     part: String(item.part || '').trim(),
     chapter,
@@ -11199,8 +11202,11 @@ function buildMcqSignature(question, options) {
 function buildMcqDuplicateFingerprint(row, index = 0) {
   const question = String(row?.question || '').trim();
   const options = (Array.isArray(row?.options) ? row.options : []).slice(0, 4).map((item) => String(item || '').trim());
+  const contentFingerprint = String(row?.contentFingerprint || buildMcqContentFingerprint({ question, options }) || '').trim();
   return {
-    id: String(row?._id || row?.id || `ref-${index + 1}`),
+    id: String(row?.externalId || row?._id || row?.id || `ref-${index + 1}`),
+    externalId: String(row?.externalId || '').trim(),
+    contentFingerprint,
     signature: buildMcqSignature(question, options),
     question,
     options,
@@ -11216,6 +11222,15 @@ function detectDuplicateGeneratedMcq(candidate, existingFingerprints) {
   }
 
   for (const existing of existingFingerprints) {
+    if (existing.contentFingerprint && candidateFingerprint.contentFingerprint && existing.contentFingerprint === candidateFingerprint.contentFingerprint) {
+      return {
+        duplicate: true,
+        reason: `Duplicate of existing MCQ ${existing.id} (content fingerprint match).`,
+        similarity: 1,
+        matchedId: existing.id,
+      };
+    }
+
     if (existing.signature && existing.signature === candidateFingerprint.signature) {
       return { duplicate: true, reason: `Duplicate of existing MCQ ${existing.id} (exact normalized match).`, similarity: 1, matchedId: existing.id };
     }
@@ -11241,12 +11256,16 @@ function detectDuplicateGeneratedMcq(candidate, existingFingerprints) {
 
 function buildExistingMcqReferenceForPrompt(existingRows) {
   const lines = (Array.isArray(existingRows) ? existingRows : []).map((row, index) => {
+    const externalId = String(row?.externalId || '').trim();
+    const contentFingerprint = String(row?.contentFingerprint || buildMcqContentFingerprint({ question: row?.question || '', options: row?.options || [] }) || '').trim();
     const question = normalizeRichMcqText(row?.question || '').slice(0, 260);
     const options = (Array.isArray(row?.options) ? row.options : [])
       .slice(0, 4)
       .map((item) => normalizeRichMcqText(item || '').slice(0, 160));
     return [
       `#${index + 1}`,
+      externalId ? `ID: ${externalId}` : '',
+      contentFingerprint ? `FP: ${contentFingerprint}` : '',
       `Q: ${question}`,
       `A: ${options[0] || ''}`,
       `B: ${options[1] || ''}`,
@@ -11289,7 +11308,7 @@ async function fetchExistingMcqsForHierarchy(hierarchy) {
   }
 
   return MCQModel.find(filter)
-    .select({ _id: 1, question: 1, options: 1 })
+    .select({ _id: 1, externalId: 1, contentFingerprint: 1, question: 1, options: 1 })
     .lean();
 }
 
@@ -11903,11 +11922,14 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
     payload.topic = `${chapterText} - ${sectionText}`.trim();
   }
 
-  const mcq = await MCQModel.findByIdAndUpdate(req.params.mcqId, { $set: payload }, { new: true });
+  const mcq = await MCQModel.findById(req.params.mcqId);
   if (!mcq) {
     res.status(404).json({ error: 'MCQ not found.' });
     return;
   }
+
+  Object.assign(mcq, payload);
+  await mcq.save();
 
   broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'update' } });
 
