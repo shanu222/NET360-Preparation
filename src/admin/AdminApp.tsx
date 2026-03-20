@@ -1126,6 +1126,10 @@ interface ParsedBulkResponse {
   errors: string[];
 }
 
+const BULK_ANALYZE_DEBOUNCE_MS = 700;
+const BULK_ANALYZE_MAX_ATTEMPTS = 3;
+const BULK_ANALYZE_RETRY_DELAY_MS = 650;
+
 interface AdminMcqPreviewQuestion {
   id: string;
   subject: string;
@@ -1533,6 +1537,36 @@ function parseBulkMcqs(raw: string): { parsed: ParsedBulkMcq[]; errors: string[]
   return { parsed, errors };
 }
 
+function delayMs(duration: number): Promise<void> {
+  return new Promise((resolve) => {
+    globalThis.setTimeout(resolve, Math.max(0, duration));
+  });
+}
+
+function parseBulkMcqsAsync(raw: string): Promise<{ parsed: ParsedBulkMcq[]; errors: string[] }> {
+  return new Promise((resolve) => {
+    const execute = () => resolve(parseBulkMcqs(raw));
+    const runtime = globalThis as unknown as { requestIdleCallback?: (cb: () => void, opts?: { timeout?: number }) => number };
+    if (typeof runtime.requestIdleCallback === 'function') {
+      runtime.requestIdleCallback(() => execute(), { timeout: 250 });
+      return;
+    }
+    globalThis.setTimeout(execute, 0);
+  });
+}
+
+function hasValidParsedMcqs(items: ParsedBulkMcq[]): boolean {
+  return items.some((item) => {
+    const question = String(item.question || '').trim();
+    const questionImage = String(item.questionImageDataUrl || item.questionImageUrl || '').trim();
+    const options = Array.isArray(item.options)
+      ? item.options.map((option) => String(option || '').trim()).filter(Boolean)
+      : [];
+    const answer = String(item.answer || '').trim();
+    return (Boolean(question || questionImage) && options.length >= 2 && Boolean(answer));
+  });
+}
+
 function hierarchyLabel(selection: SelectedHierarchy | null): string {
   if (!selection) return 'No target selected';
   if (selection.kind === 'section') {
@@ -1923,8 +1957,13 @@ export default function AdminApp() {
   const [showParsedPreview, setShowParsedPreview] = useState(false);
   const [bulkParseErrors, setBulkParseErrors] = useState<string[]>([]);
   const [bulkProcessing, setBulkProcessing] = useState(false);
+  const [bulkProcessingLabel, setBulkProcessingLabel] = useState('Analysing MCQs...');
+  const [bulkAnalysisReady, setBulkAnalysisReady] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
   const [bulkApplyDifficultyLevel, setBulkApplyDifficultyLevel] = useState<'Easy' | 'Medium' | 'Hard'>('Medium');
+  const bulkAnalyzeInFlightRef = useRef(false);
+  const bulkAnalyzeLastClickRef = useRef(0);
+  const bulkAnalyzeRunIdRef = useRef(0);
   const [isSavingMcq, setIsSavingMcq] = useState(false);
   const [bulkDeleteMode, setBulkDeleteMode] = useState<BulkDeleteMode>('section-topic');
   const [bulkDeleteSubject, setBulkDeleteSubject] = useState('mathematics');
@@ -3651,6 +3690,10 @@ export default function AdminApp() {
     return () => window.clearInterval(timer);
   }, [authToken, selectedSupportUserId]);
 
+  useEffect(() => {
+    setBulkAnalysisReady(false);
+  }, [bulkFile, bulkInput]);
+
   const openGestureImageEditorForFile = async (file: File, target: ManualImageEditorTarget) => {
     if (!isSupportedMcqImage(file)) {
       toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
@@ -4187,6 +4230,18 @@ export default function AdminApp() {
   const analyzeBulkMcqs = async (sourceOverride?: { text?: string; file?: File | null }) => {
     if (!authToken) return;
 
+    const now = Date.now();
+    if (bulkAnalyzeInFlightRef.current) {
+      toast.message('Analysis is already running. Please wait...');
+      return;
+    }
+    if (now - bulkAnalyzeLastClickRef.current < BULK_ANALYZE_DEBOUNCE_MS) {
+      return;
+    }
+    bulkAnalyzeLastClickRef.current = now;
+    bulkAnalyzeInFlightRef.current = true;
+    const runId = ++bulkAnalyzeRunIdRef.current;
+
     const effectiveText = String(sourceOverride?.text ?? bulkInput);
     const effectiveFile = sourceOverride?.file === undefined ? bulkFile : sourceOverride.file;
     const hasText = Boolean(effectiveText.trim());
@@ -4201,10 +4256,35 @@ export default function AdminApp() {
     }
 
     const hierarchyContext = resolveDocumentHierarchyContext(true);
-    if (!hierarchyContext) return;
+    if (!hierarchyContext) {
+      bulkAnalyzeInFlightRef.current = false;
+      return;
+    }
+
+    const runApiParser = async (): Promise<ParsedBulkResponse> => {
+      if (effectiveFile) {
+        const formData = new FormData();
+        formData.append('sourceType', 'file');
+        formData.append('file', effectiveFile);
+        return apiRequest<ParsedBulkResponse>('/api/ai/parse-mcqs', {
+          method: 'POST',
+          body: formData,
+        }, authToken);
+      }
+
+      return apiRequest<ParsedBulkResponse>('/api/ai/parse-mcqs', {
+        method: 'POST',
+        body: JSON.stringify({
+          sourceType: 'text',
+          rawText: effectiveText,
+        }),
+      }, authToken);
+    };
 
     try {
       setBulkProcessing(true);
+      setBulkProcessingLabel('Analysing MCQs...');
+      setBulkAnalysisReady(false);
       console.info('Admin Analyse by AI started', {
         hasFile: Boolean(effectiveFile),
         sourceType: effectiveFile ? 'file' : 'text',
@@ -4214,29 +4294,45 @@ export default function AdminApp() {
         section: hierarchyContext.section,
       });
 
-      let payload: ParsedBulkResponse;
+      let payload: ParsedBulkResponse | null = null;
+      let lastError: unknown = null;
 
-      if (effectiveFile) {
-        const formData = new FormData();
-        formData.append('sourceType', 'file');
-        formData.append('file', effectiveFile);
-        payload = await apiRequest<ParsedBulkResponse>('/api/ai/parse-mcqs', {
-          method: 'POST',
-          body: formData,
-        }, authToken);
-      } else {
+      for (let attempt = 1; attempt <= BULK_ANALYZE_MAX_ATTEMPTS; attempt += 1) {
         try {
-          payload = await apiRequest<ParsedBulkResponse>('/api/ai/parse-mcqs', {
-            method: 'POST',
-            body: JSON.stringify({
-              sourceType: 'text',
-              rawText: effectiveText,
-            }),
-          }, authToken);
-        } catch {
-          // Fallback keeps local mode usable when backend parser route is unavailable.
-          payload = parseBulkMcqs(effectiveText);
+          if (attempt > 1) {
+            setBulkProcessingLabel(`Retrying analysis (${attempt}/${BULK_ANALYZE_MAX_ATTEMPTS})...`);
+          }
+
+          payload = await runApiParser();
+          const parsedItems = payload.parsed || [];
+
+          if (!hasValidParsedMcqs(parsedItems)) {
+            throw new Error(payload.errors?.[0] || 'No valid MCQs were extracted.');
+          }
+          break;
+        } catch (error) {
+          lastError = error;
+          if (!effectiveFile && attempt === 1) {
+            // Fallback keeps text mode reliable even if backend parser is unavailable.
+            const localPayload = await parseBulkMcqsAsync(effectiveText);
+            if (hasValidParsedMcqs(localPayload.parsed || [])) {
+              payload = localPayload;
+              break;
+            }
+          }
+
+          if (attempt < BULK_ANALYZE_MAX_ATTEMPTS) {
+            await delayMs(BULK_ANALYZE_RETRY_DELAY_MS * attempt);
+          }
         }
+      }
+
+      if (!payload) {
+        throw (lastError instanceof Error ? lastError : new Error('Could not parse MCQs after multiple attempts.'));
+      }
+
+      if (runId !== bulkAnalyzeRunIdRef.current) {
+        return;
       }
 
       const withSelectedHierarchy = (payload.parsed || []).map((item) => ({
@@ -4253,7 +4349,8 @@ export default function AdminApp() {
       setShowParsedPreview(true);
 
       if (!withSelectedHierarchy.length) {
-        toast.error(payload.errors?.[0] || 'No questions were parsed.');
+        setBulkAnalysisReady(false);
+        toast.error(payload.errors?.[0] || 'No questions were parsed after retries.');
         return;
       }
 
@@ -4268,6 +4365,8 @@ export default function AdminApp() {
       }
       setBulkParsed(limitedParsed);
       setShowParsedPreview(true);
+      setBulkAnalysisReady(true);
+      setBulkProcessingLabel('Analysing MCQs...');
 
       console.info('Admin Analyse by AI completed', {
         parsedCount: limitedParsed.length,
@@ -4277,14 +4376,22 @@ export default function AdminApp() {
       toast.success(`Parsed ${limitedParsed.length} MCQ(s). Review and confirm target before saving.`);
     } catch (error) {
       console.error('Admin Analyse by AI failed', error);
+      if (runId === bulkAnalyzeRunIdRef.current) {
+        setBulkParsed([]);
+        setShowParsedPreview(false);
+        setBulkAnalysisReady(false);
+        setBulkParseErrors([error instanceof Error ? error.message : 'AI analysis failed. Please try again.']);
+      }
       const status = Number((error as { status?: number } | null)?.status || 0);
       if (status === 401 || status === 403) {
         toast.error('Admin session expired. Please log in again to continue AI analysis.');
       } else {
-        toast.error(error instanceof Error ? error.message : 'AI analysis failed. Please try again.');
+        toast.error(error instanceof Error ? error.message : 'AI analysis failed after retries. Please try again.');
       }
     } finally {
       setBulkProcessing(false);
+      setBulkProcessingLabel('Analysing MCQs...');
+      bulkAnalyzeInFlightRef.current = false;
     }
   };
 
@@ -4422,6 +4529,7 @@ export default function AdminApp() {
     setBulkParsed(withSelectedHierarchy);
     setBulkParseErrors([]);
     setShowParsedPreview(true);
+    setBulkAnalysisReady(true);
 
     toast.success('Mapped pasted image segments to Question, Option A-D, Correct Answer, and Explanation fields.');
   };
@@ -4704,8 +4812,8 @@ export default function AdminApp() {
   };
 
   const applyDifficultyToAllParsedMcqs = () => {
-    if (!bulkParsed.length) {
-      toast.error('Parse MCQs first, then apply difficulty.');
+    if (!bulkAnalysisReady || !bulkParsed.length) {
+      toast.error('Run Analyse MCQs successfully first, then apply difficulty.');
       return;
     }
 
@@ -7198,11 +7306,11 @@ export default function AdminApp() {
                             <Button type="button" variant="outline" onClick={() => bulkDocumentInputRef.current?.click()}>
                               Upload Document
                             </Button>
-                            <Button type="button" onClick={() => void analyzeBulkMcqs()} disabled={bulkProcessing || !bulkFile}>
+                            <Button type="button" onClick={() => void analyzeBulkMcqs()} disabled={bulkProcessing || (!bulkFile && !bulkInput.trim())}>
                               {bulkProcessing ? (
                                 <>
                                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                  Analysing MCQs...
+                                  {bulkProcessingLabel}
                                 </>
                               ) : 'Analyse by AI'}
                             </Button>
@@ -7241,7 +7349,7 @@ export default function AdminApp() {
                                 type="button"
                                 variant="outline"
                                 onClick={applyDifficultyToAllParsedMcqs}
-                                disabled={!bulkParsed.length}
+                                disabled={!bulkParsed.length || !bulkAnalysisReady || bulkProcessing}
                               >
                                 Apply to All MCQs
                               </Button>
