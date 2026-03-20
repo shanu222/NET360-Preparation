@@ -1126,12 +1126,26 @@ interface ParsedBulkResponse {
   errors: string[];
 }
 
+interface AiGeneratedMcqPayload {
+  question: string;
+  options: string[];
+  answer: string;
+  explanation: string;
+  difficulty: 'Easy' | 'Medium' | 'Hard';
+}
+
+interface AiGeneratedMcqResponse {
+  mcq?: AiGeneratedMcqPayload;
+  errors?: string[];
+}
+
 const BULK_ANALYZE_DEBOUNCE_MS = 700;
 const BULK_ANALYZE_MAX_ATTEMPTS = 3;
 const BULK_ANALYZE_RETRY_DELAY_MS = 650;
 const BULK_ANALYZE_REQUEST_TIMEOUT_MS = 120_000;
 const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 8_000;
 const AI_PARSE_ENDPOINT = '/api/ai/parse-mcqs';
+const AI_GENERATE_ENDPOINT = '/api/admin/ai-generate-mcq';
 
 interface AdminMcqPreviewQuestion {
   id: string;
@@ -1927,7 +1941,23 @@ export default function AdminApp() {
   const [isApplyingGestureCrop, setIsApplyingGestureCrop] = useState(false);
   const [selectedHierarchy, setSelectedHierarchy] = useState<SelectedHierarchy | null>(null);
   const [activeMcqPanel, setActiveMcqPanel] = useState<'upload' | 'deleter' | 'bank' | null>(null);
-  const [uploadMode, setUploadMode] = useState<'manual' | 'document'>('manual');
+  const [uploadMode, setUploadMode] = useState<'manual' | 'document' | 'ai-generated'>('manual');
+  const [aiGenSubject, setAiGenSubject] = useState('mathematics');
+  const [aiGenPart, setAiGenPart] = useState('');
+  const [aiGenChapter, setAiGenChapter] = useState('');
+  const [aiGenSection, setAiGenSection] = useState('');
+  const [aiGenTopic, setAiGenTopic] = useState('');
+  const [aiGenChapterKey, setAiGenChapterKey] = useState('');
+  const [aiGenInstructions, setAiGenInstructions] = useState('');
+  const [aiGenDifficulty, setAiGenDifficulty] = useState<'Easy' | 'Medium' | 'Hard'>('Medium');
+  const [aiGenSourceText, setAiGenSourceText] = useState('');
+  const [aiGenFile, setAiGenFile] = useState<File | null>(null);
+  const [aiGenGenerated, setAiGenGenerated] = useState<AiGeneratedMcqPayload | null>(null);
+  const [aiGenGenerateErrors, setAiGenGenerateErrors] = useState<string[]>([]);
+  const [aiGenGenerating, setAiGenGenerating] = useState(false);
+  const [aiGenUploading, setAiGenUploading] = useState(false);
+  const aiGenGenerateInFlightRef = useRef(false);
+  const aiGenUploadInFlightRef = useRef(false);
   const [subscriptionOverview, setSubscriptionOverview] = useState<AdminSubscriptionOverview | null>(null);
   const [subscriptionUsers, setSubscriptionUsers] = useState<AdminSubscriptionUser[]>([]);
   const [subscriptionFilter, setSubscriptionFilter] = useState('all');
@@ -2462,9 +2492,11 @@ export default function AdminApp() {
   );
 
   const isManualFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizeSubjectKey(form.subject));
+  const isAiGenFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizeSubjectKey(aiGenSubject));
   const isBulkDeleteFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizeSubjectKey(bulkDeleteSubject));
   const isBankFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizeSubjectKey(bankFilterSubject));
   const isManualPartSelectionSubject = !isManualFlatTopicSubject && isPartSelectionRequiredSubject(form.subject);
+  const isAiGenPartSelectionSubject = !isAiGenFlatTopicSubject && isPartSelectionRequiredSubject(aiGenSubject);
   const isBulkDeletePartSelectionSubject = !isBulkDeleteFlatTopicSubject && isPartSelectionRequiredSubject(bulkDeleteSubject);
   const isBankPartSelectionSubject = !isBankFlatTopicSubject && isPartSelectionRequiredSubject(bankFilterSubject);
 
@@ -2485,6 +2517,18 @@ export default function AdminApp() {
       }));
   }, [syllabusTree, form.subject, form.part, isManualPartSelectionSubject]);
 
+  const aiGenChapterOptions = useMemo(() => {
+    const activeSubject = syllabusTree.find((item) => item.subject === aiGenSubject);
+    return (activeSubject?.chapters || [])
+      .filter((chapter) => (isAiGenPartSelectionSubject ? chapter.part === aiGenPart : true))
+      .map((chapter) => ({
+        value: chapter.key,
+        label: chapter.title,
+        chapterTitle: chapter.title,
+        part: chapter.part,
+      }));
+  }, [syllabusTree, aiGenSubject, aiGenPart, isAiGenPartSelectionSubject]);
+
   const manualSectionOptions = useMemo(() => {
     const activeSubject = syllabusTree.find((item) => item.subject === form.subject);
     if (isManualFlatTopicSubject) {
@@ -2498,6 +2542,20 @@ export default function AdminApp() {
     const subjectChapter = (activeSubject?.chapters || []).find((item) => item.key === chapter.value);
     return dedupeNormalizedStrings((subjectChapter?.sections || []).filter(Boolean)).sort((a, b) => a.localeCompare(b));
   }, [syllabusTree, form.subject, uploadChapterKey, manualChapterOptions, isManualFlatTopicSubject]);
+
+  const aiGenSectionOptions = useMemo(() => {
+    const activeSubject = syllabusTree.find((item) => item.subject === aiGenSubject);
+    if (isAiGenFlatTopicSubject) {
+      return dedupeNormalizedStrings(
+        (activeSubject?.chapters || []).flatMap((item) => item.sections || []).filter(Boolean),
+      ).sort((a, b) => a.localeCompare(b));
+    }
+
+    const chapter = aiGenChapterOptions.find((item) => item.value === aiGenChapterKey);
+    if (!chapter) return [];
+    const subjectChapter = (activeSubject?.chapters || []).find((item) => item.key === chapter.value);
+    return dedupeNormalizedStrings((subjectChapter?.sections || []).filter(Boolean)).sort((a, b) => a.localeCompare(b));
+  }, [syllabusTree, aiGenSubject, aiGenChapterKey, aiGenChapterOptions, isAiGenFlatTopicSubject]);
 
   const deleteSubjectOptions = manualSubjectOptions;
 
@@ -4755,6 +4813,178 @@ export default function AdminApp() {
       topic: topic || section,
       label: labelParts.join(' -> '),
     };
+  };
+
+  const resolveAiGenHierarchyContext = (showToast = true) => {
+    const subject = String(aiGenSubject || '').trim().toLowerCase();
+    const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(subject);
+    const requiresPartSelection = isPartSelectionRequiredSubject(subject);
+    const part = isFlatTopicSubject ? '' : (requiresPartSelection ? String(aiGenPart || '').trim().toLowerCase() : '');
+    const chapter = isFlatTopicSubject ? '' : String(aiGenChapter || '').trim();
+    const section = String(aiGenSection || '').trim();
+    const topic = String(aiGenTopic || aiGenSection || '').trim();
+
+    if (!subject) {
+      if (showToast) toast.error('Select Subject before generating AI MCQ.');
+      return null;
+    }
+    if (requiresPartSelection && !part) {
+      if (showToast) toast.error('Select Part before generating AI MCQ.');
+      return null;
+    }
+    if (!isFlatTopicSubject && !chapter) {
+      if (showToast) toast.error('Select Chapter before generating AI MCQ.');
+      return null;
+    }
+    if (!section) {
+      if (showToast) toast.error('Select Section/Topic before generating AI MCQ.');
+      return null;
+    }
+
+    return {
+      subject,
+      part,
+      chapter,
+      section,
+      topic: topic || section,
+    };
+  };
+
+  const generateAiMcq = async () => {
+    if (!authToken) return;
+    if (aiGenGenerateInFlightRef.current || aiGenGenerating) return;
+
+    const hierarchyContext = resolveAiGenHierarchyContext(true);
+    if (!hierarchyContext) return;
+
+    const hasText = Boolean(String(aiGenSourceText || '').trim());
+    if (!aiGenFile && !hasText) {
+      toast.error('Upload a document/image or provide source text to generate AI MCQ.');
+      return;
+    }
+
+    if (aiGenFile && aiGenFile.size > 20 * 1024 * 1024) {
+      toast.error('Uploaded file is too large. Maximum size is 20 MB.');
+      return;
+    }
+
+    aiGenGenerateInFlightRef.current = true;
+    setAiGenGenerating(true);
+    setAiGenGenerateErrors([]);
+
+    try {
+      const formData = new FormData();
+      formData.append('sourceType', aiGenFile ? 'file' : 'text');
+      formData.append('subject', hierarchyContext.subject);
+      formData.append('part', hierarchyContext.part);
+      formData.append('chapter', hierarchyContext.chapter);
+      formData.append('section', hierarchyContext.section);
+      formData.append('topic', hierarchyContext.topic);
+      formData.append('difficulty', aiGenDifficulty);
+      formData.append('instructions', String(aiGenInstructions || '').trim());
+
+      if (aiGenFile) {
+        formData.append('file', aiGenFile);
+      }
+      if (hasText) {
+        formData.append('rawText', aiGenSourceText.trim());
+      }
+
+      const payload = await apiRequest<AiGeneratedMcqResponse>(AI_GENERATE_ENDPOINT, {
+        method: 'POST',
+        body: formData,
+        timeoutMs: 120_000,
+      }, authToken);
+
+      const generated = payload?.mcq;
+      if (!generated?.question || !Array.isArray(generated.options) || generated.options.length < 4 || !generated.answer) {
+        throw new Error(payload?.errors?.[0] || 'AI did not return a valid MCQ.');
+      }
+
+      setAiGenGenerated({
+        question: generated.question,
+        options: generated.options.slice(0, 4),
+        answer: generated.answer,
+        explanation: generated.explanation || '',
+        difficulty: generated.difficulty || aiGenDifficulty,
+      });
+      setAiGenGenerateErrors(Array.isArray(payload?.errors) ? payload.errors : []);
+      toast.success('AI generated one MCQ. Review and upload it.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not generate AI MCQ.';
+      setAiGenGenerateErrors([message]);
+      toast.error(message);
+    } finally {
+      setAiGenGenerating(false);
+      aiGenGenerateInFlightRef.current = false;
+    }
+  };
+
+  const uploadGeneratedAiMcq = async () => {
+    if (!authToken) return;
+    if (aiGenUploadInFlightRef.current || aiGenUploading) return;
+    if (!aiGenGenerated) {
+      toast.error('Generate an AI MCQ first.');
+      return;
+    }
+
+    const hierarchyContext = resolveAiGenHierarchyContext(true);
+    if (!hierarchyContext) return;
+
+    const normalizedOptions = (aiGenGenerated.options || []).map((item) => String(item || '').trim()).filter(Boolean);
+    if (normalizedOptions.length < 4) {
+      toast.error('Generated MCQ must contain 4 options (A-D).');
+      return;
+    }
+
+    aiGenUploadInFlightRef.current = true;
+    setAiGenUploading(true);
+
+    try {
+      const optionMedia = normalizedOptions.slice(0, 4).map((text, idx) => ({
+        key: String.fromCharCode(65 + idx),
+        text,
+        image: null,
+      }));
+      const resolvedAnswer = resolveAnswerKeyFromInput(optionMedia, aiGenGenerated.answer) || 'A';
+
+      const payload = {
+        question: aiGenGenerated.question,
+        subject: hierarchyContext.subject,
+        part: hierarchyContext.part,
+        chapter: hierarchyContext.chapter,
+        section: hierarchyContext.section,
+        topic: hierarchyContext.topic,
+        options: normalizedOptions.slice(0, 4),
+        optionMedia,
+        answer: resolvedAnswer,
+        tip: aiGenGenerated.explanation,
+        explanationText: aiGenGenerated.explanation,
+        difficulty: aiGenGenerated.difficulty,
+      };
+
+      const result = await apiRequest<{ mcq?: AdminMCQ }>('/api/admin/mcqs', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }, authToken);
+
+      if (!result?.mcq?.id) {
+        throw new Error('Generated MCQ could not be saved.');
+      }
+
+      setMcqs((previous) => [result.mcq!, ...previous.filter((item) => item.id !== result.mcq!.id)]);
+      setAiGenGenerated(null);
+      toast.success('Generated MCQ uploaded successfully.');
+
+      void apiRequest<{ structure: AdminMcqBankStructureItem[] }>('/api/admin/mcq-bank/structure', {}, authToken)
+        .then((structurePayload) => setMcqStructure(structurePayload.structure || []))
+        .catch(() => undefined);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not upload generated MCQ.');
+    } finally {
+      setAiGenUploading(false);
+      aiGenUploadInFlightRef.current = false;
+    }
   };
 
   const uploadBulkMcqs = async () => {
@@ -7166,7 +7396,7 @@ export default function AdminApp() {
                   {activeMcqPanel === 'upload' ? (
                   <div className="space-y-3 rounded-lg border border-indigo-200/70 bg-indigo-50/25 p-3">
                       <div className="space-y-3">
-                        <div className="grid gap-2 sm:grid-cols-2">
+                        <div className="grid gap-2 sm:grid-cols-3">
                           <Button
                             type="button"
                             variant={uploadMode === 'manual' ? 'default' : 'outline'}
@@ -7180,6 +7410,13 @@ export default function AdminApp() {
                             onClick={() => setUploadMode('document')}
                           >
                             Upload by Document
+                          </Button>
+                          <Button
+                            type="button"
+                            variant={uploadMode === 'ai-generated' ? 'default' : 'outline'}
+                            onClick={() => setUploadMode('ai-generated')}
+                          >
+                            AI Generated MCQs
                           </Button>
                         </div>
 
@@ -7949,6 +8186,253 @@ export default function AdminApp() {
                           <Button type="button" variant="outline" onClick={resetForm}>Clear</Button>
                         </div>
                           </form>
+                        ) : null}
+
+                        {uploadMode === 'ai-generated' ? (
+                          <div className="space-y-3 rounded-lg border border-indigo-200 bg-white/70 p-3 dark:border-indigo-300/30 dark:bg-white/5">
+                            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+                              <div className="space-y-1.5">
+                                <Label>Subject</Label>
+                                <Select
+                                  value={aiGenSubject}
+                                  onValueChange={(value) => {
+                                    setAiGenSubject(value);
+                                    setAiGenPart('');
+                                    setAiGenChapter('');
+                                    setAiGenChapterKey('');
+                                    setAiGenSection('');
+                                    setAiGenTopic('');
+                                  }}
+                                >
+                                  <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
+                                  <SelectContent>
+                                    {manualSubjectOptions.map((item) => (
+                                      <SelectItem key={`ai-subject-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+
+                              {aiGenSubject && !isAiGenFlatTopicSubject && isAiGenPartSelectionSubject ? (
+                                <div className="space-y-1.5">
+                                  <Label>Part</Label>
+                                  <Select
+                                    value={aiGenPart}
+                                    onValueChange={(value) => {
+                                      setAiGenPart(value);
+                                      setAiGenChapter('');
+                                      setAiGenChapterKey('');
+                                      setAiGenSection('');
+                                      setAiGenTopic('');
+                                    }}
+                                  >
+                                    <SelectTrigger><SelectValue placeholder="Select part" /></SelectTrigger>
+                                    <SelectContent>
+                                      {partOptions.map((item) => (
+                                        <SelectItem key={`ai-part-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              ) : null}
+
+                              {aiGenSubject && !isAiGenFlatTopicSubject ? (
+                                <div className="space-y-1.5">
+                                  <Label>Chapter</Label>
+                                  <Select
+                                    value={aiGenChapterKey}
+                                    disabled={!aiGenSubject || (isAiGenPartSelectionSubject && !aiGenPart)}
+                                    onValueChange={(value) => {
+                                      setAiGenChapterKey(value);
+                                      const selectedChapter = aiGenChapterOptions.find((item) => item.value === value);
+                                      setAiGenPart(isAiGenPartSelectionSubject ? (selectedChapter?.part || aiGenPart || '') : '');
+                                      setAiGenChapter(selectedChapter?.chapterTitle || '');
+                                      setAiGenSection('');
+                                      setAiGenTopic('');
+                                    }}
+                                  >
+                                    <SelectTrigger><SelectValue placeholder="Select chapter" /></SelectTrigger>
+                                    <SelectContent>
+                                      {aiGenChapterOptions.map((item) => (
+                                        <SelectItem key={`ai-chapter-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              ) : null}
+
+                              {aiGenSubject && (isAiGenFlatTopicSubject || aiGenChapter) ? (
+                                <div className="space-y-1.5">
+                                  <Label>Section / Topic</Label>
+                                  <Select
+                                    value={aiGenSection}
+                                    disabled={isAiGenFlatTopicSubject ? !aiGenSubject : !aiGenChapterKey}
+                                    onValueChange={(value) => {
+                                      setAiGenSection(value);
+                                      setAiGenTopic(value);
+                                    }}
+                                  >
+                                    <SelectTrigger><SelectValue placeholder="Select section/topic" /></SelectTrigger>
+                                    <SelectContent>
+                                      {aiGenSectionOptions.map((item) => (
+                                        <SelectItem key={`ai-section-${item}`} value={item}>{item}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              ) : null}
+                            </div>
+
+                            <div className="grid gap-3 md:grid-cols-2">
+                              <div className="space-y-1.5">
+                                <Label>Document Upload (PDF, DOCX, TXT, JPG, PNG)</Label>
+                                <Input
+                                  type="file"
+                                  accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/jpeg,image/png"
+                                  onChange={(e) => setAiGenFile(e.target.files?.[0] || null)}
+                                />
+                                {aiGenFile ? <p className="text-xs text-muted-foreground">Selected: {aiGenFile.name}</p> : null}
+                              </div>
+
+                              <div className="space-y-1.5">
+                                <Label>Difficulty</Label>
+                                <Select value={aiGenDifficulty} onValueChange={(value: 'Easy' | 'Medium' | 'Hard') => setAiGenDifficulty(value)}>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="Easy">Easy</SelectItem>
+                                    <SelectItem value="Medium">Medium</SelectItem>
+                                    <SelectItem value="Hard">Hard</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <Label>Instructions</Label>
+                              <Textarea
+                                value={aiGenInstructions}
+                                onChange={(e) => setAiGenInstructions(e.target.value)}
+                                placeholder="Optional: provide generation instructions for this MCQ"
+                                className="min-h-[90px]"
+                              />
+                            </div>
+
+                            <div className="space-y-1.5">
+                              <Label>Source Text (optional)</Label>
+                              <Textarea
+                                value={aiGenSourceText}
+                                onChange={(e) => setAiGenSourceText(e.target.value)}
+                                placeholder="Optional: paste source text instead of uploading a file"
+                                className="min-h-[110px]"
+                              />
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
+                              <Button type="button" onClick={() => void generateAiMcq()} disabled={aiGenGenerating || aiGenUploading || (!aiGenFile && !aiGenSourceText.trim())}>
+                                {aiGenGenerating ? (
+                                  <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Generating...
+                                  </>
+                                ) : 'Generate MCQ'}
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={() => {
+                                  setAiGenGenerated(null);
+                                  setAiGenGenerateErrors([]);
+                                }}
+                                disabled={aiGenGenerating || aiGenUploading}
+                              >
+                                Clear Generated
+                              </Button>
+                            </div>
+
+                            {aiGenGenerateErrors.length ? (
+                              <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-200">
+                                {aiGenGenerateErrors.map((error, idx) => (
+                                  <p key={`ai-gen-error-${idx}`}>• {error}</p>
+                                ))}
+                              </div>
+                            ) : null}
+
+                            {aiGenGenerated ? (
+                              <div className="space-y-3 rounded-lg border border-indigo-200/80 bg-indigo-50/30 p-3 dark:border-indigo-300/30 dark:bg-indigo-500/10">
+                                <MathEditorField
+                                  id="ai-generated-question"
+                                  label="Generated Question"
+                                  value={aiGenGenerated.question}
+                                  className="min-h-[90px]"
+                                  onValueChange={(nextValue) => setAiGenGenerated((prev) => (prev ? { ...prev, question: nextValue } : prev))}
+                                />
+
+                                <div className="grid gap-2 md:grid-cols-2">
+                                  {aiGenGenerated.options.slice(0, 4).map((option, idx) => (
+                                    <MathEditorField
+                                      key={`ai-generated-option-${idx}`}
+                                      id={`ai-generated-option-${idx}`}
+                                      label={`Option ${String.fromCharCode(65 + idx)}`}
+                                      value={option}
+                                      onValueChange={(nextValue) => {
+                                        setAiGenGenerated((prev) => {
+                                          if (!prev) return prev;
+                                          const nextOptions = [...prev.options];
+                                          nextOptions[idx] = nextValue;
+                                          return { ...prev, options: nextOptions };
+                                        });
+                                      }}
+                                    />
+                                  ))}
+                                </div>
+
+                                <div className="grid gap-3 md:grid-cols-2">
+                                  <div className="space-y-1.5">
+                                    <Label>Correct Answer</Label>
+                                    <Input
+                                      value={aiGenGenerated.answer}
+                                      onChange={(e) => setAiGenGenerated((prev) => (prev ? { ...prev, answer: e.target.value } : prev))}
+                                      placeholder="A / B / C / D or exact option text"
+                                    />
+                                  </div>
+                                  <div className="space-y-1.5">
+                                    <Label>Difficulty</Label>
+                                    <Select
+                                      value={aiGenGenerated.difficulty}
+                                      onValueChange={(value: 'Easy' | 'Medium' | 'Hard') => {
+                                        setAiGenGenerated((prev) => (prev ? { ...prev, difficulty: value } : prev));
+                                        setAiGenDifficulty(value);
+                                      }}
+                                    >
+                                      <SelectTrigger><SelectValue /></SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="Easy">Easy</SelectItem>
+                                        <SelectItem value="Medium">Medium</SelectItem>
+                                        <SelectItem value="Hard">Hard</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                </div>
+
+                                <MathEditorField
+                                  id="ai-generated-explanation"
+                                  label="Explanation"
+                                  value={aiGenGenerated.explanation}
+                                  className="min-h-[90px]"
+                                  onValueChange={(nextValue) => setAiGenGenerated((prev) => (prev ? { ...prev, explanation: nextValue } : prev))}
+                                />
+
+                                <Button type="button" onClick={() => void uploadGeneratedAiMcq()} disabled={aiGenUploading || aiGenGenerating}>
+                                  {aiGenUploading ? (
+                                    <>
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      Uploading...
+                                    </>
+                                  ) : 'Upload MCQ'}
+                                </Button>
+                              </div>
+                            ) : null}
+                          </div>
                         ) : null}
                       </div>
                   </div>

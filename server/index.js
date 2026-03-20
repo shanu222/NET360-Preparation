@@ -11161,6 +11161,111 @@ async function parseMcqsFromSourceText(sourceText) {
   return { parsed, errors };
 }
 
+async function generateSingleMcqWithAi({
+  sourceText,
+  imageDataUrl,
+  instructions,
+  difficulty,
+  hierarchy,
+}) {
+  const openAiContext = await getOpenAiClientContext();
+  const aiClient = openAiContext.client;
+  const aiModel = String(openAiContext.model || AI_PARSE_DEFAULT_MODEL).trim() || AI_PARSE_DEFAULT_MODEL;
+
+  if (!aiClient) {
+    return { mcq: null, errors: ['OpenAI API is not configured for AI generation. Set OPENAI_API_KEY to continue.'] };
+  }
+
+  const requestedDifficulty = normalizeDifficulty(difficulty || 'Medium');
+  const userInstructions = String(instructions || '').trim();
+  const safeSourceText = String(sourceText || '').trim();
+  const safeImageDataUrl = String(imageDataUrl || '').trim();
+
+  if (!safeSourceText && !safeImageDataUrl) {
+    return { mcq: null, errors: ['Provide source text or upload a document/image before generating MCQ.'] };
+  }
+
+  const baseHierarchy = normalizeParsedHierarchyContext(hierarchy || {});
+
+  const runCompletion = async () => {
+    const userContent = [
+      `Difficulty: ${requestedDifficulty}`,
+      `Subject: ${baseHierarchy.subject || ''}`,
+      `Part: ${baseHierarchy.part || ''}`,
+      `Chapter: ${baseHierarchy.chapter || ''}`,
+      `Section: ${baseHierarchy.section || ''}`,
+      `Topic: ${baseHierarchy.topic || ''}`,
+      userInstructions ? `Instructions: ${userInstructions}` : '',
+      safeSourceText ? `Source:\n${safeSourceText.slice(0, AI_PARSE_MAX_INPUT_CHARS)}` : '',
+    ].filter(Boolean).join('\n\n');
+
+    const messagePayload = safeImageDataUrl
+      ? [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: userContent || 'Generate one MCQ from this image.' },
+            { type: 'image_url', image_url: { url: safeImageDataUrl } },
+          ],
+        },
+      ]
+      : [
+        {
+          role: 'user',
+          content: userContent,
+        },
+      ];
+
+    const completion = await aiClient.chat.completions.create({
+      model: aiModel,
+      temperature: 0.2,
+      response_format: { type: 'json_object' },
+      messages: [
+        {
+          role: 'system',
+          content: [
+            'You are an MCQ generation engine. Return valid JSON only.',
+            'Generate exactly ONE MCQ using this schema:',
+            '{"mcq":{"question":"...","options":["A option","B option","C option","D option"],"correctAnswer":"A|B|C|D|option text","explanation":"...","difficulty":"Easy|Medium|Hard"},"errors":["..."]}',
+            'Rules:',
+            '- Return exactly 4 options in A-D order.',
+            '- Ensure exactly one correct answer.',
+            '- Keep output concise and educational.',
+            '- Never add markdown code fences.',
+          ].join('\n'),
+        },
+        ...messagePayload,
+      ],
+    });
+
+    const raw = completion.choices?.[0]?.message?.content || '';
+    const parsedJson = extractJsonObject(raw);
+    const row = parsedJson?.mcq || null;
+    const normalized = normalizeAiParsedRows(row ? [row] : [], baseHierarchy, 'ai-generate');
+    const extraErrors = Array.isArray(parsedJson?.errors)
+      ? parsedJson.errors.map((item) => String(item || '').trim()).filter(Boolean)
+      : [];
+
+    if (!normalized.parsed.length) {
+      throw new Error(normalized.errors[0] || extraErrors[0] || 'AI could not generate a valid MCQ.');
+    }
+
+    const first = normalized.parsed[0];
+    return {
+      mcq: {
+        question: first.question,
+        options: (first.options || []).slice(0, 4),
+        answer: first.answer,
+        explanation: first.tip || '',
+        difficulty: normalizeDifficulty(first.difficulty || requestedDifficulty),
+      },
+      errors: [...normalized.errors, ...extraErrors],
+    };
+  };
+
+  return withRetries(runCompletion, 2, AI_PARSE_RETRY_BASE_DELAY_MS);
+}
+
 app.post('/api/ai/parse-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
   try {
     const sourceType = String(req.body?.sourceType || 'file').trim().toLowerCase();
@@ -11192,6 +11297,73 @@ app.post('/api/ai/parse-mcqs', authMiddleware, requireAdmin, aiParseUpload.singl
     res.status(400).json({
       parsed: [],
       errors: [error instanceof Error ? error.message : 'Could not parse content via AI.'],
+    });
+  }
+});
+
+app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
+  try {
+    const sourceType = String(req.body?.sourceType || '').trim().toLowerCase();
+    const upload = req.file;
+    const rawText = String(req.body?.rawText || '').trim();
+    const instructions = String(req.body?.instructions || '').trim();
+    const difficulty = String(req.body?.difficulty || 'Medium').trim();
+
+    let sourceText = rawText;
+    let imageDataUrl = '';
+
+    if (sourceType === 'file') {
+      if (!upload?.buffer?.length) {
+        res.status(400).json({ mcq: null, errors: ['Upload a PDF, DOCX, TXT, JPG, or PNG file before generating MCQ.'] });
+        return;
+      }
+
+      const mimeType = String(upload.mimetype || 'application/octet-stream').toLowerCase().trim();
+      const filePayload = {
+        name: String(upload.originalname || 'upload.bin').trim(),
+        mimeType,
+        size: Number(upload.size || upload.buffer.length || 0),
+        dataUrl: `data:${mimeType};base64,${upload.buffer.toString('base64')}`,
+      };
+
+      const isImage = /^image\/(png|jpe?g)$/i.test(mimeType);
+      if (isImage) {
+        imageDataUrl = filePayload.dataUrl;
+      } else {
+        sourceText = await extractTextFromUpload(filePayload);
+      }
+    }
+
+    if (!sourceText && !imageDataUrl) {
+      res.status(400).json({ mcq: null, errors: ['Provide source text or upload a supported file.'] });
+      return;
+    }
+
+    const result = await generateSingleMcqWithAi({
+      sourceText,
+      imageDataUrl,
+      instructions,
+      difficulty,
+      hierarchy: {
+        subject: String(req.body?.subject || '').trim().toLowerCase(),
+        part: String(req.body?.part || '').trim().toLowerCase(),
+        chapter: String(req.body?.chapter || '').trim(),
+        section: String(req.body?.section || '').trim(),
+        topic: String(req.body?.topic || '').trim(),
+      },
+    });
+
+    if (!result?.mcq) {
+      res.status(400).json({ mcq: null, errors: result?.errors?.length ? result.errors : ['AI could not generate MCQ.'] });
+      return;
+    }
+
+    res.json({ mcq: result.mcq, errors: result.errors || [] });
+  } catch (error) {
+    console.error('AI single MCQ generation failed:', error);
+    res.status(400).json({
+      mcq: null,
+      errors: [error instanceof Error ? error.message : 'Could not generate AI MCQ.'],
     });
   }
 });
