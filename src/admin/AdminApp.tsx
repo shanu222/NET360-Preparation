@@ -217,14 +217,21 @@ function extractRichBoldTextFromClipboard(event: ClipboardDataEvent): string {
   return normalized;
 }
 
+function extractPlainTextFromClipboard(event: ClipboardDataEvent): string {
+  const text = String(event.clipboardData?.getData('text/plain') || '');
+  return text.replace(/\r\n/g, '\n');
+}
+
 async function extractPastedImageDataUrl(event: ClipboardDataEvent): Promise<string | null> {
   const clipboardData = event.clipboardData;
   if (!clipboardData) return null;
 
   const imageItem = Array.from(clipboardData.items || []).find((item) => String(item.type || '').toLowerCase().startsWith('image/'));
-  if (!imageItem) return null;
-
-  const file = imageItem.getAsFile();
+  const itemFile = imageItem?.getAsFile() || null;
+  const fileFallback = Array.from(clipboardData.files || []).find((entry) =>
+    String(entry.type || '').toLowerCase().startsWith('image/'),
+  ) || null;
+  const file = itemFile || fileFallback;
   if (!file) return null;
   if (!isSupportedMcqImage(file)) {
     toast.error('Unsupported pasted image format. Use JPG, PNG, WEBP, SVG, or GIF.');
@@ -328,10 +335,51 @@ function MathLiveInput({
   onPasteIntercept?: (event: ClipboardDataEvent) => boolean;
 }) {
   const fieldRef = useRef<MathFieldLikeElement | null>(null);
+  const lastHandledPasteRef = useRef(0);
 
   useEffect(() => {
     const field = fieldRef.current;
     if (!field) return;
+
+    const processClipboard = (clipboardEvent: ClipboardDataEvent) => {
+      const richText = extractRichBoldTextFromClipboard(clipboardEvent);
+      if (richText) {
+        clipboardEvent.preventDefault();
+        insertTextToField(id, richText);
+        return true;
+      }
+
+      const hasImageClipboardItem = Array.from(clipboardEvent.clipboardData?.items || []).some((item) =>
+        String(item.type || '').toLowerCase().startsWith('image/'),
+      ) || Array.from(clipboardEvent.clipboardData?.files || []).some((entry) =>
+        String(entry.type || '').toLowerCase().startsWith('image/'),
+      );
+
+      if (hasImageClipboardItem) {
+        clipboardEvent.preventDefault();
+        void extractPastedImageDataUrl(clipboardEvent)
+          .then((dataUrl) => {
+            if (!dataUrl) return;
+            onImagePaste?.(dataUrl);
+            if (insertImageTokenOnPaste !== false) {
+              insertImageTokenToField(id, dataUrl);
+            }
+          })
+          .catch(() => {
+            // Keep editor usable even if image extraction fails.
+          });
+        return true;
+      }
+
+      const plainText = extractPlainTextFromClipboard(clipboardEvent);
+      if (plainText) {
+        clipboardEvent.preventDefault();
+        insertTextToField(id, plainText);
+        return true;
+      }
+
+      return false;
+    };
 
     const handleInput = () => {
       onValueChange(field.getValue('latex'));
@@ -343,37 +391,40 @@ function MathLiveInput({
         return;
       }
 
-      const richText = extractRichBoldTextFromClipboard(clipboardEvent);
-      if (richText) {
-        clipboardEvent.preventDefault();
-        insertTextToField(id, richText);
+      if (processClipboard(clipboardEvent)) {
+        lastHandledPasteRef.current = Date.now();
+      }
+    };
+
+    const handleBeforeInput = (event: Event) => {
+      const inputEvent = event as InputEvent & { dataTransfer?: DataTransfer | null };
+      if (inputEvent.inputType !== 'insertFromPaste') return;
+      if (Date.now() - lastHandledPasteRef.current < 80) return;
+
+      const dataTransfer = inputEvent.dataTransfer || null;
+      if (!dataTransfer) return;
+
+      const syntheticClipboardEvent: ClipboardDataEvent = {
+        clipboardData: dataTransfer,
+        preventDefault: () => inputEvent.preventDefault(),
+      };
+
+      if (onPasteIntercept?.(syntheticClipboardEvent)) {
         return;
       }
 
-      const hasImageClipboardItem = Array.from(clipboardEvent.clipboardData?.items || []).some((item) =>
-        String(item.type || '').toLowerCase().startsWith('image/'),
-      );
-      if (!hasImageClipboardItem) return;
-
-      clipboardEvent.preventDefault();
-      void extractPastedImageDataUrl(clipboardEvent)
-        .then((dataUrl) => {
-          if (!dataUrl) return;
-          onImagePaste?.(dataUrl);
-          if (insertImageTokenOnPaste !== false) {
-            insertImageTokenToField(id, dataUrl);
-          }
-        })
-        .catch(() => {
-          // Keep standard paste behavior for non-image clipboard content.
-        });
+      if (processClipboard(syntheticClipboardEvent)) {
+        lastHandledPasteRef.current = Date.now();
+      }
     };
 
     field.addEventListener('input', handleInput);
     field.addEventListener('paste', handlePaste);
+    field.addEventListener('beforeinput', handleBeforeInput);
     return () => {
       field.removeEventListener('input', handleInput);
       field.removeEventListener('paste', handlePaste);
+      field.removeEventListener('beforeinput', handleBeforeInput);
     };
   }, [id, insertImageTokenOnPaste, onImagePaste, onPasteIntercept, onValueChange]);
 
