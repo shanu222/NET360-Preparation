@@ -4899,10 +4899,10 @@ export default function AdminApp() {
         ? payload.mcqs
         : (payload?.mcq ? [payload.mcq] : []);
 
-      const normalizedGenerated: AiGeneratedMcqPayload[] = generatedList
+      const normalizedGenerated = generatedList
         .filter((item) => item && item.question && Array.isArray(item.options) && item.options.length >= 4 && item.answer)
         .slice(0, AI_GENERATE_TARGET_COUNT)
-        .map((item): AiGeneratedMcqPayload => ({
+        .map((item) => ({
           question: String(item.question || '').trim(),
           options: item.options.slice(0, 4).map((option) => String(option || '').trim()),
           answer: String(item.answer || '').trim(),
