@@ -1924,6 +1924,7 @@ export default function AdminApp() {
   const [bulkParseErrors, setBulkParseErrors] = useState<string[]>([]);
   const [bulkProcessing, setBulkProcessing] = useState(false);
   const [bulkUploading, setBulkUploading] = useState(false);
+  const [bulkApplyDifficultyLevel, setBulkApplyDifficultyLevel] = useState<'Easy' | 'Medium' | 'Hard'>('Medium');
   const [isSavingMcq, setIsSavingMcq] = useState(false);
   const [bulkDeleteMode, setBulkDeleteMode] = useState<BulkDeleteMode>('section-topic');
   const [bulkDeleteSubject, setBulkDeleteSubject] = useState('mathematics');
@@ -4702,6 +4703,19 @@ export default function AdminApp() {
     setBulkParsed((previous) => previous.map((item, idx) => (idx === index ? updater(item) : item)));
   };
 
+  const applyDifficultyToAllParsedMcqs = () => {
+    if (!bulkParsed.length) {
+      toast.error('Parse MCQs first, then apply difficulty.');
+      return;
+    }
+
+    setBulkParsed((previous) => previous.map((item) => ({
+      ...item,
+      difficulty: bulkApplyDifficultyLevel,
+    })));
+    toast.success(`Applied ${bulkApplyDifficultyLevel} to ${bulkParsed.length} parsed MCQ(s).`);
+  };
+
   const openMcqTestPreview = (payload: AdminMcqPreviewPayload) => {
     try {
       localStorage.setItem(ADMIN_MCQ_TEST_PREVIEW_STORAGE_KEY, JSON.stringify(payload));
@@ -7212,6 +7226,26 @@ export default function AdminApp() {
                             >
                               Parse MCQs
                             </Button>
+                            <div className="flex min-w-[220px] flex-1 flex-wrap items-center gap-2 sm:flex-none">
+                              <Select value={bulkApplyDifficultyLevel} onValueChange={(value: 'Easy' | 'Medium' | 'Hard') => setBulkApplyDifficultyLevel(value)}>
+                                <SelectTrigger className="h-9 w-full sm:w-[150px]">
+                                  <SelectValue placeholder="Difficulty" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="Easy">Easy</SelectItem>
+                                  <SelectItem value="Medium">Medium</SelectItem>
+                                  <SelectItem value="Hard">Hard</SelectItem>
+                                </SelectContent>
+                              </Select>
+                              <Button
+                                type="button"
+                                variant="outline"
+                                onClick={applyDifficultyToAllParsedMcqs}
+                                disabled={!bulkParsed.length}
+                              >
+                                Apply to All MCQs
+                              </Button>
+                            </div>
                           </div>
 
                           {bulkParseErrors.length ? (
