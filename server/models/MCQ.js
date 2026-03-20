@@ -22,7 +22,7 @@ const mcqOptionSchema = new mongoose.Schema(
 
 const mcqSchema = new mongoose.Schema(
   {
-    externalId: { type: String, default: undefined, index: true },
+    externalId: { type: String, default: undefined },
     contentFingerprint: { type: String, default: '', index: true },
     subject: { type: String, required: true, index: true },
     part: { type: String, default: '', index: true },
