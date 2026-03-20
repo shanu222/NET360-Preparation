@@ -754,6 +754,25 @@ interface EditableBankMcq {
   shortTrickImage: AdminMcqImageFile | null;
 }
 
+type AdminImageEditorTarget =
+  | { kind: 'manual-question-image' }
+  | { kind: 'manual-option-image'; optionIndex: number }
+  | { kind: 'manual-explanation-image' };
+
+type AdminImageEditorState = {
+  isOpen: boolean;
+  target: AdminImageEditorTarget | null;
+  fileName: string;
+  sourceDataUrl: string;
+  cropXPercent: number;
+  cropYPercent: number;
+  cropWidthPercent: number;
+  cropHeightPercent: number;
+  rotationDeg: 0 | 90 | 180 | 270;
+  maxWidth: number;
+  maxHeight: number;
+};
+
 interface AdminMcqBankStructureItem {
   subject: string;
   part?: string;
@@ -1352,6 +1371,100 @@ function fileToDataUrl(file: File): Promise<string> {
 const MCQ_IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/svg+xml', 'image/gif']);
 const MCQ_IMAGE_NAME_PATTERN = /\.(jpe?g|png|webp|svg|gif)$/i;
 const MCQ_IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+const ADMIN_IMAGE_EDITOR_DEFAULT_MAX_WIDTH = 1280;
+const ADMIN_IMAGE_EDITOR_DEFAULT_MAX_HEIGHT = 1280;
+
+function clampEditorPercent(value: number, fallback: number) {
+  const numeric = Number.isFinite(value) ? Number(value) : fallback;
+  return Math.min(100, Math.max(0, numeric));
+}
+
+function clampEditorDimension(value: number, fallback: number) {
+  const numeric = Number.isFinite(value) ? Number(value) : fallback;
+  return Math.min(4096, Math.max(64, Math.round(numeric)));
+}
+
+function loadImageElement(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Could not load image.'));
+    img.src = dataUrl;
+  });
+}
+
+async function buildEditedImageDataUrl(
+  sourceDataUrl: string,
+  config: {
+    cropXPercent: number;
+    cropYPercent: number;
+    cropWidthPercent: number;
+    cropHeightPercent: number;
+    rotationDeg: 0 | 90 | 180 | 270;
+    maxWidth: number;
+    maxHeight: number;
+  },
+): Promise<string> {
+  const image = await loadImageElement(sourceDataUrl);
+
+  const cropX = clampEditorPercent(config.cropXPercent, 0);
+  const cropY = clampEditorPercent(config.cropYPercent, 0);
+  const cropWidth = clampEditorPercent(config.cropWidthPercent, 100);
+  const cropHeight = clampEditorPercent(config.cropHeightPercent, 100);
+
+  const sourceWidth = Math.max(1, image.naturalWidth || image.width || 1);
+  const sourceHeight = Math.max(1, image.naturalHeight || image.height || 1);
+
+  const sx = Math.round((cropX / 100) * sourceWidth);
+  const sy = Math.round((cropY / 100) * sourceHeight);
+  const sw = Math.max(1, Math.round((cropWidth / 100) * sourceWidth));
+  const sh = Math.max(1, Math.round((cropHeight / 100) * sourceHeight));
+
+  const boundedSx = Math.min(sourceWidth - 1, sx);
+  const boundedSy = Math.min(sourceHeight - 1, sy);
+  const boundedSw = Math.min(sw, sourceWidth - boundedSx);
+  const boundedSh = Math.min(sh, sourceHeight - boundedSy);
+
+  const cropCanvas = document.createElement('canvas');
+  cropCanvas.width = Math.max(1, boundedSw);
+  cropCanvas.height = Math.max(1, boundedSh);
+  const cropCtx = cropCanvas.getContext('2d');
+  if (!cropCtx) {
+    throw new Error('Could not initialize image editor.');
+  }
+  cropCtx.drawImage(image, boundedSx, boundedSy, boundedSw, boundedSh, 0, 0, cropCanvas.width, cropCanvas.height);
+
+  const rotation = config.rotationDeg;
+  const rotatedCanvas = document.createElement('canvas');
+  const swapAxis = rotation === 90 || rotation === 270;
+  rotatedCanvas.width = swapAxis ? cropCanvas.height : cropCanvas.width;
+  rotatedCanvas.height = swapAxis ? cropCanvas.width : cropCanvas.height;
+  const rotatedCtx = rotatedCanvas.getContext('2d');
+  if (!rotatedCtx) {
+    throw new Error('Could not rotate image.');
+  }
+
+  rotatedCtx.translate(rotatedCanvas.width / 2, rotatedCanvas.height / 2);
+  rotatedCtx.rotate((rotation * Math.PI) / 180);
+  rotatedCtx.drawImage(cropCanvas, -cropCanvas.width / 2, -cropCanvas.height / 2);
+
+  const maxWidth = clampEditorDimension(config.maxWidth, ADMIN_IMAGE_EDITOR_DEFAULT_MAX_WIDTH);
+  const maxHeight = clampEditorDimension(config.maxHeight, ADMIN_IMAGE_EDITOR_DEFAULT_MAX_HEIGHT);
+  const scale = Math.min(1, maxWidth / rotatedCanvas.width, maxHeight / rotatedCanvas.height);
+
+  const finalWidth = Math.max(1, Math.round(rotatedCanvas.width * scale));
+  const finalHeight = Math.max(1, Math.round(rotatedCanvas.height * scale));
+  const finalCanvas = document.createElement('canvas');
+  finalCanvas.width = finalWidth;
+  finalCanvas.height = finalHeight;
+  const finalCtx = finalCanvas.getContext('2d');
+  if (!finalCtx) {
+    throw new Error('Could not resize image.');
+  }
+  finalCtx.drawImage(rotatedCanvas, 0, 0, finalWidth, finalHeight);
+
+  return finalCanvas.toDataURL('image/png', 0.92);
+}
 
 function isSupportedMcqImage(file: File) {
   const mime = String(file.type || '').toLowerCase();
@@ -1575,6 +1688,20 @@ export default function AdminApp() {
   const [issuedTokens, setIssuedTokens] = useState<Record<string, string>>({});
   const [query, setQuery] = useState('');
   const [form, setForm] = useState(emptyForm());
+  const [imageEditor, setImageEditor] = useState<AdminImageEditorState>({
+    isOpen: false,
+    target: null,
+    fileName: '',
+    sourceDataUrl: '',
+    cropXPercent: 0,
+    cropYPercent: 0,
+    cropWidthPercent: 100,
+    cropHeightPercent: 100,
+    rotationDeg: 0,
+    maxWidth: ADMIN_IMAGE_EDITOR_DEFAULT_MAX_WIDTH,
+    maxHeight: ADMIN_IMAGE_EDITOR_DEFAULT_MAX_HEIGHT,
+  });
+  const [isApplyingImageEditor, setIsApplyingImageEditor] = useState(false);
   const [selectedHierarchy, setSelectedHierarchy] = useState<SelectedHierarchy | null>(null);
   const [activeMcqPanel, setActiveMcqPanel] = useState<'upload' | 'deleter' | 'bank' | null>(null);
   const [uploadMode, setUploadMode] = useState<'manual' | 'document'>('manual');
@@ -3304,6 +3431,103 @@ export default function AdminApp() {
 
     return () => window.clearInterval(timer);
   }, [authToken, selectedSupportUserId]);
+
+  const openImageEditorForFile = async (file: File, target: AdminImageEditorTarget) => {
+    if (!isSupportedMcqImage(file)) {
+      toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+      return;
+    }
+    if (file.size > MCQ_IMAGE_MAX_BYTES) {
+      toast.error('Image is too large. Maximum size is 5 MB.');
+      return;
+    }
+
+    try {
+      const sourceDataUrl = await fileToDataUrl(file);
+      setImageEditor({
+        isOpen: true,
+        target,
+        fileName: file.name || 'image.png',
+        sourceDataUrl,
+        cropXPercent: 0,
+        cropYPercent: 0,
+        cropWidthPercent: 100,
+        cropHeightPercent: 100,
+        rotationDeg: 0,
+        maxWidth: ADMIN_IMAGE_EDITOR_DEFAULT_MAX_WIDTH,
+        maxHeight: ADMIN_IMAGE_EDITOR_DEFAULT_MAX_HEIGHT,
+      });
+    } catch {
+      toast.error('Could not read selected image.');
+    }
+  };
+
+  const closeImageEditor = () => {
+    if (isApplyingImageEditor) return;
+    setImageEditor((prev) => ({ ...prev, isOpen: false, target: null, sourceDataUrl: '' }));
+  };
+
+  const applyImageEditorChanges = async () => {
+    if (!imageEditor.isOpen || !imageEditor.target || !imageEditor.sourceDataUrl) return;
+
+    setIsApplyingImageEditor(true);
+    try {
+      const editedDataUrl = await buildEditedImageDataUrl(imageEditor.sourceDataUrl, {
+        cropXPercent: imageEditor.cropXPercent,
+        cropYPercent: imageEditor.cropYPercent,
+        cropWidthPercent: imageEditor.cropWidthPercent,
+        cropHeightPercent: imageEditor.cropHeightPercent,
+        rotationDeg: imageEditor.rotationDeg,
+        maxWidth: imageEditor.maxWidth,
+        maxHeight: imageEditor.maxHeight,
+      });
+
+      const normalizedFileName = imageEditor.fileName.replace(/\.[^.]+$/, '') || 'question-image';
+      const editedImage = parsedDataUrlToImage(editedDataUrl, normalizedFileName);
+      if (!editedImage) {
+        throw new Error('Edited image is invalid.');
+      }
+
+      let successMessage = 'Image updated.';
+
+      if (imageEditor.target.kind === 'manual-question-image') {
+        setForm((prev) => ({ ...prev, questionImage: editedImage }));
+
+        // Match paste behavior by inserting image token directly into the math field when available.
+        insertImageTokenToField('questionInput', editedImage.dataUrl);
+        setForm((prev) => {
+          const token = `[[img:${editedImage.dataUrl}]]`;
+          if (String(prev.question || '').includes(token)) return prev;
+          return {
+            ...prev,
+            question: String(prev.question || '').trim()
+              ? `${String(prev.question || '')} ${token}`
+              : token,
+          };
+        });
+        successMessage = 'Question image edited and inserted into question text.';
+      } else if (imageEditor.target.kind === 'manual-option-image') {
+        const optionIndex = imageEditor.target.optionIndex;
+        setForm((prev) => {
+          if (optionIndex < 0 || optionIndex >= prev.optionMedia.length) return prev;
+          const optionMedia = [...prev.optionMedia];
+          optionMedia[optionIndex] = { ...optionMedia[optionIndex], image: editedImage };
+          return { ...prev, optionMedia };
+        });
+        successMessage = 'Option image edited successfully.';
+      } else if (imageEditor.target.kind === 'manual-explanation-image') {
+        setForm((prev) => ({ ...prev, explanationImage: editedImage, shortTrickImage: null }));
+        successMessage = 'Explanation image edited successfully.';
+      }
+
+      setImageEditor((prev) => ({ ...prev, isOpen: false, target: null, sourceDataUrl: '' }));
+      toast.success(successMessage);
+    } catch {
+      toast.error('Could not apply image edits.');
+    } finally {
+      setIsApplyingImageEditor(false);
+    }
+  };
 
   const resetForm = () => {
     const fresh = emptyForm();
@@ -6877,22 +7101,11 @@ export default function AdminApp() {
                             id="mcq-question-image-upload"
                             type="file"
                             accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                            capture="environment"
                             onChange={(e) => {
                               const file = e.target.files?.[0] || null;
                               if (!file) return;
-                              if (!isSupportedMcqImage(file)) {
-                                toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
-                                e.currentTarget.value = '';
-                                return;
-                              }
-                              if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                                toast.error('Image is too large. Maximum size is 5 MB.');
-                                e.currentTarget.value = '';
-                                return;
-                              }
-                              void fileToMcqImage(file)
-                                .then((image) => setForm((prev) => ({ ...prev, questionImage: image })))
-                                .catch(() => toast.error('Could not read selected image.'));
+                              void openImageEditorForFile(file, { kind: 'manual-question-image' });
                               e.currentTarget.value = '';
                             }}
                           />
@@ -6984,28 +7197,11 @@ export default function AdminApp() {
                                   <Input
                                     type="file"
                                     accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp"
+                                    capture="environment"
                                     onChange={(e) => {
                                       const file = e.target.files?.[0] || null;
                                       if (!file) return;
-                                      if (!isSupportedMcqImage(file)) {
-                                        toast.error('Unsupported image format. Use JPG, PNG, or WEBP.');
-                                        e.currentTarget.value = '';
-                                        return;
-                                      }
-                                      if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                                        toast.error('Image is too large. Maximum size is 5 MB.');
-                                        e.currentTarget.value = '';
-                                        return;
-                                      }
-                                      void fileToMcqImage(file)
-                                        .then((image) => {
-                                          setForm((prev) => {
-                                            const optionMedia = [...prev.optionMedia];
-                                            optionMedia[optionIdx] = { ...optionMedia[optionIdx], image };
-                                            return { ...prev, optionMedia };
-                                          });
-                                        })
-                                        .catch(() => toast.error('Could not read selected image.'));
+                                      void openImageEditorForFile(file, { kind: 'manual-option-image', optionIndex: optionIdx });
                                       e.currentTarget.value = '';
                                     }}
                                   />
@@ -7087,22 +7283,11 @@ export default function AdminApp() {
                                 type="file"
                                 className="hidden"
                                 accept="image/jpeg,image/png,image/webp,image/svg+xml,image/gif,.jpg,.jpeg,.png,.webp,.svg,.gif"
+                                capture="environment"
                                 onChange={(e) => {
                                   const file = e.target.files?.[0] || null;
                                   if (!file) return;
-                                  if (!isSupportedMcqImage(file)) {
-                                    toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
-                                    e.currentTarget.value = '';
-                                    return;
-                                  }
-                                  if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                                    toast.error('Image is too large. Maximum size is 5 MB.');
-                                    e.currentTarget.value = '';
-                                    return;
-                                  }
-                                  void fileToMcqImage(file)
-                                    .then((image) => setForm((prev) => ({ ...prev, explanationImage: image, shortTrickImage: null })))
-                                    .catch(() => toast.error('Could not read selected image.'));
+                                  void openImageEditorForFile(file, { kind: 'manual-explanation-image' });
                                   e.currentTarget.value = '';
                                 }}
                               />
@@ -8437,6 +8622,134 @@ export default function AdminApp() {
           </Tabs>
         </div>
       </main>
+
+      {imageEditor.isOpen ? (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm">
+          <div className="w-full max-w-3xl rounded-xl border border-slate-300/70 bg-white p-3 shadow-2xl dark:border-white/20 dark:bg-slate-900 sm:p-4">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900 dark:text-slate-100">Edit Image</h3>
+                <p className="text-xs text-slate-600 dark:text-slate-300">Crop, rotate, and resize before inserting into question text.</p>
+              </div>
+              <Button type="button" variant="outline" size="sm" onClick={closeImageEditor} disabled={isApplyingImageEditor}>
+                Close
+              </Button>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-[1.2fr_1fr]">
+              <div className="space-y-2">
+                <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-100 dark:border-white/20 dark:bg-slate-950">
+                  <img
+                    src={imageEditor.sourceDataUrl}
+                    alt="Selected image preview"
+                    className="max-h-[320px] w-full object-contain"
+                  />
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-300">
+                  File: {imageEditor.fileName || 'image'}
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label>Crop Left (%)</Label>
+                  <Input
+                    type="range"
+                    min={0}
+                    max={95}
+                    value={imageEditor.cropXPercent}
+                    onChange={(e) => setImageEditor((prev) => ({ ...prev, cropXPercent: clampEditorPercent(Number(e.target.value), prev.cropXPercent) }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Crop Top (%)</Label>
+                  <Input
+                    type="range"
+                    min={0}
+                    max={95}
+                    value={imageEditor.cropYPercent}
+                    onChange={(e) => setImageEditor((prev) => ({ ...prev, cropYPercent: clampEditorPercent(Number(e.target.value), prev.cropYPercent) }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Crop Width (%)</Label>
+                  <Input
+                    type="range"
+                    min={5}
+                    max={100}
+                    value={imageEditor.cropWidthPercent}
+                    onChange={(e) => setImageEditor((prev) => ({ ...prev, cropWidthPercent: clampEditorPercent(Number(e.target.value), prev.cropWidthPercent) }))}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Crop Height (%)</Label>
+                  <Input
+                    type="range"
+                    min={5}
+                    max={100}
+                    value={imageEditor.cropHeightPercent}
+                    onChange={(e) => setImageEditor((prev) => ({ ...prev, cropHeightPercent: clampEditorPercent(Number(e.target.value), prev.cropHeightPercent) }))}
+                  />
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Rotate</Label>
+                  <div className="flex flex-wrap gap-2">
+                    {[0, 90, 180, 270].map((deg) => (
+                      <Button
+                        key={`rotate-${deg}`}
+                        type="button"
+                        size="sm"
+                        variant={imageEditor.rotationDeg === deg ? 'default' : 'outline'}
+                        onClick={() => setImageEditor((prev) => ({ ...prev, rotationDeg: deg as 0 | 90 | 180 | 270 }))}
+                      >
+                        {deg}deg
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div className="space-y-1">
+                    <Label>Max Width</Label>
+                    <Input
+                      type="number"
+                      min={64}
+                      max={4096}
+                      value={imageEditor.maxWidth}
+                      onChange={(e) => setImageEditor((prev) => ({ ...prev, maxWidth: clampEditorDimension(Number(e.target.value), prev.maxWidth) }))}
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <Label>Max Height</Label>
+                    <Input
+                      type="number"
+                      min={64}
+                      max={4096}
+                      value={imageEditor.maxHeight}
+                      onChange={(e) => setImageEditor((prev) => ({ ...prev, maxHeight: clampEditorDimension(Number(e.target.value), prev.maxHeight) }))}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <Button type="button" variant="outline" onClick={closeImageEditor} disabled={isApplyingImageEditor}>
+                Cancel
+              </Button>
+              <Button type="button" onClick={() => void applyImageEditorChanges()} disabled={isApplyingImageEditor}>
+                {isApplyingImageEditor ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Applying...
+                  </>
+                ) : 'Apply & Insert'}
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
