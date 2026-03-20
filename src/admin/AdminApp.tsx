@@ -185,6 +185,22 @@ function insertImageTokenToField(targetId: string, dataUrl: string) {
   insertTextToField(targetId, `[[img:${normalized}]]`);
 }
 
+function insertImageTokenToFieldWithRetry(targetId: string, dataUrl: string, attempt = 0) {
+  const normalized = String(dataUrl || '').trim();
+  if (!normalized) return;
+
+  const field = document.getElementById(targetId) as MathFieldLikeElement | null;
+  if (field) {
+    insertImageTokenToField(targetId, normalized);
+    return;
+  }
+
+  if (attempt >= 18) return;
+  window.setTimeout(() => {
+    insertImageTokenToFieldWithRetry(targetId, normalized, attempt + 1);
+  }, 22);
+}
+
 function extractRichBoldTextFromClipboard(event: ClipboardDataEvent): string {
   const html = String(event.clipboardData?.getData('text/html') || '').trim();
   if (!html || typeof DOMParser === 'undefined') return '';
@@ -3564,13 +3580,6 @@ export default function AdminApp() {
     cropDragStateRef.current = null;
   };
 
-  const appendImageTokenToText = (value: string, dataUrl: string) => {
-    const token = `[[img:${String(dataUrl || '').trim()}]]`;
-    const normalized = String(value || '');
-    if (!token.trim() || normalized.includes(token)) return normalized;
-    return normalized.trim() ? `${normalized} ${token}` : token;
-  };
-
   const applyGestureImageEditor = async () => {
     if (!gestureImageEditor.isOpen || !gestureImageEditor.target || !gestureImageEditor.sourceDataUrl) return;
 
@@ -3586,32 +3595,32 @@ export default function AdminApp() {
       if (target.kind === 'question') {
         setForm((prev) => ({
           ...prev,
-          questionImage: parsedImage,
-          question: appendImageTokenToText(prev.question, parsedImage.dataUrl),
+          questionType: 'text',
+          questionImage: null,
         }));
-        insertImageTokenToField('questionInput', parsedImage.dataUrl);
+        insertImageTokenToFieldWithRetry('questionInput', parsedImage.dataUrl);
       } else if (target.kind === 'option') {
         const optionFieldId = `option-input-${normalizeMathInputId(target.optionKey)}`;
         setForm((prev) => {
           if (target.optionIndex < 0 || target.optionIndex >= prev.optionMedia.length) return prev;
+          const optionTypes = [...prev.optionTypes];
+          optionTypes[target.optionIndex] = 'text';
           const optionMedia = [...prev.optionMedia];
           const existing = optionMedia[target.optionIndex];
           optionMedia[target.optionIndex] = {
             ...existing,
-            image: parsedImage,
-            text: appendImageTokenToText(existing.text, parsedImage.dataUrl),
+            image: null,
           };
-          return { ...prev, optionMedia };
+          return { ...prev, optionTypes, optionMedia };
         });
-        insertImageTokenToField(optionFieldId, parsedImage.dataUrl);
+        insertImageTokenToFieldWithRetry(optionFieldId, parsedImage.dataUrl);
       } else if (target.kind === 'explanation') {
         setForm((prev) => ({
           ...prev,
-          explanationImage: parsedImage,
-          explanationText: appendImageTokenToText(prev.explanationText, parsedImage.dataUrl),
+          explanationImage: null,
           shortTrickImage: null,
         }));
-        insertImageTokenToField('explanationInput', parsedImage.dataUrl);
+        insertImageTokenToFieldWithRetry('explanationInput', parsedImage.dataUrl);
       }
 
       closeGestureImageEditor();
