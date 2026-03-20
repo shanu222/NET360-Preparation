@@ -11515,6 +11515,50 @@ async function generateMultipleMcqsWithAi({
   };
 }
 
+async function extractTextFromImageForMcqGeneration({ imageDataUrl, instructions, hierarchy }) {
+  const safeImageDataUrl = String(imageDataUrl || '').trim();
+  if (!safeImageDataUrl) return '';
+
+  try {
+    const openAiContext = await getOpenAiClientContext();
+    const aiClient = openAiContext.client;
+    const aiModel = String(openAiContext.model || AI_PARSE_DEFAULT_MODEL).trim() || AI_PARSE_DEFAULT_MODEL;
+    if (!aiClient) return '';
+
+    const hierarchyContext = normalizeParsedHierarchyContext(hierarchy || {});
+    const prompt = [
+      'Extract readable educational text from this image for MCQ generation.',
+      'Return plain text only. No markdown. No JSON.',
+      'If little or no text is readable, return an empty string.',
+      `Subject: ${hierarchyContext.subject || ''}`,
+      `Chapter: ${hierarchyContext.chapter || ''}`,
+      `Section: ${hierarchyContext.section || ''}`,
+      `Topic: ${hierarchyContext.topic || ''}`,
+      instructions ? `Instructions: ${String(instructions || '').trim()}` : '',
+    ].filter(Boolean).join('\n');
+
+    const completion = await aiClient.chat.completions.create({
+      model: aiModel,
+      temperature: 0,
+      max_tokens: 700,
+      messages: [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: prompt },
+            { type: 'image_url', image_url: { url: safeImageDataUrl } },
+          ],
+        },
+      ],
+    });
+
+    return String(completion.choices?.[0]?.message?.content || '').trim();
+  } catch (error) {
+    console.warn('AI image text extraction skipped:', error?.message || error);
+    return '';
+  }
+}
+
 app.post('/api/ai/parse-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
   try {
     const sourceType = String(req.body?.sourceType || 'file').trim().toLowerCase();
@@ -11562,18 +11606,18 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
       ? sourceTypeRaw
       : (upload?.buffer?.length ? 'file' : 'text');
 
+    const hierarchyContext = {
+      subject: String(req.body?.subject || '').trim().toLowerCase(),
+      part: String(req.body?.part || '').trim().toLowerCase(),
+      chapter: String(req.body?.chapter || '').trim(),
+      section: String(req.body?.section || '').trim(),
+      topic: String(req.body?.topic || '').trim(),
+    };
+
     let sourceText = rawText;
     let imageDataUrl = '';
 
-    if (sourceType === 'file') {
-      if (!upload?.buffer?.length) {
-        res.status(400).json({
-          mcq: null,
-          errors: ['sourceType is file, but no file was uploaded. Upload a PDF, DOCX, TXT, JPG, or PNG, or set sourceType to text.'],
-        });
-        return;
-      }
-
+    if (upload?.buffer?.length) {
       const mimeType = String(upload.mimetype || 'application/octet-stream').toLowerCase().trim();
       const filePayload = {
         name: String(upload.originalname || 'upload.bin').trim(),
@@ -11585,40 +11629,52 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
       const isImage = /^image\/(png|jpe?g)$/i.test(mimeType);
       if (isImage) {
         imageDataUrl = filePayload.dataUrl;
+        const extractedText = await extractTextFromImageForMcqGeneration({
+          imageDataUrl,
+          instructions,
+          hierarchy: hierarchyContext,
+        });
+        if (extractedText) {
+          sourceText = [sourceText, extractedText].filter(Boolean).join('\n\n');
+        }
       } else {
         sourceText = await extractTextFromUpload(filePayload);
       }
+    } else if (sourceType === 'file') {
+      console.warn('AI MCQ generate called with sourceType=file but no file uploaded; continuing with text/instructions.');
     }
-
-    const hierarchyContext = {
-      subject: String(req.body?.subject || '').trim().toLowerCase(),
-      part: String(req.body?.part || '').trim().toLowerCase(),
-      chapter: String(req.body?.chapter || '').trim(),
-      section: String(req.body?.section || '').trim(),
-      topic: String(req.body?.topic || '').trim(),
-    };
 
     const normalizedHierarchy = normalizeParsedHierarchyContext(hierarchyContext);
     const isFlatTopicSubject = MCQ_FLAT_TOPIC_SUBJECTS.has(normalizedHierarchy.subject);
     const requiresPartSelection = !isFlatTopicSubject && isPartSelectionRequiredSubject(normalizedHierarchy.subject);
 
     if (!normalizedHierarchy.subject) {
-      res.status(400).json({ mcq: null, errors: ['Missing required field: subject.'] });
+      res.status(400).json({ mcq: null, error: 'Missing required field: subject.', errors: ['Missing required field: subject.'] });
       return;
     }
 
     if (requiresPartSelection && !normalizedHierarchy.part) {
-      res.status(400).json({ mcq: null, errors: ['Missing required field: part for this subject.'] });
+      res.status(400).json({ mcq: null, error: 'Missing required field: part for this subject.', errors: ['Missing required field: part for this subject.'] });
       return;
     }
 
     if (!isFlatTopicSubject && !normalizedHierarchy.chapter) {
-      res.status(400).json({ mcq: null, errors: ['Missing required field: chapter.'] });
+      res.status(400).json({ mcq: null, error: 'Missing required field: chapter.', errors: ['Missing required field: chapter.'] });
       return;
     }
 
     if (!String(normalizedHierarchy.section || normalizedHierarchy.topic || '').trim()) {
-      res.status(400).json({ mcq: null, errors: ['Missing required field: section/topic.'] });
+      res.status(400).json({ mcq: null, error: 'Missing required field: section/topic.', errors: ['Missing required field: section/topic.'] });
+      return;
+    }
+
+    const hasInputSource = Boolean(String(sourceText || '').trim() || String(instructions || '').trim() || String(imageDataUrl || '').trim());
+    if (!hasInputSource) {
+      res.status(400).json({
+        mcq: null,
+        error: 'Provide at least one input source: image file, source text, or instructions.',
+        errors: ['Provide at least one input source: image file, source text, or instructions.'],
+      });
       return;
     }
 
@@ -11635,10 +11691,11 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
     });
 
     if (!Array.isArray(result?.mcqs) || result.mcqs.length < AI_MULTI_MCQ_GENERATION_COUNT) {
-      res.status(400).json({
+      res.json({
         mcq: null,
         mcqs: Array.isArray(result?.mcqs) ? result.mcqs : [],
         generatedCount: Number(result?.generatedCount || 0),
+        error: result?.errors?.[0] || `AI could not generate ${AI_MULTI_MCQ_GENERATION_COUNT} MCQs.`,
         errors: result?.errors?.length
           ? result.errors
           : [`AI could not generate ${AI_MULTI_MCQ_GENERATION_COUNT} MCQs.`],
@@ -11650,14 +11707,16 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
       mcq: result.mcqs[0],
       mcqs: result.mcqs,
       generatedCount: result.generatedCount,
+      error: '',
       errors: result.errors || [],
     });
   } catch (error) {
-    console.error('AI single MCQ generation failed:', {
+    console.error('AI MCQ generation failed:', {
       message: error?.message || error,
       sourceType: String(req.body?.sourceType || '').trim().toLowerCase() || '(missing)',
       hasFile: Boolean(req.file?.buffer?.length),
       hasRawText: Boolean(String(req.body?.rawText || '').trim()),
+      hasInstructions: Boolean(String(req.body?.instructions || '').trim()),
       subject: String(req.body?.subject || '').trim().toLowerCase(),
       chapter: String(req.body?.chapter || '').trim(),
       section: String(req.body?.section || '').trim(),
@@ -11665,6 +11724,7 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
     });
     res.status(400).json({
       mcq: null,
+      error: error instanceof Error ? error.message : 'Could not generate AI MCQ.',
       errors: [error instanceof Error ? error.message : 'Could not generate AI MCQ.'],
     });
   }
