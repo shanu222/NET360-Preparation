@@ -8473,7 +8473,7 @@ export default function AdminApp() {
 
                                 <div className="flex flex-wrap gap-2">
                                   <Button type="button" variant="outline" onClick={openAiGeneratedMcqPreview} disabled={aiGenGenerating || aiGenUploading}>
-                                    Preview MCQ
+                                    Preview Test
                                   </Button>
                                   <Button type="button" onClick={() => void uploadGeneratedAiMcq()} disabled={aiGenUploading || aiGenGenerating}>
                                     {aiGenUploading ? (
