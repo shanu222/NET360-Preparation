@@ -11366,6 +11366,7 @@ async function generateSingleMcqWithAi({
   imageDataUrl,
   instructions,
   difficulty,
+  requestedCount = 1,
   hierarchy,
   existingMcqs = [],
 }) {
@@ -11388,6 +11389,7 @@ async function generateSingleMcqWithAi({
   const existingReference = buildExistingMcqReferenceForPrompt(existingRows);
   const generatedSignatures = new Set();
   const regenerationErrors = [];
+  const safeRequestedCount = clamp(Number(requestedCount || 1), 1, 15);
 
   for (let generationAttempt = 1; generationAttempt <= AI_SINGLE_MCQ_MAX_REGENERATIONS; generationAttempt += 1) {
     const rejectionHint = regenerationErrors.length
@@ -11395,8 +11397,60 @@ async function generateSingleMcqWithAi({
       : '';
 
     const runCompletion = async () => {
-      const userContent = [
+      const generationCommand = [
+        'You are an expert NUST NET exam paper setter.',
+        '',
+        'Carefully read and analyze the uploaded document containing MCQs. Identify the exact pattern, style, difficulty level, and structure of the questions.',
+        '',
+        'Your task is to generate new MCQs that closely MATCH the style, logic, and structure of the provided document.',
+        '',
+        'Observed Pattern Requirements:',
+        '- Short, numerical or logical problem-solving questions',
+        '- Focus on distance, time, work, sequences, coding, and basic reasoning',
+        '- NO theoretical, opinion-based, or definition questions',
+        '- Each question must require calculation or logical deduction',
+        '- Questions must mimic real NUST NET problem-solving style',
+        '- Options must be close, competitive, and slightly tricky',
+        '- Only ONE correct answer',
+        '- Explanation must be concise (1 logical step only)',
+        '',
+        `Now generate ${safeRequestedCount} MCQs for:`,
+        '',
+        'Subject: Intelligence',
+        'Chapter: Critical Thinking',
+        'Topic: Problem Solving',
         `Difficulty: ${requestedDifficulty}`,
+        '',
+        'STRICT FORMAT (DO NOT CHANGE):',
+        '',
+        'MCQ 1',
+        '',
+        '<Question>',
+        '',
+        'A. option',
+        'B. option',
+        'C. option',
+        'D. option',
+        '',
+        'Correct Answer: X',
+        '',
+        'Explanation: short logical explanation',
+        '',
+        '---',
+        '',
+        'IMPORTANT INSTRUCTIONS:',
+        '- STRICTLY follow the pattern from the uploaded document',
+        '- DO NOT generate generic or textbook-style questions',
+        '- DO NOT always generate theory-based questions only if necessary',
+        '- Ensure each MCQ involves thinking, logic, or calculation',
+        '- Maintain consistent difficulty level',
+        '- Avoid repetition of question types',
+      ].join('\n');
+
+      const userContent = [
+        generationCommand,
+        '',
+        'Resolved hierarchy context for this run:',
         `Subject: ${baseHierarchy.subject || ''}`,
         `Part: ${baseHierarchy.part || ''}`,
         `Chapter: ${baseHierarchy.chapter || ''}`,
@@ -11434,13 +11488,15 @@ async function generateSingleMcqWithAi({
           {
             role: 'system',
             content: [
-              'You are an MCQ generation engine. Return valid JSON only.',
+              'Follow the provided NUST NET command and constraints exactly for content style and logic.',
+              'Return valid JSON only.',
               'Generate exactly ONE MCQ using this schema:',
               '{"mcq":{"question":"...","options":["A option","B option","C option","D option"],"correctAnswer":"A|B|C|D|option text","explanation":"...","difficulty":"Easy|Medium|Hard"},"errors":["..."]}',
               'Rules:',
               '- Return exactly 4 DISTINCT options in A-D order.',
               '- Ensure exactly one correct answer.',
               '- Explanation is required and must be non-empty.',
+              '- Keep explanation concise (one logical step).',
               '- Keep output concise and educational.',
               '- The MCQ must be completely NEW and unique versus every Existing MCQ reference.',
               '- Do not match or closely resemble any provided Existing MCQ (stem, wording pattern, options, or concept framing).',
@@ -11538,6 +11594,7 @@ async function generateMultipleMcqsWithAi({
       imageDataUrl,
       instructions,
       difficulty,
+      requestedCount: targetCount,
       hierarchy,
       existingMcqs: comparisonPool,
     });
