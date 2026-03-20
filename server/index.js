@@ -1433,12 +1433,56 @@ async function maybeEnrichWithOcrHints(rawText) {
   return `${text}\n\n[OCR-EXTRACTED-TEXT]\n${ocrSnippets.join('\n\n---\n\n')}`;
 }
 
+function normalizeConclusions(value) {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => normalizeRichMcqText(String(item || '').replace(/^[\-\u2022\d.()\s]+/, '')))
+      .filter(Boolean);
+  }
+
+  const text = normalizeRichMcqText(String(value || ''));
+  if (!text) return [];
+
+  return text
+    .split(/\n+|(?<=[.!?])\s+(?=(?:therefore|thus|hence|so|conclusion|inference|result|finally)\b)/i)
+    .map((item) => normalizeRichMcqText(item.replace(/^[\-\u2022\d.()\s]+/, '')))
+    .filter(Boolean);
+}
+
+function splitQuestionAndConclusions(questionText, explicitConclusions = []) {
+  const normalizedQuestion = normalizeRichMcqText(String(questionText || ''));
+  const conclusionList = normalizeConclusions(explicitConclusions);
+  if (!normalizedQuestion) {
+    return {
+      question: '',
+      conclusions: conclusionList,
+    };
+  }
+
+  const markerMatch = normalizedQuestion.match(/^(.*?)(?:\s*(?:conclusion|inference|therefore|thus|hence|so)\s*[:\-]\s*)([\s\S]+)$/i);
+  if (!markerMatch) {
+    return {
+      question: normalizedQuestion,
+      conclusions: conclusionList,
+    };
+  }
+
+  const questionBody = normalizeRichMcqText(String(markerMatch[1] || ''));
+  const markerConclusions = normalizeConclusions(String(markerMatch[2] || ''));
+  return {
+    question: questionBody || normalizedQuestion,
+    conclusions: [...conclusionList, ...markerConclusions],
+  };
+}
+
 function normalizeAiParsedRows(rows, baseHierarchy, chunkLabel = 'chunk') {
   const parsed = [];
   const errors = [];
 
   rows.forEach((row, idx) => {
-    const question = normalizeRichMcqText(String(row?.question || '').replace(/\s+/g, ' ').trim());
+    const splitContent = splitQuestionAndConclusions(String(row?.question || '').replace(/\s+/g, ' ').trim(), row?.conclusions);
+    const question = splitContent.question;
+    const conclusions = splitContent.conclusions;
     const options = parseOptionsFromUnknown(row?.options).slice(0, 4);
     const answer = resolveAnswerToOption(row?.correctAnswer ?? row?.answer, options);
     const tip = normalizeRichMcqText(row?.explanation || '');
@@ -1482,6 +1526,7 @@ function normalizeAiParsedRows(rows, baseHierarchy, chunkLabel = 'chunk') {
       optionImageDataUrls: optionImageRefs.slice(0, 4).map((ref) => (/^data:image\//i.test(ref) ? ref : '')),
       answer,
       tip,
+      conclusions,
       explanationImageDataUrl: /^data:image\//i.test(explanationImageRef) ? explanationImageRef : '',
       difficulty,
     });
@@ -1523,8 +1568,10 @@ async function parseBulkMcqsWithAi(rawText) {
           content: [
             'You are an MCQ extraction engine. Return valid JSON only.',
             'Extract ALL MCQs from the chunk using this schema:',
-            '{"mcqs":[{"question":"...","options":["A option","B option","C option","D option"],"correctAnswer":"A|B|C|D|option text","explanation":"...","difficulty":"Easy|Medium|Hard","subject":"","part":"","chapter":"","section":"","topic":"","questionImage":"","optionImages":[""],"explanationImage":""}],"errors":["..."]}',
+            '{"mcqs":[{"question":"...","conclusions":["..."],"options":["A option","B option","C option","D option"],"correctAnswer":"A|B|C|D|option text","explanation":"...","difficulty":"Easy|Medium|Hard","subject":"","part":"","chapter":"","section":"","topic":"","questionImage":"","optionImages":[""],"explanationImage":""}],"errors":["..."]}',
             'Rules:',
+            '- Keep the stem in question and output each inference/conclusion as a separate item in conclusions[].',
+            '- Do not merge multiple conclusions into one line; split them into separate array entries.',
             '- Keep exactly 4 options whenever available; map mixed formats to A-D order.',
             '- Preserve inline formatting tags like <strong>, <em>, <b>, <i> if present.',
             '- If answer is textual, map it to the closest option.',
@@ -1625,7 +1672,9 @@ function parseBulkMcqsFromText(raw) {
         return;
       }
 
-      const question = normalizeRichMcqText(state.current.questionLines.join(' '));
+      const splitContent = splitQuestionAndConclusions(state.current.questionLines.join(' '));
+      const question = splitContent.question;
+      const conclusions = splitContent.conclusions;
       const orderedOptions = ['A', 'B', 'C', 'D']
         .map((key) => normalizeRichMcqText(state.current.optionsByKey[key]))
         .filter(Boolean);
@@ -1654,6 +1703,7 @@ function parseBulkMcqsFromText(raw) {
         optionImageDataUrls: [],
         answer: resolvedAnswer,
         tip: normalizeRichMcqText(state.current.explanationLines.join('\n')),
+        conclusions,
         explanationImageDataUrl: '',
         difficulty: state.current.difficulty,
       });
@@ -1884,7 +1934,9 @@ function parseBulkMcqsFromText(raw) {
       }
     }
 
-    const question = normalizeRichMcqText(questionLines.join(' '));
+    const splitContent = splitQuestionAndConclusions(questionLines.join(' '));
+    const question = splitContent.question;
+    const conclusions = splitContent.conclusions;
     const normalizedOptions = options.map((option) => normalizeRichMcqText(option.text)).filter(Boolean);
     const resolvedAnswer = resolveAnswerToOption(answer, normalizedOptions);
     if ((!question && !questionImageUrl && !questionImageDataUrl) || normalizedOptions.length < 2 || !resolvedAnswer) {
@@ -1905,6 +1957,7 @@ function parseBulkMcqsFromText(raw) {
       optionImageDataUrls: options.map((option) => option.imageDataUrl || ''),
       answer: resolvedAnswer,
       tip: normalizeRichMcqText(explanationLines.join('\n')),
+      conclusions,
       explanationImageDataUrl,
       difficulty,
     });
