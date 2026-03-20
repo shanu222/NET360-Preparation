@@ -11690,22 +11690,36 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
       count: AI_MULTI_MCQ_GENERATION_COUNT,
     });
 
-    if (!Array.isArray(result?.mcqs) || result.mcqs.length < AI_MULTI_MCQ_GENERATION_COUNT) {
-      res.json({
+    const generatedMcqs = Array.isArray(result?.mcqs) ? result.mcqs : [];
+    if (!generatedMcqs.length) {
+      res.status(400).json({
         mcq: null,
-        mcqs: Array.isArray(result?.mcqs) ? result.mcqs : [],
-        generatedCount: Number(result?.generatedCount || 0),
-        error: result?.errors?.[0] || `AI could not generate ${AI_MULTI_MCQ_GENERATION_COUNT} MCQs.`,
+        mcqs: [],
+        generatedCount: 0,
+        error: result?.errors?.[0] || `AI could not generate any MCQ.`,
         errors: result?.errors?.length
           ? result.errors
-          : [`AI could not generate ${AI_MULTI_MCQ_GENERATION_COUNT} MCQs.`],
+          : [`AI could not generate any MCQ.`],
+      });
+      return;
+    }
+
+    if (generatedMcqs.length < AI_MULTI_MCQ_GENERATION_COUNT) {
+      res.json({
+        mcq: generatedMcqs[0],
+        mcqs: generatedMcqs,
+        generatedCount: Number(result?.generatedCount || generatedMcqs.length),
+        error: '',
+        errors: result?.errors?.length
+          ? result.errors
+          : [`Generated ${generatedMcqs.length} MCQ(s) this run.`],
       });
       return;
     }
 
     res.json({
-      mcq: result.mcqs[0],
-      mcqs: result.mcqs,
+      mcq: generatedMcqs[0],
+      mcqs: generatedMcqs,
       generatedCount: result.generatedCount,
       error: '',
       errors: result.errors || [],

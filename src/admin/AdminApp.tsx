@@ -4910,7 +4910,7 @@ export default function AdminApp() {
           difficulty: item.difficulty === 'Easy' || item.difficulty === 'Hard' ? item.difficulty : 'Medium',
         }));
 
-      if (normalizedGenerated.length < AI_GENERATE_TARGET_COUNT) {
+      if (!normalizedGenerated.length) {
         throw new Error(payload?.errors?.[0] || 'AI did not return a valid MCQ.');
       }
 
@@ -4945,7 +4945,7 @@ export default function AdminApp() {
       setUploadChapterKey(aiGenChapterKey || '');
       setUploadMode('document');
       setAiGenGenerateErrors(Array.isArray(payload?.errors) ? payload.errors : []);
-      toast.success(`AI generated ${normalizedGenerated.length} MCQs. Review/edit the populated blocks and upload.`);
+      toast.success(`AI generated ${normalizedGenerated.length} MCQ(s). Review/edit the populated blocks and upload.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not generate AI MCQ.';
       setAiGenGenerateErrors([message]);
