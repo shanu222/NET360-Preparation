@@ -1130,6 +1130,7 @@ const BULK_ANALYZE_DEBOUNCE_MS = 700;
 const BULK_ANALYZE_MAX_ATTEMPTS = 3;
 const BULK_ANALYZE_RETRY_DELAY_MS = 650;
 const BULK_ANALYZE_REQUEST_TIMEOUT_MS = 120_000;
+const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 8_000;
 const AI_PARSE_ENDPOINT = '/api/ai/parse-mcqs';
 
 interface AdminMcqPreviewQuestion {
@@ -4285,12 +4286,41 @@ export default function AdminApp() {
       }, authToken);
     };
 
+    const runBackendPreflight = async (): Promise<string> => {
+      const healthUrl = buildApiUrl('/api/health');
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS);
+
+      try {
+        const response = await fetch(healthUrl, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+          },
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          throw new Error(`Backend health check failed (${response.status}).`);
+        }
+
+        return healthUrl;
+      } catch {
+        throw new Error(`Backend offline on ${healthUrl}. Start the backend API server or fix VITE_API_BASE_URL/VITE_DEV_API_ORIGIN.`);
+      } finally {
+        window.clearTimeout(timeout);
+      }
+    };
+
     try {
       setBulkProcessing(true);
-      setBulkProcessingLabel('Analysing MCQs...');
+      setBulkProcessingLabel('Checking backend...');
       setBulkAnalysisReady(false);
+      const healthUrl = await runBackendPreflight();
+      setBulkProcessingLabel('Analysing MCQs...');
       const aiParseUrl = buildApiUrl(AI_PARSE_ENDPOINT);
       console.info('Admin Analyse by AI started', {
+        healthUrl,
         endpoint: aiParseUrl,
         hasFile: Boolean(effectiveFile),
         sourceType: effectiveFile ? 'file' : 'text',
@@ -4394,6 +4424,8 @@ export default function AdminApp() {
         toast.error('Admin session expired. Please log in again to continue AI analysis.');
       } else if (status >= 500) {
         toast.error('AI parser service is temporarily unavailable. Please retry in a moment.');
+      } else if (error instanceof Error && /^Backend offline on\s+/i.test(error.message)) {
+        toast.error(error.message);
       } else if (error instanceof Error && /timeout|network error|failed to fetch|cors|backend url/i.test(error.message)) {
         toast.error(`Could not reach AI parser at ${aiParseUrl}. Ensure backend server is running, URL/port is correct, and CORS allows this origin.`);
       } else {
