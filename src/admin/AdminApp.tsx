@@ -1149,8 +1149,9 @@ const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 8_000;
 const AI_PARSE_ENDPOINT = '/api/ai/parse-mcqs';
 const AI_GENERATE_ENDPOINT = '/api/admin/ai-generate-mcq';
 const AI_GENERATE_TARGET_COUNT = 10;
-const AI_GENERATE_RETRY_COUNT = 2;
-const AI_GENERATE_RETRY_DELAY_MS = 1_500;
+const AI_GENERATE_RETRY_COUNT = 3;
+const AI_GENERATE_RETRY_DELAY_MS = 4_000;
+const AI_GENERATE_REQUEST_TIMEOUT_MS = 300_000;
 
 interface AdminMcqPreviewQuestion {
   id: string;
@@ -4894,7 +4895,7 @@ export default function AdminApp() {
       const payload = await apiRequest<AiGeneratedMcqResponse>(AI_GENERATE_ENDPOINT, {
         method: 'POST',
         body: formData,
-        timeoutMs: 240_000,
+        timeoutMs: AI_GENERATE_REQUEST_TIMEOUT_MS,
         retryCount: AI_GENERATE_RETRY_COUNT,
         retryDelayMs: AI_GENERATE_RETRY_DELAY_MS,
         retryOnStatuses: [408, 425, 429, 500, 502, 503, 504],
