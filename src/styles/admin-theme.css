@@ -618,6 +618,10 @@
   scrollbar-color: rgba(14, 165, 233, 0.45) transparent;
 }
 
+.admin-shell .admin-mobile-sidebar-toggle {
+  display: none;
+}
+
 @media (max-width: 1279px) {
   .admin-shell .admin-content {
     padding-bottom: 1rem;
@@ -712,6 +716,14 @@
 }
 
 @media (max-width: 768px) {
+  .admin-shell .admin-mobile-sidebar-toggle {
+    display: inline-flex;
+    position: fixed;
+    top: max(0.75rem, env(safe-area-inset-top, 0px));
+    left: max(0.75rem, env(safe-area-inset-left, 0px));
+    z-index: 60;
+  }
+
   .admin-shell .admin-main [data-slot='input'],
   .admin-shell .admin-main [data-slot='textarea'],
   .admin-shell .admin-main [data-slot='select-trigger'],

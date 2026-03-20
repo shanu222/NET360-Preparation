@@ -5222,12 +5222,24 @@ export default function AdminApp() {
     <div className="admin-shell min-h-screen bg-gradient-to-br from-slate-100 via-cyan-50 to-indigo-100 text-slate-900 transition-colors dark:from-[#060b1b] dark:via-[#1b1642] dark:to-[#062a33] dark:text-slate-100">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_16%_18%,rgba(56,189,248,0.16),transparent_40%),radial-gradient(circle_at_80%_10%,rgba(99,102,241,0.18),transparent_35%),radial-gradient(circle_at_78%_80%,rgba(20,184,166,0.14),transparent_40%)] dark:bg-[radial-gradient(circle_at_15%_20%,rgba(56,189,248,0.18),transparent_38%),radial-gradient(circle_at_80%_10%,rgba(168,85,247,0.26),transparent_36%),radial-gradient(circle_at_75%_78%,rgba(45,212,191,0.22),transparent_42%)]" />
 
+      <button
+        type="button"
+        onClick={toggleSidebar}
+        className="admin-mobile-sidebar-toggle inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300/75 bg-white/90 text-slate-700 shadow-lg backdrop-blur-md transition hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 dark:border-white/20 dark:bg-slate-900/80 dark:text-slate-100 dark:hover:bg-slate-900"
+        aria-label={isMobileSidebarOpen ? 'Close sidebar' : 'Open sidebar'}
+        aria-controls="admin-sidebar"
+        aria-expanded={isMobileSidebarOpen}
+      >
+        {isMobileSidebarOpen ? <X className="h-4.5 w-4.5" /> : <PanelLeftOpen className="h-4.5 w-4.5" />}
+      </button>
+
       <div
         className={`fixed inset-0 z-30 bg-slate-900/45 backdrop-blur-sm transition-opacity duration-300 lg:hidden ${isMobileSidebarOpen ? 'pointer-events-auto opacity-100' : 'pointer-events-none opacity-0'}`}
         onClick={() => setIsMobileSidebarOpen(false)}
       />
 
       <aside
+        id="admin-sidebar"
         className={`admin-sidebar fixed inset-y-0 left-0 z-40 flex flex-col border-r border-slate-300/70 bg-white/80 px-3 py-4 shadow-[0_16px_45px_rgba(15,23,42,0.15)] backdrop-blur-xl transition-all duration-300 ease-out dark:border-white/10 dark:bg-slate-950/60 dark:shadow-[0_20px_45px_rgba(3,8,30,0.55)] ${isSidebarExpanded ? 'w-72' : 'w-20'} ${isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}
       >
         <div className={`mb-5 flex items-center ${isSidebarExpanded ? 'justify-between' : 'justify-center'}`}>
@@ -5241,15 +5253,10 @@ export default function AdminApp() {
           <button
             type="button"
             onClick={toggleSidebar}
-            className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 transition hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20"
+            className="hidden h-10 w-10 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 transition hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20 lg:inline-flex"
             aria-label={isSidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
           >
-            <span className="hidden lg:inline-flex">
-              {isSidebarExpanded ? <PanelLeftClose className="h-4.5 w-4.5" /> : <PanelLeftOpen className="h-4.5 w-4.5" />}
-            </span>
-            <span className="inline-flex lg:hidden">
-              <X className="h-4.5 w-4.5" />
-            </span>
+            {isSidebarExpanded ? <PanelLeftClose className="h-4.5 w-4.5" /> : <PanelLeftOpen className="h-4.5 w-4.5" />}
           </button>
         </div>
 
