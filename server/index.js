@@ -11921,6 +11921,13 @@ app.post('/api/ai/parse-mcqs', authMiddleware, requireAdmin, aiParseUpload.singl
   }
 });
 
+app.get('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, (_req, res) => {
+  res.setHeader('Allow', 'POST');
+  res.status(405).json({
+    error: 'Method not allowed for /api/admin/ai-generate-mcq. Use POST with JSON body (text mode) or multipart/form-data (file mode).',
+  });
+});
+
 app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
   try {
     const sourceTypeRaw = String(req.body?.sourceType || '').trim().toLowerCase();

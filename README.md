@@ -69,7 +69,8 @@ Create environment variables for backend service:
 
 Frontend environment variable:
 
-- `VITE_API_BASE_URL` = full backend URL in production, for example `https://net360-api.onrender.com`
+- `VITE_API_URL` = preferred full backend URL in production, for example `https://net360-preparation-production-62d2.up.railway.app`
+- `VITE_API_BASE_URL` = backward-compatible alias for backend URL
 - `VITE_MOBILE_API_BASE_URL` = optional native override for Android/iOS builds
 - `VITE_DEV_API_ORIGIN` = optional local backend origin override for browser dev mode, default `http://localhost:4000`
 - `VITE_DISABLE_LOCAL_API_FALLBACK` = set `true` for production mobile builds to require live backend
@@ -95,22 +96,22 @@ Deploy as two Render services:
 If admin/client requests fail with network errors in production:
 
 1. Verify frontend base URL variables
-- `VITE_API_BASE_URL` must point to API service (for example `https://net360-api.onrender.com`)
+- `VITE_API_URL` (or `VITE_API_BASE_URL`) must point to API service (for example `https://net360-preparation-production-62d2.up.railway.app`)
 - `VITE_MOBILE_API_BASE_URL` should point to the same API service for native builds
 - Set `VITE_DISABLE_LOCAL_API_FALLBACK=true` in production to avoid silent local fallback
 
 2. Verify backend CORS variables
-- Set `CORS_ALLOWED_ORIGINS` to comma-separated frontend origins (for example `https://net360-preparation.onrender.com,https://net360-admin.onrender.com`)
+- Set `CORS_ALLOWED_ORIGINS` to comma-separated frontend origins (for example `https://net360-preparation-production.up.railway.app,https://net360-admin-production.up.railway.app`)
 - Optional aliases supported by backend: `FRONTEND_URL`, `FRONTEND_ORIGIN`, `WEB_ORIGIN`
 
 3. Verify API routes and health
 - Admin AI generation route: `POST /api/admin/ai-generate-mcq`
 - Health route: `GET /api/health` (must return JSON)
 
-4. Render cold-start behavior (free tier)
+4. Free-tier sleep/wake behavior
 - First request can take longer while backend wakes up
 - Frontend includes retry/backoff for transient timeouts and `5xx` responses
-- If cold starts are frequent, consider an always-on plan for API service
+- If wake-up delays are frequent, consider an always-on plan for API service
 
 ## New Production Features Added
 

@@ -1610,7 +1610,7 @@ async function runBackendPreflightCheck(options?: {
   }
 
   const detail = lastError instanceof Error ? ` ${lastError.message}` : '';
-  throw new Error(`Backend offline on ${healthUrl}. Start the backend API server or fix VITE_API_BASE_URL/VITE_DEV_API_ORIGIN.${detail}`);
+  throw new Error(`Backend offline on ${healthUrl}. Start the backend API server or fix VITE_API_URL/VITE_API_BASE_URL/VITE_DEV_API_ORIGIN.${detail}`);
 }
 
 function parseBulkMcqsAsync(raw: string): Promise<{ parsed: ParsedBulkMcq[]; errors: string[] }> {
@@ -4881,26 +4881,43 @@ export default function AdminApp() {
         retryDelayMs: AI_GENERATE_PREFLIGHT_RETRY_DELAY_MS,
       });
 
-      const formData = new FormData();
-      formData.append('sourceType', aiGenFile ? 'file' : 'text');
-      formData.append('subject', hierarchyContext.subject);
-      formData.append('part', hierarchyContext.part);
-      formData.append('chapter', hierarchyContext.chapter);
-      formData.append('section', hierarchyContext.section);
-      formData.append('topic', hierarchyContext.topic);
-      formData.append('difficulty', aiGenDifficulty);
-      formData.append('instructions', String(aiGenInstructions || '').trim());
+      const baseGeneratePayload = {
+        sourceType: aiGenFile ? 'file' : 'text',
+        subject: hierarchyContext.subject,
+        part: hierarchyContext.part,
+        chapter: hierarchyContext.chapter,
+        section: hierarchyContext.section,
+        topic: hierarchyContext.topic,
+        difficulty: aiGenDifficulty,
+        instructions: String(aiGenInstructions || '').trim(),
+        rawText: hasText ? aiGenSourceText.trim() : '',
+      };
 
-      if (aiGenFile) {
+      const requestBody: FormData | string = (() => {
+        if (!aiGenFile) {
+          // JSON payload keeps text-only generation compatible with express.json middleware.
+          return JSON.stringify(baseGeneratePayload);
+        }
+
+        const formData = new FormData();
+        formData.append('sourceType', baseGeneratePayload.sourceType);
+        formData.append('subject', baseGeneratePayload.subject);
+        formData.append('part', baseGeneratePayload.part);
+        formData.append('chapter', baseGeneratePayload.chapter);
+        formData.append('section', baseGeneratePayload.section);
+        formData.append('topic', baseGeneratePayload.topic);
+        formData.append('difficulty', baseGeneratePayload.difficulty);
+        formData.append('instructions', baseGeneratePayload.instructions);
+        if (baseGeneratePayload.rawText) {
+          formData.append('rawText', baseGeneratePayload.rawText);
+        }
         formData.append('file', aiGenFile);
-      }
-      if (hasText) {
-        formData.append('rawText', aiGenSourceText.trim());
-      }
+        return formData;
+      })();
 
       const payload = await apiRequest<AiGeneratedMcqResponse>(AI_GENERATE_ENDPOINT, {
         method: 'POST',
-        body: formData,
+        body: requestBody,
         timeoutMs: AI_GENERATE_REQUEST_TIMEOUT_MS,
         retryCount: AI_GENERATE_RETRY_COUNT,
         retryDelayMs: AI_GENERATE_RETRY_DELAY_MS,

@@ -1,7 +1,9 @@
 import { localApiRequest, localDownloadReport } from './localApi';
 
 type RuntimeEnv = {
+  VITE_API_URL?: string;
   VITE_API_BASE_URL?: string;
+  REACT_APP_API_URL?: string;
   VITE_MOBILE_API_BASE_URL?: string;
   VITE_DEV_API_ORIGIN?: string;
   VITE_FORCE_LOCAL_API?: string;
@@ -18,8 +20,8 @@ type ApiRequestOptions = RequestInit & {
 };
 
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
-const API_BASE_URL = env.VITE_API_BASE_URL || '';
-const MOBILE_API_BASE_URL = env.VITE_MOBILE_API_BASE_URL || '';
+const API_BASE_URL = env.VITE_API_BASE_URL || env.VITE_API_URL || env.REACT_APP_API_URL || '';
+const MOBILE_API_BASE_URL = env.VITE_MOBILE_API_BASE_URL || API_BASE_URL;
 const DEV_API_ORIGIN = env.VITE_DEV_API_ORIGIN || 'http://localhost:4000';
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
@@ -536,7 +538,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 
   let response: Response;
   let attempt = 0;
-  // Retry transient transport/HTTP failures to absorb Render cold starts.
+  // Retry transient transport/HTTP failures to absorb slow backend wake-ups.
   for (;;) {
     try {
       response = await fetchWithTimeout(resolvedPath, {
