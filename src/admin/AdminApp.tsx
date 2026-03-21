@@ -1152,6 +1152,9 @@ const AI_GENERATE_TARGET_COUNT = 10;
 const AI_GENERATE_RETRY_COUNT = 3;
 const AI_GENERATE_RETRY_DELAY_MS = 4_000;
 const AI_GENERATE_REQUEST_TIMEOUT_MS = 300_000;
+const AI_GENERATE_PREFLIGHT_TIMEOUT_MS = 10_000;
+const AI_GENERATE_PREFLIGHT_ATTEMPTS = 4;
+const AI_GENERATE_PREFLIGHT_RETRY_DELAY_MS = 1_500;
 
 interface AdminMcqPreviewQuestion {
   id: string;
@@ -1564,6 +1567,50 @@ function delayMs(duration: number): Promise<void> {
   return new Promise((resolve) => {
     globalThis.setTimeout(resolve, Math.max(0, duration));
   });
+}
+
+async function runBackendPreflightCheck(options?: {
+  timeoutMs?: number;
+  attempts?: number;
+  retryDelayMs?: number;
+}): Promise<string> {
+  const timeoutMs = Math.max(1_000, Number(options?.timeoutMs || BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS));
+  const attempts = Math.max(1, Math.floor(Number(options?.attempts || 1)));
+  const retryDelayMs = Math.max(250, Number(options?.retryDelayMs || 1_000));
+  const healthUrl = buildApiUrl('/api/health');
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+    try {
+      const response = await fetch(healthUrl, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+          'Cache-Control': 'no-cache',
+        },
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        throw new Error(`Backend health check failed (${response.status}).`);
+      }
+
+      return healthUrl;
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) {
+        await delayMs(retryDelayMs * attempt);
+      }
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  const detail = lastError instanceof Error ? ` ${lastError.message}` : '';
+  throw new Error(`Backend offline on ${healthUrl}. Start the backend API server or fix VITE_API_BASE_URL/VITE_DEV_API_ORIGIN.${detail}`);
 }
 
 function parseBulkMcqsAsync(raw: string): Promise<{ parsed: ParsedBulkMcq[]; errors: string[] }> {
@@ -3028,34 +3075,6 @@ export default function AdminApp() {
           const status = Number((error as { status?: number } | null)?.status || 0);
           const message = error instanceof Error ? error.message : 'Could not load admin data.';
           console.error('Admin data load failed:', error);
-          const shouldTryRefresh = Boolean(currentRefreshToken) && (status === 401 || status === 403);
-
-          if (shouldTryRefresh && currentRefreshToken) {
-            try {
-              const refreshed = await apiRequest<{ token: string; refreshToken: string; user: LoginUser }>('/api/auth/refresh', {
-                method: 'POST',
-                body: JSON.stringify({ refreshToken: currentRefreshToken }),
-              });
-
-              if (refreshed.user?.role !== 'admin') {
-                clearAdminSession();
-                return;
-              }
-
-              setToken(refreshed.token);
-              setRefreshToken(refreshed.refreshToken);
-              localStorage.setItem(TOKEN_KEY, refreshed.token);
-              localStorage.setItem(REFRESH_TOKEN_KEY, refreshed.refreshToken);
-              await loadAdminData(refreshed.token);
-              if (!cancelled) {
-                setAdminLoadError('');
-              }
-              return;
-            } catch {
-              clearAdminSession();
-              return;
-            }
-          }
 
           if (status === 401 || status === 403) {
             clearAdminSession();
@@ -4350,37 +4369,15 @@ export default function AdminApp() {
       }, authToken);
     };
 
-    const runBackendPreflight = async (): Promise<string> => {
-      const healthUrl = buildApiUrl('/api/health');
-      const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS);
-
-      try {
-        const response = await fetch(healthUrl, {
-          method: 'GET',
-          headers: {
-            Accept: 'application/json',
-          },
-          signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          throw new Error(`Backend health check failed (${response.status}).`);
-        }
-
-        return healthUrl;
-      } catch {
-        throw new Error(`Backend offline on ${healthUrl}. Start the backend API server or fix VITE_API_BASE_URL/VITE_DEV_API_ORIGIN.`);
-      } finally {
-        window.clearTimeout(timeout);
-      }
-    };
-
     try {
       setBulkProcessing(true);
       setBulkProcessingLabel('Checking backend...');
       setBulkAnalysisReady(false);
-      const healthUrl = await runBackendPreflight();
+      const healthUrl = await runBackendPreflightCheck({
+        timeoutMs: BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS,
+        attempts: 2,
+        retryDelayMs: 900,
+      });
       setBulkProcessingLabel('Analysing MCQs...');
       const aiParseUrl = buildApiUrl(AI_PARSE_ENDPOINT);
       console.info('Admin Analyse by AI started', {
@@ -4875,6 +4872,12 @@ export default function AdminApp() {
     setAiGenGenerateErrors([]);
 
     try {
+      await runBackendPreflightCheck({
+        timeoutMs: AI_GENERATE_PREFLIGHT_TIMEOUT_MS,
+        attempts: AI_GENERATE_PREFLIGHT_ATTEMPTS,
+        retryDelayMs: AI_GENERATE_PREFLIGHT_RETRY_DELAY_MS,
+      });
+
       const formData = new FormData();
       formData.append('sourceType', aiGenFile ? 'file' : 'text');
       formData.append('subject', hierarchyContext.subject);

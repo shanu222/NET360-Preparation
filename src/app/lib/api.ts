@@ -32,6 +32,10 @@ const DEFAULT_API_RETRY_DELAY_MS = 1_250;
 const MAX_API_RETRY_COUNT = 3;
 
 const DEFAULT_RETRIABLE_STATUS_CODES = new Set([408, 425, 429, 500, 502, 503, 504]);
+const REFRESH_FAILURE_BACKOFF_MS = 15_000;
+
+let refreshInFlight: Promise<string | null> | null = null;
+let refreshBlockedUntil = 0;
 
 function isNativeCapacitorRuntime() {
   const runtime = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
@@ -253,6 +257,17 @@ function readStoredRefreshCandidates() {
   return candidates;
 }
 
+function clearStoredTokenPair(refreshKey: string) {
+  if (refreshKey === ADMIN_REFRESH_TOKEN_STORAGE_KEY) {
+    localStorage.removeItem(ADMIN_REFRESH_TOKEN_STORAGE_KEY);
+    localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+    return;
+  }
+
+  localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+  localStorage.removeItem(TOKEN_STORAGE_KEY);
+}
+
 function isPremiumSensitivePath(path: string) {
   return path.startsWith('/api/subscriptions/') || path.startsWith('/api/ai/');
 }
@@ -384,49 +399,75 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 
   const tryRefreshAccessToken = async () => {
     if (path.startsWith('/api/auth/refresh')) return null;
-    const refreshCandidates = readStoredRefreshCandidates();
-    if (!refreshCandidates.length) return null;
 
-    for (const candidate of refreshCandidates) {
-      try {
-        const response = await fetchWithTimeout(resolveApiPath('/api/auth/refresh'), {
-          method: 'POST',
-          headers: new Headers({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ refreshToken: candidate.value }),
-        }, Math.min(timeoutMs, 20_000));
-        if (!response.ok) continue;
-
-        let payload: { token?: string; refreshToken?: string };
-        try {
-          payload = await response.json() as { token?: string; refreshToken?: string };
-        } catch {
-          const bodyText = await response.text().catch(() => '');
-          if (isLikelyHtmlResponse(response, bodyText)) {
-            throw buildHtmlInsteadOfJsonError('/api/auth/refresh');
-          }
-          continue;
-        }
-        if (!payload?.token) continue;
-
-        if (candidate.key === ADMIN_REFRESH_TOKEN_STORAGE_KEY) {
-          localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, payload.token);
-          if (payload.refreshToken) {
-            localStorage.setItem(ADMIN_REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
-          }
-        } else {
-          localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
-          if (payload.refreshToken) {
-            localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
-          }
-        }
-
-        return payload.token;
-      } catch {
-        // Try next refresh token candidate.
-      }
+    if (Date.now() < refreshBlockedUntil) {
+      return null;
     }
 
-    return null;
+    if (refreshInFlight) {
+      return refreshInFlight;
+    }
+
+    refreshInFlight = (async () => {
+      const refreshCandidates = readStoredRefreshCandidates();
+      if (!refreshCandidates.length) return null;
+
+      for (const candidate of refreshCandidates) {
+        try {
+          const response = await fetchWithTimeout(resolveApiPath('/api/auth/refresh'), {
+            method: 'POST',
+            headers: new Headers({ 'Content-Type': 'application/json' }),
+            body: JSON.stringify({ refreshToken: candidate.value }),
+          }, Math.min(timeoutMs, 20_000));
+
+          if (!response.ok) {
+            if (response.status === 401 || response.status === 403) {
+              // Remove revoked/expired refresh tokens to avoid repeating known-bad attempts.
+              clearStoredTokenPair(candidate.key);
+            }
+            continue;
+          }
+
+          let payload: { token?: string; refreshToken?: string };
+          try {
+            payload = await response.json() as { token?: string; refreshToken?: string };
+          } catch {
+            const bodyText = await response.text().catch(() => '');
+            if (isLikelyHtmlResponse(response, bodyText)) {
+              throw buildHtmlInsteadOfJsonError('/api/auth/refresh');
+            }
+            continue;
+          }
+          if (!payload?.token) continue;
+
+          if (candidate.key === ADMIN_REFRESH_TOKEN_STORAGE_KEY) {
+            localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, payload.token);
+            if (payload.refreshToken) {
+              localStorage.setItem(ADMIN_REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
+            }
+          } else {
+            localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
+            if (payload.refreshToken) {
+              localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
+            }
+          }
+
+          refreshBlockedUntil = 0;
+          return payload.token;
+        } catch {
+          // Try next refresh token candidate.
+        }
+      }
+
+      refreshBlockedUntil = Date.now() + REFRESH_FAILURE_BACKOFF_MS;
+      return null;
+    })();
+
+    try {
+      return await refreshInFlight;
+    } finally {
+      refreshInFlight = null;
+    }
   };
 
   const initialToken = token || readStoredAccessToken();
