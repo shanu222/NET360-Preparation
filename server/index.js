@@ -107,7 +107,7 @@ function clearAuthCookies(res) {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT || process.env.API_PORT || 4000);
+const PORT = Number(process.env.PORT || process.env.API_PORT || 5000);
 const MONGODB_URI = process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO_URI || '';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || `${JWT_SECRET}-refresh`;
@@ -425,6 +425,10 @@ app.use((req, res, next) => {
   req.params = sanitizePayload(req.params);
   res.setTimeout(REQUEST_TIMEOUT_MS);
   next();
+});
+
+app.get('/', (_req, res) => {
+  res.send('Backend is running successfully');
 });
 
 app.use(

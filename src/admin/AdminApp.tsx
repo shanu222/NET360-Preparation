@@ -1157,10 +1157,14 @@ const BULK_ANALYZE_RETRY_DELAY_MS = 650;
 const BULK_ANALYZE_REQUEST_TIMEOUT_MS = 120_000;
 const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 8_000;
 const AI_PARSE_ENDPOINT = '/api/ai/parse-mcqs';
-const AI_GENERATE_ENDPOINT = '/generate-mcqs';
+const AI_GENERATE_RAILWAY_URL = 'https://net360-preparation-production-62d2.up.railway.app/generate-mcqs';
+const AI_GENERATE_ENDPOINT = String(
+  ((import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_AI_GENERATE_URL || AI_GENERATE_RAILWAY_URL),
+).trim() || AI_GENERATE_RAILWAY_URL;
+const AI_GENERATE_HEALTH_ENDPOINT = AI_GENERATE_ENDPOINT.replace(/\/generate-mcqs\/?$/i, '/api/health');
 const AI_GENERATE_TARGET_COUNT = 5;
 const AI_GENERATE_RETRY_COUNT = 3;
-const AI_GENERATE_RETRY_DELAY_MS = 4_000;
+const AI_GENERATE_RETRY_DELAY_MS = 2_500;
 const AI_GENERATE_REQUEST_TIMEOUT_MS = 300_000;
 const AI_GENERATE_PREFLIGHT_TIMEOUT_MS = 10_000;
 const AI_GENERATE_PREFLIGHT_ATTEMPTS = 4;
@@ -1587,35 +1591,42 @@ async function runBackendPreflightCheck(options?: {
   const timeoutMs = Math.max(1_000, Number(options?.timeoutMs || BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS));
   const attempts = Math.max(1, Math.floor(Number(options?.attempts || 1)));
   const retryDelayMs = Math.max(250, Number(options?.retryDelayMs || 1_000));
-  const healthUrl = buildApiUrl('/api/health');
+  const healthCandidates = Array.from(new Set([
+    String(buildApiUrl('/api/health') || '').trim(),
+    String(AI_GENERATE_HEALTH_ENDPOINT || '').trim(),
+  ].filter(Boolean)));
+  const healthUrl = healthCandidates[0] || '/api/health';
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const controller = new AbortController();
-    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    for (const candidateUrl of healthCandidates) {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
-    try {
-      const response = await fetch(healthUrl, {
-        method: 'GET',
-        headers: {
-          Accept: 'application/json',
-          'Cache-Control': 'no-cache',
-        },
-        signal: controller.signal,
-      });
+      try {
+        const response = await fetch(candidateUrl, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+            'Cache-Control': 'no-cache',
+          },
+          signal: controller.signal,
+        });
 
-      if (!response.ok) {
-        throw new Error(`Backend health check failed (${response.status}).`);
+        if (!response.ok) {
+          throw new Error(`Backend health check failed (${response.status}).`);
+        }
+
+        return candidateUrl;
+      } catch (error) {
+        lastError = error;
+      } finally {
+        window.clearTimeout(timeout);
       }
+    }
 
-      return healthUrl;
-    } catch (error) {
-      lastError = error;
-      if (attempt < attempts) {
-        await delayMs(retryDelayMs * attempt);
-      }
-    } finally {
-      window.clearTimeout(timeout);
+    if (attempt < attempts) {
+      await delayMs(retryDelayMs * attempt);
     }
   }
 
