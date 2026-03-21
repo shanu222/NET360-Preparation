@@ -8404,190 +8404,185 @@ export default function AdminApp() {
                         ) : null}
 
                         {uploadMode === 'ai-generated' ? (
-                          <div className="space-y-3 rounded-lg border border-indigo-200 bg-white/70 p-3 dark:border-indigo-300/30 dark:bg-white/5">
-                            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
-                              <div className="space-y-1.5">
-                                <Label>Subject</Label>
-                                <div className="grid gap-2 sm:grid-cols-3">
-                                  {aiPromptSubjectOptions.map((item) => {
-                                    const selected = aiGenSubject === item.value;
-                                    return (
-                                      <label
-                                        key={`ai-subject-radio-${item.value}`}
-                                        className={`flex cursor-pointer items-center justify-between rounded-md border px-3 py-2 text-sm transition ${selected ? 'border-indigo-500 bg-indigo-50 text-indigo-900 dark:border-indigo-300 dark:bg-indigo-500/15 dark:text-indigo-100' : 'border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-950/50'}`}
-                                      >
-                                        <span className="font-medium">{item.label}</span>
-                                        <input
-                                          type="radio"
-                                          name="ai-gen-subject"
-                                          checked={selected}
-                                          onChange={() => {
-                                            setAiGenSubject(item.value);
-                                            setAiGenPart('');
-                                            setAiGenChapter('');
-                                            setAiGenChapterKey('');
-                                            setAiGenSection('');
-                                            setAiGenTopic('');
-                                          }}
-                                          className="h-4 w-4 accent-indigo-600"
-                                        />
-                                      </label>
-                                    );
-                                  })}
-                                </div>
-                                <p className="text-xs text-muted-foreground">
-                                  {aiPromptTemplateMeta.status === 'loading' ? 'Loading subject prompt template...' : ''}
-                                  {aiPromptTemplateMeta.status === 'loaded' ? `Prompt loaded: ${aiPromptTemplateMeta.fileName}` : ''}
-                                  {aiPromptTemplateMeta.status === 'error' ? `Prompt load failed: ${aiPromptTemplateMeta.message}` : ''}
-                                </p>
-                              </div>
-
-                              {aiGenSubject && !isAiGenFlatTopicSubject && isAiGenPartSelectionSubject ? (
+                          <div className="mx-auto w-full max-w-5xl rounded-2xl border border-slate-200 bg-white p-5 shadow-sm md:p-6 dark:border-slate-700 dark:bg-slate-950/40">
+                            <div className="space-y-4">
+                              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                                 <div className="space-y-1.5">
-                                  <Label>Part</Label>
+                                  <Label>Subject</Label>
                                   <Select
-                                    value={aiGenPart}
+                                    value={aiGenSubject}
                                     onValueChange={(value) => {
-                                      setAiGenPart(value);
+                                      setAiGenSubject(value);
+                                      setAiGenPart('');
                                       setAiGenChapter('');
                                       setAiGenChapterKey('');
                                       setAiGenSection('');
                                       setAiGenTopic('');
                                     }}
                                   >
-                                    <SelectTrigger><SelectValue placeholder="Select part" /></SelectTrigger>
+                                    <SelectTrigger className="rounded-lg focus:ring-2 focus:ring-blue-500 focus:ring-offset-0">
+                                      <SelectValue placeholder="Select Subject" />
+                                    </SelectTrigger>
                                     <SelectContent>
-                                      {partOptions.map((item) => (
-                                        <SelectItem key={`ai-part-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                                      {aiPromptSubjectOptions.map((item) => (
+                                        <SelectItem key={`ai-subject-${item.value}`} value={item.value}>{item.label}</SelectItem>
                                       ))}
                                     </SelectContent>
                                   </Select>
+                                  <p className="text-xs text-muted-foreground">
+                                    {aiPromptTemplateMeta.status === 'loading' ? 'Loading subject prompt template...' : ''}
+                                    {aiPromptTemplateMeta.status === 'loaded' ? `Prompt loaded: ${aiPromptTemplateMeta.fileName}` : ''}
+                                    {aiPromptTemplateMeta.status === 'error' ? `Prompt load failed: ${aiPromptTemplateMeta.message}` : ''}
+                                  </p>
                                 </div>
-                              ) : null}
 
-                              {aiGenSubject && !isAiGenFlatTopicSubject ? (
+                                {aiGenSubject && !isAiGenFlatTopicSubject && isAiGenPartSelectionSubject ? (
+                                  <div className="space-y-1.5">
+                                    <Label>Part</Label>
+                                    <Select
+                                      value={aiGenPart}
+                                      onValueChange={(value) => {
+                                        setAiGenPart(value);
+                                        setAiGenChapter('');
+                                        setAiGenChapterKey('');
+                                        setAiGenSection('');
+                                        setAiGenTopic('');
+                                      }}
+                                    >
+                                      <SelectTrigger className="rounded-lg focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"><SelectValue placeholder="Select Part" /></SelectTrigger>
+                                      <SelectContent>
+                                        {partOptions.map((item) => (
+                                          <SelectItem key={`ai-part-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                ) : null}
+
+                                {aiGenSubject && !isAiGenFlatTopicSubject ? (
+                                  <div className="space-y-1.5">
+                                    <Label>Chapter</Label>
+                                    <Select
+                                      value={aiGenChapterKey}
+                                      disabled={!aiGenSubject || (isAiGenPartSelectionSubject && !aiGenPart)}
+                                      onValueChange={(value) => {
+                                        setAiGenChapterKey(value);
+                                        const selectedChapter = aiGenChapterOptions.find((item) => item.value === value);
+                                        setAiGenPart(isAiGenPartSelectionSubject ? (selectedChapter?.part || aiGenPart || '') : '');
+                                        setAiGenChapter(selectedChapter?.chapterTitle || '');
+                                        setAiGenSection('');
+                                        setAiGenTopic('');
+                                      }}
+                                    >
+                                      <SelectTrigger className="rounded-lg focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"><SelectValue placeholder="Select chapter" /></SelectTrigger>
+                                      <SelectContent>
+                                        {aiGenChapterOptions.map((item) => (
+                                          <SelectItem key={`ai-chapter-${item.value}`} value={item.value}>{item.label}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                ) : null}
+
+                                {aiGenSubject && (isAiGenFlatTopicSubject || aiGenChapter) ? (
+                                  <div className="space-y-1.5">
+                                    <Label>Section / Topic</Label>
+                                    <Select
+                                      value={aiGenSection}
+                                      disabled={isAiGenFlatTopicSubject ? !aiGenSubject : !aiGenChapterKey}
+                                      onValueChange={(value) => {
+                                        setAiGenSection(value);
+                                        setAiGenTopic(value);
+                                      }}
+                                    >
+                                      <SelectTrigger className="rounded-lg focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"><SelectValue placeholder="Select section/topic" /></SelectTrigger>
+                                      <SelectContent>
+                                        {aiGenSectionOptions.map((item) => (
+                                          <SelectItem key={`ai-section-${item}`} value={item}>{item}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                ) : null}
+                              </div>
+
+                              <div className="grid gap-4 md:grid-cols-2">
                                 <div className="space-y-1.5">
-                                  <Label>Chapter</Label>
-                                  <Select
-                                    value={aiGenChapterKey}
-                                    disabled={!aiGenSubject || (isAiGenPartSelectionSubject && !aiGenPart)}
-                                    onValueChange={(value) => {
-                                      setAiGenChapterKey(value);
-                                      const selectedChapter = aiGenChapterOptions.find((item) => item.value === value);
-                                      setAiGenPart(isAiGenPartSelectionSubject ? (selectedChapter?.part || aiGenPart || '') : '');
-                                      setAiGenChapter(selectedChapter?.chapterTitle || '');
-                                      setAiGenSection('');
-                                      setAiGenTopic('');
-                                    }}
-                                  >
-                                    <SelectTrigger><SelectValue placeholder="Select chapter" /></SelectTrigger>
-                                    <SelectContent>
-                                      {aiGenChapterOptions.map((item) => (
-                                        <SelectItem key={`ai-chapter-${item.value}`} value={item.value}>{item.label}</SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
+                                  <Label>Document Upload (PDF, DOCX, TXT, JPG, PNG)</Label>
+                                  <Input
+                                    type="file"
+                                    accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/jpeg,image/png"
+                                    onChange={(e) => setAiGenFile(e.target.files?.[0] || null)}
+                                    className="rounded-lg focus-visible:ring-2 focus-visible:ring-blue-500"
+                                  />
+                                  {aiGenFile ? <p className="text-xs text-muted-foreground">Selected: {aiGenFile.name}</p> : null}
                                 </div>
-                              ) : null}
 
-                              {aiGenSubject && (isAiGenFlatTopicSubject || aiGenChapter) ? (
                                 <div className="space-y-1.5">
-                                  <Label>Section / Topic</Label>
-                                  <Select
-                                    value={aiGenSection}
-                                    disabled={isAiGenFlatTopicSubject ? !aiGenSubject : !aiGenChapterKey}
-                                    onValueChange={(value) => {
-                                      setAiGenSection(value);
-                                      setAiGenTopic(value);
-                                    }}
-                                  >
-                                    <SelectTrigger><SelectValue placeholder="Select section/topic" /></SelectTrigger>
+                                  <Label>Difficulty</Label>
+                                  <Select value={aiGenDifficulty} onValueChange={(value: 'Easy' | 'Medium' | 'Hard') => setAiGenDifficulty(value)}>
+                                    <SelectTrigger className="rounded-lg focus:ring-2 focus:ring-blue-500 focus:ring-offset-0"><SelectValue /></SelectTrigger>
                                     <SelectContent>
-                                      {aiGenSectionOptions.map((item) => (
-                                        <SelectItem key={`ai-section-${item}`} value={item}>{item}</SelectItem>
-                                      ))}
+                                      <SelectItem value="Easy">Easy</SelectItem>
+                                      <SelectItem value="Medium">Medium</SelectItem>
+                                      <SelectItem value="Hard">Hard</SelectItem>
                                     </SelectContent>
                                   </Select>
                                 </div>
-                              ) : null}
-                            </div>
+                              </div>
 
-                            <div className="grid gap-3 md:grid-cols-2">
                               <div className="space-y-1.5">
-                                <Label>Document Upload (PDF, DOCX, TXT, JPG, PNG)</Label>
-                                <Input
-                                  type="file"
-                                  accept=".pdf,.docx,.txt,.jpg,.jpeg,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,image/jpeg,image/png"
-                                  onChange={(e) => setAiGenFile(e.target.files?.[0] || null)}
+                                <Label>Instructions</Label>
+                                <Textarea
+                                  value={aiGenInstructions}
+                                  onChange={(e) => setAiGenInstructions(e.target.value)}
+                                  placeholder="Optional: provide generation instructions for this MCQ"
+                                  className="min-h-[90px] rounded-lg focus-visible:ring-2 focus-visible:ring-blue-500"
                                 />
-                                {aiGenFile ? <p className="text-xs text-muted-foreground">Selected: {aiGenFile.name}</p> : null}
                               </div>
 
                               <div className="space-y-1.5">
-                                <Label>Difficulty</Label>
-                                <Select value={aiGenDifficulty} onValueChange={(value: 'Easy' | 'Medium' | 'Hard') => setAiGenDifficulty(value)}>
-                                  <SelectTrigger><SelectValue /></SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="Easy">Easy</SelectItem>
-                                    <SelectItem value="Medium">Medium</SelectItem>
-                                    <SelectItem value="Hard">Hard</SelectItem>
-                                  </SelectContent>
-                                </Select>
+                                <Label>Source Text (optional)</Label>
+                                <Textarea
+                                  value={aiGenSourceText}
+                                  onChange={(e) => setAiGenSourceText(e.target.value)}
+                                  placeholder="Optional: paste source text instead of uploading a file"
+                                  className="min-h-[110px] rounded-lg focus-visible:ring-2 focus-visible:ring-blue-500"
+                                />
                               </div>
-                            </div>
 
-                            <div className="space-y-1.5">
-                              <Label>Instructions</Label>
-                              <Textarea
-                                value={aiGenInstructions}
-                                onChange={(e) => setAiGenInstructions(e.target.value)}
-                                placeholder="Optional: provide generation instructions for this MCQ"
-                                className="min-h-[90px]"
-                              />
-                            </div>
-
-                            <div className="space-y-1.5">
-                              <Label>Source Text (optional)</Label>
-                              <Textarea
-                                value={aiGenSourceText}
-                                onChange={(e) => setAiGenSourceText(e.target.value)}
-                                placeholder="Optional: paste source text instead of uploading a file"
-                                className="min-h-[110px]"
-                              />
-                            </div>
-
-                            <div className="flex flex-wrap gap-2">
-                              <Button type="button" onClick={() => void generateAiMcq()} disabled={aiGenGenerating || aiGenUploading}>
-                                {aiGenGenerating ? (
-                                  <>
-                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                    Generating...
-                                  </>
-                                ) : 'Generate MCQs'}
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="outline"
-                                onClick={() => {
-                                  setAiGenGenerated(null);
-                                  setAiGenGenerateErrors([]);
-                                }}
-                                disabled={aiGenGenerating || aiGenUploading}
-                              >
-                                Clear Generated
-                              </Button>
-                            </div>
-
-                            {aiGenGenerateErrors.length ? (
-                              <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-200">
-                                {aiGenGenerateErrors.map((error, idx) => (
-                                  <p key={`ai-gen-error-${idx}`}>• {error}</p>
-                                ))}
+                              <div className="flex flex-wrap gap-2 pt-1">
+                                <Button type="button" onClick={() => void generateAiMcq()} disabled={aiGenGenerating || aiGenUploading}>
+                                  {aiGenGenerating ? (
+                                    <>
+                                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                      Generating...
+                                    </>
+                                  ) : 'Generate MCQs'}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setAiGenGenerated(null);
+                                    setAiGenGenerateErrors([]);
+                                  }}
+                                  disabled={aiGenGenerating || aiGenUploading}
+                                >
+                                  Clear Generated
+                                </Button>
                               </div>
-                            ) : null}
 
-                            {aiGenGenerated ? (
-                              <div className="space-y-3 rounded-lg border border-indigo-200/80 bg-indigo-50/30 p-3 dark:border-indigo-300/30 dark:bg-indigo-500/10">
+                              {aiGenGenerateErrors.length ? (
+                                <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-500/50 dark:bg-amber-500/10 dark:text-amber-200">
+                                  {aiGenGenerateErrors.map((error, idx) => (
+                                    <p key={`ai-gen-error-${idx}`}>• {error}</p>
+                                  ))}
+                                </div>
+                              ) : null}
+
+                              {aiGenGenerated ? (
+                                <div className="space-y-3 rounded-lg border border-indigo-200/80 bg-indigo-50/30 p-3 dark:border-indigo-300/30 dark:bg-indigo-500/10">
                                 <MathEditorField
                                   id="ai-generated-question"
                                   label="Generated Question"
@@ -8664,8 +8659,9 @@ export default function AdminApp() {
                                     ) : 'Upload MCQ'}
                                   </Button>
                                 </div>
-                              </div>
-                            ) : null}
+                                </div>
+                              ) : null}
+                            </div>
                           </div>
                         ) : null}
                       </div>
