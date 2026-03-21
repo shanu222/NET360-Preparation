@@ -431,6 +431,11 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use((req, _res, next) => {
+  console.log(`[request] ${String(req.method || '').toUpperCase()} ${String(req.originalUrl || req.url || '').trim()}`);
+  next();
+});
+
 app.get('/', (_req, res) => {
   res.send('Backend is running successfully');
 });
@@ -5696,6 +5701,10 @@ app.get('/api/health', (_req, res) => {
     status: 'ok',
     message: 'Backend is live',
   });
+});
+
+app.get('/api/test', (_req, res) => {
+  res.json({ message: 'API working fine' });
 });
 
 app.get('/api/admin/system-status', authMiddleware, requireAdmin, async (_req, res) => {
@@ -12365,13 +12374,17 @@ async function handleGenerateMcqs(req, res) {
 }
 
 app.post('/generate-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
+  console.log('[mcq] API HIT (/generate-mcqs)');
   console.log('Request received:', req.body);
   await handleGenerateMcqs(req, res);
+  console.log(`[mcq] Request completed with status ${res.statusCode}`);
 });
 
 app.post('/api/generate-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
+  console.log('[mcq] API HIT (/api/generate-mcqs)');
   console.log('Request received:', req.body);
   await handleGenerateMcqs(req, res);
+  console.log(`[mcq] Request completed with status ${res.statusCode}`);
 });
 
 app.post('/api/admin/generate-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
@@ -12405,6 +12418,8 @@ app.post('/api/admin/mcqs/parse', authMiddleware, requireAdmin, async (req, res)
 });
 
 app.post('/api/analyze', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
+  console.log('[analyze] API HIT (/api/analyze)');
+  console.log('[analyze] Body:', req.body);
   const sourceType = String(req.body?.sourceType || 'text').trim().toLowerCase();
 
   try {
