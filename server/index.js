@@ -107,7 +107,7 @@ function clearAuthCookies(res) {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = Number(process.env.PORT || process.env.API_PORT || 5000);
+const PORT = process.env.PORT || 4000;
 const MONGODB_URI = process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO_URI || '';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || `${JWT_SECRET}-refresh`;
@@ -140,6 +140,8 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
 const CORS_ALLOWED_ORIGINS = Array.from(new Set([
+  'https://net360-admin-production.up.railway.app',
+  'https://net360-preparation-production.up.railway.app',
   ...parseOriginList(process.env.CORS_ALLOWED_ORIGINS || ''),
   ...parseOriginList(process.env.FRONTEND_URL || ''),
   ...parseOriginList(process.env.FRONTEND_ORIGIN || ''),
@@ -417,7 +419,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
-app.use(express.json({ limit: `${MAX_JSON_BODY_MB}mb` }));
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: false, limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use((req, res, next) => {
   req.body = sanitizePayload(req.body);
@@ -5687,20 +5689,10 @@ async function refreshUserProgress(userId) {
   });
 }
 
-app.get('/api/health', async (req, res) => {
-  const configuredCorsOrigins = CORS_ALLOWED_ORIGINS.length;
+app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
-    service: 'net360-api',
-    env: NODE_ENV,
-    mongo: 'connected',
-    uptimeSeconds: Math.floor(process.uptime()),
-    now: new Date().toISOString(),
-    requestTimeoutMs: REQUEST_TIMEOUT_MS,
-    cors: {
-      configuredOrigins: configuredCorsOrigins,
-      allowAll: IS_PRODUCTION && configuredCorsOrigins === 0,
-    },
+    message: 'Backend is live',
   });
 });
 
@@ -12371,6 +12363,7 @@ async function handleGenerateMcqs(req, res) {
 }
 
 app.post('/generate-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
+  console.log('Request received:', req.body);
   await handleGenerateMcqs(req, res);
 });
 
@@ -12958,8 +12951,8 @@ process.on('uncaughtException', (error) => {
 
 async function bootstrap() {
   validateCriticalConfiguration();
-  const server = app.listen(PORT, () => {
-    console.log(`NET360 API running on http://localhost:${PORT}`);
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running on port ${PORT}`);
   });
 
   server.headersTimeout = clamp(REQUEST_TIMEOUT_MS + 5_000, 10_000, 180_000);
