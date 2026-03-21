@@ -331,7 +331,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <h4 className="text-base text-indigo-950">This Week Performance</h4>
               <span className="rounded-full bg-indigo-50 px-2 py-1 text-xs text-indigo-700">7D</span>
             </div>
-            <div className="overflow-x-auto">
+            <div className="net360-horizontal-scroll net360-swipe-row" aria-label="Weekly performance scroll">
               <div className="grid min-w-[300px] sm:min-w-[360px] grid-cols-7 items-end gap-2 rounded-xl bg-slate-50 p-3">
                 {weekChart.map((point) => (
                   <div key={point.label} className="text-center">

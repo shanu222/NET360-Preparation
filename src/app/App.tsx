@@ -279,13 +279,22 @@ export default function App() {
 
     const cleanupFns: Array<() => void> = [];
 
+    const updateRowScrollState = (row: HTMLElement) => {
+      const maxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
+      const canScroll = maxScrollLeft > 1;
+      const current = Math.max(0, Math.min(row.scrollLeft, maxScrollLeft));
+      row.dataset.scrollable = canScroll ? 'true' : 'false';
+      row.dataset.scrollLeftActive = canScroll && current > 2 ? 'true' : 'false';
+      row.dataset.scrollRightActive = canScroll && current < maxScrollLeft - 2 ? 'true' : 'false';
+    };
+
     const syncRowLayout = () => {
       rows.forEach((row) => {
         const maxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
         if (row.scrollLeft > maxScrollLeft) {
           row.scrollLeft = maxScrollLeft;
         }
-        row.dataset.scrollable = maxScrollLeft > 1 ? 'true' : 'false';
+        updateRowScrollState(row);
       });
     };
 
@@ -307,6 +316,7 @@ export default function App() {
         isDragging = false;
         startX = event.clientX;
         startScrollLeft = row.scrollLeft;
+        row.dataset.dragging = 'false';
         row.setPointerCapture?.(event.pointerId);
       };
 
@@ -315,9 +325,11 @@ export default function App() {
         const deltaX = event.clientX - startX;
         if (!isDragging && Math.abs(deltaX) > 6) {
           isDragging = true;
+          row.dataset.dragging = 'true';
         }
         if (!isDragging) return;
         row.scrollLeft = startScrollLeft - deltaX;
+        updateRowScrollState(row);
       };
 
       const onPointerUp = (event: PointerEvent) => {
@@ -325,9 +337,14 @@ export default function App() {
           row.releasePointerCapture?.(event.pointerId);
         }
         isPointerDown = false;
+        row.dataset.dragging = 'false';
         window.setTimeout(() => {
           isDragging = false;
         }, 0);
+      };
+
+      const onScroll = () => {
+        updateRowScrollState(row);
       };
 
       const onClickCapture = (event: MouseEvent) => {
@@ -340,13 +357,16 @@ export default function App() {
       row.addEventListener('pointermove', onPointerMove, { passive: true });
       row.addEventListener('pointerup', onPointerUp, { passive: true });
       row.addEventListener('pointercancel', onPointerUp, { passive: true });
+      row.addEventListener('scroll', onScroll, { passive: true });
       row.addEventListener('click', onClickCapture, true);
+      updateRowScrollState(row);
 
       return () => {
         row.removeEventListener('pointerdown', onPointerDown);
         row.removeEventListener('pointermove', onPointerMove);
         row.removeEventListener('pointerup', onPointerUp);
         row.removeEventListener('pointercancel', onPointerUp);
+        row.removeEventListener('scroll', onScroll);
         row.removeEventListener('click', onClickCapture, true);
       };
     };

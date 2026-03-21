@@ -302,11 +302,13 @@
   .net360-horizontal-scroll {
     overflow-x: auto;
     overflow-y: hidden;
+    scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-x: contain;
     overscroll-behavior-y: auto;
     touch-action: pan-x pan-y;
     scrollbar-width: thin;
+    scrollbar-color: rgba(99, 102, 241, 0.45) transparent;
   }
 
   .net360-horizontal-scroll > * {
@@ -314,24 +316,74 @@
   }
 
   .net360-swipe-row {
+    position: relative;
     display: block;
     width: 100%;
     max-width: 100%;
     overflow-x: auto;
     overflow-y: hidden;
+    scroll-behavior: smooth;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-x: contain;
     overscroll-behavior-y: auto;
     touch-action: pan-x pan-y;
-    scrollbar-width: none;
-    -ms-overflow-style: none;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(79, 70, 229, 0.5) transparent;
+    -ms-overflow-style: auto;
     scrollbar-gutter: stable;
   }
 
   .net360-swipe-row::-webkit-scrollbar {
-    display: none;
-    width: 0;
-    height: 0;
+    height: 4px;
+    width: 4px;
+  }
+
+  .net360-swipe-row::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .net360-swipe-row::-webkit-scrollbar-thumb {
+    background: linear-gradient(90deg, rgba(99, 102, 241, 0.55), rgba(139, 92, 246, 0.55));
+    border-radius: 999px;
+  }
+
+  .net360-swipe-row::before,
+  .net360-swipe-row::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 18px;
+    pointer-events: none;
+    z-index: 2;
+    opacity: 0;
+    transition: opacity 180ms ease;
+  }
+
+  .net360-swipe-row::before {
+    left: 0;
+    background: linear-gradient(90deg, rgba(241, 245, 255, 0.95), rgba(241, 245, 255, 0));
+  }
+
+  .net360-swipe-row::after {
+    right: 0;
+    background: linear-gradient(270deg, rgba(241, 245, 255, 0.95), rgba(241, 245, 255, 0));
+  }
+
+  .dark .net360-swipe-row::before {
+    background: linear-gradient(90deg, rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0));
+  }
+
+  .dark .net360-swipe-row::after {
+    background: linear-gradient(270deg, rgba(15, 23, 42, 0.88), rgba(15, 23, 42, 0));
+  }
+
+  .net360-swipe-row[data-scroll-left-active='true']::before {
+    opacity: 1;
+  }
+
+  .net360-swipe-row[data-scroll-right-active='true']::after {
+    opacity: 1;
   }
 
   .net360-swipe-row > [data-slot='tabs-list'],
@@ -352,8 +404,10 @@
     cursor: grab;
   }
 
-  .net360-swipe-row[data-scrollable='true']:active {
+  .net360-swipe-row[data-scrollable='true']:active,
+  .net360-swipe-row[data-dragging='true'] {
     cursor: grabbing;
+    user-select: none;
   }
 
   .net360-page .recharts-responsive-container,
