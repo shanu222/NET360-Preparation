@@ -1157,11 +1157,11 @@ const BULK_ANALYZE_RETRY_DELAY_MS = 650;
 const BULK_ANALYZE_REQUEST_TIMEOUT_MS = 120_000;
 const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 8_000;
 const AI_PARSE_ENDPOINT = '/api/ai/parse-mcqs';
-const AI_GENERATE_RAILWAY_URL = 'https://net360-preparation-production-62d2.up.railway.app/generate-mcqs';
-const AI_GENERATE_ENDPOINT = String(
-  ((import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_AI_GENERATE_URL || AI_GENERATE_RAILWAY_URL),
-).trim() || AI_GENERATE_RAILWAY_URL;
-const AI_GENERATE_HEALTH_ENDPOINT = AI_GENERATE_ENDPOINT.replace(/\/generate-mcqs\/?$/i, '/api/health');
+const API_BASE = String(
+  (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_BASE_URL || '',
+).trim().replace(/\/+$/, '');
+const AI_GENERATE_ENDPOINT = API_BASE ? `${API_BASE}/api/generate-mcqs` : '/api/generate-mcqs';
+const AI_GENERATE_HEALTH_ENDPOINT = API_BASE ? `${API_BASE}/api/health` : '/api/health';
 const AI_GENERATE_TARGET_COUNT = 5;
 const AI_GENERATE_RETRY_COUNT = 3;
 const AI_GENERATE_RETRY_DELAY_MS = 2_500;
