@@ -1165,6 +1165,7 @@ const API_PREFIX = `${API_BASE}/api`;
 const AI_PARSE_ENDPOINT = `${API_PREFIX}/ai/parse-mcqs`;
 const AI_GENERATE_ENDPOINT = `${API_PREFIX}/generate-mcqs`;
 const AI_GENERATE_HEALTH_ENDPOINT = `${API_PREFIX}/health`;
+const API_FALLBACK_BASE = 'https://net360-preparation-production.up.railway.app';
 const AI_GENERATE_TARGET_COUNT = 5;
 const AI_GENERATE_RETRY_COUNT = 3;
 const AI_GENERATE_RETRY_DELAY_MS = 2_500;
@@ -1603,15 +1604,39 @@ async function fetchWithRetry(url: string, options: RequestInit, retries = 3): P
   }
 }
 
+function buildApiBaseCandidates() {
+  const fromEnv = String(API_BASE || '').trim().replace(/\/+$/, '');
+  const canonicalRailway = fromEnv.includes('-62d2.up.railway.app')
+    ? fromEnv.replace('-62d2.up.railway.app', '.up.railway.app')
+    : '';
+  const runtimeOrigin = typeof window !== 'undefined'
+    ? String(window.location.origin || '').trim().replace(/\/+$/, '')
+    : '';
+
+  return Array.from(new Set([
+    fromEnv,
+    canonicalRailway,
+    API_FALLBACK_BASE,
+    runtimeOrigin,
+  ].filter(Boolean)));
+}
+
+function toApiPrefix(apiBase: string) {
+  const normalized = String(apiBase || '').trim().replace(/\/+$/, '');
+  return normalized ? `${normalized}/api` : '/api';
+}
+
 async function runBackendPreflightCheck(options?: {
   timeoutMs?: number;
   attempts?: number;
   retryDelayMs?: number;
-}): Promise<string> {
+}): Promise<{ healthUrl: string; apiPrefix: string }> {
   const timeoutMs = Math.max(1_000, Number(options?.timeoutMs || BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS));
   const attempts = Math.max(1, Math.floor(Number(options?.attempts || 1)));
   const retryDelayMs = Math.max(250, Number(options?.retryDelayMs || 1_000));
+  const apiPrefixes = buildApiBaseCandidates().map((base) => toApiPrefix(base));
   const healthCandidates = Array.from(new Set([
+    ...apiPrefixes.map((prefix) => `${prefix}/health`),
     String(AI_GENERATE_HEALTH_ENDPOINT || '').trim(),
   ].filter(Boolean)));
   const healthUrl = healthCandidates[0] || `${API_PREFIX}/health`;
@@ -1636,7 +1661,8 @@ async function runBackendPreflightCheck(options?: {
           signal: controller.signal,
         }, 3);
 
-        return candidateUrl;
+        const resolvedPrefix = candidateUrl.replace(/\/health\/?$/i, '');
+        return { healthUrl: candidateUrl, apiPrefix: resolvedPrefix };
       } catch (error) {
         lastError = error;
       } finally {
@@ -4441,41 +4467,41 @@ export default function AdminApp() {
     bulkAnalyzeInFlightRef.current = true;
     const runId = ++bulkAnalyzeRunIdRef.current;
 
-    const runApiParser = async (): Promise<ParsedBulkResponse> => {
-      if (effectiveFile) {
-        const formData = new FormData();
-        formData.append('sourceType', 'file');
-        formData.append('file', effectiveFile);
-        return apiRequest<ParsedBulkResponse>(AI_PARSE_ENDPOINT, {
-          method: 'POST',
-          body: formData,
-          timeoutMs: BULK_ANALYZE_REQUEST_TIMEOUT_MS,
-        }, authToken);
-      }
-
-      return apiRequest<ParsedBulkResponse>(AI_PARSE_ENDPOINT, {
-        method: 'POST',
-        body: JSON.stringify({
-          sourceType: 'text',
-          rawText: effectiveText,
-        }),
-        timeoutMs: BULK_ANALYZE_REQUEST_TIMEOUT_MS,
-      }, authToken);
-    };
-
     try {
       setBulkProcessing(true);
       setBulkProcessingLabel('Checking backend...');
       setBulkAnalysisReady(false);
-      const healthUrl = await runBackendPreflightCheck({
+      const preflight = await runBackendPreflightCheck({
         timeoutMs: BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS,
         attempts: 2,
         retryDelayMs: 900,
       });
       setBulkProcessingLabel('Analysing MCQs...');
-      const aiParseUrl = buildApiUrl(AI_PARSE_ENDPOINT);
+      const aiParseEndpoint = `${preflight.apiPrefix}/ai/parse-mcqs`;
+      const runApiParser = async (): Promise<ParsedBulkResponse> => {
+        if (effectiveFile) {
+          const formData = new FormData();
+          formData.append('sourceType', 'file');
+          formData.append('file', effectiveFile);
+          return apiRequest<ParsedBulkResponse>(aiParseEndpoint, {
+            method: 'POST',
+            body: formData,
+            timeoutMs: BULK_ANALYZE_REQUEST_TIMEOUT_MS,
+          }, authToken);
+        }
+
+        return apiRequest<ParsedBulkResponse>(aiParseEndpoint, {
+          method: 'POST',
+          body: JSON.stringify({
+            sourceType: 'text',
+            rawText: effectiveText,
+          }),
+          timeoutMs: BULK_ANALYZE_REQUEST_TIMEOUT_MS,
+        }, authToken);
+      };
+      const aiParseUrl = buildApiUrl(aiParseEndpoint);
       console.info('Admin Analyse by AI started', {
-        healthUrl,
+        healthUrl: preflight.healthUrl,
         endpoint: aiParseUrl,
         hasFile: Boolean(effectiveFile),
         sourceType: effectiveFile ? 'file' : 'text',
@@ -4966,11 +4992,12 @@ export default function AdminApp() {
     setAiGenGenerateErrors([]);
 
     try {
-      await runBackendPreflightCheck({
+      const preflight = await runBackendPreflightCheck({
         timeoutMs: AI_GENERATE_PREFLIGHT_TIMEOUT_MS,
         attempts: AI_GENERATE_PREFLIGHT_ATTEMPTS,
         retryDelayMs: AI_GENERATE_PREFLIGHT_RETRY_DELAY_MS,
       });
+      const aiGenerateEndpoint = `${preflight.apiPrefix}/generate-mcqs`;
 
       const baseGeneratePayload = {
         sourceType: aiGenFile ? 'file' : 'text',
@@ -5006,7 +5033,7 @@ export default function AdminApp() {
         return formData;
       })();
 
-      const payload = await apiRequest<AiGeneratedMcqResponse>(AI_GENERATE_ENDPOINT, {
+      const payload = await apiRequest<AiGeneratedMcqResponse>(aiGenerateEndpoint, {
         method: 'POST',
         body: requestBody,
         timeoutMs: AI_GENERATE_REQUEST_TIMEOUT_MS,
