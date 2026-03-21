@@ -20,7 +20,7 @@ type ApiRequestOptions = RequestInit & {
 };
 
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
-const API_BASE_URL = env.VITE_API_BASE_URL || env.VITE_API_URL || env.REACT_APP_API_URL || '';
+const API_BASE_URL = env.VITE_API_URL || env.VITE_API_BASE_URL || env.REACT_APP_API_URL || '';
 const MOBILE_API_BASE_URL = env.VITE_MOBILE_API_BASE_URL || API_BASE_URL;
 const DEV_API_ORIGIN = env.VITE_DEV_API_ORIGIN || 'http://localhost:4000';
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
@@ -224,7 +224,7 @@ function mapTransportError(path: string, resolvedUrl: string, error: unknown) {
 
   if (normalized.includes('failed to fetch') || normalized.includes('networkerror') || normalized.includes('load failed')) {
     return new Error(
-      `Network error while calling ${resolvedUrl}. Check backend URL/port, CORS settings, and confirm the API server is running.`,
+      `Network error while calling ${resolvedUrl}. Check backend URL/port, CORS settings, confirm the API server is running, and ensure VITE_API_URL / VITE_MOBILE_API_BASE_URL points to the backend API service.`,
     );
   }
 
@@ -332,14 +332,14 @@ function isLikelyHtmlResponse(response: Response, bodyText: string) {
 function buildHtmlInsteadOfJsonError(path: string) {
   return new Error(
     `API configuration error: ${path} returned HTML instead of JSON. ` +
-    'Check VITE_API_BASE_URL / VITE_MOBILE_API_BASE_URL and ensure it points to the backend API service.',
+    'Set VITE_API_URL or VITE_MOBILE_API_BASE_URL for Android builds.',
   );
 }
 
 function buildMissingNativeApiBaseUrlError(path: string) {
   return new Error(
     `API configuration error: ${path} is running in native mode without backend URL. ` +
-    'Set VITE_API_BASE_URL or VITE_MOBILE_API_BASE_URL for Android builds.',
+    'Set VITE_API_URL or VITE_MOBILE_API_BASE_URL for Android builds.',
   );
 }
 
@@ -377,7 +377,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   }
 
   if (shouldUseForcedLocalMode() && isPremiumSensitivePath(path)) {
-    throw new Error('AI mentor features require live backend mode. Disable VITE_FORCE_LOCAL_API and configure VITE_API_BASE_URL.');
+    throw new Error('AI mentor features require live backend mode. Disable VITE_FORCE_LOCAL_API and configure VITE_API_URL.');
   }
 
   if (shouldUseForcedLocalMode()) {
@@ -640,7 +640,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       && env.VITE_ADMIN_ONLY === 'true'
       && errorMessage === `Request failed (${response.status})`
     ) {
-      errorMessage = 'Admin portal API is not configured. Set VITE_API_BASE_URL to your backend service URL and redeploy.';
+      errorMessage = 'Admin portal API is not configured. Set VITE_API_URL to your backend service URL and redeploy.';
     }
 
     const error = new Error(errorMessage) as Error & {
@@ -739,7 +739,7 @@ export async function downloadReport(path: string, token?: string | null): Promi
 
 export async function downloadBinary(path: string, options: RequestInit = {}, token?: string | null): Promise<{ blob: Blob; filename: string }> {
   if (shouldUseForcedLocalMode() && isPremiumSensitivePath(path)) {
-    throw new Error('AI mentor export requires live backend mode. Disable VITE_FORCE_LOCAL_API and configure VITE_API_BASE_URL.');
+    throw new Error('AI mentor export requires live backend mode. Disable VITE_FORCE_LOCAL_API and configure VITE_API_URL.');
   }
 
   if (shouldUseForcedLocalMode()) {

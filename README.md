@@ -89,7 +89,7 @@ Deploy as two Render services:
 2. Frontend web service
 - Build: `npm install && npm run build`
 - Start: `npx vite preview --host 0.0.0.0 --port $PORT`
-- Add `VITE_API_BASE_URL` pointing to backend service URL
+- Add `VITE_API_URL` pointing to backend service URL
 
 ## Production API Connectivity Checklist
 
@@ -101,7 +101,7 @@ If admin/client requests fail with network errors in production:
 - Set `VITE_DISABLE_LOCAL_API_FALLBACK=true` in production to avoid silent local fallback
 
 2. Verify backend CORS variables
-- Set `CORS_ALLOWED_ORIGINS` to comma-separated frontend origins (for example `https://net360-preparation-production.up.railway.app,https://net360-admin-production.up.railway.app`)
+- Set `CORS_ALLOWED_ORIGINS` to comma-separated frontend origins (for example `https://net360-admin-production.up.railway.app,https://net360-preparation-production.up.railway.app`)
 - Optional aliases supported by backend: `FRONTEND_URL`, `FRONTEND_ORIGIN`, `WEB_ORIGIN`
 
 3. Verify API routes and health

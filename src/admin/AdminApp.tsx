@@ -1610,7 +1610,7 @@ async function runBackendPreflightCheck(options?: {
   }
 
   const detail = lastError instanceof Error ? ` ${lastError.message}` : '';
-  throw new Error(`Backend offline on ${healthUrl}. Start the backend API server or fix VITE_API_URL/VITE_API_BASE_URL/VITE_DEV_API_ORIGIN.${detail}`);
+  throw new Error(`Backend offline on ${healthUrl}. Start the backend API server or fix VITE_API_URL/VITE_DEV_API_ORIGIN.${detail}`);
 }
 
 function parseBulkMcqsAsync(raw: string): Promise<{ parsed: ParsedBulkMcq[]; errors: string[] }> {
@@ -4983,7 +4983,7 @@ export default function AdminApp() {
       if (status === 401 || status === 403) {
         message = 'Admin session expired. Please log in again and retry AI generation.';
       } else if (status >= 500 || /timeout|network error|failed to fetch|backend offline|cors/i.test(message)) {
-        message = `Could not reach AI generation service at ${endpoint}. The backend may be cold-starting on Render. Please retry in a few seconds.`;
+        message = `Could not reach AI generation service at ${endpoint}. The backend may still be waking up. Please retry in a few seconds.`;
       }
 
       setAiGenGenerateErrors([message]);
