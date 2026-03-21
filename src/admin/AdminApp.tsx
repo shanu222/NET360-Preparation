@@ -1156,12 +1156,15 @@ const BULK_ANALYZE_MAX_ATTEMPTS = 3;
 const BULK_ANALYZE_RETRY_DELAY_MS = 650;
 const BULK_ANALYZE_REQUEST_TIMEOUT_MS = 120_000;
 const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 8_000;
-const AI_PARSE_ENDPOINT = '/api/ai/parse-mcqs';
 const API_BASE = String(
-  (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_BASE_URL || '',
+  (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_BASE_URL
+    || (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_URL
+    || '',
 ).trim().replace(/\/+$/, '');
-const AI_GENERATE_ENDPOINT = API_BASE ? `${API_BASE}/api/generate-mcqs` : '/api/generate-mcqs';
-const AI_GENERATE_HEALTH_ENDPOINT = API_BASE ? `${API_BASE}/api/health` : '/api/health';
+const API_PREFIX = `${API_BASE}/api`;
+const AI_PARSE_ENDPOINT = `${API_PREFIX}/ai/parse-mcqs`;
+const AI_GENERATE_ENDPOINT = `${API_PREFIX}/generate-mcqs`;
+const AI_GENERATE_HEALTH_ENDPOINT = `${API_PREFIX}/health`;
 const AI_GENERATE_TARGET_COUNT = 5;
 const AI_GENERATE_RETRY_COUNT = 3;
 const AI_GENERATE_RETRY_DELAY_MS = 2_500;
@@ -1592,10 +1595,9 @@ async function runBackendPreflightCheck(options?: {
   const attempts = Math.max(1, Math.floor(Number(options?.attempts || 1)));
   const retryDelayMs = Math.max(250, Number(options?.retryDelayMs || 1_000));
   const healthCandidates = Array.from(new Set([
-    String(buildApiUrl('/api/health') || '').trim(),
     String(AI_GENERATE_HEALTH_ENDPOINT || '').trim(),
   ].filter(Boolean)));
-  const healthUrl = healthCandidates[0] || '/api/health';
+  const healthUrl = healthCandidates[0] || `${API_PREFIX}/health`;
   let lastError: unknown = null;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -1604,6 +1606,7 @@ async function runBackendPreflightCheck(options?: {
       const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
 
       try {
+        console.log('Calling API:', candidateUrl);
         const response = await fetch(candidateUrl, {
           method: 'GET',
           headers: {

@@ -114,7 +114,7 @@ function resolveRequestTimeoutMs(path: string, explicitTimeoutMs?: number) {
   if (Number.isFinite(explicitTimeoutMs) && Number(explicitTimeoutMs) > 0) {
     return Math.min(MAX_API_TIMEOUT_MS, Math.max(1_000, Math.floor(Number(explicitTimeoutMs))));
   }
-  if (path.startsWith('/api/ai/parse-mcqs')) {
+  if (String(path || '').includes('/api/ai/parse-mcqs')) {
     return AI_PARSE_API_TIMEOUT_MS;
   }
   return DEFAULT_API_TIMEOUT_MS;
@@ -174,6 +174,7 @@ function computeRetryDelayMs(attemptIndex: number, baseDelayMs: number, retryAft
 }
 
 async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: number) {
+  console.log('Calling API:', input);
   const externalSignal = init.signal;
   const controller = new AbortController();
   let didTimeout = false;
@@ -704,7 +705,9 @@ export async function downloadReport(path: string, token?: string | null): Promi
 
   let response: Response;
   try {
-    response = await fetch(resolveApiPath(path), {
+    const requestUrl = resolveApiPath(path);
+    console.log('Calling API:', requestUrl);
+    response = await fetch(requestUrl, {
       headers,
       credentials: 'include',
     });
@@ -756,7 +759,9 @@ export async function downloadBinary(path: string, options: RequestInit = {}, to
     headers.set('Authorization', `Bearer ${token}`);
   }
 
-  const response = await fetch(resolveApiPath(path), {
+  const requestUrl = resolveApiPath(path);
+  console.log('Calling API:', requestUrl);
+  const response = await fetch(requestUrl, {
     ...options,
     headers,
     credentials: options.credentials || 'include',
