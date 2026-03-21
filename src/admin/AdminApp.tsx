@@ -1138,7 +1138,17 @@ interface AiGeneratedMcqResponse {
   mcq?: AiGeneratedMcqPayload;
   mcqs?: AiGeneratedMcqPayload[];
   generatedCount?: number;
+  promptFile?: string;
   errors?: string[];
+}
+
+interface AiPromptTemplateMetaResponse {
+  ok?: boolean;
+  subject?: string;
+  promptFile?: string;
+  promptLength?: number;
+  preview?: string;
+  error?: string;
 }
 
 const BULK_ANALYZE_DEBOUNCE_MS = 700;
@@ -1147,8 +1157,8 @@ const BULK_ANALYZE_RETRY_DELAY_MS = 650;
 const BULK_ANALYZE_REQUEST_TIMEOUT_MS = 120_000;
 const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 8_000;
 const AI_PARSE_ENDPOINT = '/api/ai/parse-mcqs';
-const AI_GENERATE_ENDPOINT = '/api/admin/ai-generate-mcq';
-const AI_GENERATE_TARGET_COUNT = 10;
+const AI_GENERATE_ENDPOINT = '/generate-mcqs';
+const AI_GENERATE_TARGET_COUNT = 5;
 const AI_GENERATE_RETRY_COUNT = 3;
 const AI_GENERATE_RETRY_DELAY_MS = 4_000;
 const AI_GENERATE_REQUEST_TIMEOUT_MS = 300_000;
@@ -2007,6 +2017,11 @@ export default function AdminApp() {
   const [aiGenFile, setAiGenFile] = useState<File | null>(null);
   const [aiGenGenerated, setAiGenGenerated] = useState<AiGeneratedMcqPayload | null>(null);
   const [aiGenGenerateErrors, setAiGenGenerateErrors] = useState<string[]>([]);
+  const [aiPromptTemplateMeta, setAiPromptTemplateMeta] = useState<{ fileName: string; status: 'idle' | 'loading' | 'loaded' | 'error'; message: string }>({
+    fileName: '',
+    status: 'idle',
+    message: '',
+  });
   const [aiGenGenerating, setAiGenGenerating] = useState(false);
   const [aiGenUploading, setAiGenUploading] = useState(false);
   const aiGenGenerateInFlightRef = useRef(false);
@@ -2544,6 +2559,11 @@ export default function AdminApp() {
     [syllabusTree],
   );
 
+  const aiPromptSubjectOptions = useMemo(
+    () => manualSubjectOptions.filter((item) => String(item.value || '').trim().length > 0),
+    [manualSubjectOptions],
+  );
+
   const isManualFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizeSubjectKey(form.subject));
   const isAiGenFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizeSubjectKey(aiGenSubject));
   const isBulkDeleteFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(normalizeSubjectKey(bulkDeleteSubject));
@@ -2609,6 +2629,47 @@ export default function AdminApp() {
     const subjectChapter = (activeSubject?.chapters || []).find((item) => item.key === chapter.value);
     return dedupeNormalizedStrings((subjectChapter?.sections || []).filter(Boolean)).sort((a, b) => a.localeCompare(b));
   }, [syllabusTree, aiGenSubject, aiGenChapterKey, aiGenChapterOptions, isAiGenFlatTopicSubject]);
+
+  useEffect(() => {
+    if (!token || !aiGenSubject) {
+      setAiPromptTemplateMeta({ fileName: '', status: 'idle', message: '' });
+      return;
+    }
+
+    let cancelled = false;
+    setAiPromptTemplateMeta({ fileName: '', status: 'loading', message: '' });
+
+    void apiRequest<AiPromptTemplateMetaResponse>(`/api/admin/mcq-prompts/${encodeURIComponent(aiGenSubject)}`, {}, token)
+      .then((payload) => {
+        if (cancelled) return;
+        if (payload?.ok === false || !payload?.promptFile) {
+          setAiPromptTemplateMeta({
+            fileName: '',
+            status: 'error',
+            message: String(payload?.error || 'Prompt template is not available for this subject.'),
+          });
+          return;
+        }
+
+        setAiPromptTemplateMeta({
+          fileName: String(payload.promptFile || '').trim(),
+          status: 'loaded',
+          message: '',
+        });
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setAiPromptTemplateMeta({
+          fileName: '',
+          status: 'error',
+          message: error instanceof Error ? error.message : 'Could not load prompt template for this subject.',
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [token, aiGenSubject]);
 
   const deleteSubjectOptions = manualSubjectOptions;
 
@@ -4939,8 +5000,8 @@ export default function AdminApp() {
           difficulty: item.difficulty === 'Easy' || item.difficulty === 'Hard' ? item.difficulty : 'Medium',
         }));
 
-      if (!normalizedGenerated.length) {
-        throw new Error(payload?.errors?.[0] || 'AI did not return a valid MCQ.');
+      if (normalizedGenerated.length !== AI_GENERATE_TARGET_COUNT) {
+        throw new Error(payload?.errors?.[0] || `AI must return exactly ${AI_GENERATE_TARGET_COUNT} MCQs.`);
       }
 
       const parsedFromAi: ParsedBulkMcq[] = normalizedGenerated.map((item) => ({
@@ -4970,11 +5031,20 @@ export default function AdminApp() {
         chapter: hierarchyContext.chapter,
         section: hierarchyContext.section,
         topic: hierarchyContext.topic,
+        question: normalizedGenerated[0]?.question || previous.question,
+        optionMedia: (normalizedGenerated[0]?.options || previous.optionMedia.map((item) => item.text)).slice(0, 4).map((text, index) => ({
+          key: String.fromCharCode(65 + index),
+          text: String(text || '').trim(),
+          image: null,
+        })),
+        answer: normalizedGenerated[0]?.answer || previous.answer,
+        explanationText: normalizedGenerated[0]?.explanation || previous.explanationText,
+        difficulty: normalizedGenerated[0]?.difficulty || previous.difficulty,
       }));
       setUploadChapterKey(aiGenChapterKey || '');
       setUploadMode('document');
       setAiGenGenerateErrors(Array.isArray(payload?.errors) ? payload.errors : []);
-      toast.success(`AI generated ${normalizedGenerated.length} MCQ(s). Review/edit the populated blocks and upload.`);
+      toast.success(`AI generated exactly ${normalizedGenerated.length} MCQs. Review/edit the populated blocks and upload.`);
     } catch (error) {
       const status = Number((error as { status?: number } | null)?.status || 0);
       const endpoint = buildApiUrl(AI_GENERATE_ENDPOINT);
@@ -8338,24 +8408,38 @@ export default function AdminApp() {
                             <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
                               <div className="space-y-1.5">
                                 <Label>Subject</Label>
-                                <Select
-                                  value={aiGenSubject}
-                                  onValueChange={(value) => {
-                                    setAiGenSubject(value);
-                                    setAiGenPart('');
-                                    setAiGenChapter('');
-                                    setAiGenChapterKey('');
-                                    setAiGenSection('');
-                                    setAiGenTopic('');
-                                  }}
-                                >
-                                  <SelectTrigger><SelectValue placeholder="Select subject" /></SelectTrigger>
-                                  <SelectContent>
-                                    {manualSubjectOptions.map((item) => (
-                                      <SelectItem key={`ai-subject-${item.value}`} value={item.value}>{item.label}</SelectItem>
-                                    ))}
-                                  </SelectContent>
-                                </Select>
+                                <div className="grid gap-2 sm:grid-cols-3">
+                                  {aiPromptSubjectOptions.map((item) => {
+                                    const selected = aiGenSubject === item.value;
+                                    return (
+                                      <label
+                                        key={`ai-subject-radio-${item.value}`}
+                                        className={`flex cursor-pointer items-center justify-between rounded-md border px-3 py-2 text-sm transition ${selected ? 'border-indigo-500 bg-indigo-50 text-indigo-900 dark:border-indigo-300 dark:bg-indigo-500/15 dark:text-indigo-100' : 'border-slate-300 bg-white dark:border-slate-700 dark:bg-slate-950/50'}`}
+                                      >
+                                        <span className="font-medium">{item.label}</span>
+                                        <input
+                                          type="radio"
+                                          name="ai-gen-subject"
+                                          checked={selected}
+                                          onChange={() => {
+                                            setAiGenSubject(item.value);
+                                            setAiGenPart('');
+                                            setAiGenChapter('');
+                                            setAiGenChapterKey('');
+                                            setAiGenSection('');
+                                            setAiGenTopic('');
+                                          }}
+                                          className="h-4 w-4 accent-indigo-600"
+                                        />
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                                <p className="text-xs text-muted-foreground">
+                                  {aiPromptTemplateMeta.status === 'loading' ? 'Loading subject prompt template...' : ''}
+                                  {aiPromptTemplateMeta.status === 'loaded' ? `Prompt loaded: ${aiPromptTemplateMeta.fileName}` : ''}
+                                  {aiPromptTemplateMeta.status === 'error' ? `Prompt load failed: ${aiPromptTemplateMeta.message}` : ''}
+                                </p>
                               </div>
 
                               {aiGenSubject && !isAiGenFlatTopicSubject && isAiGenPartSelectionSubject ? (
@@ -8479,7 +8563,7 @@ export default function AdminApp() {
                                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                                     Generating...
                                   </>
-                                ) : 'Generate 10 MCQs'}
+                                ) : 'Generate MCQs'}
                               </Button>
                               <Button
                                 type="button"

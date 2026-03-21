@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
@@ -1345,8 +1346,219 @@ const AI_SINGLE_MCQ_MAX_REGENERATIONS = clamp(Number(process.env.AI_SINGLE_MCQ_M
 const AI_MULTI_SINGLE_SLOT_RETRIES = clamp(Number(process.env.AI_MULTI_SINGLE_SLOT_RETRIES || 2), 1, 5);
 const AI_SINGLE_MCQ_SIMILARITY_THRESHOLD = Math.max(0.6, Math.min(0.99, Number(process.env.AI_SINGLE_MCQ_SIMILARITY_THRESHOLD || 0.84)));
 const AI_SINGLE_MCQ_REFERENCE_MAX_TEXT = clamp(Number(process.env.AI_SINGLE_MCQ_REFERENCE_MAX_TEXT || 180_000), 50_000, 300_000);
+const AI_FINAL_GENERATION_COUNT = clamp(Number(process.env.AI_FINAL_GENERATION_COUNT || 5), 5, 5);
+const AI_PROMPT_CONTEXT_MAX_TEXT = clamp(Number(process.env.AI_PROMPT_CONTEXT_MAX_TEXT || 45_000), 5_000, 120_000);
+const AI_PROMPT_DUPLICATES_MAX_TEXT = clamp(Number(process.env.AI_PROMPT_DUPLICATES_MAX_TEXT || 35_000), 2_000, 90_000);
+const AI_PROMPT_ADDITIONAL_MAX_TEXT = clamp(Number(process.env.AI_PROMPT_ADDITIONAL_MAX_TEXT || 15_000), 1_000, 50_000);
+const AI_PROMPTS_FOLDER = path.join(__dirname, '..', 'Prompts for AI MCQS generation');
 const MATHPIX_APP_ID = String(process.env.MATHPIX_APP_ID || '').trim();
 const MATHPIX_APP_KEY = String(process.env.MATHPIX_APP_KEY || '').trim();
+
+const SUBJECT_PROMPT_FILE_CANDIDATES = {
+  mathematics: ['mathematics.txt', 'Mathematics part 1 and 2 prompt.docx'],
+  physics: ['physics.txt', 'Physics part 1 and 2 prompt.docx'],
+  chemistry: ['chemistry.txt', 'Chemistry part 1 and 2 prompt.docx'],
+  biology: ['biology.txt', 'Biology part 1 and 2 prompt.docx'],
+  english: ['english.txt', 'English part 1 and 2 prompt.docx'],
+  'computer-science': ['computer_science.txt', 'computer science prompt.docx'],
+  intelligence: ['intelligence.txt', 'Intelligence prompt.docx'],
+  'quantitative-mathematics': ['quantitative_mathematics.txt', 'quantitative math prompt.docx'],
+  'design-aptitude': ['design_aptitude.txt', 'design aptitude prompt.docx'],
+};
+
+function buildSubjectPromptCandidates(subject) {
+  const normalized = normalizeSubjectKey(subject);
+  const explicit = Array.isArray(SUBJECT_PROMPT_FILE_CANDIDATES[normalized])
+    ? SUBJECT_PROMPT_FILE_CANDIDATES[normalized]
+    : [];
+
+  const canonical = String(normalized || '').trim();
+  const hyphenated = canonical;
+  const underscored = canonical.replace(/-/g, '_');
+  const spaced = canonical.replace(/-/g, ' ');
+  const titleSpaced = spaced
+    .split(' ')
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+
+  const generated = [
+    `${canonical}.txt`,
+    `${underscored}.txt`,
+    `${spaced}.txt`,
+    `${canonical} prompt.docx`,
+    `${spaced} prompt.docx`,
+    `${titleSpaced} prompt.docx`,
+    `${titleSpaced} part 1 and 2 prompt.docx`,
+    `${spaced} part 1 and 2 prompt.docx`,
+    `${hyphenated} part 1 and 2 prompt.docx`,
+  ].filter(Boolean);
+
+  return Array.from(new Set([...explicit, ...generated]));
+}
+
+function trimPromptBlock(value, maxChars) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (raw.length <= maxChars) return raw;
+  return `${raw.slice(0, maxChars)}\n\n[trimmed for token safety]`;
+}
+
+function buildPromptDuplicateReference(existingRows) {
+  const lines = (Array.isArray(existingRows) ? existingRows : []).map((row, index) => {
+    const question = normalizeRichMcqText(String(row?.question || '')).slice(0, 240);
+    const options = (Array.isArray(row?.options) ? row.options : [])
+      .slice(0, 4)
+      .map((item) => normalizeRichMcqText(String(item || '')).slice(0, 140));
+    const id = String(row?.externalId || row?._id || `ref-${index + 1}`);
+    return `${index + 1}. [${id}] ${question}\nA) ${options[0] || ''}\nB) ${options[1] || ''}\nC) ${options[2] || ''}\nD) ${options[3] || ''}`;
+  });
+
+  return trimPromptBlock(lines.join('\n\n'), AI_PROMPT_DUPLICATES_MAX_TEXT);
+}
+
+async function loadBasePromptForSubject(subject) {
+  const normalizedSubject = normalizeSubjectKey(subject);
+  const candidates = buildSubjectPromptCandidates(normalizedSubject);
+  if (!candidates.length) {
+    throw new Error(`No configured prompt template for subject: ${normalizedSubject || 'unknown'}.`);
+  }
+
+  const folderEntries = await fs.readdir(AI_PROMPTS_FOLDER, { withFileTypes: true });
+  const fileMap = new Map(
+    folderEntries
+      .filter((entry) => entry.isFile())
+      .map((entry) => [String(entry.name || '').toLowerCase(), entry.name]),
+  );
+
+  for (const candidate of candidates) {
+    const resolvedName = fileMap.get(String(candidate).toLowerCase());
+    if (!resolvedName) continue;
+
+    const filePath = path.join(AI_PROMPTS_FOLDER, resolvedName);
+    const extension = path.extname(resolvedName).toLowerCase();
+
+    if (extension === '.txt') {
+      const content = await fs.readFile(filePath, 'utf8');
+      const text = String(content || '').trim();
+      if (text) {
+        return { fileName: resolvedName, text };
+      }
+      continue;
+    }
+
+    if (extension === '.docx') {
+      const buffer = await fs.readFile(filePath);
+      const parsed = await mammoth.extractRawText({ buffer });
+      const text = String(parsed?.value || '').replace(/\n{3,}/g, '\n\n').trim();
+      if (text) {
+        return { fileName: resolvedName, text };
+      }
+    }
+  }
+
+  throw new Error(`Prompt template file not found or empty for subject: ${normalizedSubject}.`);
+}
+
+function buildFinalPrompt({
+  basePrompt,
+  subject,
+  chapter,
+  section,
+  topic,
+  part,
+  sourceText,
+  uploadedDocumentText,
+  instructions,
+  duplicateMcqsText,
+  difficulty,
+}) {
+  const normalizedSubject = String(subject || '').trim();
+  const normalizedChapter = String(chapter || '').trim() || '[not provided]';
+  const normalizedSection = String(section || '').trim() || '[not provided]';
+  const normalizedTopic = String(topic || '').trim() || normalizedSection;
+  const normalizedPart = String(part || '').trim() || '[not applicable]';
+  const normalizedDifficulty = normalizeDifficulty(String(difficulty || 'Medium'));
+
+  const finalPrompt = [
+    'You are a senior NET-style MCQ writer.',
+    'Follow the base prompt and constraints strictly.',
+    '',
+    '=== BASE PROMPT ===',
+    trimPromptBlock(basePrompt, AI_PROMPT_CONTEXT_MAX_TEXT),
+    '',
+    '=== MCQ CONTEXT ===',
+    `Subject: ${normalizedSubject}`,
+    `Part: ${normalizedPart}`,
+    `Chapter: ${normalizedChapter}`,
+    `Section: ${normalizedSection}`,
+    `Topic: ${normalizedTopic}`,
+    `Difficulty: ${normalizedDifficulty}`,
+    '',
+    '=== ADMIN ADDITIONAL INSTRUCTIONS ===',
+    trimPromptBlock(instructions, AI_PROMPT_ADDITIONAL_MAX_TEXT) || '[none]',
+    '',
+    '=== SOURCE TEXT ===',
+    trimPromptBlock(sourceText, AI_PROMPT_CONTEXT_MAX_TEXT) || '[none]',
+    '',
+    '=== EXTRACTED DOCUMENT TEXT ===',
+    trimPromptBlock(uploadedDocumentText, AI_PROMPT_CONTEXT_MAX_TEXT) || '[none]',
+    '',
+    '=== DUPLICATE PREVENTION (DO NOT REPEAT) ===',
+    trimPromptBlock(duplicateMcqsText, AI_PROMPT_DUPLICATES_MAX_TEXT) || '[none]',
+    '',
+    'CRITICAL OUTPUT RULES:',
+    '- Generate EXACTLY 5 MCQs.',
+    '- Each MCQ must include: question, 4 options (A-D), one correct answer, explanation.',
+    '- Questions must be conceptual and NET-style, not rote memorization.',
+    '- Do not repeat or closely paraphrase listed duplicate MCQs.',
+    '- Return JSON only (no markdown, no commentary).',
+    '',
+    'Return this exact JSON schema:',
+    '{"mcqs":[{"question":"...","options":{"A":"...","B":"...","C":"...","D":"..."},"correct_answer":"A|B|C|D","explanation":"...","difficulty":"Easy|Medium|Hard"}]}',
+  ].join('\n');
+
+  return trimPromptBlock(finalPrompt, Math.max(AI_PROMPT_CONTEXT_MAX_TEXT * 3, 70_000));
+}
+
+function parseGeneratedMcqsFromAi(rawContent, requestedDifficulty = 'Medium') {
+  const raw = String(rawContent || '').trim();
+  const parsedJson = extractJsonObject(raw);
+  const candidateRows = Array.isArray(parsedJson?.mcqs)
+    ? parsedJson.mcqs
+    : (Array.isArray(parsedJson) ? parsedJson : []);
+
+  if (!candidateRows.length) {
+    return { mcqs: [], errors: ['AI response did not contain a valid mcqs array.'] };
+  }
+
+  const normalized = [];
+  const errors = [];
+  for (const row of candidateRows) {
+    const optionsObj = row?.options && typeof row.options === 'object' && !Array.isArray(row.options)
+      ? [row.options.A, row.options.B, row.options.C, row.options.D]
+      : row?.options;
+
+    const validation = validateGeneratedMcqStructure({
+      question: row?.question,
+      options: optionsObj,
+      answer: row?.correct_answer || row?.correctAnswer || row?.answer,
+      explanation: row?.explanation,
+      difficulty: row?.difficulty,
+    }, requestedDifficulty);
+
+    if (validation.valid && validation.mcq) {
+      normalized.push(validation.mcq);
+    } else if (validation.reason) {
+      errors.push(validation.reason);
+    }
+  }
+
+  return {
+    mcqs: normalized,
+    errors,
+  };
+}
 
 function normalizeParsedHierarchyContext(context) {
   const subjectRaw = String(context?.subject || '').trim().toLowerCase();
@@ -11929,7 +12141,31 @@ app.get('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, (_req, res) 
   });
 });
 
-app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
+app.get('/api/admin/mcq-prompts/:subject', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const subject = normalizeSubjectKey(String(req.params?.subject || '').trim().toLowerCase());
+    if (!subject) {
+      res.status(400).json({ error: 'Missing subject.' });
+      return;
+    }
+
+    const promptTemplate = await loadBasePromptForSubject(subject);
+    res.json({
+      ok: true,
+      subject,
+      promptFile: promptTemplate.fileName,
+      promptLength: promptTemplate.text.length,
+      preview: promptTemplate.text.slice(0, 240),
+    });
+  } catch (error) {
+    res.status(400).json({
+      ok: false,
+      error: error instanceof Error ? error.message : 'Could not load prompt template.',
+    });
+  }
+});
+
+async function handleGenerateMcqs(req, res) {
   try {
     const sourceTypeRaw = String(req.body?.sourceType || '').trim().toLowerCase();
     const upload = req.file;
@@ -11950,6 +12186,7 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
     };
 
     let sourceText = rawText;
+    let uploadedDocumentText = '';
     let imageDataUrl = '';
 
     if (upload?.buffer?.length) {
@@ -11970,10 +12207,10 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
           hierarchy: hierarchyContext,
         });
         if (extractedText) {
-          sourceText = [sourceText, extractedText].filter(Boolean).join('\n\n');
+          uploadedDocumentText = [uploadedDocumentText, extractedText].filter(Boolean).join('\n\n');
         }
       } else {
-        sourceText = await extractTextFromUpload(filePayload);
+        uploadedDocumentText = await extractTextFromUpload(filePayload);
       }
     } else if (sourceType === 'file') {
       console.warn('AI MCQ generate called with sourceType=file but no file uploaded; continuing with text/instructions.');
@@ -12004,40 +12241,99 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
     }
 
     const existingMcqs = await fetchExistingMcqsForHierarchy(normalizedHierarchy);
-
-    const result = await generateMultipleMcqsWithAi({
+    const duplicateReference = buildPromptDuplicateReference(existingMcqs);
+    const promptTemplate = await loadBasePromptForSubject(normalizedHierarchy.subject);
+    const finalPrompt = buildFinalPrompt({
+      basePrompt: promptTemplate.text,
+      subject: normalizedHierarchy.subject,
+      part: normalizedHierarchy.part,
+      chapter: normalizedHierarchy.chapter,
+      section: normalizedHierarchy.section,
+      topic: normalizedHierarchy.topic,
       sourceText,
-      imageDataUrl,
+      uploadedDocumentText,
       instructions,
+      duplicateMcqsText: duplicateReference,
       difficulty,
-      hierarchy: normalizedHierarchy,
-      existingMcqs,
-      count: AI_MULTI_MCQ_GENERATION_COUNT,
     });
 
-    const generatedMcqs = Array.isArray(result?.mcqs) ? result.mcqs : [];
-    if (!generatedMcqs.length) {
-      res.status(400).json({
+    const openAiContext = await getOpenAiClientContext();
+    if (!openAiContext.client) {
+      res.status(503).json({
         mcq: null,
         mcqs: [],
         generatedCount: 0,
-        error: result?.errors?.[0] || `AI could not generate any MCQ.`,
-        errors: result?.errors?.length
-          ? result.errors
-          : [`AI could not generate any MCQ.`],
+        errors: ['OpenAI API is not configured for AI generation. Set OPENAI_API_KEY to continue.'],
       });
       return;
     }
 
-    if (generatedMcqs.length < AI_MULTI_MCQ_GENERATION_COUNT) {
-      res.json({
-        mcq: generatedMcqs[0],
-        mcqs: generatedMcqs,
-        generatedCount: Number(result?.generatedCount || generatedMcqs.length),
-        error: '',
-        errors: result?.errors?.length
-          ? result.errors
-          : [`Generated ${generatedMcqs.length} MCQ(s) this run.`],
+    const aiModel = String(openAiContext.model || AI_PARSE_DEFAULT_MODEL).trim() || AI_PARSE_DEFAULT_MODEL;
+    const existingFingerprints = existingMcqs.map((item, index) => buildMcqDuplicateFingerprint(item, index));
+    const collected = [];
+    const generationErrors = [];
+
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const completion = await openAiContext.client.chat.completions.create({
+        model: aiModel,
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content: [
+              'You are an expert MCQ writer for NUST NET style conceptual questions.',
+              'Return JSON only.',
+              'Generate exactly 5 MCQs with explanations.',
+              'Avoid duplicates with provided references.',
+            ].join('\n'),
+          },
+          {
+            role: 'user',
+            content: finalPrompt,
+          },
+        ],
+      });
+
+      const raw = String(completion.choices?.[0]?.message?.content || '').trim();
+      const parsed = parseGeneratedMcqsFromAi(raw, difficulty);
+      if (parsed.errors.length) {
+        generationErrors.push(...parsed.errors.map((item) => `Attempt ${attempt}: ${item}`));
+      }
+
+      for (const mcq of parsed.mcqs) {
+        if (collected.length >= AI_FINAL_GENERATION_COUNT) break;
+
+        const localDuplicate = collected.some((item) => buildMcqSignature(item.question, item.options) === buildMcqSignature(mcq.question, mcq.options));
+        if (localDuplicate) {
+          generationErrors.push(`Attempt ${attempt}: AI repeated an already generated MCQ in this batch.`);
+          continue;
+        }
+
+        const duplicateCheck = detectDuplicateGeneratedMcq(mcq, existingFingerprints);
+        if (duplicateCheck.duplicate) {
+          generationErrors.push(`Attempt ${attempt}: ${duplicateCheck.reason}`);
+          continue;
+        }
+
+        collected.push(mcq);
+      }
+
+      if (collected.length >= AI_FINAL_GENERATION_COUNT) {
+        break;
+      }
+    }
+
+    const generatedMcqs = collected.slice(0, AI_FINAL_GENERATION_COUNT);
+    if (generatedMcqs.length !== AI_FINAL_GENERATION_COUNT) {
+      res.status(400).json({
+        mcq: null,
+        mcqs: [],
+        generatedCount: 0,
+        error: generationErrors[0] || 'AI could not generate exactly 5 unique MCQs.',
+        errors: generationErrors.length
+          ? generationErrors
+          : ['AI could not generate exactly 5 unique MCQs.'],
       });
       return;
     }
@@ -12045,9 +12341,10 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
     res.json({
       mcq: generatedMcqs[0],
       mcqs: generatedMcqs,
-      generatedCount: result.generatedCount,
+      generatedCount: generatedMcqs.length,
       error: '',
-      errors: result.errors || [],
+      promptFile: promptTemplate.fileName,
+      errors: generationErrors,
     });
   } catch (error) {
     console.error('AI MCQ generation failed:', {
@@ -12067,6 +12364,18 @@ app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUplo
       errors: [error instanceof Error ? error.message : 'Could not generate AI MCQ.'],
     });
   }
+}
+
+app.post('/generate-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
+  await handleGenerateMcqs(req, res);
+});
+
+app.post('/api/admin/generate-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
+  await handleGenerateMcqs(req, res);
+});
+
+app.post('/api/admin/ai-generate-mcq', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
+  await handleGenerateMcqs(req, res);
 });
 
 app.post('/api/admin/mcqs/parse', authMiddleware, requireAdmin, async (req, res) => {
