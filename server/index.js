@@ -142,6 +142,8 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
 const CORS_ALLOWED_ORIGINS = Array.from(new Set([
   'https://net360-admin-production.up.railway.app',
   'https://net360-preparation-production.up.railway.app',
+  'http://localhost:5173',
+  'http://localhost:3000',
   ...parseOriginList(process.env.CORS_ALLOWED_ORIGINS || ''),
   ...parseOriginList(process.env.FRONTEND_URL || ''),
   ...parseOriginList(process.env.FRONTEND_ORIGIN || ''),
@@ -12367,6 +12369,11 @@ app.post('/generate-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('f
   await handleGenerateMcqs(req, res);
 });
 
+app.post('/api/generate-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
+  console.log('Request received:', req.body);
+  await handleGenerateMcqs(req, res);
+});
+
 app.post('/api/admin/generate-mcqs', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
   await handleGenerateMcqs(req, res);
 });
@@ -12393,6 +12400,34 @@ app.post('/api/admin/mcqs/parse', authMiddleware, requireAdmin, async (req, res)
     res.status(400).json({
       parsed: [],
       errors: [error instanceof Error ? error.message : 'Could not parse content.'],
+    });
+  }
+});
+
+app.post('/api/analyze', authMiddleware, requireAdmin, aiParseUpload.single('file'), async (req, res) => {
+  const sourceType = String(req.body?.sourceType || 'text').trim().toLowerCase();
+
+  try {
+    const filePayload = req.file?.buffer?.length
+      ? {
+        name: String(req.file.originalname || '').trim() || 'upload',
+        mimeType: String(req.file.mimetype || '').trim().toLowerCase() || 'application/octet-stream',
+        size: Number(req.file.size || req.file.buffer.length || 0),
+        dataUrl: `data:${String(req.file.mimetype || 'application/octet-stream').trim().toLowerCase()};base64,${req.file.buffer.toString('base64')}`,
+      }
+      : null;
+
+    const sourceText = sourceType === 'file'
+      ? await extractTextFromUpload(filePayload || {})
+      : String(req.body?.rawText || req.body?.sourceText || '').trim();
+
+    const result = await parseMcqsFromSourceText(sourceText);
+    res.json(result);
+  } catch (error) {
+    console.error('AI analyze failed:', error);
+    res.status(400).json({
+      parsed: [],
+      errors: [error instanceof Error ? error.message : 'Could not analyze content.'],
     });
   }
 });
