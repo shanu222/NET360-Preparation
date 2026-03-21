@@ -63,6 +63,15 @@ function getOrCreateDeviceId() {
   return created;
 }
 
+function redirectToLoginScreen() {
+  if (typeof window === 'undefined') return;
+  const target = String(window.location.pathname || '').toLowerCase().startsWith('/admin')
+    ? '/admin'
+    : '/?tab=profile';
+  if (window.location.pathname + window.location.search === target) return;
+  window.location.assign(target);
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_STORAGE_KEY));
   const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY));
@@ -94,6 +103,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(null);
           localStorage.removeItem(TOKEN_STORAGE_KEY);
           localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+          redirectToLoginScreen();
           return;
         }
 
@@ -117,6 +127,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setUser(null);
             localStorage.removeItem(TOKEN_STORAGE_KEY);
             localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
+            redirectToLoginScreen();
           }
         }
       } finally {

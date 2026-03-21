@@ -193,6 +193,7 @@ async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: num
   try {
     return await fetch(input, {
       ...init,
+      credentials: init.credentials || 'include',
       signal: controller.signal,
     });
   } catch (error) {
@@ -410,7 +411,57 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 
     refreshInFlight = (async () => {
       const refreshCandidates = readStoredRefreshCandidates();
-      if (!refreshCandidates.length) return null;
+      const tryCookieRefresh = async () => {
+        const response = await fetchWithTimeout(resolveApiPath('/api/auth/refresh'), {
+          method: 'POST',
+          headers: new Headers({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify({}),
+        }, Math.min(timeoutMs, 20_000));
+
+        if (!response.ok) {
+          return null;
+        }
+
+        const payload = await response.json() as {
+          token?: string;
+          refreshToken?: string;
+          user?: { role?: 'admin' | 'student' };
+        };
+
+        if (!payload?.token) {
+          return null;
+        }
+
+        const role = String(payload?.user?.role || '').toLowerCase();
+        if (role === 'admin') {
+          localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, payload.token);
+          if (payload.refreshToken) {
+            localStorage.setItem(ADMIN_REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
+          }
+        } else {
+          localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
+          if (payload.refreshToken) {
+            localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
+          }
+        }
+
+        return payload.token;
+      };
+
+      if (!refreshCandidates.length) {
+        try {
+          const cookieToken = await tryCookieRefresh();
+          if (cookieToken) {
+            refreshBlockedUntil = 0;
+            return cookieToken;
+          }
+        } catch {
+          // Fall through to backoff assignment.
+        }
+
+        refreshBlockedUntil = Date.now() + REFRESH_FAILURE_BACKOFF_MS;
+        return null;
+      }
 
       for (const candidate of refreshCandidates) {
         try {
@@ -457,6 +508,16 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
         } catch {
           // Try next refresh token candidate.
         }
+      }
+
+      try {
+        const cookieToken = await tryCookieRefresh();
+        if (cookieToken) {
+          refreshBlockedUntil = 0;
+          return cookieToken;
+        }
+      } catch {
+        // Continue to backoff and return null.
       }
 
       refreshBlockedUntil = Date.now() + REFRESH_FAILURE_BACKOFF_MS;
@@ -641,7 +702,10 @@ export async function downloadReport(path: string, token?: string | null): Promi
 
   let response: Response;
   try {
-    response = await fetch(resolveApiPath(path), { headers });
+    response = await fetch(resolveApiPath(path), {
+      headers,
+      credentials: 'include',
+    });
   } catch {
     if (!canFallbackToLocalMode()) {
       throw new Error('Unable to reach report service. Check mobile network and API base URL configuration.');
@@ -693,6 +757,7 @@ export async function downloadBinary(path: string, options: RequestInit = {}, to
   const response = await fetch(resolveApiPath(path), {
     ...options,
     headers,
+    credentials: options.credentials || 'include',
   });
 
   if (!response.ok) {

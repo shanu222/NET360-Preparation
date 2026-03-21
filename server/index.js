@@ -52,6 +52,57 @@ function parseOriginList(rawValue) {
     .filter(Boolean);
 }
 
+function parseCookies(headerValue) {
+  const source = String(headerValue || '').trim();
+  if (!source) return {};
+  return source.split(';').reduce((acc, chunk) => {
+    const [rawKey, ...rawValueParts] = String(chunk || '').split('=');
+    const key = String(rawKey || '').trim();
+    if (!key) return acc;
+    const value = rawValueParts.join('=').trim();
+    acc[key] = decodeURIComponent(value || '');
+    return acc;
+  }, {});
+}
+
+function readCookie(req, key) {
+  const cookies = parseCookies(req?.headers?.cookie);
+  return String(cookies?.[key] || '').trim();
+}
+
+function buildAuthCookieOptions(maxAgeMs) {
+  const options = {
+    httpOnly: true,
+    secure: AUTH_COOKIE_SECURE,
+    sameSite: AUTH_COOKIE_SECURE ? 'none' : 'lax',
+    path: '/',
+    maxAge: Math.max(1000, Math.floor(Number(maxAgeMs || 0))),
+  };
+  if (AUTH_COOKIE_DOMAIN) {
+    options.domain = AUTH_COOKIE_DOMAIN;
+  }
+  return options;
+}
+
+function setAuthCookies(res, accessToken, refreshToken) {
+  if (accessToken) {
+    res.cookie(ACCESS_TOKEN_COOKIE_NAME, String(accessToken), buildAuthCookieOptions(ACCESS_TOKEN_COOKIE_MAX_AGE_MS));
+  }
+  if (refreshToken) {
+    res.cookie(REFRESH_TOKEN_COOKIE_NAME, String(refreshToken), buildAuthCookieOptions(REFRESH_TOKEN_TTL_MS));
+  }
+}
+
+function clearAuthCookies(res) {
+  const expiredOptions = {
+    ...buildAuthCookieOptions(1),
+    maxAge: 0,
+    expires: new Date(0),
+  };
+  res.clearCookie(ACCESS_TOKEN_COOKIE_NAME, expiredOptions);
+  res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, expiredOptions);
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -63,6 +114,12 @@ const NODE_ENV = String(process.env.NODE_ENV || 'development').toLowerCase();
 const IS_PRODUCTION = NODE_ENV === 'production';
 const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '15m';
 const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
+const REFRESH_TOKEN_TTL_MS = REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000;
+const ACCESS_TOKEN_COOKIE_MAX_AGE_MS = clamp(Number(process.env.ACCESS_TOKEN_COOKIE_MAX_AGE_MS || 15 * 60 * 1000), 60_000, 24 * 60 * 60 * 1000);
+const ACCESS_TOKEN_COOKIE_NAME = String(process.env.ACCESS_TOKEN_COOKIE_NAME || 'net360_access_token').trim() || 'net360_access_token';
+const REFRESH_TOKEN_COOKIE_NAME = String(process.env.REFRESH_TOKEN_COOKIE_NAME || 'net360_refresh_token').trim() || 'net360_refresh_token';
+const AUTH_COOKIE_DOMAIN = String(process.env.AUTH_COOKIE_DOMAIN || '').trim();
+const AUTH_COOKIE_SECURE = IS_PRODUCTION || String(process.env.AUTH_COOKIE_SECURE || '').toLowerCase() === 'true';
 const AI_DAILY_LIMIT = Number(process.env.SMART_DAILY_LIMIT || process.env.AI_DAILY_LIMIT || 50);
 const OPENAI_MODEL = process.env.MODEL_PROVIDER_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const SIGNUP_TOKEN_TTL_MINUTES = Number(
@@ -331,19 +388,11 @@ function isAllowedOrigin(origin) {
   if (!normalizedOrigin) return true;
   if (MOBILE_RUNTIME_ORIGINS.has(normalizedOrigin)) return true;
   if (!IS_PRODUCTION) return true;
-  if (CORS_ALLOWED_ORIGINS.length === 0) return true;
+  if (CORS_ALLOWED_ORIGINS.length === 0) return false;
 
   const matches = CORS_ALLOWED_ORIGINS.some((allowedOrigin) => {
     if (!allowedOrigin) return false;
-    if (allowedOrigin === '*') return true;
-    if (!allowedOrigin.includes('*')) {
-      return allowedOrigin === normalizedOrigin;
-    }
-
-    const escaped = allowedOrigin
-      .replace(/[.+?^${}()|[\]\\]/g, '\\$&')
-      .replace(/\*/g, '.*');
-    return new RegExp(`^${escaped}$`, 'i').test(normalizedOrigin);
+    return allowedOrigin === normalizedOrigin;
   });
 
   return matches;
@@ -5002,6 +5051,10 @@ function extractAccessToken(req) {
   if (authHeader.startsWith('Bearer ')) {
     return authHeader.slice('Bearer '.length);
   }
+  const cookieAccessToken = readCookie(req, ACCESS_TOKEN_COOKIE_NAME);
+  if (cookieAccessToken) {
+    return cookieAccessToken;
+  }
   return String(req.query?.token || '').trim() || null;
 }
 
@@ -5836,6 +5889,7 @@ app.post('/api/auth/register-with-token', async (req, res) => {
     await signupRequest.save();
 
     const payload = await issueAuthPayload(user, req);
+    setAuthCookies(res, payload.token, payload.refreshToken);
     res.status(201).json(payload);
   } catch {
     res.status(500).json({ error: 'Registration failed.' });
@@ -5939,6 +5993,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const payload = await issueAuthPayload(user, req);
+    setAuthCookies(res, payload.token, payload.refreshToken);
     await logSecurityEvent(req, {
       eventType: 'auth.login_success',
       severity: 'info',
@@ -5956,7 +6011,7 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 app.post('/api/auth/refresh', async (req, res) => {
-  const refreshToken = String(req.body?.refreshToken || '').trim();
+  const refreshToken = String(req.body?.refreshToken || readCookie(req, REFRESH_TOKEN_COOKIE_NAME) || '').trim();
   if (!refreshToken) {
     await logSecurityEvent(req, {
       eventType: 'auth.refresh_missing_token',
@@ -5973,6 +6028,7 @@ app.post('/api/auth/refresh', async (req, res) => {
         eventType: 'auth.refresh_invalid_type',
         severity: 'warning',
       });
+      clearAuthCookies(res);
       res.status(401).json({ error: 'Invalid refresh token.' });
       return;
     }
@@ -5983,6 +6039,7 @@ app.post('/api/auth/refresh', async (req, res) => {
         eventType: 'auth.refresh_user_not_found',
         severity: 'warning',
       });
+      clearAuthCookies(res);
       res.status(401).json({ error: 'User not found.' });
       return;
     }
@@ -5997,6 +6054,7 @@ app.post('/api/auth/refresh', async (req, res) => {
         actorUserId: user._id,
         actorEmail: user.email,
       });
+      clearAuthCookies(res);
       res.status(401).json({ error: 'Refresh token revoked or expired.' });
       return;
     }
@@ -6013,6 +6071,7 @@ app.post('/api/auth/refresh', async (req, res) => {
           actorUserId: user._id,
           actorEmail: user.email,
         });
+        clearAuthCookies(res);
         res.status(401).json({ error: 'Session ended. Please log in again.' });
         return;
       }
@@ -6022,6 +6081,7 @@ app.post('/api/auth/refresh', async (req, res) => {
     await user.save();
 
     const newPayload = await issueAuthPayload(user, req);
+    setAuthCookies(res, newPayload.token, newPayload.refreshToken);
     await logSecurityEvent(req, {
       eventType: 'auth.refresh_success',
       severity: 'info',
@@ -6034,12 +6094,14 @@ app.post('/api/auth/refresh', async (req, res) => {
       eventType: 'auth.refresh_invalid_token',
       severity: 'warning',
     });
+    clearAuthCookies(res);
     res.status(401).json({ error: 'Invalid or expired refresh token.' });
   }
 });
 
 app.post('/api/auth/logout', async (req, res) => {
-  const refreshToken = String(req.body?.refreshToken || '').trim();
+  const refreshToken = String(req.body?.refreshToken || readCookie(req, REFRESH_TOKEN_COOKIE_NAME) || '').trim();
+  clearAuthCookies(res);
 
   if (!refreshToken) {
     res.json({ message: 'Logged out.' });
@@ -12496,7 +12558,7 @@ app.use((err, req, res, next) => {
 
   if (String(err?.message || '').toLowerCase().includes('cors origin denied')) {
     res.status(403).json({
-      error: 'CORS origin denied. Add your frontend origin to CORS_ALLOWED_ORIGINS or use a matching wildcard entry.',
+      error: 'CORS origin denied. Add your exact frontend origin to CORS_ALLOWED_ORIGINS.',
     });
     return;
   }
@@ -12532,7 +12594,7 @@ function validateCriticalConfiguration() {
   }
 
   if (IS_PRODUCTION && CORS_ALLOWED_ORIGINS.length === 0) {
-    warnings.push('CORS_ALLOWED_ORIGINS is not configured in production. Falling back to allow-all CORS; configure this env var as soon as possible.');
+    warnings.push('CORS_ALLOWED_ORIGINS is not configured in production. Credentialed cross-origin requests will be denied until exact frontend origins are configured.');
   }
 
   if (problems.length) {

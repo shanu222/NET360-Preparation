@@ -2742,6 +2742,9 @@ export default function AdminApp() {
     setRefreshToken(null);
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_TOKEN_KEY);
+    if (typeof window !== 'undefined' && String(window.location.pathname || '').toLowerCase() !== '/admin') {
+      window.location.assign('/admin');
+    }
   };
 
   const navigateToSection = (section: AdminSection, replace = false) => {
