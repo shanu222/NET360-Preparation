@@ -1155,7 +1155,7 @@ const BULK_ANALYZE_DEBOUNCE_MS = 700;
 const BULK_ANALYZE_MAX_ATTEMPTS = 3;
 const BULK_ANALYZE_RETRY_DELAY_MS = 650;
 const BULK_ANALYZE_REQUEST_TIMEOUT_MS = 120_000;
-const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 8_000;
+const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 30_000;
 const API_BASE = String(
   (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_BASE_URL
     || (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_URL
@@ -1169,7 +1169,7 @@ const AI_GENERATE_TARGET_COUNT = 5;
 const AI_GENERATE_RETRY_COUNT = 3;
 const AI_GENERATE_RETRY_DELAY_MS = 2_500;
 const AI_GENERATE_REQUEST_TIMEOUT_MS = 300_000;
-const AI_GENERATE_PREFLIGHT_TIMEOUT_MS = 10_000;
+const AI_GENERATE_PREFLIGHT_TIMEOUT_MS = 30_000;
 const AI_GENERATE_PREFLIGHT_ATTEMPTS = 4;
 const AI_GENERATE_PREFLIGHT_RETRY_DELAY_MS = 1_500;
 
@@ -1586,6 +1586,23 @@ function delayMs(duration: number): Promise<void> {
   });
 }
 
+async function fetchWithRetry(url: string, options: RequestInit, retries = 3): Promise<Response> {
+  try {
+    const response = await fetch(url, options);
+    if (!response.ok) {
+      throw new Error(`Request failed (${response.status})`);
+    }
+    return response;
+  } catch (error) {
+    if (retries > 0) {
+      console.log('Retrying API request...', retries);
+      await delayMs(3000);
+      return fetchWithRetry(url, options, retries - 1);
+    }
+    throw error;
+  }
+}
+
 async function runBackendPreflightCheck(options?: {
   timeoutMs?: number;
   attempts?: number;
@@ -1600,6 +1617,9 @@ async function runBackendPreflightCheck(options?: {
   const healthUrl = healthCandidates[0] || `${API_PREFIX}/health`;
   let lastError: unknown = null;
 
+  // Give Railway a short moment to wake before health probing.
+  await delayMs(1500);
+
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     for (const candidateUrl of healthCandidates) {
       const controller = new AbortController();
@@ -1607,18 +1627,14 @@ async function runBackendPreflightCheck(options?: {
 
       try {
         console.log('Calling API:', candidateUrl);
-        const response = await fetch(candidateUrl, {
+        await fetchWithRetry(candidateUrl, {
           method: 'GET',
           headers: {
             Accept: 'application/json',
             'Cache-Control': 'no-cache',
           },
           signal: controller.signal,
-        });
-
-        if (!response.ok) {
-          throw new Error(`Backend health check failed (${response.status}).`);
-        }
+        }, 3);
 
         return candidateUrl;
       } catch (error) {
