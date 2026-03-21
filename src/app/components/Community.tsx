@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -9,6 +9,7 @@ import { ScrollArea } from './ui/scroll-area';
 import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
+import { Skeleton } from './ui/skeleton';
 import { apiRequest, buildApiUrl } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'sonner';
@@ -201,6 +202,13 @@ const PROFILE_PICTURE_MAX_BYTES = 3 * 1024 * 1024;
 const CHAT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
 const QUICK_CHAT_EMOJIS = ['😀', '😂', '🔥', '👏', '❤️', '👍'];
 const ENCRYPTION_LABEL = 'Messages are end-to-end encrypted.';
+const COMMUNITY_CACHE_PREFIX = 'net360:community-cache:';
+const COMMUNITY_CACHE_TTL_MS = 45_000;
+
+type CommunityCacheEntry = {
+  expiresAt: number;
+  payload: unknown;
+};
 
 const CHAT_ATTACHMENT_ACCEPT = [
   '.pdf',
@@ -248,7 +256,7 @@ function getAvatarFallback(userLike: { firstName?: string; lastName?: string; us
   return label.slice(0, 2).toUpperCase();
 }
 
-function CommunityAvatar({
+const CommunityAvatar = memo(function CommunityAvatar({
   userLike,
   sizeClass = 'h-8 w-8',
 }: {
@@ -267,6 +275,34 @@ function CommunityAvatar({
       {fallback}
     </div>
   );
+});
+
+function CommunitySkeleton() {
+  return (
+    <div className="space-y-4">
+      <div className="net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1 [scrollbar-gutter:stable]">
+        <div className="inline-flex h-auto min-w-max flex-nowrap gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 via-indigo-50 to-fuchsia-50 p-1.5">
+          {Array.from({ length: 6 }).map((_, idx) => (
+            <Skeleton key={idx} className="h-10 w-[132px] rounded-xl" />
+          ))}
+        </div>
+      </div>
+      <Card>
+        <CardHeader>
+          <Skeleton className="h-6 w-48" />
+          <Skeleton className="h-4 w-80 max-w-full" />
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-28 w-full" />
+          <div className="grid gap-3 md:grid-cols-2">
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-24 w-full" />
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
 }
 
 function displayName(user: CommunityUser) {
@@ -282,6 +318,9 @@ export function Community() {
   const { token, user } = useAuth();
 
   const [loading, setLoading] = useState(true);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
+  const [quizLoading, setQuizLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('discover-students');
   const [leaderboardPeriod, setLeaderboardPeriod] = useState<'weekly' | 'monthly'>('weekly');
 
@@ -345,12 +384,108 @@ export function Community() {
   const [isUnfriendingConnection, setIsUnfriendingConnection] = useState(false);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
   const [reportReason, setReportReason] = useState('');
+  const memoryCacheRef = useRef<Map<string, CommunityCacheEntry>>(new Map());
+  const inFlightGetRef = useRef<Map<string, Promise<unknown>>>(new Map());
+  const refreshInFlightRef = useRef<Promise<void> | null>(null);
+  const searchDebounceRef = useRef<number | null>(null);
   const messageFileInputRef = useRef<HTMLInputElement | null>(null);
   const voiceRecorderRef = useRef<MediaRecorder | null>(null);
   const voiceStreamRef = useRef<MediaStream | null>(null);
   const voiceStartAtRef = useRef<number>(0);
   const hasInitializedChallengeNotifications = useRef(false);
   const previousChallengeState = useRef<Map<string, { status: string }>>(new Map());
+
+  const getCacheStorageKey = useCallback((path: string) => `${COMMUNITY_CACHE_PREFIX}${path}`, []);
+
+  const readCachedPayload = useCallback(<T,>(path: string): T | null => {
+    const now = Date.now();
+    const inMemory = memoryCacheRef.current.get(path);
+    if (inMemory && inMemory.expiresAt > now) {
+      return inMemory.payload as T;
+    }
+
+    try {
+      const raw = localStorage.getItem(getCacheStorageKey(path));
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as CommunityCacheEntry;
+      if (!parsed || typeof parsed.expiresAt !== 'number' || parsed.expiresAt <= now) {
+        localStorage.removeItem(getCacheStorageKey(path));
+        return null;
+      }
+      memoryCacheRef.current.set(path, parsed);
+      return parsed.payload as T;
+    } catch {
+      return null;
+    }
+  }, [getCacheStorageKey]);
+
+  const writeCachedPayload = useCallback((path: string, payload: unknown, ttlMs = COMMUNITY_CACHE_TTL_MS) => {
+    const entry: CommunityCacheEntry = {
+      expiresAt: Date.now() + Math.max(1_000, Math.floor(ttlMs)),
+      payload,
+    };
+    memoryCacheRef.current.set(path, entry);
+    try {
+      localStorage.setItem(getCacheStorageKey(path), JSON.stringify(entry));
+    } catch {
+      // Ignore storage quota issues; in-memory cache still applies.
+    }
+  }, [getCacheStorageKey]);
+
+  const invalidateCommunityCache = useCallback((prefix = '/api/community') => {
+    for (const key of Array.from(memoryCacheRef.current.keys())) {
+      if (key.startsWith(prefix)) {
+        memoryCacheRef.current.delete(key);
+      }
+    }
+    for (const key of Array.from(inFlightGetRef.current.keys())) {
+      if (key.startsWith(prefix)) {
+        inFlightGetRef.current.delete(key);
+      }
+    }
+    try {
+      const keysToDelete: string[] = [];
+      for (let idx = 0; idx < localStorage.length; idx += 1) {
+        const storageKey = localStorage.key(idx);
+        if (!storageKey || !storageKey.startsWith(COMMUNITY_CACHE_PREFIX)) continue;
+        const path = storageKey.slice(COMMUNITY_CACHE_PREFIX.length);
+        if (path.startsWith(prefix)) {
+          keysToDelete.push(storageKey);
+        }
+      }
+      keysToDelete.forEach((storageKey) => localStorage.removeItem(storageKey));
+    } catch {
+      // Ignore storage read issues.
+    }
+  }, []);
+
+  const requestCached = useCallback(async <T,>(path: string, options?: { force?: boolean; ttlMs?: number }): Promise<T> => {
+    if (!token) {
+      throw new Error('Authentication token is missing for community request.');
+    }
+
+    if (!options?.force) {
+      const cached = readCachedPayload<T>(path);
+      if (cached) return cached;
+    }
+
+    const inFlight = inFlightGetRef.current.get(path);
+    if (inFlight) {
+      return inFlight as Promise<T>;
+    }
+
+    const requestPromise = apiRequest<T>(path, {}, token)
+      .then((payload) => {
+        writeCachedPayload(path, payload, options?.ttlMs);
+        return payload;
+      })
+      .finally(() => {
+        inFlightGetRef.current.delete(path);
+      });
+
+    inFlightGetRef.current.set(path, requestPromise as Promise<unknown>);
+    return requestPromise;
+  }, [token, readCachedPayload, writeCachedPayload]);
 
   const activeConnection = useMemo(
     () => connections.find((item) => item.connectionId === activeConnectionId) || null,
@@ -380,33 +515,43 @@ export function Community() {
     );
   }, [usernameInput, bio, subjectsNeedHelpInput, profilePictureDataUrl]);
 
-  const loadLeaderboardAndBadges = async (period: 'weekly' | 'monthly') => {
+  const loadLeaderboardAndBadges = useCallback(async (period: 'weekly' | 'monthly', force = false) => {
     if (!token) return;
-    const [leaderboardPayload, badgesPayload] = await Promise.all([
-      apiRequest<{ leaderboard: LeaderboardRow[] }>(`/api/community/leaderboard?period=${period}`, {}, token),
-      apiRequest<{ badges: BadgeRow[] }>('/api/community/achievements', {}, token),
-    ]);
-    setLeaderboard(leaderboardPayload.leaderboard || []);
-    setBadges(badgesPayload.badges || []);
-  };
-
-  const loadQuizData = async () => {
-    if (!token) return;
-    const [challengesPayload, quizBoardPayload] = await Promise.all([
-      apiRequest<{ challenges: QuizChallengeRow[] }>('/api/community/quiz-challenges', {}, token),
-      apiRequest<{ leaderboard: QuizLeaderboardRow[] }>('/api/community/quiz-leaderboard', {}, token),
-    ]);
-
-    const challengeRows = challengesPayload.challenges || [];
-    setQuizChallenges(challengeRows);
-    setQuizLeaderboard(quizBoardPayload.leaderboard || []);
-
-    if (!selectedQuizChallengeId && challengeRows.length > 0) {
-      setSelectedQuizChallengeId(challengeRows[0].id);
-    } else if (selectedQuizChallengeId && !challengeRows.some((row) => row.id === selectedQuizChallengeId)) {
-      setSelectedQuizChallengeId(challengeRows[0]?.id || '');
+    setLeaderboardLoading(true);
+    try {
+      const [leaderboardPayload, badgesPayload] = await Promise.all([
+        requestCached<{ leaderboard: LeaderboardRow[] }>(`/api/community/leaderboard?period=${period}`, { force }),
+        requestCached<{ badges: BadgeRow[] }>('/api/community/achievements', { force }),
+      ]);
+      setLeaderboard(leaderboardPayload.leaderboard || []);
+      setBadges(badgesPayload.badges || []);
+    } finally {
+      setLeaderboardLoading(false);
     }
-  };
+  }, [token, requestCached]);
+
+  const loadQuizData = useCallback(async (force = false) => {
+    if (!token) return;
+    setQuizLoading(true);
+    try {
+      const [challengesPayload, quizBoardPayload] = await Promise.all([
+        requestCached<{ challenges: QuizChallengeRow[] }>('/api/community/quiz-challenges', { force }),
+        requestCached<{ leaderboard: QuizLeaderboardRow[] }>('/api/community/quiz-leaderboard', { force }),
+      ]);
+
+      const challengeRows = challengesPayload.challenges || [];
+      setQuizChallenges(challengeRows);
+      setQuizLeaderboard(quizBoardPayload.leaderboard || []);
+
+      if (!selectedQuizChallengeId && challengeRows.length > 0) {
+        setSelectedQuizChallengeId(challengeRows[0].id);
+      } else if (selectedQuizChallengeId && !challengeRows.some((row) => row.id === selectedQuizChallengeId)) {
+        setSelectedQuizChallengeId(challengeRows[0]?.id || '');
+      }
+    } finally {
+      setQuizLoading(false);
+    }
+  }, [token, requestCached, selectedQuizChallengeId]);
 
   const challengeRemainingSeconds = useMemo(() => {
     if (!selectedQuizChallenge || !quizStartedAtMs) return 0;
@@ -414,76 +559,76 @@ export function Community() {
     return Math.max(0, Number(selectedQuizChallenge.durationSeconds || 0) - elapsed);
   }, [selectedQuizChallenge, quizStartedAtMs]);
 
-  const loadDiscussionRoomPosts = async (roomId: string) => {
+  const loadDiscussionRoomPosts = useCallback(async (roomId: string, force = false) => {
     if (!token || !roomId) return;
-    const payload = await apiRequest<{ room: DiscussionRoom; posts: DiscussionPost[] }>(`/api/community/discussion-rooms/${roomId}/posts`, {}, token);
+    const payload = await requestCached<{ room: DiscussionRoom; posts: DiscussionPost[] }>(`/api/community/discussion-rooms/${roomId}/posts`, { force });
     setRoomPosts(payload.posts || []);
-  };
+  }, [token, requestCached]);
 
-  const refreshCommunity = async () => {
+  const refreshCommunity = useCallback(async (force = false) => {
     if (!token) return;
 
-    const [
-      profilePayload,
-      requestsPayload,
-      connectionsPayload,
-      roomsPayload,
-      partnersPayload,
-    ] = await Promise.all([
-      apiRequest<{ profile: CommunityUser }>('/api/community/profile', {}, token),
-      apiRequest<{ incoming: CommunityRequestRow[]; outgoing: CommunityRequestRow[] }>('/api/community/connections/requests', {}, token),
-      apiRequest<{ connections: ConnectionRow[] }>('/api/community/connections', {}, token),
-      apiRequest<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms', {}, token),
-      apiRequest<{ studyPartners: Array<{ compatibility: number; user: CommunityUser; reasons?: string[] }> }>('/api/community/study-partners', {}, token),
-    ]);
-
-    setProfile(profilePayload.profile || null);
-    setUsernameInput(profilePayload.profile?.username || '');
-    setProfilePictureDataUrl(profilePayload.profile?.profilePictureUrl || '');
-    setProfilePictureUploadName('');
-    setShareProfilePicture(Boolean(profilePayload.profile?.shareProfilePicture));
-    setTargetNetType(profilePayload.profile?.targetNetType || 'net-engineering');
-    setSubjectsNeedHelpInput((profilePayload.profile?.subjectsNeedHelp || []).join(', '));
-    setPreparationLevel((profilePayload.profile?.preparationLevel as 'beginner' | 'intermediate' | 'advanced') || 'intermediate');
-    setStudyTimePreference((profilePayload.profile?.studyTimePreference as 'morning' | 'evening' | 'night' | 'flexible') || 'flexible');
-    setScoreRangeMin(Number(profilePayload.profile?.testScoreRange?.min ?? 0));
-    setScoreRangeMax(Number(profilePayload.profile?.testScoreRange?.max ?? 200));
-    setBio(profilePayload.profile?.bio || '');
-    setIsCommunityProfileExpanded(!(profilePayload.profile?.username || profilePayload.profile?.bio));
-
-    setIncomingRequests(requestsPayload.incoming || []);
-    setOutgoingRequests(requestsPayload.outgoing || []);
-    setConnections(connectionsPayload.connections || []);
-    setRooms(roomsPayload.rooms || []);
-    setStudyPartners(partnersPayload.studyPartners || []);
-
-    const nextRoomId = activeRoomId || (roomsPayload.rooms?.[0]?.id || '');
-    setActiveRoomId(nextRoomId);
-    if (nextRoomId) {
-      await loadDiscussionRoomPosts(nextRoomId);
-    } else {
-      setRoomPosts([]);
+    if (refreshInFlightRef.current) {
+      return refreshInFlightRef.current;
     }
 
-    const nextConnectionId = activeConnectionId || (connectionsPayload.connections?.[0]?.connectionId || '');
-    setActiveConnectionId(nextConnectionId);
-    if (nextConnectionId) {
-      const messagePayload = await apiRequest<{ messages: MessageRow[] }>(`/api/community/messages/${nextConnectionId}`, {}, token);
-      setMessages(messagePayload.messages || []);
-    } else {
-      setMessages([]);
-    }
+    refreshInFlightRef.current = (async () => {
+      const [
+        profilePayload,
+        requestsPayload,
+        connectionsPayload,
+        roomsPayload,
+        partnersPayload,
+      ] = await Promise.all([
+        requestCached<{ profile: CommunityUser }>('/api/community/profile', { force }),
+        requestCached<{ incoming: CommunityRequestRow[]; outgoing: CommunityRequestRow[] }>('/api/community/connections/requests', { force }),
+        requestCached<{ connections: ConnectionRow[] }>('/api/community/connections', { force }),
+        requestCached<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms', { force }),
+        requestCached<{ studyPartners: Array<{ compatibility: number; user: CommunityUser; reasons?: string[] }> }>('/api/community/study-partners', { force }),
+      ]);
 
-    await loadLeaderboardAndBadges(leaderboardPeriod);
-    await loadQuizData();
+      setProfile(profilePayload.profile || null);
+      setUsernameInput(profilePayload.profile?.username || '');
+      setProfilePictureDataUrl(profilePayload.profile?.profilePictureUrl || '');
+      setProfilePictureUploadName('');
+      setShareProfilePicture(Boolean(profilePayload.profile?.shareProfilePicture));
+      setTargetNetType(profilePayload.profile?.targetNetType || 'net-engineering');
+      setSubjectsNeedHelpInput((profilePayload.profile?.subjectsNeedHelp || []).join(', '));
+      setPreparationLevel((profilePayload.profile?.preparationLevel as 'beginner' | 'intermediate' | 'advanced') || 'intermediate');
+      setStudyTimePreference((profilePayload.profile?.studyTimePreference as 'morning' | 'evening' | 'night' | 'flexible') || 'flexible');
+      setScoreRangeMin(Number(profilePayload.profile?.testScoreRange?.min ?? 0));
+      setScoreRangeMax(Number(profilePayload.profile?.testScoreRange?.max ?? 200));
+      setBio(profilePayload.profile?.bio || '');
+      setIsCommunityProfileExpanded(!(profilePayload.profile?.username || profilePayload.profile?.bio));
 
-    const userSearchPayload = await apiRequest<{ users: Array<CommunityUser & { connectionStatus?: string }> }>(
-      '/api/community/users/search?q=',
-      {},
-      token,
-    );
-    setAllCommunityUsers(userSearchPayload.users || []);
-  };
+      setIncomingRequests(requestsPayload.incoming || []);
+      setOutgoingRequests(requestsPayload.outgoing || []);
+      setConnections(connectionsPayload.connections || []);
+      setRooms(roomsPayload.rooms || []);
+      setStudyPartners(partnersPayload.studyPartners || []);
+
+      const nextRoomId = activeRoomId || (roomsPayload.rooms?.[0]?.id || '');
+      setActiveRoomId(nextRoomId);
+      if (nextRoomId) {
+        await loadDiscussionRoomPosts(nextRoomId, force);
+      } else {
+        setRoomPosts([]);
+      }
+
+      const nextConnectionId = activeConnectionId || (connectionsPayload.connections?.[0]?.connectionId || '');
+      setActiveConnectionId(nextConnectionId);
+      if (nextConnectionId) {
+        const messagePayload = await requestCached<{ messages: MessageRow[] }>(`/api/community/messages/${nextConnectionId}`, { force, ttlMs: 15_000 });
+        setMessages(messagePayload.messages || []);
+      } else {
+        setMessages([]);
+      }
+    })().finally(() => {
+      refreshInFlightRef.current = null;
+    });
+
+    return refreshInFlightRef.current;
+  }, [token, requestCached, activeRoomId, activeConnectionId, loadDiscussionRoomPosts]);
 
   useEffect(() => {
     if (!token) {
@@ -495,7 +640,7 @@ export function Community() {
     async function bootstrap() {
       setLoading(true);
       try {
-        await refreshCommunity();
+        await refreshCommunity(false);
       } catch (error) {
         if (!cancelled) {
           toast.error(error instanceof Error ? error.message : 'Could not load community data.');
@@ -511,20 +656,26 @@ export function Community() {
     return () => {
       cancelled = true;
     };
-  }, [token]);
+  }, [token, refreshCommunity]);
 
   useEffect(() => {
     if (!token) return;
-    void loadLeaderboardAndBadges(leaderboardPeriod);
-  }, [token, leaderboardPeriod]);
+    if (activeTab === 'leaderboard') {
+      void loadLeaderboardAndBadges(leaderboardPeriod, false);
+      return;
+    }
+    if (activeTab === 'quiz-battles') {
+      void loadQuizData(false);
+    }
+  }, [token, activeTab, leaderboardPeriod, loadLeaderboardAndBadges, loadQuizData]);
 
   useEffect(() => {
     if (!token || !activeRoomId) {
       setRoomPosts([]);
       return;
     }
-    void loadDiscussionRoomPosts(activeRoomId);
-  }, [token, activeRoomId]);
+    void loadDiscussionRoomPosts(activeRoomId, false);
+  }, [token, activeRoomId, loadDiscussionRoomPosts]);
 
   useEffect(() => {
     if (!token || !activeConnectionId) {
@@ -534,7 +685,7 @@ export function Community() {
     let cancelled = false;
     async function loadMessages() {
       try {
-        const payload = await apiRequest<{ messages: MessageRow[] }>(`/api/community/messages/${activeConnectionId}`, {}, token);
+        const payload = await requestCached<{ messages: MessageRow[] }>(`/api/community/messages/${activeConnectionId}`, { ttlMs: 15_000 });
         if (!cancelled) setMessages(payload.messages || []);
       } catch {
         if (!cancelled) setMessages([]);
@@ -544,7 +695,7 @@ export function Community() {
     return () => {
       cancelled = true;
     };
-  }, [token, activeConnectionId]);
+  }, [token, activeConnectionId, requestCached]);
 
   useEffect(() => {
     if (!token) return;
@@ -556,9 +707,9 @@ export function Community() {
       running = true;
       try {
         const [requestsPayload, connectionsPayload, roomsPayload] = await Promise.all([
-          apiRequest<{ incoming: CommunityRequestRow[]; outgoing: CommunityRequestRow[] }>('/api/community/connections/requests', {}, token),
-          apiRequest<{ connections: ConnectionRow[] }>('/api/community/connections', {}, token),
-          apiRequest<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms', {}, token),
+          requestCached<{ incoming: CommunityRequestRow[]; outgoing: CommunityRequestRow[] }>('/api/community/connections/requests', { force: true, ttlMs: 10_000 }),
+          requestCached<{ connections: ConnectionRow[] }>('/api/community/connections', { force: true, ttlMs: 10_000 }),
+          requestCached<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms', { force: true, ttlMs: 10_000 }),
         ]);
 
         if (cancelled) return;
@@ -568,20 +719,20 @@ export function Community() {
         setRooms(roomsPayload.rooms || []);
 
         if (activeConnectionId) {
-          const messagePayload = await apiRequest<{ messages: MessageRow[] }>(`/api/community/messages/${activeConnectionId}`, {}, token);
+          const messagePayload = await requestCached<{ messages: MessageRow[] }>(`/api/community/messages/${activeConnectionId}`, { force: true, ttlMs: 10_000 });
           if (!cancelled) setMessages(messagePayload.messages || []);
         }
 
         if (activeRoomId) {
-          const roomPayload = await apiRequest<{ posts: DiscussionPost[] }>(`/api/community/discussion-rooms/${activeRoomId}/posts`, {}, token);
+          const roomPayload = await requestCached<{ posts: DiscussionPost[] }>(`/api/community/discussion-rooms/${activeRoomId}/posts`, { force: true, ttlMs: 10_000 });
           if (!cancelled) setRoomPosts(roomPayload.posts || []);
         }
 
         if (activeTab === 'leaderboard') {
-          await loadLeaderboardAndBadges(leaderboardPeriod);
+          await loadLeaderboardAndBadges(leaderboardPeriod, true);
         }
         if (activeTab === 'quiz-battles') {
-          await loadQuizData();
+          await loadQuizData(true);
         }
       } catch {
         // Silent polling failures; primary actions already show toasts.
@@ -598,7 +749,7 @@ export function Community() {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [token, activeConnectionId, activeRoomId, activeTab, leaderboardPeriod]);
+  }, [token, activeConnectionId, activeRoomId, activeTab, leaderboardPeriod, requestCached, loadLeaderboardAndBadges, loadQuizData]);
 
   useEffect(() => {
     return () => {
@@ -632,7 +783,7 @@ export function Community() {
       source = new EventSource(`${buildApiUrl('/api/stream')}?token=${encodeURIComponent(token)}`);
       source.addEventListener('sync', () => {
         if (document.hidden) return;
-        void refreshCommunity().catch(() => undefined);
+        void refreshCommunity(true).catch(() => undefined);
       });
       source.addEventListener('heartbeat', () => {
         // Stream heartbeat keeps transport alive.
@@ -650,7 +801,7 @@ export function Community() {
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
       closeCurrent();
     };
-  }, [token]);
+  }, [token, refreshCommunity]);
 
   useEffect(() => {
     const currentMap = new Map(quizChallenges.map((challenge) => [challenge.id, { status: String(challenge.status || '') }]));
@@ -760,25 +911,49 @@ export function Community() {
       setProfilePictureUploadName('');
       setIsCommunityProfileExpanded(false);
       toast.success('Community profile updated.');
-      await refreshCommunity();
+      invalidateCommunityCache('/api/community');
+      await refreshCommunity(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update profile.');
     }
   };
 
-  const searchUsers = async (query = searchQuery) => {
+  const searchUsers = useCallback(async (query = searchQuery, force = false, silent = false) => {
     if (!token) return;
+    setSearchLoading(true);
     try {
-      const payload = await apiRequest<{ users: Array<CommunityUser & { connectionStatus?: string }> }>(
-        `/api/community/users/search?q=${encodeURIComponent(query)}`,
-        {},
-        token,
+      const trimmed = String(query || '').trim();
+      const payload = await requestCached<{ users: Array<CommunityUser & { connectionStatus?: string }> }>(
+        `/api/community/users/search?q=${encodeURIComponent(trimmed)}`,
+        { force, ttlMs: 30_000 },
       );
       setSearchResults(payload.users || []);
+      if (!trimmed) {
+        setAllCommunityUsers(payload.users || []);
+      }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not search users.');
+      if (!silent) {
+        toast.error(error instanceof Error ? error.message : 'Could not search users.');
+      }
+    } finally {
+      setSearchLoading(false);
     }
-  };
+  }, [token, requestCached, searchQuery]);
+
+  useEffect(() => {
+    if (!token) return;
+    if (searchDebounceRef.current) {
+      window.clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = window.setTimeout(() => {
+      void searchUsers(searchQuery, false, true);
+    }, 320);
+    return () => {
+      if (searchDebounceRef.current) {
+        window.clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, [token, searchQuery, searchUsers]);
 
   const sendConnectionRequest = async (toUserId: string) => {
     if (!token) return;
@@ -799,8 +974,9 @@ export function Community() {
         body: JSON.stringify({ toUserId }),
       }, token);
       toast.success('Connection request sent.');
-      await refreshCommunity();
-      await searchUsers(searchQuery);
+      invalidateCommunityCache('/api/community');
+      await refreshCommunity(true);
+      await searchUsers(searchQuery, true, true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not send request.');
     }
@@ -814,7 +990,8 @@ export function Community() {
         body: JSON.stringify({ action }),
       }, token);
       toast.success(action === 'accept' ? 'Connection accepted.' : 'Request rejected.');
-      await refreshCommunity();
+      invalidateCommunityCache('/api/community');
+      await refreshCommunity(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update request.');
     }
@@ -834,8 +1011,9 @@ export function Community() {
       setNewPostTitle('');
       setNewPostText('');
       toast.success('Posted to discussion room.');
-      await loadDiscussionRoomPosts(activeRoomId);
-      const roomsPayload = await apiRequest<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms', {}, token);
+      invalidateCommunityCache('/api/community/discussion-rooms');
+      await loadDiscussionRoomPosts(activeRoomId, true);
+      const roomsPayload = await requestCached<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms', { force: true });
       setRooms(roomsPayload.rooms || []);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not post to room.');
@@ -852,7 +1030,8 @@ export function Community() {
         body: JSON.stringify({ text }),
       }, token);
       setAnswerTextByPostId((prev) => ({ ...prev, [postId]: '' }));
-      await loadDiscussionRoomPosts(activeRoomId);
+      invalidateCommunityCache('/api/community/discussion');
+      await loadDiscussionRoomPosts(activeRoomId, true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not post answer.');
     }
@@ -865,7 +1044,8 @@ export function Community() {
         method: 'POST',
         body: JSON.stringify({ targetType: answerId ? 'answer' : 'post', answerId: answerId || '' }),
       }, token);
-      await loadDiscussionRoomPosts(activeRoomId);
+      invalidateCommunityCache('/api/community/discussion');
+      await loadDiscussionRoomPosts(activeRoomId, true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update vote.');
     }
@@ -873,7 +1053,7 @@ export function Community() {
 
   const refreshActiveMessages = async () => {
     if (!token || !activeConnectionId) return;
-    const payload = await apiRequest<{ messages: MessageRow[] }>(`/api/community/messages/${activeConnectionId}`, {}, token);
+    const payload = await requestCached<{ messages: MessageRow[] }>(`/api/community/messages/${activeConnectionId}`, { force: true, ttlMs: 10_000 });
     setMessages(payload.messages || []);
   };
 
@@ -898,8 +1078,9 @@ export function Community() {
       }, token);
       setMessageInput('');
       setMessageAttachment(null);
+      invalidateCommunityCache('/api/community/messages');
       await refreshActiveMessages();
-      await refreshCommunity();
+      await refreshCommunity(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not send message.');
     } finally {
@@ -954,6 +1135,7 @@ export function Community() {
         method: 'POST',
         body: JSON.stringify({ emoji }),
       }, token);
+      invalidateCommunityCache('/api/community/messages');
       await refreshActiveMessages();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update reaction.');
@@ -970,7 +1152,8 @@ export function Community() {
         body: JSON.stringify({ blocked: nextBlockedState }),
       }, token);
       toast.success(nextBlockedState ? 'Connection blocked. Messaging paused.' : 'Connection unblocked. Messaging restored.');
-      await refreshCommunity();
+      invalidateCommunityCache('/api/community/connections');
+      await refreshCommunity(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not update block state.');
     } finally {
@@ -990,7 +1173,8 @@ export function Community() {
       toast.success('Connection removed.');
       setActiveConnectionId('');
       setMessages([]);
-      await refreshCommunity();
+      invalidateCommunityCache('/api/community/connections');
+      await refreshCommunity(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not unfriend this connection.');
     } finally {
@@ -1128,7 +1312,8 @@ export function Community() {
       toast.success('Quiz challenge sent.');
       setQuizAnswers({});
       setQuizStartedAtMs(null);
-      await loadQuizData();
+      invalidateCommunityCache('/api/community/quiz');
+      await loadQuizData(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not create quiz challenge.');
     }
@@ -1145,7 +1330,8 @@ export function Community() {
         openChallengeExamWindow(challengeId);
       }
       toast.success(action === 'accept' ? 'Challenge accepted.' : 'Challenge declined.');
-      await loadQuizData();
+      invalidateCommunityCache('/api/community/quiz');
+      await loadQuizData(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not respond to challenge.');
     }
@@ -1204,7 +1390,8 @@ export function Community() {
       toast.success('Challenge submitted.');
       setQuizStartedAtMs(null);
       setQuizAnswers({});
-      await loadQuizData();
+      invalidateCommunityCache('/api/community/quiz');
+      await loadQuizData(true);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not submit challenge.');
     }
@@ -1222,11 +1409,7 @@ export function Community() {
   }
 
   if (loading) {
-    return (
-      <Card>
-        <CardContent className="py-8 text-sm text-muted-foreground">Loading community...</CardContent>
-      </Card>
-    );
+    return <CommunitySkeleton />;
   }
 
   const sectionTabTriggerClassName =
@@ -1400,9 +1583,18 @@ export function Community() {
               <CardContent className="space-y-3">
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search by username" />
-                  <Button variant="outline" className="w-full sm:w-auto" onClick={() => void searchUsers()}>Search</Button>
+                  <Button variant="outline" className="w-full sm:w-auto" onClick={() => void searchUsers(searchQuery, true)}>
+                    {searchLoading ? 'Searching...' : 'Search'}
+                  </Button>
                 </div>
                 <div className="space-y-2 max-h-[320px] overflow-auto">
+                  {searchLoading && !searchResults.length ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-16 w-full" />
+                      <Skeleton className="h-16 w-full" />
+                      <Skeleton className="h-16 w-full" />
+                    </div>
+                  ) : null}
                   {searchResults.map((result) => (
                     <div key={result.id} className="rounded-lg border p-3">
                       <div className="flex items-start gap-2">
@@ -1884,6 +2076,13 @@ export function Community() {
                     <CardDescription>Top performers by wins, win rate, and volume.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-2 max-h-[220px] overflow-auto">
+                        {quizLoading && !quizLeaderboard.length ? (
+                          <div className="space-y-2">
+                            <Skeleton className="h-14 w-full" />
+                            <Skeleton className="h-14 w-full" />
+                            <Skeleton className="h-14 w-full" />
+                          </div>
+                        ) : null}
                     {quizLeaderboard.map((entry) => (
                       <div key={entry.userId} className="rounded-md border p-2 text-sm">
                         <p className="font-medium">#{entry.rank} {entry.name || entry.username || 'Student'}</p>
@@ -1910,6 +2109,13 @@ export function Community() {
                 <Button size="sm" variant={leaderboardPeriod === 'monthly' ? 'default' : 'outline'} onClick={() => setLeaderboardPeriod('monthly')}>Monthly</Button>
               </div>
               <div className="space-y-2 max-h-[360px] overflow-auto">
+                {leaderboardLoading && !leaderboard.length ? (
+                  <div className="space-y-2">
+                    <Skeleton className="h-14 w-full" />
+                    <Skeleton className="h-14 w-full" />
+                    <Skeleton className="h-14 w-full" />
+                  </div>
+                ) : null}
                 {leaderboard.map((entry) => (
                   <div key={entry.id} className="flex items-center justify-between rounded-lg border p-3">
                     <div>
@@ -1930,6 +2136,13 @@ export function Community() {
               <CardDescription>Gamified milestones for consistency and contribution.</CardDescription>
             </CardHeader>
             <CardContent className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+              {leaderboardLoading && !badges.length ? (
+                <>
+                  <Skeleton className="h-24 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                  <Skeleton className="h-24 w-full" />
+                </>
+              ) : null}
               {badges.map((badge) => (
                 <div key={badge.id} className={`rounded-lg border p-3 ${badge.earned ? 'border-emerald-300 bg-emerald-50/60' : ''}`}>
                   <p className="text-sm">{badge.icon} {badge.label}</p>
