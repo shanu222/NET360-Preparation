@@ -63,7 +63,7 @@ Create environment variables for backend service:
 - `SMART_DAILY_LIMIT` = optional, default `50`
 - `ADMIN_EMAILS` = comma-separated admin emails, for example `admin@net360.pk,ops@net360.pk`
 - `API_PORT` = optional, default `4000`
-- `CORS_ALLOWED_ORIGINS` = comma-separated allowed frontend origins in production
+- `CORS_ALLOWED_ORIGINS` = comma-separated allowed frontend origins in production (for example `https://net360-preparation.onrender.com,https://net360-admin.onrender.com`)
 - `MAX_JSON_BODY_MB` = optional request body limit, default `10`
 - `REQUEST_TIMEOUT_MS` = optional API request timeout in milliseconds, default `30000`
 
@@ -101,7 +101,7 @@ If admin/client requests fail with network errors in production:
 - Set `VITE_DISABLE_LOCAL_API_FALLBACK=true` in production to avoid silent local fallback
 
 2. Verify backend CORS variables
-- Set `CORS_ALLOWED_ORIGINS` to comma-separated frontend origins (for example `https://net360-admin-production.up.railway.app,https://net360-preparation-production.up.railway.app`)
+- Set `CORS_ALLOWED_ORIGINS` to comma-separated frontend origins (for example `https://net360-preparation.onrender.com,https://net360-admin.onrender.com`)
 - Optional aliases supported by backend: `FRONTEND_URL`, `FRONTEND_ORIGIN`, `WEB_ORIGIN`
 
 3. Verify API routes and health

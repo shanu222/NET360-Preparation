@@ -142,6 +142,8 @@ const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
 const CORS_ALLOWED_ORIGINS = Array.from(new Set([
   'https://net360-admin-production.up.railway.app',
   'https://net360-preparation-production.up.railway.app',
+  'https://net360-admin.onrender.com',
+  'https://net360-preparation.onrender.com',
   'http://localhost:5173',
   'http://localhost:3000',
   ...parseOriginList(process.env.CORS_ALLOWED_ORIGINS || ''),
