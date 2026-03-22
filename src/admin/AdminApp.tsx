@@ -1659,6 +1659,20 @@ async function runBackendPreflightCheck(options?: {
     return status === 'ok';
   };
 
+  const canParseJsonResponse = async (response: Response) => {
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    if (!contentType.includes('application/json')) {
+      return false;
+    }
+
+    try {
+      const payload = await response.clone().json();
+      return Boolean(payload) && typeof payload === 'object';
+    } catch {
+      return false;
+    }
+  };
+
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     for (const candidateUrl of healthCandidates) {
       const controller = new AbortController();
@@ -1688,6 +1702,21 @@ async function runBackendPreflightCheck(options?: {
         }
 
         const resolvedPrefix = candidateUrl.replace(/\/health\/?$/i, '');
+
+        const probeResponse = await fetchWithRetry(`${resolvedPrefix}/test`, {
+          method: 'GET',
+          headers: {
+            Accept: 'application/json',
+            'Cache-Control': 'no-cache',
+          },
+          signal: controller.signal,
+        }, 2);
+
+        const isJsonProbe = await canParseJsonResponse(probeResponse);
+        if (!isJsonProbe) {
+          throw new Error(`API probe failed for ${resolvedPrefix}/test`);
+        }
+
         return { healthUrl: candidateUrl, apiPrefix: resolvedPrefix };
       } catch (error) {
         lastError = error;
