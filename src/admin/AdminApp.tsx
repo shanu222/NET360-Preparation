@@ -1645,6 +1645,20 @@ async function runBackendPreflightCheck(options?: {
   // Give Railway a short moment to wake before health probing.
   await delayMs(1500);
 
+  const isHealthyJsonPayload = (response: Response, payload: unknown) => {
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    if (!contentType.includes('application/json')) {
+      return false;
+    }
+
+    if (!payload || typeof payload !== 'object') {
+      return false;
+    }
+
+    const status = String((payload as { status?: unknown }).status || '').toLowerCase();
+    return status === 'ok';
+  };
+
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     for (const candidateUrl of healthCandidates) {
       const controller = new AbortController();
@@ -1652,7 +1666,7 @@ async function runBackendPreflightCheck(options?: {
 
       try {
         console.log('Calling API:', candidateUrl);
-        await fetchWithRetry(candidateUrl, {
+        const response = await fetchWithRetry(candidateUrl, {
           method: 'GET',
           headers: {
             Accept: 'application/json',
@@ -1660,6 +1674,18 @@ async function runBackendPreflightCheck(options?: {
           },
           signal: controller.signal,
         }, 3);
+
+        let payload: unknown = null;
+        try {
+          payload = await response.clone().json();
+        } catch {
+          // Non-JSON responses (usually HTML fallback pages) should be ignored.
+          payload = null;
+        }
+
+        if (!isHealthyJsonPayload(response, payload)) {
+          throw new Error(`Non-JSON or invalid health payload from ${candidateUrl}`);
+        }
 
         const resolvedPrefix = candidateUrl.replace(/\/health\/?$/i, '');
         return { healthUrl: candidateUrl, apiPrefix: resolvedPrefix };
