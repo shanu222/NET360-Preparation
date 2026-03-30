@@ -690,8 +690,69 @@ function normalizeSubjectKey(value) {
   return String(value || '').trim().toLowerCase().replace(/\s+/g, '-');
 }
 
+const SUBJECT_CANONICAL_ALIAS_MAP = {
+  math: 'mathematics',
+  maths: 'mathematics',
+  mathematics: 'mathematics',
+  physics: 'physics',
+  english: 'english',
+  bio: 'biology',
+  biology: 'biology',
+  chem: 'chemistry',
+  chemistry: 'chemistry',
+  cs: 'computer-science',
+  'computer-science': 'computer-science',
+  'computer-sciences': 'computer-science',
+  'computer-science-engineering': 'computer-science',
+  'computer-science-and-engineering': 'computer-science',
+  intelligence: 'intelligence',
+  'quantitative-math': 'quantitative-mathematics',
+  quantitative: 'quantitative-mathematics',
+  'quantitative-mathematics': 'quantitative-mathematics',
+  'design-aptitude': 'design-aptitude',
+};
+
+const SUBJECT_QUERY_VARIANTS = {
+  mathematics: ['mathematics', 'math', 'maths'],
+  physics: ['physics'],
+  english: ['english'],
+  biology: ['biology', 'bio'],
+  chemistry: ['chemistry', 'chem'],
+  'computer-science': ['computer-science', 'computer science', 'cs'],
+  intelligence: ['intelligence'],
+  'quantitative-mathematics': ['quantitative-mathematics', 'quantitative mathematics', 'quantitative-math', 'quantitative math', 'quantitative'],
+  'design-aptitude': ['design-aptitude', 'design aptitude'],
+};
+
+function canonicalizeSubject(value) {
+  const normalized = normalizeSubjectKey(value);
+  if (!normalized) return '';
+  return SUBJECT_CANONICAL_ALIAS_MAP[normalized] || normalized;
+}
+
+function buildSubjectMatcher(value) {
+  const canonical = canonicalizeSubject(value);
+  const variants = SUBJECT_QUERY_VARIANTS[canonical] || (canonical ? [canonical] : []);
+  const escaped = variants
+    .map((item) => escapeRegexLiteral(item, 60))
+    .filter(Boolean);
+
+  if (!escaped.length) return null;
+  return new RegExp(`^(?:${escaped.join('|')})$`, 'i');
+}
+
+function buildSubjectInMatchers(values) {
+  const rows = Array.isArray(values) ? values : [];
+  const matchers = rows
+    .map((item) => buildSubjectMatcher(item))
+    .filter(Boolean);
+
+  const deduped = Array.from(new Set(matchers.map((item) => item.source))).map((source) => new RegExp(source, 'i'));
+  return deduped;
+}
+
 function isPartSelectionRequiredSubject(value) {
-  return MCQ_PART_REQUIRED_SUBJECTS.has(normalizeSubjectKey(value));
+  return MCQ_PART_REQUIRED_SUBJECTS.has(canonicalizeSubject(value));
 }
 
 function normalizeContributionActorKey(params) {
@@ -4064,7 +4125,7 @@ function serializeMcq(item) {
     id: String(item._id),
     externalId: String(item.externalId || '').trim(),
     contentFingerprint: String(item.contentFingerprint || '').trim(),
-    subject: item.subject,
+    subject: canonicalizeSubject(item.subject),
     part: String(item.part || '').trim(),
     chapter,
     section,
@@ -4316,10 +4377,14 @@ async function generateQuizChallengeQuestions({ mode, subject, topic, difficulty
     if (!normalizedSubject) {
       throw new Error('Subject-wise challenge requires a valid subject.');
     }
-    pool = await MCQModel.find({ subject: normalizedSubject }).select(MCQ_SELECT).limit(500).lean();
+    const subjectMatcher = buildSubjectMatcher(normalizedSubject);
+    pool = await MCQModel.find(subjectMatcher ? { subject: subjectMatcher } : { subject: normalizedSubject }).select(MCQ_SELECT).limit(500).lean();
   } else if (mode === 'custom') {
     const filter = {};
-    if (normalizedSubject) filter.subject = normalizedSubject;
+    if (normalizedSubject) {
+      const subjectMatcher = buildSubjectMatcher(normalizedSubject);
+      if (subjectMatcher) filter.subject = subjectMatcher;
+    }
     if (normalizedTopic) filter.topic = containsRegex(normalizedTopic, 80);
     if (normalizedDifficulty) filter.difficulty = normalizedDifficulty;
     pool = await MCQModel.find(filter).select(MCQ_SELECT).limit(500).lean();
@@ -4329,17 +4394,19 @@ async function generateQuizChallengeQuestions({ mode, subject, topic, difficulty
       ...(opponentUser?.progress?.weakTopics || []).map((item) => String(item || '').toLowerCase()),
     ])).filter(Boolean);
 
-    const basePool = await MCQModel.find({ subject: { $in: allowedSubjects } }).select(MCQ_SELECT).limit(900).lean();
+    const allowedSubjectMatchers = buildSubjectInMatchers(allowedSubjects);
+    const basePool = await MCQModel.find({ subject: { $in: allowedSubjectMatchers } }).select(MCQ_SELECT).limit(900).lean();
     const filtered = weakTopics.length
       ? basePool.filter((item) => {
         const itemTopic = String(item.topic || '').toLowerCase();
-        const itemSubject = String(item.subject || '').toLowerCase();
+        const itemSubject = canonicalizeSubject(item.subject);
         return weakTopics.some((weak) => itemTopic.includes(weak) || itemSubject.includes(weak));
       })
       : [];
     pool = filtered.length >= safeCount ? filtered : basePool;
   } else {
-    pool = await MCQModel.find({ subject: { $in: allowedSubjects } }).select(MCQ_SELECT).limit(900).lean();
+    const allowedSubjectMatchers = buildSubjectInMatchers(allowedSubjects);
+    pool = await MCQModel.find({ subject: { $in: allowedSubjectMatchers } }).select(MCQ_SELECT).limit(900).lean();
   }
 
   if (!pool.length) {
@@ -4353,7 +4420,7 @@ async function generateQuizChallengeQuestions({ mode, subject, topic, difficulty
 
   return selected.map((item) => ({
     questionId: String(item._id),
-    subject: String(item.subject || '').toLowerCase(),
+    subject: canonicalizeSubject(item.subject),
     topic: String(item.topic || '').trim(),
     question: String(item.question || '').trim(),
     options: Array.isArray(item.options) ? item.options.map((option) => String(option || '').trim()) : [],
@@ -5485,17 +5552,18 @@ function pickFromPoolsByDistribution({ distribution, pool, totalQuestions, usedI
   const selected = [];
 
   counts.forEach((entry) => {
+    const allowedCanonicalSubjects = Array.from(new Set((entry.sourceSubjects || []).map((subject) => canonicalizeSubject(subject))));
     const candidates = shuffle(
       pool.filter((item) => {
         if (usedIds.has(String(item._id))) return false;
-        return entry.sourceSubjects.includes(item.subject);
+        return allowedCanonicalSubjects.includes(canonicalizeSubject(item.subject));
       }),
     );
 
     for (const question of candidates) {
       selected.push(question);
       usedIds.add(String(question._id));
-      if (selected.filter((item) => entry.sourceSubjects.includes(item.subject)).length >= entry.count) {
+      if (selected.filter((item) => allowedCanonicalSubjects.includes(canonicalizeSubject(item.subject))).length >= entry.count) {
         break;
       }
       if (selected.length >= totalQuestions) {
@@ -5518,15 +5586,15 @@ function pickFromPoolsByDistribution({ distribution, pool, totalQuestions, usedI
 
 function generateAdaptiveSet({ profile, allQuestions, weakTopics, questionCount, userProgress }) {
   const profileSubjects = Array.from(
-    new Set(profile.distribution.flatMap((item) => item.sourceSubjects)),
+    new Set(profile.distribution.flatMap((item) => item.sourceSubjects).map((subject) => canonicalizeSubject(subject))),
   );
-  const inScope = allQuestions.filter((item) => profileSubjects.includes(item.subject));
+  const inScope = allQuestions.filter((item) => profileSubjects.includes(canonicalizeSubject(item.subject)));
 
   const weakSet = new Set((weakTopics || []).map((item) => String(item).toLowerCase()));
   const averageScore = Number(userProgress?.averageScore || 0);
   const averageSecondsPerQuestion = Number(userProgress?.analytics?.averageSecondsPerQuestion || 0);
 
-  const weakPool = inScope.filter((item) => weakSet.has(String(item.subject).toLowerCase()) || weakSet.has(String(item.topic).toLowerCase()));
+  const weakPool = inScope.filter((item) => weakSet.has(canonicalizeSubject(item.subject)) || weakSet.has(String(item.topic).toLowerCase()));
   const mediumPool = inScope.filter((item) => item.difficulty === 'Medium');
   const hardPool = inScope.filter((item) => item.difficulty === 'Hard');
   const easyPool = inScope.filter((item) => item.difficulty === 'Easy');
@@ -5757,12 +5825,13 @@ app.get('/api/admin/openai-health', authMiddleware, requireAdmin, async (_req, r
 
 app.get('/api/recommendations/adaptive', authMiddleware, async (req, res) => {
   const questionCount = clamp(Number(req.query.questionCount) || 15, 5, 40);
-  const preferredSubject = String(req.query.subject || '').trim().toLowerCase();
+  const preferredSubject = canonicalizeSubject(req.query.subject || '');
   const weakTopics = Array.isArray(req.user.progress?.weakTopics)
     ? req.user.progress.weakTopics.map((item) => String(item || '').toLowerCase()).filter(Boolean)
     : [];
 
-  const subjectFilter = preferredSubject ? { subject: preferredSubject } : {};
+  const preferredSubjectMatcher = buildSubjectMatcher(preferredSubject);
+  const subjectFilter = preferredSubjectMatcher ? { subject: preferredSubjectMatcher } : {};
   const pool = await MCQModel.find(subjectFilter).select(MCQ_SELECT).limit(1200).lean();
   if (!pool.length) {
     res.status(404).json({ error: 'No questions available for adaptive recommendation.' });
@@ -9073,7 +9142,8 @@ app.get('/api/mcqs', async (req, res) => {
     const filter = {};
 
     if (subject) {
-      filter.subject = String(subject).toLowerCase();
+      const subjectMatcher = buildSubjectMatcher(subject);
+      if (subjectMatcher) filter.subject = subjectMatcher;
     }
     if (difficulty) {
       const normalized = String(difficulty).toLowerCase();
@@ -10016,7 +10086,7 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
   }
 
   const normalizedMode = String(mode);
-  const normalizedSubject = String(subject || 'mathematics').toLowerCase();
+  const normalizedSubject = canonicalizeSubject(subject || 'mathematics') || 'mathematics';
   const normalizedDifficulty = String(difficulty || 'Medium');
   const normalizedPart = String(part || '').toLowerCase().trim();
   const normalizedChapter = String(chapter || '').trim();
@@ -10041,11 +10111,12 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
   };
 
   let selected = [];
-  const allInProfile = await MCQModel.find({
-    subject: {
-      $in: Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects))),
-    },
-  }).lean();
+  const profileSubjectMatchers = buildSubjectInMatchers(Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects))));
+  const allInProfile = await MCQModel.find(
+    profileSubjectMatchers.length
+      ? { subject: { $in: profileSubjectMatchers } }
+      : {},
+  ).lean();
 
   if (normalizedTestType === 'full-mock' || normalizedMode === 'mock') {
     selected = pickFromPoolsByDistribution({
@@ -10054,9 +10125,10 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
       totalQuestions: profile.totalQuestions,
     });
   } else if (normalizedTestType === 'subject-wise') {
-    const pickedSubject = String(selectedSubject || normalizedSubject || '').toLowerCase();
+    const pickedSubject = canonicalizeSubject(selectedSubject || normalizedSubject || '');
     const subjectCount = profile.subjectWiseQuestions[pickedSubject] || desiredQuestions;
-    const subjectPool = await MCQModel.find({ subject: pickedSubject }).lean();
+    const pickedSubjectMatcher = buildSubjectMatcher(pickedSubject);
+    const subjectPool = await MCQModel.find(pickedSubjectMatcher ? { subject: pickedSubjectMatcher } : { subject: pickedSubject }).lean();
     selected = shuffle(subjectPool).slice(0, Math.min(subjectCount, subjectPool.length));
   } else if (normalizedTestType === 'adaptive' || normalizedMode === 'adaptive') {
     const weakTopics = req.user.progress?.weakTopics || [];
@@ -10069,7 +10141,7 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     });
   } else {
     const baseFilter = {
-      subject: normalizedSubject,
+      subject: buildSubjectMatcher(normalizedSubject) || normalizedSubject,
     };
     if (normalizedPart) {
       baseFilter.part = normalizedPart;
@@ -10130,7 +10202,7 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     const serialized = serializeMcq(question);
     return {
       id: String(question._id),
-      subject: question.subject,
+      subject: canonicalizeSubject(question.subject) || normalizedSubject,
       part: String(question.part || '').trim(),
       chapter: String(question.chapter || '').trim(),
       section: String(question.section || '').trim(),
@@ -11336,8 +11408,9 @@ app.delete('/api/admin/users/:userId', authMiddleware, requireAdmin, async (req,
 });
 
 app.get('/api/admin/mcq-bank/structure', authMiddleware, requireAdmin, async (req, res) => {
-  const subject = String(req.query.subject || '').trim().toLowerCase();
-  const filter = subject ? { subject } : {};
+  const subject = canonicalizeSubject(req.query.subject || '');
+  const subjectMatcher = buildSubjectMatcher(subject);
+  const filter = subjectMatcher ? { subject: subjectMatcher } : {};
 
   const rows = await MCQModel.aggregate([
     { $match: filter },
@@ -11357,7 +11430,7 @@ app.get('/api/admin/mcq-bank/structure', authMiddleware, requireAdmin, async (re
 
   res.json({
     structure: rows.map((item) => ({
-      subject: String(item._id?.subject || ''),
+      subject: canonicalizeSubject(item._id?.subject || ''),
       part: String(item._id?.part || ''),
       chapter: String(item._id?.chapter || ''),
       section: String(item._id?.section || ''),
@@ -11367,7 +11440,7 @@ app.get('/api/admin/mcq-bank/structure', authMiddleware, requireAdmin, async (re
 });
 
 app.get('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
-  const subject = String(req.query.subject || '').trim().toLowerCase();
+  const subject = canonicalizeSubject(req.query.subject || '');
   const part = String(req.query.part || '').trim().toLowerCase();
   const chapter = String(req.query.chapter || '').trim();
   const section = String(req.query.section || '').trim();
@@ -11376,7 +11449,10 @@ app.get('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const { page, limit, skip } = readPagination(req.query, { defaultLimit: 200, maxLimit: 500 });
 
   const filter = {};
-  if (subject) filter.subject = subject;
+  if (subject) {
+    const subjectMatcher = buildSubjectMatcher(subject);
+    if (subjectMatcher) filter.subject = subjectMatcher;
+  }
   if (part && isPartSelectionRequiredSubject(subject)) filter.part = part;
   if (chapter) {
     const expr = containsRegex(chapter, 100);
@@ -12470,8 +12546,8 @@ function buildAdminMcqDocument(input = {}) {
     shortTrickImage = null,
   } = input || {};
 
-  const normalizedSubject = String(subject || '').toLowerCase().trim();
-  const normalizedSubjectKey = normalizeSubjectKey(normalizedSubject);
+  const normalizedSubject = canonicalizeSubject(subject || '');
+  const normalizedSubjectKey = canonicalizeSubject(normalizedSubject);
   const normalizedPart = String(part || '').toLowerCase().trim();
   const normalizedChapter = String(chapter || '').trim();
   const normalizedSection = String(section || '').trim();
@@ -12620,8 +12696,10 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
   ['question', 'questionImageUrl', 'answer', 'subject', 'part', 'chapter', 'section', 'topic', 'difficulty', 'tip', 'explanationText', 'shortTrickText'].forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(req.body, field)) {
       const value = String(req.body[field] ?? '');
-      payload[field] = ['subject', 'part'].includes(field)
-        ? value.toLowerCase().trim()
+      payload[field] = field === 'subject'
+        ? canonicalizeSubject(value)
+        : field === 'part'
+          ? value.toLowerCase().trim()
         : ['question', 'tip', 'explanationText', 'shortTrickText'].includes(field)
           ? normalizeRichMcqText(value)
           : value;

@@ -4607,14 +4607,30 @@ export default function AdminApp() {
         return;
       }
 
-      const withSelectedHierarchy = (payload.parsed || []).map((item) => ({
-        ...item,
-        subject: hierarchyContext.subject,
-        part: hierarchyContext.part,
-        chapter: hierarchyContext.chapter,
-        section: hierarchyContext.section,
-        topic: hierarchyContext.topic,
-      }));
+      const withSelectedHierarchy = (payload.parsed || []).map((item) => {
+        const subjectCandidate = String(item.subject || '').trim().toLowerCase();
+        const subject = subjectCandidate || String(hierarchyContext.subject || '').trim().toLowerCase();
+        const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(subject);
+        const requiresPartSelection = !isFlatTopicSubject && isPartSelectionRequiredSubject(subject);
+        const partCandidate = String(item.part || '').trim().toLowerCase();
+        const part = isFlatTopicSubject
+          ? ''
+          : (requiresPartSelection ? (partCandidate || String(hierarchyContext.part || '').trim().toLowerCase()) : '');
+        const chapter = isFlatTopicSubject
+          ? ''
+          : String(item.chapter || hierarchyContext.chapter || '').trim();
+        const section = String(item.section || item.topic || hierarchyContext.section || '').trim();
+        const topic = String(item.topic || section || hierarchyContext.topic || '').trim();
+
+        return {
+          ...item,
+          subject,
+          part,
+          chapter,
+          section,
+          topic: topic || section,
+        };
+      });
 
       setBulkParsed(withSelectedHierarchy);
       setBulkParseErrors(payload.errors || []);
@@ -5263,6 +5279,20 @@ export default function AdminApp() {
       setBulkUploading(true);
 
       const mcqsPayload = bulkParsed.map((item) => {
+        const subjectCandidate = String(item.subject || '').trim().toLowerCase();
+        const subject = subjectCandidate || String(hierarchyContext.subject || '').trim().toLowerCase();
+        const isFlatTopicSubject = FLAT_TOPIC_SUBJECTS.has(subject);
+        const requiresPartSelection = !isFlatTopicSubject && isPartSelectionRequiredSubject(subject);
+        const partCandidate = String(item.part || '').trim().toLowerCase();
+        const part = isFlatTopicSubject
+          ? ''
+          : (requiresPartSelection ? (partCandidate || String(hierarchyContext.part || '').trim().toLowerCase()) : '');
+        const chapter = isFlatTopicSubject
+          ? ''
+          : String(item.chapter || hierarchyContext.chapter || '').trim();
+        const section = String(item.section || item.topic || hierarchyContext.section || '').trim();
+        const topic = String(item.topic || section || hierarchyContext.topic || '').trim();
+
         const optionMedia = (item.options || []).map((text, idx) => ({
           key: String.fromCharCode(65 + idx),
           text: String(text || ''),
@@ -5270,11 +5300,11 @@ export default function AdminApp() {
         }));
 
         return {
-          subject: hierarchyContext.subject,
-          part: hierarchyContext.part,
-          chapter: hierarchyContext.chapter,
-          section: hierarchyContext.section,
-          topic: hierarchyContext.topic,
+          subject,
+          part,
+          chapter,
+          section,
+          topic: topic || section,
           question: item.question,
           questionImageUrl: item.questionImageUrl,
           questionImage: parsedDataUrlToImage(item.questionImageDataUrl, 'question-image'),
