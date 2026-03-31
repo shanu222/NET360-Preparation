@@ -33,8 +33,9 @@ function normalizeDollarMathDelimiters(value: string) {
   const shouldConvertInline = (content: string) => {
     const trimmed = String(content || '').trim();
     if (!trimmed) return false;
-    if (looksLikeMath(trimmed)) return true;
-    return /[=<>+\-*/]|\\[a-zA-Z]+/.test(trimmed);
+    // Avoid converting likely currency-only content while converting scientific latex/math.
+    if (/^\d+(?:[.,]\d+)?%?$/.test(trimmed)) return false;
+    return true;
   };
 
   const normalizedDisplay = input.replace(/(^|[^\\])\$\$([\s\S]*?)\$\$/g, (_full, prefix, expr) => {
@@ -43,7 +44,13 @@ function normalizeDollarMathDelimiters(value: string) {
     return `${prefix}\\[${expression}\\]`;
   });
 
-  return normalizedDisplay.replace(/(^|[^\\])\$([^\n$]+?)\$/g, (_full, prefix, expr) => {
+  const mergedScriptNotation = normalizedDisplay.replace(/([A-Za-z0-9)\]}])\$([_^][^\n$]+?)\$/g, (_full, base, expr) => {
+    const expression = String(expr || '').trim();
+    if (!expression) return _full;
+    return `\\(${base}${expression}\\)`;
+  });
+
+  return mergedScriptNotation.replace(/(^|[^\\])\$([^\n$]+?)\$/g, (_full, prefix, expr) => {
     const expression = String(expr || '').trim();
     if (!expression || !shouldConvertInline(expression)) return _full;
     return `${prefix}\\(${expression}\\)`;
@@ -57,8 +64,8 @@ function normalizeMathSegment(value: string) {
   const raw = String(value || '');
   if (!raw.trim()) return '';
   const withNormalizedDollarDelimiters = normalizeDollarMathDelimiters(raw);
+  if (hasMathDelimiters(withNormalizedDollarDelimiters)) return withNormalizedDollarDelimiters;
   const sanitized = sanitizeLatexScripts(withNormalizedDollarDelimiters);
-  if (hasMathDelimiters(sanitized)) return sanitized;
   if (looksLikeMath(sanitized)) return `\\(${sanitized}\\)`;
   return raw;
 }
