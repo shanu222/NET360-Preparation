@@ -40,12 +40,36 @@
   --admin-accent-2: #818cf8;
   --admin-accent-3: #a78bfa;
   animation: admin-fade-up 380ms ease-out;
+  min-height: 100svh;
+  min-height: 100dvh;
   min-width: 0;
   overflow-x: clip;
 }
 
 .admin-shell .admin-content > * {
   animation: admin-fade-up 320ms ease-out;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .admin-shell,
+  .admin-shell .admin-content > * {
+    animation: none;
+  }
+
+  .admin-shell [data-slot='card'],
+  .admin-shell [data-slot='button'] {
+    transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease, color 180ms ease;
+    transform: none;
+  }
+
+  .admin-shell [data-slot='card']:hover,
+  .admin-shell [data-slot='button']:hover {
+    transform: none;
+  }
+
+  .admin-shell .admin-nav-item::after {
+    display: none;
+  }
 }
 
 .admin-shell .admin-main,
