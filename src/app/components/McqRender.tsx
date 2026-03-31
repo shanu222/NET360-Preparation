@@ -44,8 +44,8 @@ function normalizeDollarMathDelimiters(value: string) {
     return `${prefix}\\[${expression}\\]`;
   });
 
-  const mergedScriptNotation = normalizedDisplay.replace(/([A-Za-z0-9)\]}])\$([_^][^\n$]+?)\$/g, (_full, base, expr) => {
-    const expression = String(expr || '').trim();
+  const mergedScriptNotation = normalizedDisplay.replace(/([A-Za-z0-9)\]}])\$((?:\\?[_^])[^\n$]+?)\$/g, (_full, base, expr) => {
+    const expression = String(expr || '').trim().replace(/^\\([_^])/, '$1');
     if (!expression) return _full;
     return `\\(${base}${expression}\\)`;
   });
@@ -57,6 +57,16 @@ function normalizeDollarMathDelimiters(value: string) {
   });
 }
 
+function normalizeEscapedScriptsInsideMath(value: string) {
+  const input = String(value || '');
+  if (!input) return input;
+
+  const normalizeExpression = (expr: string) => String(expr || '').replace(/\\([_^])(?=\{?[A-Za-z0-9(])/g, '$1');
+
+  const normalizedInline = input.replace(/\\\(([\s\S]*?)\\\)/g, (_full, expr) => `\\(${normalizeExpression(expr)}\\)`);
+  return normalizedInline.replace(/\\\[([\s\S]*?)\\\]/g, (_full, expr) => `\\[${normalizeExpression(expr)}\\]`);
+}
+
 const INLINE_MEDIA_TOKEN_REGEX = /\[\[(?:imgrow:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\|(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)|img:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+))\]\]/gi;
 const INLINE_FORMAT_TAG_REGEX = /<(strong|b|em|i)>([\s\S]*?)<\/\s*(strong|b|em|i)\s*>/gi;
 
@@ -64,7 +74,9 @@ function normalizeMathSegment(value: string) {
   const raw = String(value || '');
   if (!raw.trim()) return '';
   const withNormalizedDollarDelimiters = normalizeDollarMathDelimiters(raw);
-  if (hasMathDelimiters(withNormalizedDollarDelimiters)) return withNormalizedDollarDelimiters;
+  if (hasMathDelimiters(withNormalizedDollarDelimiters)) {
+    return normalizeEscapedScriptsInsideMath(withNormalizedDollarDelimiters);
+  }
   const sanitized = sanitizeLatexScripts(withNormalizedDollarDelimiters);
   if (looksLikeMath(sanitized)) return `\\(${sanitized}\\)`;
   return raw;
