@@ -777,10 +777,19 @@ function buildAdminMcqSubjectClause(subject) {
 function buildAdminMcqPartClause(part) {
   const normalizedPart = String(part || '').trim().toLowerCase();
   if (!normalizedPart) return null;
+
+  const partMatcher = normalizedPart === 'part1'
+    ? /^(?:part[\s_-]*)?1$/i
+    : normalizedPart === 'part2'
+      ? /^(?:part[\s_-]*)?2$/i
+      : null;
+
+  if (!partMatcher) return null;
+
   return {
     $or: [
-      { part: normalizedPart },
-      { part_id: normalizedPart },
+      { part: partMatcher },
+      { part_id: partMatcher },
     ],
   };
 }
