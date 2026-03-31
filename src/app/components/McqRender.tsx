@@ -26,13 +26,38 @@ function sanitizeLatexScripts(value: string) {
   return normalized.replace(/(^|[^\\])([_^])(?!\{)/g, '$1\\$2');
 }
 
+function normalizeDollarMathDelimiters(value: string) {
+  const input = String(value || '');
+  if (!input.includes('$')) return input;
+
+  const shouldConvertInline = (content: string) => {
+    const trimmed = String(content || '').trim();
+    if (!trimmed) return false;
+    if (looksLikeMath(trimmed)) return true;
+    return /[=<>+\-*/]|\\[a-zA-Z]+/.test(trimmed);
+  };
+
+  const normalizedDisplay = input.replace(/(^|[^\\])\$\$([\s\S]*?)\$\$/g, (_full, prefix, expr) => {
+    const expression = String(expr || '').trim();
+    if (!expression) return _full;
+    return `${prefix}\\[${expression}\\]`;
+  });
+
+  return normalizedDisplay.replace(/(^|[^\\])\$([^\n$]+?)\$/g, (_full, prefix, expr) => {
+    const expression = String(expr || '').trim();
+    if (!expression || !shouldConvertInline(expression)) return _full;
+    return `${prefix}\\(${expression}\\)`;
+  });
+}
+
 const INLINE_MEDIA_TOKEN_REGEX = /\[\[(?:imgrow:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)\|(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+)|img:(data:image\/[a-z0-9.+-]+;base64,[a-z0-9+/=\s]+))\]\]/gi;
 const INLINE_FORMAT_TAG_REGEX = /<(strong|b|em|i)>([\s\S]*?)<\/\s*(strong|b|em|i)\s*>/gi;
 
 function normalizeMathSegment(value: string) {
   const raw = String(value || '');
   if (!raw.trim()) return '';
-  const sanitized = sanitizeLatexScripts(raw);
+  const withNormalizedDollarDelimiters = normalizeDollarMathDelimiters(raw);
+  const sanitized = sanitizeLatexScripts(withNormalizedDollarDelimiters);
   if (hasMathDelimiters(sanitized)) return sanitized;
   if (looksLikeMath(sanitized)) return `\\(${sanitized}\\)`;
   return raw;
