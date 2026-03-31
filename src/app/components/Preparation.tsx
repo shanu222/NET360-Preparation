@@ -553,6 +553,7 @@ interface PreparationProps {
 }
 
 export function Preparation({ showStartTestButton = true, onSelectSection, onSelectFlatTopic }: PreparationProps = {}) {
+  const difficultyLevels: Array<'Easy' | 'Medium' | 'Hard'> = ['Easy', 'Medium', 'Hard'];
   const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<PartStructuredSubjectKey, AcademicPart | null>>(() => (
     PART_STRUCTURED_SUBJECTS.reduce((acc, subject) => {
       acc[subject] = null;
@@ -578,6 +579,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
   const [selectedIntelligenceChapterId, setSelectedIntelligenceChapterId] = useState<string | null>(null);
   const [selectedIntelligenceSection, setSelectedIntelligenceSection] = useState<string | null>(null);
   const [launchingSectionKey, setLaunchingSectionKey] = useState<string | null>(null);
+  const [difficultyMenuKey, setDifficultyMenuKey] = useState<string | null>(null);
   const [selectedFlatTopicByTab, setSelectedFlatTopicByTab] = useState<Record<'quantitative-mathematics' | 'design-aptitude', string | null>>({
     'quantitative-mathematics': null,
     'design-aptitude': null,
@@ -671,6 +673,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     part?: AcademicPart;
     chapterTitle: string;
     sectionTitle: string;
+    difficulty: 'Easy' | 'Medium' | 'Hard';
   }) => {
     const authToken = await resolveLaunchToken();
     if (!authToken) {
@@ -687,16 +690,16 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       return;
     }
 
-    const launchKey = `${payload.subject}|${payload.part || ''}|${payload.chapterTitle}|${payload.sectionTitle}`;
+    const launchKey = `${payload.subject}|${payload.part || ''}|${payload.chapterTitle}|${payload.sectionTitle}|${payload.difficulty}`;
 
     try {
       setLaunchingSectionKey(launchKey);
       const session = await createTestSession(authToken, {
         subject: payload.subject,
-        difficulty: 'Medium',
+        difficulty: payload.difficulty,
         topic: payload.sectionTitle,
         mode: 'topic',
-        questionCount: 20,
+        questionCount: 25,
           part: payload.part || '',
         chapter: payload.chapterTitle,
         section: payload.sectionTitle,
@@ -712,7 +715,11 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     }
   };
 
-  const handleStartFlatTopicTest = async (tabKey: 'quantitative-mathematics' | 'design-aptitude', topicTitle: string) => {
+  const handleStartFlatTopicTest = async (
+    tabKey: 'quantitative-mathematics' | 'design-aptitude',
+    topicTitle: string,
+    difficulty: 'Easy' | 'Medium' | 'Hard',
+  ) => {
     const authToken = await resolveLaunchToken();
     if (!authToken) {
       toast.error('Please login first to start a topic test from Preparation Materials.');
@@ -726,7 +733,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       return;
     }
 
-    const launchKey = `${tabKey}|${topicTitle}`;
+    const launchKey = `${tabKey}|${topicTitle}|${difficulty}`;
     const candidateSubjects = FLAT_TAB_SUBJECT_FALLBACKS[tabKey];
     let lastError: unknown = null;
 
@@ -737,10 +744,10 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
         try {
           const session = await createTestSession(authToken, {
             subject: candidateSubject,
-            difficulty: 'Medium',
+            difficulty,
             topic: topicTitle,
             mode: 'topic',
-            questionCount: 20,
+            questionCount: 25,
           });
 
           openExamWindow({ sessionId: session.id, token: authToken, examWindow });
@@ -812,26 +819,46 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                           >
                             {topic}
                           </button>
+
+                          {showStartTestButton && !onSelectFlatTopic && selectedFlatTopic === topic ? (
+                            <div className="mt-2 rounded-lg border border-indigo-200 bg-white p-3">
+                              <Button
+                                className="bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
+                                disabled={Boolean(launchingSectionKey)}
+                                onClick={() => {
+                                  const baseKey = `${flatKey}|${topic}`;
+                                  setDifficultyMenuKey((prev) => (prev === baseKey ? null : baseKey));
+                                }}
+                              >
+                                {launchingSectionKey?.startsWith(`${flatKey}|${topic}|`) ? 'Starting...' : 'Start Test'}
+                              </Button>
+
+                              {difficultyMenuKey === `${flatKey}|${topic}` ? (
+                                <div className="mt-2 grid grid-cols-3 gap-2">
+                                  {difficultyLevels.map((difficulty) => {
+                                    const currentLaunchKey = `${flatKey}|${topic}|${difficulty}`;
+                                    return (
+                                      <Button
+                                        key={difficulty}
+                                        type="button"
+                                        variant="outline"
+                                        disabled={Boolean(launchingSectionKey)}
+                                        onClick={() => {
+                                          setDifficultyMenuKey(null);
+                                          void handleStartFlatTopicTest(flatKey, topic, difficulty);
+                                        }}
+                                      >
+                                        {launchingSectionKey === currentLaunchKey ? 'Starting...' : difficulty}
+                                      </Button>
+                                    );
+                                  })}
+                                </div>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
-
-                    {showStartTestButton && !onSelectFlatTopic && selectedFlatTopic ? (
-                      <div className="mt-3 rounded-lg border border-indigo-200 bg-white p-3">
-                        <p className="mb-2 text-xs text-slate-500">
-                          Selected topic: <span className="font-medium text-indigo-900">{selectedFlatTopic}</span>
-                        </p>
-                        <Button
-                          className="bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
-                          disabled={Boolean(launchingSectionKey)}
-                          onClick={() => {
-                            void handleStartFlatTopicTest(flatKey, selectedFlatTopic);
-                          }}
-                        >
-                          {launchingSectionKey === `${flatKey}|${selectedFlatTopic}` ? 'Starting...' : 'Start Test'}
-                        </Button>
-                      </div>
-                    ) : null}
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -898,35 +925,51 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                       >
                                         {section}
                                       </button>
+
+                                      {showStartTestButton && selectedSection === `${chapter.id}::${section}` ? (
+                                        <div className={`mt-2 rounded-lg border bg-white p-3 ${tone.panelSurface}`}>
+                                          <Button
+                                            className={`bg-gradient-to-r ${tone.sectionActive} text-white transition-all duration-200 hover:brightness-105`}
+                                            disabled={Boolean(launchingSectionKey)}
+                                            onClick={() => {
+                                              const baseKey = `${subject}||${chapter.title}|${section}`;
+                                              setDifficultyMenuKey((prev) => (prev === baseKey ? null : baseKey));
+                                            }}
+                                          >
+                                            {launchingSectionKey?.startsWith(`${subject}||${chapter.title}|${section}|`) ? 'Starting...' : 'Start Test'}
+                                          </Button>
+
+                                          {difficultyMenuKey === `${subject}||${chapter.title}|${section}` ? (
+                                            <div className="mt-2 grid grid-cols-3 gap-2">
+                                              {difficultyLevels.map((difficulty) => {
+                                                const currentLaunchKey = `${subject}||${chapter.title}|${section}|${difficulty}`;
+                                                return (
+                                                  <Button
+                                                    key={difficulty}
+                                                    type="button"
+                                                    variant="outline"
+                                                    disabled={Boolean(launchingSectionKey)}
+                                                    onClick={() => {
+                                                      setDifficultyMenuKey(null);
+                                                      void handleStartSectionTest({
+                                                        subject,
+                                                        chapterTitle: chapter.title,
+                                                        sectionTitle: section,
+                                                        difficulty,
+                                                      });
+                                                    }}
+                                                  >
+                                                    {launchingSectionKey === currentLaunchKey ? 'Starting...' : difficulty}
+                                                  </Button>
+                                                );
+                                              })}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      ) : null}
                                     </li>
                                   ))}
                                 </ul>
-
-                                {showStartTestButton && selectedSection?.startsWith(`${chapter.id}::`) ? (
-                                  <div className={`mt-3 rounded-lg border bg-white p-3 ${tone.panelSurface}`}>
-                                    <p className="mb-2 text-xs text-slate-500">
-                                      Selected section:{' '}
-                                      <span className={`font-medium ${tone.chapterAccent}`}>
-                                        {selectedSection.slice(`${chapter.id}::`.length)}
-                                      </span>
-                                    </p>
-                                    <Button
-                                      className={`bg-gradient-to-r ${tone.sectionActive} text-white transition-all duration-200 hover:brightness-105`}
-                                      disabled={Boolean(launchingSectionKey)}
-                                      onClick={() => {
-                                        const selectedSectionTitle = selectedSection.slice(`${chapter.id}::`.length);
-                                        if (!selectedSectionTitle) return;
-                                        void handleStartSectionTest({
-                                          subject,
-                                          chapterTitle: chapter.title,
-                                          sectionTitle: selectedSectionTitle,
-                                        });
-                                      }}
-                                    >
-                                      {launchingSectionKey === `${subject}||${chapter.title}|${selectedSection.slice(`${chapter.id}::`.length)}` ? 'Starting...' : 'Start Test'}
-                                    </Button>
-                                  </div>
-                                ) : null}
                               </div>
                             ) : null}
                           </div>
@@ -1031,36 +1074,52 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                       >
                                         {section}
                                       </button>
+
+                                      {showStartTestButton && selectedSectionBySubject[subject] === `${chapter.id}::${section}` ? (
+                                        <div className={`mt-2 rounded-lg border bg-white p-3 ${tone.panelSurface}`}>
+                                          <Button
+                                            className={`bg-gradient-to-r ${tone.sectionActive} text-white transition-all duration-200 hover:brightness-105`}
+                                            disabled={Boolean(launchingSectionKey)}
+                                            onClick={() => {
+                                              const baseKey = `${subject}|${selectedPart}|${chapter.title}|${section}`;
+                                              setDifficultyMenuKey((prev) => (prev === baseKey ? null : baseKey));
+                                            }}
+                                          >
+                                            {launchingSectionKey?.startsWith(`${subject}|${selectedPart}|${chapter.title}|${section}|`) ? 'Starting...' : 'Start Test'}
+                                          </Button>
+
+                                          {difficultyMenuKey === `${subject}|${selectedPart}|${chapter.title}|${section}` ? (
+                                            <div className="mt-2 grid grid-cols-3 gap-2">
+                                              {difficultyLevels.map((difficulty) => {
+                                                const currentLaunchKey = `${subject}|${selectedPart}|${chapter.title}|${section}|${difficulty}`;
+                                                return (
+                                                  <Button
+                                                    key={difficulty}
+                                                    type="button"
+                                                    variant="outline"
+                                                    disabled={Boolean(launchingSectionKey)}
+                                                    onClick={() => {
+                                                      setDifficultyMenuKey(null);
+                                                      void handleStartSectionTest({
+                                                        subject,
+                                                        part: selectedPart,
+                                                        chapterTitle: chapter.title,
+                                                        sectionTitle: section,
+                                                        difficulty,
+                                                      });
+                                                    }}
+                                                  >
+                                                    {launchingSectionKey === currentLaunchKey ? 'Starting...' : difficulty}
+                                                  </Button>
+                                                );
+                                              })}
+                                            </div>
+                                          ) : null}
+                                        </div>
+                                      ) : null}
                                     </li>
                                   ))}
                                 </ul>
-
-                                {showStartTestButton && selectedSectionBySubject[subject]?.startsWith(`${chapter.id}::`) ? (
-                                  <div className={`mt-3 rounded-lg border bg-white p-3 ${tone.panelSurface}`}>
-                                    <p className="mb-2 text-xs text-slate-500">
-                                      Selected section:{' '}
-                                      <span className={`font-medium ${tone.chapterAccent}`}>
-                                        {selectedSectionBySubject[subject]?.slice(`${chapter.id}::`.length)}
-                                      </span>
-                                    </p>
-                                    <Button
-                                      className={`bg-gradient-to-r ${tone.sectionActive} text-white transition-all duration-200 hover:brightness-105`}
-                                      disabled={Boolean(launchingSectionKey)}
-                                      onClick={() => {
-                                        const selectedSection = selectedSectionBySubject[subject]?.slice(`${chapter.id}::`.length) || '';
-                                        if (!selectedSection) return;
-                                        void handleStartSectionTest({
-                                          subject,
-                                          part: selectedPart,
-                                          chapterTitle: chapter.title,
-                                          sectionTitle: selectedSection,
-                                        });
-                                      }}
-                                    >
-                                      {launchingSectionKey === `${subject}|${selectedPart}|${chapter.title}|${selectedSectionBySubject[subject]?.slice(`${chapter.id}::`.length) || ''}` ? 'Starting...' : 'Start Test'}
-                                    </Button>
-                                  </div>
-                                ) : null}
                               </div>
                             ) : null}
                           </div>

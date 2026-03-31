@@ -10096,6 +10096,7 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
   const profile = NET_TEST_PROFILES[normalizedNetType] || NET_TEST_PROFILES['net-engineering'];
   const normalizedTestType = String(testType || '').toLowerCase();
   const isPreparationTopicSession = normalizedMode === 'topic';
+  const topicSessionScope = String(normalizedTopic || normalizedSection || topic || '').trim();
   const requestedQuestions = Number(questionCount) || (normalizedMode === 'mock' ? profile.totalQuestions : 20);
   const desiredQuestions = isPreparationTopicSession
     ? 25
@@ -10178,7 +10179,50 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
       pool = applyHierarchyFilters(await MCQModel.find(baseFilter).lean());
     }
 
-    selected = shuffle(pool).slice(0, Math.min(desiredQuestions, pool.length));
+    const shuffledPool = shuffle(pool);
+
+    if (isPreparationTopicSession && topicSessionScope) {
+      const lastAttempt = await AttemptModel.findOne({
+        userId: req.user._id,
+        subject: normalizedSubject,
+        mode: 'topic',
+        topic: topicSessionScope,
+      })
+        .sort({ attemptedAt: -1 })
+        .select('sessionId')
+        .lean();
+
+      if (lastAttempt?.sessionId) {
+        const previousSession = await TestSessionModel.findOne({
+          _id: lastAttempt.sessionId,
+          userId: req.user._id,
+          mode: 'topic',
+        })
+          .select('questionIds')
+          .lean();
+
+        const previousQuestionIds = new Set(
+          Array.isArray(previousSession?.questionIds)
+            ? previousSession.questionIds.map((id) => String(id))
+            : [],
+        );
+
+        if (previousQuestionIds.size) {
+          const unseenQuestions = shuffledPool.filter((item) => !previousQuestionIds.has(String(item?._id || '')));
+          const seenQuestions = shuffledPool.filter((item) => previousQuestionIds.has(String(item?._id || '')));
+          const preferredSelection = unseenQuestions.length
+            ? [...unseenQuestions, ...seenQuestions]
+            : seenQuestions;
+          selected = preferredSelection.slice(0, Math.min(desiredQuestions, preferredSelection.length));
+        } else {
+          selected = shuffledPool.slice(0, Math.min(desiredQuestions, shuffledPool.length));
+        }
+      } else {
+        selected = shuffledPool.slice(0, Math.min(desiredQuestions, shuffledPool.length));
+      }
+    } else {
+      selected = shuffledPool.slice(0, Math.min(desiredQuestions, shuffledPool.length));
+    }
   }
 
   console.log('TEST FILTER', {
