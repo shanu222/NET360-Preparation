@@ -624,7 +624,7 @@ const COMMUNITY_CONNECTION_SELECT = 'participantA participantB createdAt blocked
 const COMMUNITY_REQUEST_SELECT = 'fromUserId toUserId status createdAt';
 const COMMUNITY_MESSAGE_SELECT = 'connectionId senderUserId messageType text attachment voiceMeta callInvite reactions createdAt readByUserIds';
 const COMMUNITY_ROOM_POST_SELECT = 'roomId authorUserId type title text subject upvotes answers flagged createdAt';
-const MCQ_SELECT = 'externalId contentFingerprint subject part chapter section topic question questionImageUrl questionImage options optionMedia answer tip explanationText explanationImage shortTrickText shortTrickImage difficulty source createdAt';
+const MCQ_SELECT = 'externalId contentFingerprint subject part chapter section topic question questionImageUrl questionImage options optionMedia answer tip explanationText explanationImage shortTrickText shortTrickImage difficulty source createdAt subject_id part_id chapter_id section_id topic_id question_text question_image_url option_a option_b option_c option_d correct_answer explanation level';
 const PRACTICE_BOARD_SELECT = 'subject difficulty questionText questionFile questionImageUrl solutionText solutionFile solutionImageUrl source createdAt';
 
 const CHAT_ATTACHMENT_MAX_FILE_BYTES = 8 * 1024 * 1024;
@@ -749,6 +749,103 @@ function buildSubjectInMatchers(values) {
 
   const deduped = Array.from(new Set(matchers.map((item) => item.source))).map((source) => new RegExp(source, 'i'));
   return deduped;
+}
+
+function buildAdminMcqIdentifierFallbackQuery(identifier) {
+  const normalized = String(identifier || '').trim();
+  if (!normalized) return null;
+  return {
+    $or: [
+      { externalId: normalized },
+      { contentFingerprint: normalized },
+      { id: normalized },
+    ],
+  };
+}
+
+function buildAdminMcqSubjectClause(subject) {
+  const matcher = buildSubjectMatcher(subject);
+  if (!matcher) return null;
+  return {
+    $or: [
+      { subject: matcher },
+      { subject_id: matcher },
+    ],
+  };
+}
+
+function buildAdminMcqPartClause(part) {
+  const normalizedPart = String(part || '').trim().toLowerCase();
+  if (!normalizedPart) return null;
+  return {
+    $or: [
+      { part: normalizedPart },
+      { part_id: normalizedPart },
+    ],
+  };
+}
+
+function buildAdminMcqChapterClause(chapter) {
+  const expr = containsRegex(chapter, 100);
+  if (!expr) return null;
+  return {
+    $or: [
+      { chapter: expr },
+      { chapter_id: expr },
+    ],
+  };
+}
+
+function buildAdminMcqSectionClause(section) {
+  const expr = containsRegex(section, 100);
+  if (!expr) return null;
+  return {
+    $or: [
+      { section: expr },
+      { section_id: expr },
+      { topic: expr },
+      { topic_id: expr },
+    ],
+  };
+}
+
+function buildAdminMcqTopicClause(topic) {
+  const expr = containsRegex(topic, 100);
+  if (!expr) return null;
+  return {
+    $or: [
+      { topic: expr },
+      { topic_id: expr },
+      { section: expr },
+      { section_id: expr },
+    ],
+  };
+}
+
+function buildAdminMcqFilterFromClauses(clauses) {
+  const normalized = (Array.isArray(clauses) ? clauses : []).filter(Boolean);
+  if (!normalized.length) return {};
+  if (normalized.length === 1) return normalized[0];
+  return { $and: normalized };
+}
+
+async function findMcqByAdminIdentifier(identifier, { lean = false } = {}) {
+  const normalized = String(identifier || '').trim();
+  if (!normalized) return null;
+
+  if (isValidObjectId(normalized)) {
+    const byId = lean
+      ? await MCQModel.findById(normalized).lean()
+      : await MCQModel.findById(normalized);
+    if (byId) return byId;
+  }
+
+  const fallbackQuery = buildAdminMcqIdentifierFallbackQuery(normalized);
+  if (!fallbackQuery) return null;
+
+  return lean
+    ? MCQModel.findOne(fallbackQuery).lean()
+    : MCQModel.findOne(fallbackQuery);
 }
 
 function isPartSelectionRequiredSubject(value) {
@@ -4037,9 +4134,9 @@ function serializeAttempt(attempt) {
 }
 
 function serializeMcq(item) {
-  const chapter = String(item.chapter || '').trim();
-  const section = String(item.section || '').trim() || String(item.topic || '').trim();
-  const topic = String(item.topic || '').trim() || section || chapter || 'General';
+  const chapter = String(item.chapter || item.chapter_id || '').trim();
+  const section = String(item.section || item.section_id || '').trim() || String(item.topic || item.topic_id || '').trim();
+  const topic = String(item.topic || item.topic_id || '').trim() || section || chapter || 'General';
 
   const normalizedQuestionImage = item.questionImage
     ? {
@@ -4048,10 +4145,15 @@ function serializeMcq(item) {
       size: Number(item.questionImage.size || 0),
       dataUrl: String(item.questionImage.dataUrl || '').trim(),
     }
-    : normalizeLegacyImageUrlAsFile(item.questionImageUrl, 'question-image');
+    : normalizeLegacyImageUrlAsFile(item.questionImageUrl || item.question_image_url, 'question-image');
 
   const mediaOptions = Array.isArray(item.optionMedia) ? item.optionMedia : [];
-  const textOptions = Array.isArray(item.options) ? item.options : [];
+  const legacyOptions = [item.option_a, item.option_b, item.option_c, item.option_d]
+    .map((option) => String(option || '').trim())
+    .filter(Boolean);
+  const textOptions = Array.isArray(item.options)
+    ? item.options
+    : (legacyOptions.length ? legacyOptions : []);
   const optionCount = Math.max(mediaOptions.length, textOptions.length);
   const normalizedOptionMedia = Array.from({ length: optionCount }, (_unused, index) => {
     const media = mediaOptions[index] && typeof mediaOptions[index] === 'object' ? mediaOptions[index] : {};
@@ -4082,7 +4184,7 @@ function serializeMcq(item) {
 
   const resolvedOptions = resolvedOptionMedia.map((item) => item.text || `[${item.key}]`);
 
-  const explanationText = String(item.explanationText || item.tip || '').trim();
+  const explanationText = String(item.explanationText || item.tip || item.explanation || '').trim();
   const explanationImage = item.explanationImage
     ? {
       name: String(item.explanationImage.name || '').trim(),
@@ -4102,7 +4204,7 @@ function serializeMcq(item) {
     }
     : null;
 
-  const rawAnswer = String(item.answer || '').trim();
+  const rawAnswer = String(item.answer || item.correct_answer || '').trim();
   const loweredAnswer = rawAnswer.toLowerCase();
   let answerKey = '';
   resolvedOptionMedia.forEach((option) => {
@@ -4125,24 +4227,24 @@ function serializeMcq(item) {
     id: String(item._id),
     externalId: String(item.externalId || '').trim(),
     contentFingerprint: String(item.contentFingerprint || '').trim(),
-    subject: canonicalizeSubject(item.subject),
-    part: String(item.part || '').trim(),
+    subject: canonicalizeSubject(item.subject || item.subject_id),
+    part: String(item.part || item.part_id || '').trim(),
     chapter,
     section,
     topic,
-    question: item.question,
-    questionImageUrl: String(item.questionImageUrl || '').trim(),
+    question: String(item.question || item.question_text || '').trim(),
+    questionImageUrl: String(item.questionImageUrl || item.question_image_url || '').trim(),
     questionImage: normalizedQuestionImage,
     options: resolvedOptions,
     optionMedia: resolvedOptionMedia,
-    answer: item.answer,
+    answer: String(item.answer || item.correct_answer || '').trim(),
     answerKey,
-    tip: item.tip,
+    tip: String(item.tip || item.explanation || '').trim(),
     explanationText,
     explanationImage,
     shortTrickText,
     shortTrickImage,
-    difficulty: item.difficulty,
+    difficulty: String(item.difficulty || item.level || 'Medium').trim(),
   };
 }
 
@@ -11453,18 +11555,38 @@ app.delete('/api/admin/users/:userId', authMiddleware, requireAdmin, async (req,
 
 app.get('/api/admin/mcq-bank/structure', authMiddleware, requireAdmin, async (req, res) => {
   const subject = canonicalizeSubject(req.query.subject || '');
-  const subjectMatcher = buildSubjectMatcher(subject);
-  const filter = subjectMatcher ? { subject: subjectMatcher } : {};
+  const subjectClause = buildAdminMcqSubjectClause(subject);
+  const filter = subjectClause || {};
 
   const rows = await MCQModel.aggregate([
     { $match: filter },
     {
+      $project: {
+        normalizedSubject: { $ifNull: ['$subject', '$subject_id'] },
+        normalizedPart: { $ifNull: ['$part', '$part_id'] },
+        normalizedChapter: { $ifNull: ['$chapter', '$chapter_id'] },
+        normalizedSection: {
+          $ifNull: [
+            '$section',
+            {
+              $ifNull: [
+                '$section_id',
+                {
+                  $ifNull: ['$topic', '$topic_id'],
+                },
+              ],
+            },
+          ],
+        },
+      },
+    },
+    {
       $group: {
         _id: {
-          subject: '$subject',
-          part: '$part',
-          chapter: '$chapter',
-          section: '$section',
+          subject: '$normalizedSubject',
+          part: '$normalizedPart',
+          chapter: '$normalizedChapter',
+          section: '$normalizedSection',
         },
         count: { $sum: 1 },
       },
@@ -11492,25 +11614,27 @@ app.get('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   const difficulty = String(req.query.difficulty || '').trim();
   const { page, limit, skip } = readPagination(req.query, { defaultLimit: 200, maxLimit: 500 });
 
-  const filter = {};
-  if (subject) {
-    const subjectMatcher = buildSubjectMatcher(subject);
-    if (subjectMatcher) filter.subject = subjectMatcher;
+  const clauses = [];
+  const subjectClause = buildAdminMcqSubjectClause(subject);
+  if (subjectClause) clauses.push(subjectClause);
+
+  if (part && isPartSelectionRequiredSubject(subject)) {
+    const partClause = buildAdminMcqPartClause(part);
+    if (partClause) clauses.push(partClause);
   }
-  if (part && isPartSelectionRequiredSubject(subject)) filter.part = part;
-  if (chapter) {
-    const expr = containsRegex(chapter, 100);
-    if (expr) filter.chapter = expr;
-  }
-  if (section) {
-    const expr = containsRegex(section, 100);
-    if (expr) filter.section = expr;
-  }
-  if (topic) {
-    const expr = containsRegex(topic, 100);
-    if (expr) filter.topic = expr;
-  }
-  if (difficulty) filter.difficulty = difficulty;
+
+  const chapterClause = buildAdminMcqChapterClause(chapter);
+  if (chapterClause) clauses.push(chapterClause);
+
+  const sectionClause = buildAdminMcqSectionClause(section);
+  if (sectionClause) clauses.push(sectionClause);
+
+  const topicClause = buildAdminMcqTopicClause(topic);
+  if (topicClause) clauses.push(topicClause);
+
+  if (difficulty) clauses.push({ difficulty });
+
+  const filter = buildAdminMcqFilterFromClauses(clauses);
 
   const mcqs = await MCQModel.find(filter)
     .select(MCQ_SELECT)
@@ -11542,16 +11666,18 @@ app.post('/api/admin/mcqs/bulk-delete', authMiddleware, requireAdmin, async (req
     return;
   }
 
-  const filter = {};
+  const clauses = [];
 
   if (mode === 'subject') {
     if (!subject) {
       res.status(400).json({ error: 'subject is required for subject deletion.' });
       return;
     }
-    filter.subject = subject;
+    const subjectClause = buildAdminMcqSubjectClause(subject);
+    if (subjectClause) clauses.push(subjectClause);
     if (part) {
-      filter.part = part;
+      const partClause = buildAdminMcqPartClause(part);
+      if (partClause) clauses.push(partClause);
     }
   }
 
@@ -11560,11 +11686,14 @@ app.post('/api/admin/mcqs/bulk-delete', authMiddleware, requireAdmin, async (req
       res.status(400).json({ error: 'subject and chapter are required for chapter deletion.' });
       return;
     }
-    filter.subject = subject;
+    const subjectClause = buildAdminMcqSubjectClause(subject);
+    if (subjectClause) clauses.push(subjectClause);
     if (part) {
-      filter.part = part;
+      const partClause = buildAdminMcqPartClause(part);
+      if (partClause) clauses.push(partClause);
     }
-    filter.chapter = { $regex: `^${chapter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' };
+    const chapterClause = buildAdminMcqChapterClause(chapter);
+    if (chapterClause) clauses.push(chapterClause);
   }
 
   if (mode === 'section-topic') {
@@ -11572,20 +11701,22 @@ app.post('/api/admin/mcqs/bulk-delete', authMiddleware, requireAdmin, async (req
       res.status(400).json({ error: 'subject and section/topic are required for section/topic deletion.' });
       return;
     }
-    filter.subject = subject;
+    const subjectClause = buildAdminMcqSubjectClause(subject);
+    if (subjectClause) clauses.push(subjectClause);
     if (part) {
-      filter.part = part;
+      const partClause = buildAdminMcqPartClause(part);
+      if (partClause) clauses.push(partClause);
     }
     if (chapter) {
-      filter.chapter = { $regex: `^${chapter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' };
+      const chapterClause = buildAdminMcqChapterClause(chapter);
+      if (chapterClause) clauses.push(chapterClause);
     }
 
-    const escapedSectionOrTopic = sectionOrTopic.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    filter.$or = [
-      { section: { $regex: `^${escapedSectionOrTopic}$`, $options: 'i' } },
-      { topic: { $regex: `^${escapedSectionOrTopic}$`, $options: 'i' } },
-    ];
+    const sectionClause = buildAdminMcqSectionClause(sectionOrTopic);
+    if (sectionClause) clauses.push(sectionClause);
   }
+
+  const filter = buildAdminMcqFilterFromClauses(clauses);
 
   const result = await MCQModel.deleteMany(filter);
 
@@ -12736,6 +12867,12 @@ app.post('/api/admin/upload-mcqs-bulk', authMiddleware, requireAdmin, async (req
 });
 
 app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res) => {
+  const mcqId = String(req.params.mcqId || '').trim();
+  if (!mcqId) {
+    res.status(400).json({ error: 'MCQ id is required.' });
+    return;
+  }
+
   const payload = {};
   ['question', 'questionImageUrl', 'answer', 'subject', 'part', 'chapter', 'section', 'topic', 'difficulty', 'tip', 'explanationText', 'shortTrickText'].forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(req.body, field)) {
@@ -12776,7 +12913,7 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
     }
   } else if (Array.isArray(req.body?.optionMedia)) {
     try {
-      const existing = await MCQModel.findById(req.params.mcqId).lean();
+      const existing = await findMcqByAdminIdentifier(mcqId, { lean: true });
       if (!existing) {
         res.status(404).json({ error: 'MCQ not found.' });
         return;
@@ -12791,7 +12928,7 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
   }
 
   if (Object.prototype.hasOwnProperty.call(payload, 'answer')) {
-    const existingForAnswer = await MCQModel.findById(req.params.mcqId).lean();
+    const existingForAnswer = await findMcqByAdminIdentifier(mcqId, { lean: true });
     if (!existingForAnswer) {
       res.status(404).json({ error: 'MCQ not found.' });
       return;
@@ -12818,7 +12955,7 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
   }
 
   if (Object.prototype.hasOwnProperty.call(payload, 'question')) {
-    const existingForQuestion = await MCQModel.findById(req.params.mcqId).lean();
+    const existingForQuestion = await findMcqByAdminIdentifier(mcqId, { lean: true });
     if (!existingForQuestion) {
       res.status(404).json({ error: 'MCQ not found.' });
       return;
@@ -12841,7 +12978,7 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
     payload.topic = `${chapterText} - ${sectionText}`.trim();
   }
 
-  const mcq = await MCQModel.findById(req.params.mcqId);
+  const mcq = await findMcqByAdminIdentifier(mcqId);
   if (!mcq) {
     res.status(404).json({ error: 'MCQ not found.' });
     return;
@@ -12864,15 +13001,17 @@ app.delete('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, r
     return;
   }
 
-  const removed = await MCQModel.findByIdAndDelete(mcqId).lean();
+  const removed = await findMcqByAdminIdentifier(mcqId, { lean: true });
   if (!removed) {
     res.status(404).json({ error: 'MCQ not found.' });
     return;
   }
 
+  await MCQModel.deleteOne({ _id: removed._id });
+
   broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'delete' } });
 
-  res.json({ ok: true, removedMcqId: mcqId });
+  res.json({ ok: true, removedMcqId: String(removed._id || mcqId) });
 });
 
 app.get('/api/admin/practice-board/questions', authMiddleware, requireAdmin, async (req, res) => {
