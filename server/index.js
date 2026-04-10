@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
@@ -436,10 +437,6 @@ app.use((req, res, next) => {
 app.use((req, _res, next) => {
   console.log(`[request] ${String(req.method || '').toUpperCase()} ${String(req.originalUrl || req.url || '').trim()}`);
   next();
-});
-
-app.get('/', (_req, res) => {
-  res.send('Backend is running successfully');
 });
 
 app.use(
@@ -13336,6 +13333,23 @@ app.use('/api', (req, res) => {
     error: `API route not found: ${String(req.method || 'GET').toUpperCase()} ${String(req.originalUrl || req.path || '').trim()}`,
   });
 });
+
+const studentDistDir = path.resolve(__dirname, '../dist');
+if (existsSync(studentDistDir)) {
+  app.use(
+    express.static(studentDistDir, {
+      maxAge: '1h',
+      etag: true,
+    }),
+  );
+  app.get('*', (_req, res) => {
+    res.sendFile(path.join(studentDistDir, 'index.html'));
+  });
+} else {
+  app.get('/', (_req, res) => {
+    res.type('text').send('Backend is running successfully. Run npm run build to serve the web app from this process.');
+  });
+}
 
 app.use((err, req, res, next) => {
   console.error('Unhandled API error:', {
