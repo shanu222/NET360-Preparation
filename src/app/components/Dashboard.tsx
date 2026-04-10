@@ -235,10 +235,6 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         <p className="mt-2 text-sm text-slate-600">
           NET360 is a complete platform for NET preparation in Pakistan. Practice MCQs, attempt mock tests, and improve your performance with AI-powered learning.
         </p>
-        <div className="mt-2 flex flex-wrap gap-3 text-sm">
-          <a className="text-indigo-700 underline underline-offset-2 hover:text-indigo-800" href="/physics-mcqs-net">Practice Physics MCQs</a>
-          <a className="text-indigo-700 underline underline-offset-2 hover:text-indigo-800" href="/math-mcqs-net">Practice Math MCQs</a>
-        </div>
         <h2 className="mt-4 text-xl text-indigo-950 sm:text-2xl">Welcome back, {firstName}!</h2>
         <p className="text-sm text-slate-500">Stay consistent, your NUST dream is getting closer every day.</p>
       </div>

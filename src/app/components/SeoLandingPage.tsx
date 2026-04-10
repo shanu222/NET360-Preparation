@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Button } from './ui/button';
 
 type SeoPageKey =
@@ -43,8 +44,88 @@ const COPY: Record<
   },
 };
 
+const PATH_BY_PAGE: Record<SeoPageKey, string> = {
+  'physics-mcqs-net': '/physics-mcqs-net',
+  'math-mcqs-net': '/math-mcqs-net',
+  'net-preparation-pakistan': '/net-preparation-pakistan',
+  'nust-entry-test-preparation': '/nust-entry-test-preparation',
+};
+
+const HEAD_SEO: Record<
+  SeoPageKey,
+  {
+    title: string;
+    description: string;
+    ogTitle: string;
+    ogDescription: string;
+  }
+> = {
+  'physics-mcqs-net': {
+    title: 'Practice Physics MCQs | Free Test Prep',
+    description:
+      'Practice Physics MCQs with detailed explanations. Prepare for exams with high-quality questions.',
+    ogTitle: 'Practice Physics MCQs',
+    ogDescription: 'High-quality MCQs for exam prep',
+  },
+  'math-mcqs-net': {
+    title: 'Practice Math MCQs | Free Test Prep',
+    description:
+      'Practice Math MCQs with detailed explanations. Improve your problem-solving skills.',
+    ogTitle: 'Practice Math MCQs',
+    ogDescription: 'High-quality MCQs for exam prep',
+  },
+  'net-preparation-pakistan': {
+    title: 'NET Preparation in Pakistan | Free Test Prep',
+    description: COPY['net-preparation-pakistan'].paragraphs[0],
+    ogTitle: 'NET Preparation in Pakistan',
+    ogDescription: 'MCQs, mock tests, and analytics for NUST NET.',
+  },
+  'nust-entry-test-preparation': {
+    title: 'NUST Entry Test Preparation | Free Test Prep',
+    description: COPY['nust-entry-test-preparation'].paragraphs[0],
+    ogTitle: 'NUST Entry Test Preparation',
+    ogDescription: 'MCQs and mock tests aligned with NET-style practice.',
+  },
+};
+
 export function SeoLandingPage({ page }: { page: SeoPageKey }) {
   const copy = COPY[page];
+
+  useEffect(() => {
+    const seo = HEAD_SEO[page];
+    const descEl = document.querySelector<HTMLMetaElement>('meta[name="description"]');
+    const robotsEl = document.querySelector<HTMLMetaElement>('meta[name="robots"]');
+
+    const previousTitle = document.title;
+    const previousDescription = descEl?.getAttribute('content') ?? '';
+
+    document.title = seo.title;
+    if (descEl) descEl.setAttribute('content', seo.description);
+    if (robotsEl) robotsEl.setAttribute('content', 'index, follow');
+
+    const ogEntries: Array<[string, string]> = [
+      ['og:title', seo.ogTitle],
+      ['og:description', seo.ogDescription],
+      ['og:type', 'website'],
+      ['og:url', `${window.location.origin}${PATH_BY_PAGE[page]}`],
+    ];
+
+    const injected: HTMLMetaElement[] = [];
+    for (const [property, content] of ogEntries) {
+      const el = document.createElement('meta');
+      el.setAttribute('property', property);
+      el.setAttribute('content', content);
+      el.setAttribute('data-net360-seo', '1');
+      document.head.appendChild(el);
+      injected.push(el);
+    }
+
+    return () => {
+      document.title = previousTitle;
+      if (descEl) descEl.setAttribute('content', previousDescription);
+      injected.forEach((el) => el.remove());
+    };
+  }, [page]);
 
   return (
     <div className="space-y-4">
