@@ -3710,6 +3710,18 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     } as T;
   }
 
+  if (url.pathname === '/api/mcqs/counts' && method === 'GET') {
+    const mcqs = await loadMcqs();
+    const counts = mcqs.reduce((acc, item) => {
+      const key = String(item.subject || '').toLowerCase();
+      if (!key) return acc;
+      acc[key] = Number(acc[key] || 0) + 1;
+      return acc;
+    }, {} as Record<string, number>);
+
+    return { counts } as T;
+  }
+
   if (url.pathname === '/api/practice-board/questions' && method === 'GET') {
     const db = readDb();
     const subject = String(url.searchParams.get('subject') || '').trim().toLowerCase();
@@ -4197,7 +4209,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const selectedSubject = String(body.selectedSubject || subject).toLowerCase() as SubjectKey;
     const profile = NET_TEST_PROFILES[netType] || NET_TEST_PROFILES['net-engineering'];
     const requested = Number(body.questionCount) || (mode === 'mock' ? profile.totalQuestions : 20);
-    const questionCount = clamp(requested, 1, 200);
+    const questionCount = mode === 'topic' ? 25 : clamp(requested, 1, 200);
 
     if (!mode) {
       throw new Error('mode is required.');

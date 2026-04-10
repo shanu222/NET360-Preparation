@@ -9295,6 +9295,30 @@ app.get('/api/mcqs', async (req, res) => {
   }
 });
 
+app.get('/api/mcqs/counts', async (_req, res) => {
+  try {
+    const rows = await MCQModel.aggregate([
+      {
+        $group: {
+          _id: '$subject',
+          total: { $sum: 1 },
+        },
+      },
+    ]);
+
+    const counts = {};
+    rows.forEach((row) => {
+      const key = canonicalizeSubject(row?._id || '');
+      if (!key) return;
+      counts[key] = Number(row?.total || 0);
+    });
+
+    res.json({ counts });
+  } catch {
+    res.status(500).json({ error: 'Failed to load MCQ counts.' });
+  }
+});
+
 app.post('/api/practice/analyze', authMiddleware, async (req, res) => {
   const questionText = String(req.body?.question || '').trim();
   const stepsRaw = String(req.body?.steps || '').trim();

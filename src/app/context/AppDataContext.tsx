@@ -98,6 +98,7 @@ interface AppDataContextValue {
   loading: boolean;
   error: string | null;
   mcqs: MCQ[];
+  mcqTotalsBySubject: Record<SubjectKey, number>;
   mcqsBySubject: Record<SubjectKey, MCQ[]>;
   mcqsBySubjectAndDifficulty: Record<SubjectKey, Record<Difficulty, MCQ[]>>;
   attempts: TestAttempt[];
@@ -160,6 +161,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mcqs, setMcqs] = useState<MCQ[]>([]);
+  const [mcqTotalsBySubject, setMcqTotalsBySubject] = useState<Record<SubjectKey, number>>(
+    Object.fromEntries(SUBJECT_KEYS.map((subject) => [subject, 0])) as Record<SubjectKey, number>,
+  );
   const [attempts, setAttempts] = useState<TestAttempt[]>([]);
   const [profile, setProfile] = useState<ProfileState>(defaultProfile);
   const [preferences, setPreferences] = useState<PreferencesState>(defaultPreferences);
@@ -183,8 +187,17 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadMcqData = useCallback(async () => {
-    const payload = await apiRequest<{ mcqs: MCQ[] }>('/api/mcqs');
+    const [payload, countPayload] = await Promise.all([
+      apiRequest<{ mcqs: MCQ[] }>('/api/mcqs'),
+      apiRequest<{ counts: Partial<Record<SubjectKey, number>> }>('/api/mcqs/counts'),
+    ]);
     setMcqs(payload.mcqs || []);
+    setMcqTotalsBySubject(
+      SUBJECT_KEYS.reduce((acc, subject) => {
+        acc[subject] = Number(countPayload?.counts?.[subject] || 0);
+        return acc;
+      }, {} as Record<SubjectKey, number>),
+    );
   }, []);
 
   const loadUserData = useCallback(async (authToken: string, silent = false) => {
@@ -534,6 +547,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         loading,
         error,
         mcqs,
+        mcqTotalsBySubject,
         mcqsBySubject,
         mcqsBySubjectAndDifficulty,
         attempts,

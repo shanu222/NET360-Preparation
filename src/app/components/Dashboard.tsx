@@ -87,7 +87,7 @@ const SUBJECT_STYLE_OVERRIDES: Partial<Record<DashboardSubjectKey, { badge: stri
 };
 
 export function Dashboard({ onNavigate }: DashboardProps) {
-  const { mcqsBySubject, attempts, profile } = useAppData();
+  const { mcqsBySubject, mcqTotalsBySubject, attempts, profile } = useAppData();
   const dashboardSubjects = useMemo(() => buildDashboardSubjects(profile.targetProgram), [profile.targetProgram]);
 
   const daysUntilNET = useMemo(() => {
@@ -107,8 +107,8 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     const hasProfileDrivenSubjects = requiredSources.length > 0;
 
     const questionPool = hasProfileDrivenSubjects
-      ? requiredSources.reduce((sum, subject) => sum + (mcqsBySubject[subject]?.length || 0), 0)
-      : Object.values(mcqsBySubject).reduce((sum, list) => sum + list.length, 0);
+      ? requiredSources.reduce((sum, subject) => sum + (mcqTotalsBySubject[subject] || 0), 0)
+      : Object.values(mcqTotalsBySubject).reduce((sum, total) => sum + Number(total || 0), 0);
 
     const attemptedQuestions = hasProfileDrivenSubjects
       ? attempts
@@ -155,7 +155,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       streakDays,
       overallProgress,
     };
-  }, [attempts, dashboardSubjects, mcqsBySubject]);
+  }, [attempts, dashboardSubjects, mcqTotalsBySubject]);
 
   const subjectStats = useMemo(() => {
     const attemptedBySubject = attempts.reduce((acc, attempt) => {
@@ -170,7 +170,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       ]),
     )
       .filter((key) => {
-        const total = mcqsBySubject[key as SubjectKey]?.length || 0;
+        const total = mcqTotalsBySubject[key as SubjectKey] || 0;
         const attempted = attemptedBySubject[key] || 0;
         return total > 0 || attempted > 0;
       })
@@ -183,7 +183,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     const activeSubjects = dashboardSubjects.length ? dashboardSubjects : fallbackSubjects;
 
     return activeSubjects.map((subject, index) => {
-      const total = subject.source ? (mcqsBySubject[subject.source]?.length || 0) : 0;
+      const total = subject.source ? (mcqTotalsBySubject[subject.source] || 0) : 0;
       const attempted = subject.source ? (attemptedBySubject[subject.source] || 0) : 0;
       const progress = total ? Math.min(100, Math.round((attempted / total) * 100)) : 0;
       const theme = SUBJECT_STYLE_OVERRIDES[subject.key] || SUBJECT_STYLE_FALLBACKS[index % SUBJECT_STYLE_FALLBACKS.length];
@@ -199,7 +199,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         remaining: Math.max(0, total - attempted),
       };
     });
-  }, [attempts, dashboardSubjects, mcqsBySubject]);
+  }, [attempts, dashboardSubjects, mcqTotalsBySubject]);
 
   const weekChart = useMemo(() => {
     const labels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
