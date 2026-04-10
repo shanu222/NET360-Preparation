@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import { apiRequest } from '../lib/api';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../lib/hierarchyDedup';
+import { useAppData } from '../context/AppDataContext';
 
 type AcademicPart = 'part1' | 'part2';
 type TabKey = SubjectKey;
@@ -553,6 +554,7 @@ interface PreparationProps {
 }
 
 export function Preparation({ showStartTestButton = true, onSelectSection, onSelectFlatTopic }: PreparationProps = {}) {
+  const { attempts } = useAppData();
   const difficultyLevels: Array<'Easy' | 'Medium' | 'Hard'> = ['Easy', 'Medium', 'Hard'];
   const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<PartStructuredSubjectKey, AcademicPart | null>>(() => (
     PART_STRUCTURED_SUBJECTS.reduce((acc, subject) => {
@@ -585,6 +587,30 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     'quantitative-mathematics': null,
     'design-aptitude': null,
   });
+
+  const normalizeProgressKey = (value: string) => normalizeHierarchyLabel(String(value || '').trim());
+
+  const completedSectionKeys = useMemo(() => {
+    const keys = new Set<string>();
+    (attempts || []).forEach((attempt) => {
+      const attemptSubject = String(attempt?.subject || '').trim();
+      const attemptTopic = normalizeProgressKey(String(attempt?.topic || ''));
+      if (!attemptSubject || !attemptTopic) return;
+      keys.add(`${attemptSubject}::${attemptTopic}`);
+    });
+    return keys;
+  }, [attempts]);
+
+  const isSectionCompleted = (subject: SubjectKey, sectionTitle: string) => (
+    completedSectionKeys.has(`${subject}::${normalizeProgressKey(sectionTitle)}`)
+  );
+
+  const getChapterProgressPercent = (subject: SubjectKey, sections: string[]) => {
+    const totalSections = Array.isArray(sections) ? sections.length : 0;
+    if (!totalSections) return 0;
+    const completedSections = sections.filter((section) => isSectionCompleted(subject, section)).length;
+    return Math.round((completedSections / totalSections) * 100);
+  };
 
   const createTestSession = async (
     authToken: string,
@@ -914,6 +940,13 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                 <div>
                                   <p className="font-medium text-indigo-950">{chapter.title}</p>
                                   <p className="mt-1 text-xs text-slate-500">{chapter.sections.length} sections</p>
+                                  <div className="mt-2 h-1.5 w-full rounded-full bg-slate-200">
+                                    <div
+                                      className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-green-400 transition-all duration-300 ease-out"
+                                      style={{ width: `${getChapterProgressPercent(subject, chapter.sections)}%` }}
+                                    />
+                                  </div>
+                                  <p className="mt-1 text-[11px] text-slate-500">{getChapterProgressPercent(subject, chapter.sections)}% completed</p>
                                 </div>
                                 <ChevronRight className={`h-4 w-4 transition-transform ${active ? `rotate-90 ${tone.chapterAccent}` : 'text-slate-500'}`} />
                               </div>
@@ -936,7 +969,17 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                           });
                                         }}
                                       >
-                                        {section}
+                                        <span className="flex items-center justify-between gap-2">
+                                          <span>{section}</span>
+                                          {isSectionCompleted(subject, section) ? (
+                                            <span
+                                              className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full text-[11px] ${selectedSection === `${chapter.id}::${section}` ? 'bg-white/20 text-white' : 'bg-emerald-500 text-white'}`}
+                                              title="Completed"
+                                            >
+                                              ✓
+                                            </span>
+                                          ) : null}
+                                        </span>
                                       </button>
 
                                       {showStartTestButton && selectedSection === `${chapter.id}::${section}` ? (
@@ -1058,6 +1101,13 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                 <div>
                                   <p className="font-medium text-indigo-950">{chapter.title}</p>
                                   <p className="mt-1 text-xs text-slate-500">{chapter.sections.length} sections</p>
+                                  <div className="mt-2 h-1.5 w-full rounded-full bg-slate-200">
+                                    <div
+                                      className="h-full rounded-full bg-gradient-to-r from-emerald-500 to-green-400 transition-all duration-300 ease-out"
+                                      style={{ width: `${getChapterProgressPercent(subject, chapter.sections)}%` }}
+                                    />
+                                  </div>
+                                  <p className="mt-1 text-[11px] text-slate-500">{getChapterProgressPercent(subject, chapter.sections)}% completed</p>
                                 </div>
                                 <ChevronRight className={`h-4 w-4 transition-transform ${active ? `rotate-90 ${tone.chapterAccent}` : 'text-slate-500'}`} />
                               </div>
@@ -1085,7 +1135,17 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                           onSelectSection?.(selection);
                                         }}
                                       >
-                                        {section}
+                                        <span className="flex items-center justify-between gap-2">
+                                          <span>{section}</span>
+                                          {isSectionCompleted(subject, section) ? (
+                                            <span
+                                              className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full text-[11px] ${selectedSectionBySubject[subject] === `${chapter.id}::${section}` ? 'bg-white/20 text-white' : 'bg-emerald-500 text-white'}`}
+                                              title="Completed"
+                                            >
+                                              ✓
+                                            </span>
+                                          ) : null}
+                                        </span>
                                       </button>
 
                                       {showStartTestButton && selectedSectionBySubject[subject] === `${chapter.id}::${section}` ? (
