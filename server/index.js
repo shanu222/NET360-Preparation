@@ -9249,8 +9249,15 @@ app.post('/api/admin/community/reports/:reportId/review', authMiddleware, requir
 app.get('/api/mcqs', async (req, res) => {
   try {
     const { subject, part, chapter, section, difficulty, topic } = req.query;
-    const { page, limit, skip } = readPagination(req.query, { defaultLimit: 500, maxLimit: 2000 });
+    const hasExplicitLimit = req.query?.limit != null && String(req.query.limit).trim() !== '';
+    const { page, limit, skip } = readPagination(req.query, { defaultLimit: 50000, maxLimit: 100000 });
     const filter = {};
+    const buildExactTextMatcher = (value) => {
+      const normalized = String(value || '').trim();
+      if (!normalized) return null;
+      const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return { $regex: `^${escaped}$`, $options: 'i' };
+    };
 
     if (subject) {
       const subjectMatcher = buildSubjectMatcher(subject);
@@ -9265,28 +9272,31 @@ app.get('/api/mcqs', async (req, res) => {
       filter.part = String(part).toLowerCase().trim();
     }
     if (chapter) {
-      const expr = containsRegex(chapter, 100);
+      const expr = buildExactTextMatcher(chapter);
       if (expr) filter.chapter = expr;
     }
     if (section) {
-      const expr = containsRegex(section, 100);
+      const expr = buildExactTextMatcher(section);
       if (expr) filter.section = expr;
     }
     if (topic) {
-      const expr = containsRegex(topic, 100);
+      const expr = buildExactTextMatcher(topic);
       if (expr) filter.topic = expr;
     }
 
-    const mcqs = await MCQModel.find(filter)
+    const query = MCQModel.find(filter)
       .select(MCQ_SELECT)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean();
+      .sort({ createdAt: -1 });
+
+    if (hasExplicitLimit) {
+      query.skip(skip).limit(limit);
+    }
+
+    const mcqs = await query.lean();
 
     res.json({
       page,
-      limit,
+      limit: hasExplicitLimit ? limit : mcqs.length,
       mcqs: mcqs.map((item) => serializeMcq(item)),
       total: mcqs.length,
     });
@@ -10245,6 +10255,19 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     if (exact.length) return exact;
     return rows.filter((item) => normalizeTextForMatch(item?.[key]).includes(query));
   };
+  const exactSectionOrTopic = (rows, requested) => {
+    const query = normalizeTextForMatch(requested);
+    if (!query) return rows;
+    const exact = rows.filter((item) => (
+      normalizeTextForMatch(item?.section) === query
+      || normalizeTextForMatch(item?.topic) === query
+    ));
+    if (exact.length) return exact;
+    return rows.filter((item) => (
+      normalizeTextForMatch(item?.section).includes(query)
+      || normalizeTextForMatch(item?.topic).includes(query)
+    ));
+  };
 
   let selected = [];
   const profileSubjectMatchers = buildSubjectInMatchers(Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects))));
@@ -10289,14 +10312,9 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
       if (normalizedChapter && normalizedChapter !== 'All Chapters') {
         scoped = exactThenContains(scoped, 'chapter', normalizedChapter);
       }
-      if (normalizedSection && normalizedSection !== 'All Sections') {
-        scoped = exactThenContains(scoped, 'section', normalizedSection);
-      }
-      if (normalizedTopic && normalizedTopic !== 'All Topics') {
-        const byTopic = exactThenContains(scoped, 'topic', normalizedTopic);
-        if (byTopic.length) {
-          scoped = byTopic;
-        }
+      const normalizedSectionOrTopic = String(normalizedSection || normalizedTopic || '').trim();
+      if (normalizedSectionOrTopic && normalizedSectionOrTopic !== 'All Sections' && normalizedSectionOrTopic !== 'All Topics') {
+        scoped = exactSectionOrTopic(scoped, normalizedSectionOrTopic);
       }
 
       return scoped;

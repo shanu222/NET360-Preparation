@@ -187,9 +187,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadMcqData = useCallback(async () => {
+    const refreshTag = Date.now();
     const [payload, countPayload] = await Promise.all([
-      apiRequest<{ mcqs: MCQ[] }>('/api/mcqs'),
-      apiRequest<{ counts: Partial<Record<SubjectKey, number>> }>('/api/mcqs/counts'),
+      apiRequest<{ mcqs: MCQ[] }>(`/api/mcqs?t=${refreshTag}`, { cache: 'no-store' }),
+      apiRequest<{ counts: Partial<Record<SubjectKey, number>> }>(`/api/mcqs/counts?t=${refreshTag}`, { cache: 'no-store' }),
     ]);
     setMcqs(payload.mcqs || []);
     setMcqTotalsBySubject(
@@ -412,6 +413,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       throw new Error('Please login first to start a server-backed test session.');
     }
 
+    console.log('[MCQ Test Request]', { subject, chapter, topic, section, mode });
     const startPayload = await apiRequest<{ session: TestSession }>(
       '/api/tests/start',
       {
@@ -432,6 +434,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       },
       authToken,
     );
+    console.log('[MCQ Test Response]', {
+      subject,
+      chapter,
+      topic,
+      section,
+      returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
+    });
 
     return startPayload.session;
   };

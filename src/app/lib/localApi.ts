@@ -3679,7 +3679,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const section = url.searchParams.get('section');
     const difficulty = url.searchParams.get('difficulty');
     const topic = url.searchParams.get('topic');
-    const limit = Number(url.searchParams.get('limit') || '10000');
+    const hasLimit = url.searchParams.has('limit');
+    const limit = Number(url.searchParams.get('limit') || '100000');
 
     let results = [...mcqs];
     if (subject) {
@@ -3693,19 +3694,19 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       results = results.filter((item) => String(item.part || '').toLowerCase() === part.toLowerCase());
     }
     if (chapter) {
-      results = results.filter((item) => String(item.chapter || '').toLowerCase().includes(chapter.toLowerCase()));
+      results = results.filter((item) => String(item.chapter || '').trim().toLowerCase() === chapter.toLowerCase().trim());
     }
     if (section) {
-      results = results.filter((item) => String(item.section || '').toLowerCase().includes(section.toLowerCase()));
+      results = results.filter((item) => String(item.section || '').trim().toLowerCase() === section.toLowerCase().trim());
     }
     if (topic) {
       const expected = topic.toLowerCase();
-      results = results.filter((item) => item.topic.toLowerCase().includes(expected));
+      results = results.filter((item) => String(item.topic || '').trim().toLowerCase() === expected.trim());
     }
 
-    const max = clamp(Number.isFinite(limit) ? limit : 10000, 1, 10000);
+    const max = clamp(Number.isFinite(limit) ? limit : 100000, 1, 100000);
     return {
-      mcqs: results.slice(0, max),
+      mcqs: hasLimit ? results.slice(0, max) : results,
       total: results.length,
     } as T;
   }
@@ -4226,6 +4227,19 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       if (exact.length) return exact;
       return rows.filter((item) => normalizeTextForMatch(item[key]).includes(query));
     };
+    const exactSectionOrTopic = (rows: MCQ[], requested: string) => {
+      const query = normalizeTextForMatch(requested);
+      if (!query) return rows;
+      const exact = rows.filter((item) => (
+        normalizeTextForMatch(item.section) === query
+        || normalizeTextForMatch(item.topic) === query
+      ));
+      if (exact.length) return exact;
+      return rows.filter((item) => (
+        normalizeTextForMatch(item.section).includes(query)
+        || normalizeTextForMatch(item.topic).includes(query)
+      ));
+    };
 
     const profileSubjects = Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects)));
     const scoped = mcqs.filter((item) => profileSubjects.includes(item.subject));
@@ -4253,14 +4267,9 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         if (chapter && chapter !== 'All Chapters') {
           scoped = exactThenContains(scoped, 'chapter', chapter);
         }
-        if (section && section !== 'All Sections') {
-          scoped = exactThenContains(scoped, 'section', section);
-        }
-        if (topic && topic !== 'All Topics') {
-          const byTopic = exactThenContains(scoped, 'topic', topic);
-          if (byTopic.length) {
-            scoped = byTopic;
-          }
+        const sectionOrTopic = String(section || topic || '').trim();
+        if (sectionOrTopic && sectionOrTopic !== 'All Sections' && sectionOrTopic !== 'All Topics') {
+          scoped = exactSectionOrTopic(scoped, sectionOrTopic);
         }
         return scoped;
       };
