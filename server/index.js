@@ -10247,6 +10247,33 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     ? 25
     : clamp(requestedQuestions, 1, 200);
 
+  const escapeRegexText = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const exactCaseInsensitiveRegex = (value) => {
+    const normalized = String(value || '').trim();
+    if (!normalized) return null;
+    return { $regex: `^${escapeRegexText(normalized)}$`, $options: 'i' };
+  };
+  const maskedMongoUri = MONGODB_URI
+    ? MONGODB_URI.replace(/\/\/([^:]+):[^@]+@/, '//$1:***@')
+    : '(missing)';
+  console.log('[TEST START] Incoming params', {
+    subject,
+    part,
+    chapter,
+    section,
+    topic,
+    difficulty,
+    mode,
+    questionCount,
+    testType,
+    desiredQuestions,
+  });
+  console.log('[TEST START] Mongo context', {
+    uri: maskedMongoUri,
+    db: MCQModel?.db?.name || '(unknown)',
+    collection: MCQModel?.collection?.name || '(unknown)',
+  });
+
   const normalizeTextForMatch = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
   const exactThenContains = (rows, key, requested) => {
     const query = normalizeTextForMatch(requested);
@@ -10299,37 +10326,91 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
       userProgress: req.user.progress || defaultProgress(),
     });
   } else {
-    const baseFilter = {
-      subject: buildSubjectMatcher(normalizedSubject) || normalizedSubject,
-    };
+    const baseFilter = {};
+    const subjectExpr = exactCaseInsensitiveRegex(normalizedSubject);
+    if (subjectExpr) {
+      baseFilter.subject = subjectExpr;
+    }
     if (normalizedPart) {
-      baseFilter.part = normalizedPart;
+      const partExpr = exactCaseInsensitiveRegex(normalizedPart);
+      if (partExpr) {
+        baseFilter.part = partExpr;
+      }
+    }
+    if (normalizedChapter && normalizedChapter !== 'All Chapters') {
+      const chapterExpr = exactCaseInsensitiveRegex(normalizedChapter);
+      if (chapterExpr) {
+        baseFilter.chapter = chapterExpr;
+      }
     }
 
-    const applyHierarchyFilters = (rows) => {
-      let scoped = [...rows];
-
-      if (normalizedChapter && normalizedChapter !== 'All Chapters') {
-        scoped = exactThenContains(scoped, 'chapter', normalizedChapter);
+    const normalizedSectionOrTopic = String(normalizedSection || normalizedTopic || '').trim();
+    if (normalizedSectionOrTopic && normalizedSectionOrTopic !== 'All Sections' && normalizedSectionOrTopic !== 'All Topics') {
+      const sectionOrTopicExpr = exactCaseInsensitiveRegex(normalizedSectionOrTopic);
+      if (sectionOrTopicExpr) {
+        baseFilter.$or = [
+          { section: sectionOrTopicExpr },
+          { topic: sectionOrTopicExpr },
+          // Defensive fallback for inconsistent documents that may use "topics".
+          { topics: sectionOrTopicExpr },
+        ];
       }
-      const normalizedSectionOrTopic = String(normalizedSection || normalizedTopic || '').trim();
-      if (normalizedSectionOrTopic && normalizedSectionOrTopic !== 'All Sections' && normalizedSectionOrTopic !== 'All Topics') {
-        scoped = exactSectionOrTopic(scoped, normalizedSectionOrTopic);
-      }
+    }
 
-      return scoped;
-    };
+    const difficultyFilter = { ...baseFilter };
+    const difficultyExpr = exactCaseInsensitiveRegex(normalizedDifficulty);
+    if (difficultyExpr) {
+      difficultyFilter.difficulty = difficultyExpr;
+    }
 
-    const difficultyFilter = {
-      ...baseFilter,
-      difficulty: normalizedDifficulty,
-    };
+    let pool = await MCQModel.find(difficultyFilter).lean();
 
-    let pool = applyHierarchyFilters(await MCQModel.find(difficultyFilter).lean());
-
-    // If selected difficulty has no rows, fallback to any difficulty for same saved hierarchy.
+    // If selected difficulty has no rows, fallback to any difficulty for same subject/chapter/topic scope.
     if (!pool.length) {
-      pool = applyHierarchyFilters(await MCQModel.find(baseFilter).lean());
+      pool = await MCQModel.find(baseFilter).lean();
+    }
+
+    console.log('[TEST START] Mongo filtered count', {
+      withDifficulty: Array.isArray(pool) ? pool.length : 0,
+      usedFilterKeys: Object.keys(difficultyFilter || {}),
+      usedBaseFilterKeys: Object.keys(baseFilter || {}),
+    });
+
+    if (!pool.length) {
+      // Debug fallback: inspect subject-level pool to explain why filters removed all records.
+      const subjectOnlyFilter = {};
+      if (subjectExpr) {
+        subjectOnlyFilter.subject = subjectExpr;
+      }
+      if (normalizedPart) {
+        const partExpr = exactCaseInsensitiveRegex(normalizedPart);
+        if (partExpr) {
+          subjectOnlyFilter.part = partExpr;
+        }
+      }
+      const subjectOnlyPool = await MCQModel.find(subjectOnlyFilter)
+        .select('subject part chapter section topic topics difficulty')
+        .limit(200)
+        .lean();
+
+      console.log('[TEST START] Empty filtered result diagnostics', {
+        requested: {
+          subject: normalizedSubject,
+          part: normalizedPart,
+          chapter: normalizedChapter,
+          section: normalizedSection,
+          topic: normalizedTopic,
+          difficulty: normalizedDifficulty,
+        },
+        subjectOnlyCount: subjectOnlyPool.length,
+        sample: subjectOnlyPool.slice(0, 5).map((item) => ({
+          chapter: String(item?.chapter || ''),
+          section: String(item?.section || ''),
+          topic: String(item?.topic || ''),
+          topics: String(item?.topics || ''),
+          difficulty: String(item?.difficulty || ''),
+        })),
+      });
     }
 
     const shuffledPool = shuffle(pool);
@@ -10391,7 +10472,10 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
   console.log('MCQ COUNT', selected.length);
 
   if (!selected.length) {
-    res.status(404).json({ error: 'No questions available for this configuration.' });
+    res.status(404).json({
+      error: 'No questions available for this configuration.',
+      reason: 'No rows matched the selected subject/chapter/topic filters.',
+    });
     return;
   }
 
