@@ -9249,6 +9249,16 @@ app.post('/api/admin/community/reports/:reportId/review', authMiddleware, requir
 app.get('/api/mcqs', async (req, res) => {
   try {
     const { subject, part, chapter, section, difficulty, topic } = req.query;
+    console.log('[MCQ FETCH] Incoming filters:', {
+      subject,
+      part,
+      chapter,
+      section,
+      topic,
+      difficulty,
+      page: req.query?.page,
+      limit: req.query?.limit,
+    });
     const hasExplicitLimit = req.query?.limit != null && String(req.query.limit).trim() !== '';
     const { page, limit, skip } = readPagination(req.query, { defaultLimit: 50000, maxLimit: 100000 });
     const filter = {};
@@ -9281,7 +9291,13 @@ app.get('/api/mcqs', async (req, res) => {
     }
     if (topic) {
       const expr = buildExactTextMatcher(topic);
-      if (expr) filter.topic = expr;
+      if (expr) {
+        filter.$or = [
+          { topic: expr },
+          // Defensive fallback for inconsistent document shape.
+          { topics: expr },
+        ];
+      }
     }
 
     const query = MCQModel.find(filter)
@@ -9293,6 +9309,7 @@ app.get('/api/mcqs', async (req, res) => {
     }
 
     const mcqs = await query.lean();
+    console.log('[MCQ FETCH] MCQs found:', mcqs.length);
 
     res.json({
       page,
