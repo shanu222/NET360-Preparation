@@ -1099,6 +1099,16 @@ export function Profile({ onNavigate }: ProfileProps) {
                       </a>
                     </Button>
                   </div>
+
+                  <div className="mt-6 flex justify-center px-1 sm:mt-8">
+                    <img
+                      src="/images/login-banner.png"
+                      alt="NET360"
+                      className="h-auto w-full max-w-[min(90vw,500px)] rounded-xl shadow-[0_8px_24px_rgba(0,0,0,0.2)] transition-transform duration-300 ease-out hover:scale-[1.02] sm:max-w-[500px]"
+                      loading="lazy"
+                      decoding="async"
+                    />
+                  </div>
                 </>
               ) : null}
             </CardContent>
