@@ -15,7 +15,6 @@ import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentPr
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK, PAYMENT_METHODS } from '../lib/paymentMethods';
 import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 
-const ADVERTISEMENT_PREVIEW_SRC = '/advertisement-page.webp';
 const BRAND_LOGO_SRC = '/net360-logo.png';
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
 
@@ -1122,12 +1121,13 @@ export function Profile({ onNavigate }: ProfileProps) {
               <CardDescription className="text-slate-600">Latest update and announcements for NET360 students.</CardDescription>
             </CardHeader>
             <CardContent className="relative pb-7">
-              <div className="mx-auto mt-4 w-full max-w-[680px] rounded-2xl border border-indigo-100/80 bg-white/70 p-2 shadow-[0_18px_34px_rgba(79,70,229,0.14)] backdrop-blur-sm">
+              <div className="mx-auto mt-4 flex w-full max-w-[min(100%,680px)] justify-center rounded-2xl border border-indigo-100/80 bg-white/70 p-2 shadow-[0_18px_34px_rgba(79,70,229,0.14)] backdrop-blur-sm">
                 <img
-                  src={ADVERTISEMENT_PREVIEW_SRC}
+                  src="/advertisement-page.webp"
                   alt="NET360 advertisement"
-                  className="w-full rounded-xl object-cover"
+                  className="mx-auto h-auto w-full max-w-full object-contain rounded-xl"
                   loading="lazy"
+                  decoding="async"
                 />
               </div>
             </CardContent>
