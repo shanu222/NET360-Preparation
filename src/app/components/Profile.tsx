@@ -977,7 +977,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                       placeholder="NET-XXXX-XXXX-XXXX"
                       className="h-11 border-indigo-100"
                     />
-                    <p className="text-xs text-slate-500">This code appears automatically after admin clicks Send Code in the admin panel.</p>
+                    <p className="text-xs text-slate-500">Wait please, token code will appear automatically.</p>
                   </div>
                 </>
               ) : null}
