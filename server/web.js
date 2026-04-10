@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,6 +9,8 @@ const __dirname = path.dirname(__filename);
 const PORT = Number(process.env.PORT || 10000);
 const app = express();
 const distDir = path.resolve(__dirname, '../dist');
+const publicDir = path.resolve(__dirname, '../public');
+const googleVerificationFile = 'google408182c27152cb87.html';
 
 app.disable('x-powered-by');
 
@@ -19,6 +22,22 @@ app.use(express.static(distDir, {
   maxAge: '1h',
   etag: true,
 }));
+
+app.get(`/${googleVerificationFile}`, (_req, res) => {
+  const distFilePath = path.join(distDir, googleVerificationFile);
+  if (fs.existsSync(distFilePath)) {
+    res.sendFile(distFilePath);
+    return;
+  }
+
+  const publicFilePath = path.join(publicDir, googleVerificationFile);
+  if (fs.existsSync(publicFilePath)) {
+    res.sendFile(publicFilePath);
+    return;
+  }
+
+  res.status(404).send('Verification file not found.');
+});
 
 app.get('*', (_req, res) => {
   res.sendFile(path.join(distDir, 'index.html'));
