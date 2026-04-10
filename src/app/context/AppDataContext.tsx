@@ -382,7 +382,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
     mcqs.forEach((question) => {
       if (!Object.prototype.hasOwnProperty.call(grouped, question.subject)) return;
-      grouped[question.subject][question.difficulty].push(question);
+      const subjectBuckets = grouped[question.subject];
+      const difficultyKey = String(question.difficulty || '').trim() as Difficulty;
+      const targetBucket = subjectBuckets?.[difficultyKey];
+      console.log('[MCQ Difficulty Bucket Check]', {
+        subject: question.subject,
+        difficulty: question.difficulty,
+        hasBucket: Array.isArray(targetBucket),
+      });
+      if (!Array.isArray(targetBucket)) return;
+      targetBucket.push(question);
     });
 
     return grouped;
