@@ -8,7 +8,7 @@
   import { TestInterfacePage } from "./app/components/TestInterfacePage.tsx";
   import { ErrorBoundary } from "./app/components/ErrorBoundary.tsx";
   import { initializeNativeExperience } from "./app/lib/nativeMobile.ts";
-  import { HashRouter } from "react-router-dom";
+  import { BrowserRouter } from "react-router-dom";
   import "./styles/index.css";
 
   const isAdminOnlyBuild = String((import.meta as any).env?.VITE_ADMIN_ONLY || '').toLowerCase() === 'true';
@@ -39,9 +39,9 @@
           : shouldRenderAdminApp
             ? <AdminApp />
             : (
-              <HashRouter>
+              <BrowserRouter>
                 <App />
-              </HashRouter>
+              </BrowserRouter>
             )
       }
     </ErrorBoundary>,

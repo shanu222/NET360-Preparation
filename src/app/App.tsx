@@ -14,6 +14,7 @@ import { Community } from './components/Community';
 import { ProgramExplorer } from './components/ProgramExplorer';
 import { NETTypes } from './components/NETTypes';
 import { SupportChatWidget } from './components/SupportChatWidget';
+import { SeoLandingPage } from './components/SeoLandingPage';
 import { 
   Home, 
   BookOpen, 
@@ -73,7 +74,11 @@ type SectionId =
   | 'analytics'
   | 'merit-calculator'
   | 'community'
-  | 'profile';
+  | 'profile'
+  | 'physics-mcqs-net'
+  | 'math-mcqs-net'
+  | 'net-preparation-pakistan'
+  | 'nust-entry-test-preparation';
 
 const PATH_BY_SECTION: Record<SectionId, string> = {
   home: '/',
@@ -90,10 +95,19 @@ const PATH_BY_SECTION: Record<SectionId, string> = {
   'merit-calculator': '/merit-calculator',
   community: '/community',
   profile: '/profile',
+  'physics-mcqs-net': '/physics-mcqs-net',
+  'math-mcqs-net': '/math-mcqs-net',
+  'net-preparation-pakistan': '/net-preparation-pakistan',
+  'nust-entry-test-preparation': '/nust-entry-test-preparation',
 };
 
 function resolveSectionFromPath(pathname: string): SectionId | null {
   const normalized = pathname === '/' ? '/' : pathname.replace(/\/+$/, '');
+  const aliasMap: Record<string, SectionId> = {
+    '/preparation-material': 'preparation',
+    '/mock-test': 'tests',
+  };
+  if (aliasMap[normalized]) return aliasMap[normalized];
   const entry = (Object.entries(PATH_BY_SECTION) as Array<[SectionId, string]>).find(([, path]) => path === normalized);
   return entry?.[0] || null;
 }
@@ -412,7 +426,14 @@ export default function App() {
   ];
 
   const activeNavigationItem = navigationItems.find((item) => item.id === activeTab);
-  const activeTitle = activeNavigationItem?.label || 'Dashboard';
+  const seoTitle = (() => {
+    if (activeTab === 'physics-mcqs-net') return 'Physics MCQs NET';
+    if (activeTab === 'math-mcqs-net') return 'Math MCQs NET';
+    if (activeTab === 'net-preparation-pakistan') return 'NET Preparation Pakistan';
+    if (activeTab === 'nust-entry-test-preparation') return 'NUST Entry Test Preparation';
+    return null;
+  })();
+  const activeTitle = activeNavigationItem?.label || seoTitle || 'Dashboard';
 
   const handleSmartMentorComingSoon = () => {
     toast.message('Coming Soon');
@@ -539,6 +560,10 @@ export default function App() {
                   <Dashboard onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} />
                 </div>
               ) : null}
+              {activeTab === 'physics-mcqs-net' ? <div className="mt-0 net360-page"><SeoLandingPage page="physics-mcqs-net" /></div> : null}
+              {activeTab === 'math-mcqs-net' ? <div className="mt-0 net360-page"><SeoLandingPage page="math-mcqs-net" /></div> : null}
+              {activeTab === 'net-preparation-pakistan' ? <div className="mt-0 net360-page"><SeoLandingPage page="net-preparation-pakistan" /></div> : null}
+              {activeTab === 'nust-entry-test-preparation' ? <div className="mt-0 net360-page"><SeoLandingPage page="nust-entry-test-preparation" /></div> : null}
               {activeTab === 'guide' ? <div className="mt-0 net360-page"><NUSTGuide /></div> : null}
               {activeTab === 'programs' ? (
                 <div className="mt-0 net360-page">

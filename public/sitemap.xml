@@ -2,14 +2,29 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://net360preparation.com/</loc>
-    <priority>1.0</priority>
   </url>
   <url>
     <loc>https://net360preparation.com/preparation-material</loc>
-    <priority>0.9</priority>
   </url>
   <url>
     <loc>https://net360preparation.com/mock-test</loc>
-    <priority>0.9</priority>
+  </url>
+  <url>
+    <loc>https://net360preparation.com/preparation</loc>
+  </url>
+  <url>
+    <loc>https://net360preparation.com/tests</loc>
+  </url>
+  <url>
+    <loc>https://net360preparation.com/physics-mcqs-net</loc>
+  </url>
+  <url>
+    <loc>https://net360preparation.com/math-mcqs-net</loc>
+  </url>
+  <url>
+    <loc>https://net360preparation.com/net-preparation-pakistan</loc>
+  </url>
+  <url>
+    <loc>https://net360preparation.com/nust-entry-test-preparation</loc>
   </url>
 </urlset>
