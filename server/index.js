@@ -9268,36 +9268,59 @@ app.get('/api/mcqs', async (req, res) => {
       const escaped = normalized.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       return { $regex: `^${escaped}$`, $options: 'i' };
     };
+    const andClauses = [];
 
     if (subject) {
-      const subjectMatcher = buildSubjectMatcher(subject);
-      if (subjectMatcher) filter.subject = subjectMatcher;
+      const normalizedSubject = canonicalizeSubject(subject);
+      const subjectExpr = buildExactTextMatcher(normalizedSubject || subject);
+      if (subjectExpr) andClauses.push({ subject: subjectExpr });
     }
     if (difficulty) {
-      const normalized = String(difficulty).toLowerCase();
-      const title = normalized.charAt(0).toUpperCase() + normalized.slice(1);
-      filter.difficulty = title;
+      const normalizedDifficulty = String(difficulty || '').trim();
+      const difficultyExpr = buildExactTextMatcher(normalizedDifficulty);
+      if (difficultyExpr) andClauses.push({ difficulty: difficultyExpr });
     }
     if (part) {
-      filter.part = String(part).toLowerCase().trim();
+      const partExpr = buildExactTextMatcher(String(part || '').toLowerCase().trim());
+      if (partExpr) andClauses.push({ part: partExpr });
     }
     if (chapter) {
       const expr = buildExactTextMatcher(chapter);
-      if (expr) filter.chapter = expr;
+      if (expr) {
+        andClauses.push({
+          $or: [
+            { chapter: expr },
+            { chapter_id: expr },
+          ],
+        });
+      }
     }
     if (section) {
       const expr = buildExactTextMatcher(section);
-      if (expr) filter.section = expr;
+      if (expr) {
+        andClauses.push({
+          $or: [
+            { section: expr },
+            { section_id: expr },
+          ],
+        });
+      }
     }
     if (topic) {
       const expr = buildExactTextMatcher(topic);
       if (expr) {
-        filter.$or = [
-          { topic: expr },
-          // Defensive fallback for inconsistent document shape.
-          { topics: expr },
-        ];
+        andClauses.push({
+          $or: [
+            { topic: expr },
+            { topic_id: expr },
+            // Defensive fallback for inconsistent document shape.
+            { topics: expr },
+          ],
+        });
       }
+    }
+    if (andClauses.length) {
+      filter.$and = andClauses;
     }
 
     const query = MCQModel.find(filter)
@@ -9337,7 +9360,7 @@ app.get('/api/mcqs/counts', async (_req, res) => {
     rows.forEach((row) => {
       const key = canonicalizeSubject(row?._id || '');
       if (!key) return;
-      counts[key] = Number(row?.total || 0);
+      counts[key] = Number(counts[key] || 0) + Number(row?.total || 0);
     });
 
     res.json({ counts });
@@ -10291,28 +10314,6 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     collection: MCQModel?.collection?.name || '(unknown)',
   });
 
-  const normalizeTextForMatch = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
-  const exactThenContains = (rows, key, requested) => {
-    const query = normalizeTextForMatch(requested);
-    if (!query) return rows;
-    const exact = rows.filter((item) => normalizeTextForMatch(item?.[key]) === query);
-    if (exact.length) return exact;
-    return rows.filter((item) => normalizeTextForMatch(item?.[key]).includes(query));
-  };
-  const exactSectionOrTopic = (rows, requested) => {
-    const query = normalizeTextForMatch(requested);
-    if (!query) return rows;
-    const exact = rows.filter((item) => (
-      normalizeTextForMatch(item?.section) === query
-      || normalizeTextForMatch(item?.topic) === query
-    ));
-    if (exact.length) return exact;
-    return rows.filter((item) => (
-      normalizeTextForMatch(item?.section).includes(query)
-      || normalizeTextForMatch(item?.topic).includes(query)
-    ));
-  };
-
   let selected = [];
   const profileSubjectMatchers = buildSubjectInMatchers(Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects))));
   const allInProfile = await MCQModel.find(
@@ -10344,20 +10345,26 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     });
   } else {
     const baseFilter = {};
+    const andClauses = [];
     const subjectExpr = exactCaseInsensitiveRegex(normalizedSubject);
     if (subjectExpr) {
-      baseFilter.subject = subjectExpr;
+      andClauses.push({ subject: subjectExpr });
     }
     if (normalizedPart) {
       const partExpr = exactCaseInsensitiveRegex(normalizedPart);
       if (partExpr) {
-        baseFilter.part = partExpr;
+        andClauses.push({ part: partExpr });
       }
     }
     if (normalizedChapter && normalizedChapter !== 'All Chapters') {
       const chapterExpr = exactCaseInsensitiveRegex(normalizedChapter);
       if (chapterExpr) {
-        baseFilter.chapter = chapterExpr;
+        andClauses.push({
+          $or: [
+            { chapter: chapterExpr },
+            { chapter_id: chapterExpr },
+          ],
+        });
       }
     }
 
@@ -10365,13 +10372,20 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     if (normalizedSectionOrTopic && normalizedSectionOrTopic !== 'All Sections' && normalizedSectionOrTopic !== 'All Topics') {
       const sectionOrTopicExpr = exactCaseInsensitiveRegex(normalizedSectionOrTopic);
       if (sectionOrTopicExpr) {
-        baseFilter.$or = [
-          { section: sectionOrTopicExpr },
-          { topic: sectionOrTopicExpr },
-          // Defensive fallback for inconsistent documents that may use "topics".
-          { topics: sectionOrTopicExpr },
-        ];
+        andClauses.push({
+          $or: [
+            { section: sectionOrTopicExpr },
+            { section_id: sectionOrTopicExpr },
+            { topic: sectionOrTopicExpr },
+            { topic_id: sectionOrTopicExpr },
+            // Defensive fallback for inconsistent documents that may use "topics".
+            { topics: sectionOrTopicExpr },
+          ],
+        });
       }
+    }
+    if (andClauses.length) {
+      baseFilter.$and = andClauses;
     }
 
     const difficultyFilter = { ...baseFilter };

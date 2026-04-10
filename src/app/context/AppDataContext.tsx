@@ -422,32 +422,33 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       throw new Error('Please login first to start a server-backed test session.');
     }
 
-    console.log('[MCQ Test Request]', { subject, chapter, topic, section, mode });
+    const normalizedPayload = {
+      subject: String(subject || '').toLowerCase().trim(),
+      chapter: String(chapter || '').trim(),
+      topic: String(topic || '').trim(),
+      section: String(section || '').trim(),
+      difficulty: String(difficulty || '').trim(),
+      mode,
+      questionCount,
+      part: String(part || '').toLowerCase().trim(),
+      netType,
+      testType,
+      selectedSubject: String(selectedSubject || '').toLowerCase().trim(),
+    };
+    console.log('[MCQ Test Request] Sending:', normalizedPayload);
     const startPayload = await apiRequest<{ session: TestSession }>(
       '/api/tests/start',
       {
         method: 'POST',
-        body: JSON.stringify({
-          subject,
-          difficulty,
-          topic,
-          mode,
-          questionCount,
-          part,
-          chapter,
-          section,
-          netType,
-          testType,
-          selectedSubject,
-        }),
+        body: JSON.stringify(normalizedPayload),
       },
       authToken,
     );
     console.log('[MCQ Test Response]', {
-      subject,
-      chapter,
-      topic,
-      section,
+      subject: normalizedPayload.subject,
+      chapter: normalizedPayload.chapter,
+      topic: normalizedPayload.topic,
+      section: normalizedPayload.section,
       returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
     });
 
