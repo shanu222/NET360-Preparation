@@ -960,3 +960,31 @@
     }
   }
 }
+
+/* Admin approval token — shimmer placeholder while waiting for inbox code */
+@keyframes net360-token-shimmer {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.net360-token-field .net360-token-input--loading {
+  background: linear-gradient(90deg, #e8ecfa 22%, #f8f9ff 40%, #e8ecfa 58%);
+  background-size: 400% 100%;
+  animation: net360-token-shimmer 1.4s ease infinite;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent;
+  caret-color: transparent;
+}
+
+.net360-token-field .net360-token-input--loading::placeholder {
+  color: transparent;
+  opacity: 0;
+}
+
+.dark .net360-token-field .net360-token-input--loading {
+  background: linear-gradient(90deg, #1e293b 25%, #334155 37%, #1e293b 63%);
+}

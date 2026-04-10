@@ -1,5 +1,6 @@
 import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { cn } from './ui/utils';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -198,6 +199,8 @@ export function Profile({ onNavigate }: ProfileProps) {
   const isRegisterMode = authMode === 'register';
   const isRecoveryMode = authMode === 'recovery';
   const isAuthBusy = authActionState !== 'idle';
+
+  const isAwaitingAdminToken = signupFlowActive && !authForm.tokenCode.trim();
 
   const isValidInternationalWhatsApp = (value: string) => /^\+[1-9]\d{7,14}$/.test(value.trim());
 
@@ -970,13 +973,32 @@ export function Profile({ onNavigate }: ProfileProps) {
 
                   <div className="space-y-1.5">
                     <Label htmlFor="signup-token">Admin Approval Token (for final signup)</Label>
-                    <Input
-                      id="signup-token"
-                      value={authForm.tokenCode}
-                      onChange={(e) => setAuthForm((prev) => ({ ...prev, tokenCode: e.target.value.toUpperCase() }))}
-                      placeholder="NET-XXXX-XXXX-XXXX"
-                      className="h-11 border-indigo-100"
-                    />
+                    <div className="net360-token-field relative">
+                      <Input
+                        id="signup-token"
+                        type="text"
+                        readOnly={isAwaitingAdminToken}
+                        aria-busy={isAwaitingAdminToken}
+                        value={isAwaitingAdminToken ? '' : authForm.tokenCode}
+                        onChange={(e) =>
+                          setAuthForm((prev) => ({ ...prev, tokenCode: e.target.value.toUpperCase() }))
+                        }
+                        placeholder="NET-XXXX-XXXX-XXXX"
+                        className={cn(
+                          'h-11 min-h-[2.75rem] w-full border-indigo-100 transition-[color,background] duration-200',
+                          isAwaitingAdminToken && 'net360-token-input--loading pr-10',
+                          !isAwaitingAdminToken && 'pr-3',
+                        )}
+                      />
+                      {isAwaitingAdminToken ? (
+                        <div
+                          className="pointer-events-none absolute right-3 top-1/2 z-10 -translate-y-1/2"
+                          aria-hidden
+                        >
+                          <div className="h-4 w-4 rounded-full border-2 border-slate-300 border-t-sky-500 animate-spin dark:border-slate-500 dark:border-t-sky-400" />
+                        </div>
+                      ) : null}
+                    </div>
                     <p className="text-xs text-slate-500">Wait please, token code will appear automatically.</p>
                   </div>
                 </>
