@@ -18,6 +18,18 @@
         content="NET preparation, NUST entry test, MCQs Pakistan, Physics MCQs"
       />
       <meta name="robots" content="index, follow" />
+      <script>
+        (function () {
+          try {
+            var saved = localStorage.getItem('net360-theme-mode');
+            if (saved === 'light') {
+              document.documentElement.classList.remove('dark');
+            } else {
+              document.documentElement.classList.add('dark');
+            }
+          } catch (e) {}
+        })();
+      </script>
       <script type="application/ld+json">
         {
           "@context": "https://schema.org",
