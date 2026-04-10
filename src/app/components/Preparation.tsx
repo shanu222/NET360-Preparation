@@ -881,11 +881,11 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
           if (tab.key === 'computer-science' || tab.key === 'intelligence') {
             const subject: SubjectKey = tab.key;
             const chapterOnlySyllabus = subject === 'computer-science' ? COMPUTER_SCIENCE_SYLLABUS : INTELLIGENCE_SYLLABUS;
-            const tone = syllabusToneBySubject[subject];
             const selectedChapterId = subject === 'computer-science' ? selectedComputerScienceChapterId : selectedIntelligenceChapterId;
             const selectedSection = subject === 'computer-science' ? selectedComputerScienceSection : selectedIntelligenceSection;
             const setSelectedChapter = subject === 'computer-science' ? setSelectedComputerScienceChapterId : setSelectedIntelligenceChapterId;
             const setSelectedSection = subject === 'computer-science' ? setSelectedComputerScienceSection : setSelectedIntelligenceSection;
+            const selectedChapter = chapterOnlySyllabus.find((chapter) => chapter.id === selectedChapterId) || null;
             return (
               <TabsContent key={subject} value={subject} className="space-y-4">
                 <Card>
@@ -894,101 +894,110 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                     <CardDescription>Chapter and section structure (no part split).</CardDescription>
                   </CardHeader>
                   <CardContent>
-                    <div className="space-y-3">
-                      {chapterOnlySyllabus.map((chapter) => {
-                        const active = selectedChapterId === chapter.id;
-                        return (
-                          <div
+                    {!selectedChapter ? (
+                      <div className="space-y-3">
+                        {chapterOnlySyllabus.map((chapter) => (
+                          <button
                             key={chapter.id}
-                            className={`rounded-xl border transition-all duration-300 ease-out ${active ? tone.chapterActive : `${tone.chapterIdle} ${tone.chapterHover}`} ${!active ? 'hover:-translate-y-0.5 hover:shadow-[0_8px_15px_rgba(15,23,42,0.07)]' : ''}`}
+                            type="button"
+                            className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-left text-slate-800 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_6px_16px_rgba(0,0,0,0.1)]"
+                            onClick={() => {
+                              setSelectedChapter(chapter.id);
+                              setSelectedSection(null);
+                            }}
                           >
-                            <button
-                              type="button"
-                              className="w-full p-3 text-left transition-transform duration-200 active:scale-[0.995]"
-                              onClick={() => {
-                                setSelectedChapter((prev) => (prev === chapter.id ? null : chapter.id));
-                                setSelectedSection(null);
-                              }}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <p className="font-medium text-indigo-950">{chapter.title}</p>
-                                  <p className="mt-1 text-xs text-slate-500">{chapter.sections.length} sections</p>
-                                </div>
-                                <ChevronRight className={`h-4 w-4 transition-transform ${active ? `rotate-90 ${tone.chapterAccent}` : 'text-slate-500'}`} />
+                            <div className="flex items-start justify-between gap-3">
+                              <div>
+                                <p className="font-medium">{chapter.title}</p>
+                                <p className="mt-1 text-xs text-slate-500">{chapter.sections.length} sections</p>
                               </div>
-                            </button>
+                              <ChevronRight className="h-4 w-4 text-slate-500" />
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                          <p className="text-sm font-medium text-slate-800">{selectedChapter.title}</p>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => {
+                              setSelectedChapter(null);
+                              setSelectedSection(null);
+                            }}
+                          >
+                            Back to Chapters
+                          </Button>
+                        </div>
 
-                            {active ? (
-                              <div className={`border-t px-3 pb-3 pt-2 ${tone.panelSurface}`}>
-                                <ul className="space-y-2 text-sm">
-                                  {chapter.sections.map((section) => (
-                                    <li key={section}>
-                                      <button
-                                        type="button"
-                                        className={`w-full rounded-lg border px-3 py-2 text-left transition-all duration-300 ease-out active:scale-[0.99] ${selectedSection === `${chapter.id}::${section}` ? `border-transparent bg-gradient-to-r ${tone.sectionActive} text-white ${tone.sectionShadow}` : `border-slate-200/80 bg-white text-slate-700 hover:-translate-y-0.5 ${tone.sectionHover} hover:shadow-[0_8px_14px_rgba(15,23,42,0.07)]`}`}
-                                        onClick={() => {
-                                          setSelectedSection(`${chapter.id}::${section}`);
-                                          onSelectSection?.({
-                                            subject,
-                                            chapterTitle: chapter.title,
-                                            sectionTitle: section,
-                                          });
-                                        }}
-                                      >
-                                        {section}
-                                      </button>
+                        <ul className="space-y-2 text-sm">
+                          {selectedChapter.sections
+                            .filter((section) => !selectedSection || selectedSection === `${selectedChapter.id}::${section}`)
+                            .map((section) => (
+                              <li key={section}>
+                                <button
+                                  type="button"
+                                  className={`w-full rounded-lg border px-3 py-2 text-left transition-all duration-200 ${selectedSection === `${selectedChapter.id}::${section}` ? 'border-transparent bg-gradient-to-r from-emerald-500 to-green-600 text-white shadow-[0_10px_18px_rgba(22,163,74,0.25)]' : 'border-slate-200 bg-white text-slate-800 hover:-translate-y-0.5 hover:shadow-[0_6px_16px_rgba(0,0,0,0.1)]'}`}
+                                  onClick={() => {
+                                    setSelectedSection(`${selectedChapter.id}::${section}`);
+                                    onSelectSection?.({
+                                      subject,
+                                      chapterTitle: selectedChapter.title,
+                                      sectionTitle: section,
+                                    });
+                                  }}
+                                >
+                                  {section}
+                                </button>
 
-                                      {showStartTestButton && selectedSection === `${chapter.id}::${section}` ? (
-                                        <div className={`mt-2 rounded-lg border bg-white p-3 ${tone.panelSurface}`}>
-                                          <Button
-                                            className={`bg-gradient-to-r ${tone.sectionActive} text-white transition-all duration-200 hover:brightness-105`}
-                                            disabled={Boolean(launchingSectionKey)}
-                                            onClick={() => {
-                                              const baseKey = `${subject}||${chapter.title}|${section}`;
-                                              setDifficultyMenuKey((prev) => (prev === baseKey ? null : baseKey));
-                                            }}
-                                          >
-                                            {launchingSectionKey?.startsWith(`${subject}||${chapter.title}|${section}|`) ? 'Starting...' : 'Start Test'}
-                                          </Button>
+                                {showStartTestButton && selectedSection === `${selectedChapter.id}::${section}` ? (
+                                  <div className="mt-2 rounded-lg border border-slate-200 bg-white p-3">
+                                    <Button
+                                      className="bg-gradient-to-r from-emerald-500 to-green-600 text-white transition-all duration-200 hover:brightness-105"
+                                      disabled={Boolean(launchingSectionKey)}
+                                      onClick={() => {
+                                        const baseKey = `${subject}||${selectedChapter.title}|${section}`;
+                                        setDifficultyMenuKey((prev) => (prev === baseKey ? null : baseKey));
+                                      }}
+                                    >
+                                      {launchingSectionKey?.startsWith(`${subject}||${selectedChapter.title}|${section}|`) ? 'Starting...' : 'Start Test'}
+                                    </Button>
 
-                                          {difficultyMenuKey === `${subject}||${chapter.title}|${section}` ? (
-                                            <div className="mt-2 grid grid-cols-3 gap-2">
-                                              {difficultyLevels.map((difficulty) => {
-                                                const currentLaunchKey = `${subject}||${chapter.title}|${section}|${difficulty}`;
-                                                return (
-                                                  <Button
-                                                    key={difficulty}
-                                                    type="button"
-                                                    variant="outline"
-                                                    disabled={Boolean(launchingSectionKey)}
-                                                    onClick={() => {
-                                                      setDifficultyMenuKey(null);
-                                                      void handleStartSectionTest({
-                                                        subject,
-                                                        chapterTitle: chapter.title,
-                                                        sectionTitle: section,
-                                                        difficulty,
-                                                      });
-                                                    }}
-                                                  >
-                                                    {launchingSectionKey === currentLaunchKey ? 'Starting...' : difficulty}
-                                                  </Button>
-                                                );
-                                              })}
-                                            </div>
-                                          ) : null}
-                                        </div>
-                                      ) : null}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      })}
-                    </div>
+                                    {difficultyMenuKey === `${subject}||${selectedChapter.title}|${section}` ? (
+                                      <div className="mt-2 grid grid-cols-3 gap-2">
+                                        {difficultyLevels.map((difficulty) => {
+                                          const currentLaunchKey = `${subject}||${selectedChapter.title}|${section}|${difficulty}`;
+                                          return (
+                                            <Button
+                                              key={difficulty}
+                                              type="button"
+                                              variant="outline"
+                                              disabled={Boolean(launchingSectionKey)}
+                                              onClick={() => {
+                                                setDifficultyMenuKey(null);
+                                                void handleStartSectionTest({
+                                                  subject,
+                                                  chapterTitle: selectedChapter.title,
+                                                  sectionTitle: section,
+                                                  difficulty,
+                                                });
+                                              }}
+                                            >
+                                              {launchingSectionKey === currentLaunchKey ? 'Starting...' : difficulty}
+                                            </Button>
+                                          );
+                                        })}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                ) : null}
+                              </li>
+                            ))}
+                        </ul>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               </TabsContent>
@@ -996,10 +1005,11 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
           }
 
           const subject = tab.key as PartStructuredSubjectKey;
-          const tone = syllabusToneBySubject[subject];
           const selectedPart = selectedPartBySubject[subject];
           const currentPart = selectedPart ? SYLLABUS[subject][selectedPart] : null;
           const selectedChapterId = selectedChapterBySubject[subject];
+          const selectedChapter = currentPart?.chapters.find((chapter) => chapter.id === selectedChapterId) || null;
+          const selectedSectionKey = selectedSectionBySubject[subject];
           return (
             <TabsContent key={subject} value={subject} className="space-y-4">
               <Card>
@@ -1008,136 +1018,155 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                   <CardDescription>Select Part 1 or Part 2, then choose a chapter to view all sections.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="mb-4 grid gap-3 sm:grid-cols-2">
-                    {(['part1', 'part2'] as AcademicPart[]).map((part) => {
-                      const isSelected = selectedPart === part;
-                      const chapterCount = SYLLABUS[subject][part].chapters.length;
-                      return (
-                        <button
-                          key={`${subject}-${part}`}
+                  {!selectedPart ? (
+                    <>
+                      <div className="mb-4 grid gap-3 sm:grid-cols-2">
+                        {(['part1', 'part2'] as AcademicPart[]).map((part) => {
+                          const chapterCount = SYLLABUS[subject][part].chapters.length;
+                          return (
+                            <button
+                              key={`${subject}-${part}`}
+                              type="button"
+                              onClick={() => {
+                                setSelectedPartBySubject((prev) => ({ ...prev, [subject]: part }));
+                                setSelectedChapterBySubject((prev) => ({ ...prev, [subject]: null }));
+                                setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
+                              }}
+                              className="rounded-xl border border-slate-200 bg-slate-100 p-3 text-left text-slate-800 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_6px_16px_rgba(0,0,0,0.1)]"
+                            >
+                              <p className="text-sm font-semibold">{SYLLABUS[subject][part].label}</p>
+                              <p className="mt-1 text-xs text-slate-500">{chapterCount} chapters</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="py-2 text-center text-sm text-muted-foreground">Select Part 1 or Part 2 to continue.</div>
+                    </>
+                  ) : !currentPart?.chapters.length ? (
+                    <div className="py-4 text-center text-sm text-muted-foreground">No chapters added yet for this part.</div>
+                  ) : !selectedChapter ? (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                        <p className="text-sm font-medium text-slate-800">{currentPart.label}</p>
+                        <Button
                           type="button"
+                          variant="outline"
                           onClick={() => {
-                            setSelectedPartBySubject((prev) => ({ ...prev, [subject]: part }));
+                            setSelectedPartBySubject((prev) => ({ ...prev, [subject]: null }));
                             setSelectedChapterBySubject((prev) => ({ ...prev, [subject]: null }));
                             setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
                           }}
-                          className={`rounded-xl border p-3 text-left transition-all duration-300 ease-out active:scale-[0.99] ${isSelected ? `border-transparent bg-gradient-to-r ${tone.partActive} text-white ${tone.partShadow}` : `${tone.partIdle} ${tone.partHover} hover:-translate-y-0.5 hover:shadow-[0_10px_16px_rgba(15,23,42,0.08)]`}`}
                         >
-                          <p className={`text-sm font-semibold ${isSelected ? 'text-white' : 'text-indigo-950'}`}>{SYLLABUS[subject][part].label}</p>
-                          <p className={`mt-1 text-xs ${isSelected ? 'text-indigo-100' : 'text-slate-500'}`}>{chapterCount} chapters</p>
-                        </button>
-                      );
-                    })}
-                  </div>
+                          Back to Parts
+                        </Button>
+                      </div>
 
-                  {!selectedPart ? (
-                    <div className="py-4 text-center text-sm text-muted-foreground">Select Part 1 or Part 2 to continue.</div>
-                  ) : !currentPart?.chapters.length ? (
-                    <div className="py-4 text-center text-sm text-muted-foreground">No chapters added yet for this part.</div>
+                      {currentPart.chapters.map((chapter) => (
+                        <button
+                          key={chapter.id}
+                          type="button"
+                          className="w-full rounded-xl border border-slate-200 bg-white px-3 py-3 text-left text-slate-800 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_6px_16px_rgba(0,0,0,0.1)]"
+                          onClick={() => {
+                            setSelectedChapterBySubject((prev) => ({ ...prev, [subject]: chapter.id }));
+                            setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
+                          }}
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="font-medium">{chapter.title}</p>
+                              <p className="mt-1 text-xs text-slate-500">{chapter.sections.length} sections</p>
+                            </div>
+                            <ChevronRight className="h-4 w-4 text-slate-500" />
+                          </div>
+                        </button>
+                      ))}
+                    </div>
                   ) : (
                     <div className="space-y-3">
-                      {currentPart.chapters.map((chapter) => {
-                        const active = selectedChapterId === chapter.id;
-                        return (
-                          <div
-                            key={chapter.id}
-                            className={`rounded-xl border transition-all duration-300 ease-out ${active ? tone.chapterActive : `${tone.chapterIdle} ${tone.chapterHover}`} ${!active ? 'hover:-translate-y-0.5 hover:shadow-[0_8px_15px_rgba(15,23,42,0.07)]' : ''}`}
-                          >
-                            <button
-                              type="button"
-                              className="w-full p-3 text-left transition-transform duration-200 active:scale-[0.995]"
-                              onClick={() => {
-                                setSelectedChapterBySubject((prev) => ({
-                                  ...prev,
-                                  [subject]: prev[subject] === chapter.id ? null : chapter.id,
-                                }));
-                                setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
-                              }}
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div>
-                                  <p className="font-medium text-indigo-950">{chapter.title}</p>
-                                  <p className="mt-1 text-xs text-slate-500">{chapter.sections.length} sections</p>
-                                </div>
-                                <ChevronRight className={`h-4 w-4 transition-transform ${active ? `rotate-90 ${tone.chapterAccent}` : 'text-slate-500'}`} />
-                              </div>
-                            </button>
+                      <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                        <p className="text-sm font-medium text-slate-800">{selectedChapter.title}</p>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={() => {
+                            setSelectedChapterBySubject((prev) => ({ ...prev, [subject]: null }));
+                            setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
+                          }}
+                        >
+                          Back to Chapters
+                        </Button>
+                      </div>
 
-                            {active ? (
-                              <div className={`border-t px-3 pb-3 pt-2 ${tone.panelSurface}`}>
-                                <ul className="space-y-2 text-sm">
-                                  {chapter.sections.map((section) => (
-                                    <li key={section}>
-                                      <button
-                                        type="button"
-                                        className={`w-full rounded-lg border px-3 py-2 text-left transition-all duration-300 ease-out active:scale-[0.99] ${selectedSectionBySubject[subject] === `${chapter.id}::${section}` ? `border-transparent bg-gradient-to-r ${tone.sectionActive} text-white ${tone.sectionShadow}` : `border-slate-200/80 bg-white text-slate-700 hover:-translate-y-0.5 ${tone.sectionHover} hover:shadow-[0_8px_14px_rgba(15,23,42,0.07)]`}`}
-                                        onClick={() => {
-                                          const selection = {
-                                            subject,
-                                            part: selectedPart,
-                                            chapterTitle: chapter.title,
-                                            sectionTitle: section,
-                                          };
-                                          setSelectedSectionBySubject((prev) => ({
-                                            ...prev,
-                                            [subject]: `${chapter.id}::${section}`,
-                                          }));
-                                          onSelectSection?.(selection);
-                                        }}
-                                      >
-                                        {section}
-                                      </button>
+                      <ul className="space-y-2 text-sm">
+                        {selectedChapter.sections
+                          .filter((section) => !selectedSectionKey || selectedSectionKey === `${selectedChapter.id}::${section}`)
+                          .map((section) => (
+                            <li key={section}>
+                              <button
+                                type="button"
+                                className={`w-full rounded-lg border px-3 py-2 text-left transition-all duration-200 ${selectedSectionKey === `${selectedChapter.id}::${section}` ? 'border-transparent bg-gradient-to-r from-emerald-500 to-green-600 text-white shadow-[0_10px_18px_rgba(22,163,74,0.25)]' : 'border-slate-200 bg-white text-slate-800 hover:-translate-y-0.5 hover:shadow-[0_6px_16px_rgba(0,0,0,0.1)]'}`}
+                                onClick={() => {
+                                  const selection = {
+                                    subject,
+                                    part: selectedPart,
+                                    chapterTitle: selectedChapter.title,
+                                    sectionTitle: section,
+                                  };
+                                  setSelectedSectionBySubject((prev) => ({
+                                    ...prev,
+                                    [subject]: `${selectedChapter.id}::${section}`,
+                                  }));
+                                  onSelectSection?.(selection);
+                                }}
+                              >
+                                {section}
+                              </button>
 
-                                      {showStartTestButton && selectedSectionBySubject[subject] === `${chapter.id}::${section}` ? (
-                                        <div className={`mt-2 rounded-lg border bg-white p-3 ${tone.panelSurface}`}>
+                              {showStartTestButton && selectedSectionKey === `${selectedChapter.id}::${section}` ? (
+                                <div className="mt-2 rounded-lg border border-slate-200 bg-white p-3">
+                                  <Button
+                                    className="bg-gradient-to-r from-emerald-500 to-green-600 text-white transition-all duration-200 hover:brightness-105"
+                                    disabled={Boolean(launchingSectionKey)}
+                                    onClick={() => {
+                                      const baseKey = `${subject}|${selectedPart}|${selectedChapter.title}|${section}`;
+                                      setDifficultyMenuKey((prev) => (prev === baseKey ? null : baseKey));
+                                    }}
+                                  >
+                                    {launchingSectionKey?.startsWith(`${subject}|${selectedPart}|${selectedChapter.title}|${section}|`) ? 'Starting...' : 'Start Test'}
+                                  </Button>
+
+                                  {difficultyMenuKey === `${subject}|${selectedPart}|${selectedChapter.title}|${section}` ? (
+                                    <div className="mt-2 grid grid-cols-3 gap-2">
+                                      {difficultyLevels.map((difficulty) => {
+                                        const currentLaunchKey = `${subject}|${selectedPart}|${selectedChapter.title}|${section}|${difficulty}`;
+                                        return (
                                           <Button
-                                            className={`bg-gradient-to-r ${tone.sectionActive} text-white transition-all duration-200 hover:brightness-105`}
+                                            key={difficulty}
+                                            type="button"
+                                            variant="outline"
                                             disabled={Boolean(launchingSectionKey)}
                                             onClick={() => {
-                                              const baseKey = `${subject}|${selectedPart}|${chapter.title}|${section}`;
-                                              setDifficultyMenuKey((prev) => (prev === baseKey ? null : baseKey));
+                                              setDifficultyMenuKey(null);
+                                              void handleStartSectionTest({
+                                                subject,
+                                                part: selectedPart,
+                                                chapterTitle: selectedChapter.title,
+                                                sectionTitle: section,
+                                                difficulty,
+                                              });
                                             }}
                                           >
-                                            {launchingSectionKey?.startsWith(`${subject}|${selectedPart}|${chapter.title}|${section}|`) ? 'Starting...' : 'Start Test'}
+                                            {launchingSectionKey === currentLaunchKey ? 'Starting...' : difficulty}
                                           </Button>
-
-                                          {difficultyMenuKey === `${subject}|${selectedPart}|${chapter.title}|${section}` ? (
-                                            <div className="mt-2 grid grid-cols-3 gap-2">
-                                              {difficultyLevels.map((difficulty) => {
-                                                const currentLaunchKey = `${subject}|${selectedPart}|${chapter.title}|${section}|${difficulty}`;
-                                                return (
-                                                  <Button
-                                                    key={difficulty}
-                                                    type="button"
-                                                    variant="outline"
-                                                    disabled={Boolean(launchingSectionKey)}
-                                                    onClick={() => {
-                                                      setDifficultyMenuKey(null);
-                                                      void handleStartSectionTest({
-                                                        subject,
-                                                        part: selectedPart,
-                                                        chapterTitle: chapter.title,
-                                                        sectionTitle: section,
-                                                        difficulty,
-                                                      });
-                                                    }}
-                                                  >
-                                                    {launchingSectionKey === currentLaunchKey ? 'Starting...' : difficulty}
-                                                  </Button>
-                                                );
-                                              })}
-                                            </div>
-                                          ) : null}
-                                        </div>
-                                      ) : null}
-                                    </li>
-                                  ))}
-                                </ul>
-                              </div>
-                            ) : null}
-                          </div>
-                        );
-                      })}
+                                        );
+                                      })}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              ) : null}
+                            </li>
+                          ))}
+                      </ul>
                     </div>
                   )}
                 </CardContent>
