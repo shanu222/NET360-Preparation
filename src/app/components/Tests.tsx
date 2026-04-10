@@ -493,10 +493,11 @@ export function Tests({ onNavigate }: TestsProps) {
         ) : (
           <Card className="w-full max-w-2xl rounded-2xl border-indigo-200 bg-indigo-50/40 shadow-[0_12px_26px_rgba(93,109,201,0.12)]">
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <CardTitle className="text-indigo-950">{selectedNetType.name}</CardTitle>
                 <Button
                   variant="outline"
+                  className="w-full shrink-0 sm:w-auto"
                   onClick={() => {
                     setSelectedNetTypeId(null);
                     setSelectedTestKind(null);

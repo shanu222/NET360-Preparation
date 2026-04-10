@@ -8,7 +8,7 @@ function Table({ className, ...props }: React.ComponentProps<"table">) {
   return (
     <div
       data-slot="table-container"
-      className="net360-horizontal-scroll net360-swipe-row relative w-full"
+      className="table-container net360-horizontal-scroll net360-swipe-row relative w-full max-w-full"
     >
       <table
         data-slot="table"

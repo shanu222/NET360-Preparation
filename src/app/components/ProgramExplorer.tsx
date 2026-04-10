@@ -59,7 +59,7 @@ const PROGRAM_ICON_MAP: Record<NetProgramIconKey, LucideIcon> = {
 };
 
 const PROGRAM_TAB_TRIGGER_CLASS =
-  'min-w-[150px] rounded-xl border border-indigo-200/90 bg-white/88 px-3 py-2 text-[13px] font-semibold tracking-[0.01em] text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!via-violet-500 data-[state=active]:!to-blue-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)]';
+  'max-w-[min(100%,200px)] shrink-0 whitespace-normal break-words rounded-xl border border-indigo-200/90 bg-white/88 px-2.5 py-2 text-center text-[12px] font-semibold leading-tight tracking-[0.01em] text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!via-violet-500 data-[state=active]:!to-blue-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)] sm:min-w-[120px] sm:max-w-none sm:px-3 sm:text-[13px]';
 
 export function ProgramExplorer() {
   const programs: Record<CategoryKey, ProgramCategory> = {

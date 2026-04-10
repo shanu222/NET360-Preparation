@@ -169,6 +169,11 @@
     max-width: 100%;
   }
 
+  /* Default fluid images; components can override with utilities (e.g. object-cover, fixed h/w). */
+  img {
+    height: auto;
+  }
+
   /**
   * Default typography styles for HTML elements (h1-h4, p, label, button, input).
   * These are in @layer base, so Tailwind utility classes (like text-sm, text-lg) automatically override them.
@@ -231,6 +236,26 @@
   }
 }
 
+/* App-wide content width (matches common “container” pattern) */
+.container {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+/* Optional wrapper for raw <table> or wide data */
+.table-container {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
 @layer utilities {
   @keyframes net360-fade-in {
     from {
@@ -262,14 +287,22 @@
     scrollbar-gutter: stable both-edges;
     padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
     touch-action: pan-y;
+    overflow-x: hidden;
   }
 
   .net360-page {
+    box-sizing: border-box;
     padding-top: 0.25rem;
     min-width: 0;
-    max-width: 100%;
+    width: 100%;
+    max-width: min(100%, 1200px);
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
     overflow-x: visible;
     touch-action: pan-y;
+    font-size: clamp(14px, 0.82rem + 0.45vw, 17px);
   }
 
   .net360-page > * {
@@ -419,6 +452,21 @@
   .net360-page h1 {
     color: var(--net360-text-primary);
     font-size: clamp(1.5rem, 1.2rem + 1.2vw, 1.95rem);
+  }
+
+  .net360-page h2 {
+    font-size: clamp(1.15rem, 1rem + 1vw, 1.5rem);
+    line-height: 1.35;
+  }
+
+  .net360-page h3 {
+    font-size: clamp(1.05rem, 0.95rem + 0.55vw, 1.28rem);
+    line-height: 1.4;
+  }
+
+  .net360-page h4 {
+    font-size: clamp(1rem, 0.92rem + 0.35vw, 1.12rem);
+    line-height: 1.45;
   }
 
   .net360-page [data-slot='tabs-list'] {
@@ -837,18 +885,26 @@
   }
 
   .mcq-preview-image {
-    max-width: 350px;
+    width: 100%;
+    max-width: min(100%, 350px);
+    height: auto;
     margin-top: 8px;
     border-radius: 6px;
+    object-fit: contain;
   }
 
   .option-preview-image {
-    max-width: 200px;
+    width: 100%;
+    max-width: min(100%, 200px);
+    height: auto;
     margin-left: 10px;
+    object-fit: contain;
   }
 
   .edit-image-preview {
-    max-width: 250px;
+    width: 100%;
+    max-width: min(100%, 250px);
+    height: auto;
     margin-bottom: 10px;
     border: 1px solid #444;
     border-radius: 6px;
@@ -858,6 +914,37 @@
   @media (max-width: 1024px) {
     body {
       background-attachment: scroll;
+    }
+
+    .net360-shell {
+      max-width: 100%;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .net360-page input[type='text'],
+    .net360-page input[type='email'],
+    .net360-page input[type='password'],
+    .net360-page input[type='tel'],
+    .net360-page input[type='search'],
+    .net360-page input[type='url'],
+    .net360-page input[type='number'],
+    .net360-page textarea {
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+
+    .net360-page [data-slot='input'] {
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
+    }
+
+    .net360-page [data-slot='select-trigger'] {
+      width: 100%;
+      max-width: 100%;
+      box-sizing: border-box;
     }
   }
 
@@ -948,11 +1035,6 @@
     .net360-shell {
       border-radius: 1rem;
       box-shadow: 0 18px 40px rgba(59, 67, 146, 0.14);
-    }
-
-    .net360-main {
-      padding-left: 0.625rem;
-      padding-right: 0.625rem;
     }
 
     .net360-page {

@@ -122,17 +122,8 @@ const tabTriggerToneByKey: Record<TabKey, { idle: string; active: string }> = {
   },
 };
 
-const tabWidthPresetByKey: Record<TabKey, string> = {
-  mathematics: 'min-w-[128px] max-w-[166px] sm:min-w-[164px] sm:max-w-[194px]',
-  physics: 'min-w-[112px] max-w-[144px] sm:min-w-[144px] sm:max-w-[172px]',
-  english: 'min-w-[112px] max-w-[144px] sm:min-w-[142px] sm:max-w-[172px]',
-  biology: 'min-w-[112px] max-w-[144px] sm:min-w-[144px] sm:max-w-[172px]',
-  chemistry: 'min-w-[124px] max-w-[156px] sm:min-w-[154px] sm:max-w-[182px]',
-  'computer-science': 'min-w-[146px] max-w-[186px] sm:min-w-[190px] sm:max-w-[226px]',
-  intelligence: 'min-w-[128px] max-w-[164px] sm:min-w-[164px] sm:max-w-[198px]',
-  'quantitative-mathematics': 'min-w-[176px] max-w-[214px] sm:min-w-[228px] sm:max-w-[262px]',
-  'design-aptitude': 'min-w-[146px] max-w-[184px] sm:min-w-[190px] sm:max-w-[224px]',
-};
+const PREPARATION_TAB_WIDTH_CLASS =
+  'max-w-[min(100%,11rem)] sm:max-w-[13rem] md:max-w-[15rem] lg:max-w-none';
 
 const syllabusToneBySubject: Record<
   SubjectKey,
@@ -825,7 +816,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                   setSelectedSubject(tab.key);
                   console.log('Selected Subject:', tab.key);
                 }}
-                className={`!flex-none min-h-[2.55rem] rounded-xl border border-indigo-200/90 bg-white/88 px-3 py-1.5 text-center text-[12px] font-semibold leading-tight tracking-[0.01em] text-slate-700 whitespace-normal break-words transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:-translate-y-0.5 data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)] sm:text-sm ${tabWidthPresetByKey[tab.key]} ${tabTriggerToneByKey[tab.key].active} ${selectedSubject === tab.key ? 'bg-gradient-to-r from-indigo-600 to-violet-500 !text-white border-indigo-600 shadow-[0_10px_22px_rgba(79,70,229,0.32)] scale-[1.02]' : ''}`}
+                className={`!flex-none min-h-[2.55rem] rounded-xl border border-indigo-200/90 bg-white/88 px-3 py-1.5 text-center text-[12px] font-semibold leading-tight tracking-[0.01em] text-slate-700 whitespace-normal break-words transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:-translate-y-0.5 data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)] sm:text-sm ${PREPARATION_TAB_WIDTH_CLASS} ${tabTriggerToneByKey[tab.key].active} ${selectedSubject === tab.key ? 'bg-gradient-to-r from-indigo-600 to-violet-500 !text-white border-indigo-600 shadow-[0_10px_22px_rgba(79,70,229,0.32)] scale-[1.02]' : ''}`}
               >
                 {tab.label}
               </TabsTrigger>

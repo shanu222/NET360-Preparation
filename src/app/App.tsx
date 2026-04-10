@@ -512,8 +512,10 @@ export default function App() {
                     <img src={BRAND_LOGO_SRC} alt="NET360 logo" className="h-full w-full scale-[1.3] object-contain" loading="lazy" />
                   </div>
                   <div className="min-w-0">
-                  <h1 className="max-w-[42vw] truncate text-base text-indigo-950 sm:max-w-none sm:text-xl">{activeTitle}</h1>
-                  <p className="hidden text-xs text-slate-500 sm:block">My page</p>
+                    <h1 className="min-w-0 max-w-full text-base leading-snug text-indigo-950 line-clamp-2 sm:line-clamp-1 sm:text-lg md:line-clamp-none md:text-xl">
+                      {activeTitle}
+                    </h1>
+                    <p className="hidden text-xs text-slate-500 sm:block">My page</p>
                   </div>
                 </div>
               </div>
@@ -554,7 +556,7 @@ export default function App() {
             </header>
 
             {/* Main Content */}
-            <main className="net360-main min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-visible px-2 py-2.5 sm:px-5 sm:py-5">
+            <main className="net360-main min-h-0 min-w-0 flex-1 overflow-y-auto px-0 py-2.5 sm:py-5">
               {activeTab === 'home' ? (
                 <div className="mt-0 net360-page">
                   <Dashboard onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} />

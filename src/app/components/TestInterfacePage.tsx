@@ -869,7 +869,7 @@ export function TestInterfacePage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-[#f2f6fb] p-2 sm:p-3 text-[#0d2c5a]">
-        <div className="mx-auto max-w-[1600px] rounded border border-[#2b5f9f] bg-white p-4 sm:p-6">Loading test interface...</div>
+        <div className="mx-auto w-full max-w-[min(100%,1200px)] rounded border border-[#2b5f9f] bg-white px-3 py-4 sm:px-6 sm:py-6">Loading test interface...</div>
       </div>
     );
   }
@@ -877,7 +877,7 @@ export function TestInterfacePage() {
   if (error || !session || !question) {
     return (
       <div className="min-h-screen bg-[#f2f6fb] p-2 sm:p-3 text-[#0d2c5a]">
-        <div className="mx-auto max-w-[1600px] rounded border border-[#2b5f9f] bg-white p-4 sm:p-6">
+        <div className="mx-auto w-full max-w-[min(100%,1200px)] rounded border border-[#2b5f9f] bg-white px-3 py-4 sm:px-6 sm:py-6">
           <p className="mb-4 text-red-700">{error || 'Session could not be loaded.'}</p>
           <button
             type="button"
@@ -899,8 +899,8 @@ export function TestInterfacePage() {
 
   return (
     <div className="min-h-screen bg-[#f2f6fb] p-1.5 text-[#0d2c5a] sm:p-2.5">
-      <div className="mx-auto max-w-[1900px] rounded border-2 border-[#2b5f9f] bg-[#eef4fb] shadow-[0_12px_30px_rgba(5,32,71,0.15)]">
-        <header className="grid gap-1 border-b border-[#2b5f9f] bg-white px-2 py-1.5 text-xs md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-2 md:py-1 md:text-sm">
+      <div className="mx-auto w-full max-w-[min(100%,1200px)] rounded border-2 border-[#2b5f9f] bg-[#eef4fb] shadow-[0_12px_30px_rgba(5,32,71,0.15)]">
+        <header className="grid gap-1.5 border-b border-[#2b5f9f] bg-white px-2 py-2 text-xs sm:gap-1 md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-2 md:py-1 md:text-sm">
           <div className="font-semibold text-[#1f6b1f]">{formatSubject(question.subject)}</div>
           <div className="break-words text-left text-sm leading-snug text-[#a11c12] md:text-center md:text-xl">{session.topic}</div>
           <div className="text-left text-base text-[#b31212] md:text-right md:text-2xl">NUST05 <span className="text-xs text-[#1f6b1f] md:text-sm">[{question.topic}]</span></div>
@@ -1026,16 +1026,18 @@ export function TestInterfacePage() {
             <p className="mt-1 text-lg text-blue-700">{formatTime(remainingSeconds)}</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3 lg:grid-cols-5 xl:grid-cols-9">
-            <ExamButton label="Save" icon={Save} onClick={() => toast.success('Answer saved for this question.')} />
-            <ExamButton label="Next" icon={ArrowRight} onClick={() => setCurrentIndex((prev) => Math.min(session.questionCount - 1, prev + 1))} />
-            <ExamButton label="Prev" icon={ArrowLeft} onClick={() => setCurrentIndex((prev) => Math.max(0, prev - 1))} />
-            <ExamButton label="Review" icon={Bookmark} onClick={() => setMarkedForReview((prev) => ({ ...prev, [question.id]: !prev[question.id] }))} />
-            <ExamButton label="Next Section" icon={SkipForward} onClick={goToNextSection} />
-            <ExamButton label="Prev Section" icon={SkipBack} onClick={goToPreviousSection} />
-            <ExamButton label="First" icon={Rewind} onClick={() => setCurrentIndex(0)} />
-            <ExamButton label="Last" icon={FastForward} onClick={() => setCurrentIndex(session.questionCount - 1)} />
-            <ExamButton label="Help" icon={CircleHelp} onClick={() => toast.message('Use Next/Prev, section controls, and Submit when done.')} />
+          <div className="min-w-0 max-lg:overflow-x-auto max-lg:pb-1 max-lg:[-webkit-overflow-scrolling:touch]">
+            <div className="grid min-w-0 grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9">
+              <ExamButton label="Save" icon={Save} onClick={() => toast.success('Answer saved for this question.')} />
+              <ExamButton label="Next" icon={ArrowRight} onClick={() => setCurrentIndex((prev) => Math.min(session.questionCount - 1, prev + 1))} />
+              <ExamButton label="Prev" icon={ArrowLeft} onClick={() => setCurrentIndex((prev) => Math.max(0, prev - 1))} />
+              <ExamButton label="Review" icon={Bookmark} onClick={() => setMarkedForReview((prev) => ({ ...prev, [question.id]: !prev[question.id] }))} />
+              <ExamButton label="Next Section" icon={SkipForward} onClick={goToNextSection} />
+              <ExamButton label="Prev Section" icon={SkipBack} onClick={goToPreviousSection} />
+              <ExamButton label="First" icon={Rewind} onClick={() => setCurrentIndex(0)} />
+              <ExamButton label="Last" icon={FastForward} onClick={() => setCurrentIndex(session.questionCount - 1)} />
+              <ExamButton label="Help" icon={CircleHelp} onClick={() => toast.message('Use Next/Prev, section controls, and Submit when done.')} />
+            </div>
           </div>
         </section>
 
@@ -1093,7 +1095,10 @@ export function TestInterfacePage() {
 
       {result ? (
         <div className="fixed inset-0 grid place-items-center bg-black/35 p-3">
-          <div id="resultContainer" className="w-full max-w-md rounded border-2 border-[#2b5f9f] bg-white p-4">
+          <div
+            id="resultContainer"
+            className="max-h-[min(90dvh,900px)] w-full max-w-[min(calc(100vw-1.5rem),28rem)] overflow-y-auto rounded border-2 border-[#2b5f9f] bg-white p-3 sm:p-4"
+          >
             <h2 className="text-xl text-[#0d2c5a]">{isChallengeMode ? 'Challenge Submitted' : 'Test Submitted'}</h2>
             <p className="mt-1 text-sm text-slate-600">
               {isChallengeMode ? 'Your challenge attempt has been recorded.' : 'Your attempt has been saved successfully.'}
@@ -1109,10 +1114,10 @@ export function TestInterfacePage() {
               <p>Wrong: {result.wrongAnswers ?? '-'}</p>
               <p>Unanswered: {result.unanswered ?? '-'}</p>
             </div>
-            <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap">
               <button
                 type="button"
-                className="rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-1 text-blue-700"
+                className="w-full rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-2 text-sm text-blue-700 sm:w-auto sm:py-1"
                 onClick={() => {
                   if (isChallengeMode) {
                     window.location.href = '/?tab=community';
@@ -1125,7 +1130,7 @@ export function TestInterfacePage() {
               </button>
               <button
                 type="button"
-                className="rounded border border-emerald-700 bg-emerald-100 px-3 py-1 text-emerald-800"
+                className="w-full rounded border border-emerald-700 bg-emerald-100 px-3 py-2 text-sm text-emerald-800 sm:w-auto sm:py-1"
                 onClick={() => {
                   setResult(null);
                   setReviewRows([]);
@@ -1137,7 +1142,7 @@ export function TestInterfacePage() {
               <button
                 id="fullscreenResultBtn"
                 type="button"
-                className="rounded border border-slate-700 bg-slate-100 px-3 py-1 text-slate-800"
+                className="w-full rounded border border-slate-700 bg-slate-100 px-3 py-2 text-sm text-slate-800 sm:w-auto sm:py-1"
               >
                 Full Screen View
               </button>
@@ -1221,7 +1226,7 @@ function ExamButton({
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-10 items-center justify-center gap-1 rounded border border-[#3a5f8e] bg-gradient-to-b from-[#90b0d4] to-[#6f8eb8] px-2 text-[10px] text-white shadow hover:from-[#9db9d8] hover:to-[#7a99c0] sm:text-[11px]"
+      className="inline-flex h-10 min-w-0 w-full max-w-full items-center justify-center gap-1 rounded border border-[#3a5f8e] bg-gradient-to-b from-[#90b0d4] to-[#6f8eb8] px-1.5 text-[10px] text-white shadow hover:from-[#9db9d8] hover:to-[#7a99c0] sm:px-2 sm:text-[11px]"
     >
       <Icon className="h-3.5 w-3.5" />
       {label}

@@ -336,7 +336,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <span className="rounded-full bg-indigo-50 px-2 py-1 text-xs text-indigo-700">7D</span>
             </div>
             <div className="net360-horizontal-scroll net360-swipe-row" aria-label="Weekly performance scroll">
-              <div className="grid min-w-[300px] sm:min-w-[360px] grid-cols-7 items-end gap-2 rounded-xl bg-slate-50 p-3">
+                <div className="grid w-max min-w-[260px] grid-cols-7 items-end gap-1.5 rounded-xl bg-slate-50 p-2 sm:min-w-[300px] sm:gap-2 sm:p-3 md:min-w-[340px]">
                 {weekChart.map((point) => (
                   <div key={point.label} className="text-center">
                     <div
@@ -350,13 +350,18 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             </div>
             <div className="mt-4 space-y-2">
               {subjectStats.map((subject) => (
-                <div key={`${subject.key}-legend`} className="flex items-center gap-3 text-sm">
-                  <span className={`h-2.5 w-2.5 rounded-full ${subject.bar}`} />
-                  <span className="min-w-[7rem] text-slate-700 sm:min-w-[8rem]">{subject.label}</span>
-                  <div className="h-2 flex-1 rounded-full bg-slate-200">
+                <div
+                  key={`${subject.key}-legend`}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm sm:flex-nowrap"
+                >
+                  <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${subject.bar}`} />
+                  <span className="min-w-0 shrink-0 basis-full text-slate-700 sm:basis-auto sm:min-w-[6.5rem] md:min-w-[8rem]">
+                    {subject.label}
+                  </span>
+                  <div className="h-2 min-w-0 flex-1 basis-[120px] rounded-full bg-slate-200 sm:basis-auto">
                     <div className={`h-full rounded-full ${subject.bar}`} style={{ width: `${subject.progress}%` }} />
                   </div>
-                  <span className="w-9 text-right text-slate-600">{subject.progress}%</span>
+                  <span className="w-9 shrink-0 text-right text-slate-600">{subject.progress}%</span>
                 </div>
               ))}
             </div>
