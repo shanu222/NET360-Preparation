@@ -14,7 +14,6 @@ import { Community } from './components/Community';
 import { ProgramExplorer } from './components/ProgramExplorer';
 import { NETTypes } from './components/NETTypes';
 import { SupportChatWidget } from './components/SupportChatWidget';
-import { FirstTimeSetup, isTermsAccepted } from './components/FirstTimeSetup';
 import { 
   Home, 
   BookOpen, 
@@ -233,7 +232,6 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
 
 export default function App() {
   const smartMentorTabId = 'smart-mentor';
-  const [setupCompleted, setSetupCompleted] = useState(() => isTermsAccepted());
   const [sidebarMenuOpen, setSidebarMenuOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(resolveInitialThemeMode);
   const location = useLocation();
@@ -395,10 +393,6 @@ export default function App() {
       cleanupFns.forEach((fn) => fn());
     };
   }, [activeTab]);
-
-  if (!setupCompleted) {
-    return <FirstTimeSetup onComplete={() => setSetupCompleted(true)} />;
-  }
 
   const navigationItems: Array<{ id: SectionId; label: string; icon: typeof Home }> = [
     { id: 'home', label: 'Dashboard', icon: Home },
