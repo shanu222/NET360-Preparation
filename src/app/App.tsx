@@ -109,7 +109,6 @@ function resolveSectionFromPath(pathname: string): SectionId | null {
   const aliasMap: Record<string, SectionId> = {
     '/preparation-material': 'preparation',
     '/mock-test': 'tests',
-    '/dashboard': 'home',
   };
   if (aliasMap[normalized]) return aliasMap[normalized];
   const entry = (Object.entries(PATH_BY_SECTION) as Array<[SectionId, string]>).find(([, path]) => path === normalized);
