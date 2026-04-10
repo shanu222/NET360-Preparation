@@ -556,6 +556,7 @@ interface PreparationProps {
 export function Preparation({ showStartTestButton = true, onSelectSection, onSelectFlatTopic }: PreparationProps = {}) {
   const { attempts } = useAppData();
   const difficultyLevels: Array<'Easy' | 'Medium' | 'Hard'> = ['Easy', 'Medium', 'Hard'];
+  const [selectedSubject, setSelectedSubject] = useState<TabKey>('mathematics');
   const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<PartStructuredSubjectKey, AcademicPart | null>>(() => (
     PART_STRUCTURED_SUBJECTS.reduce((acc, subject) => {
       acc[subject] = null;
@@ -813,14 +814,18 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
         <p className="text-muted-foreground">Syllabus browser by subject, part, chapter, and section</p>
       </div>
 
-      <Tabs defaultValue="mathematics">
+      <Tabs value={selectedSubject} onValueChange={(value) => setSelectedSubject(value as TabKey)}>
         <div className="net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1">
           <TabsList className="inline-flex h-auto min-w-max flex-nowrap gap-1.5 rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-[#eef2ff] via-[#f1ecff] to-[#f5f8ff] p-1.5 shadow-[0_8px_18px_rgba(79,70,229,0.14)] lg:min-w-0 lg:flex-wrap lg:justify-center">
             {tabItems.map((tab) => (
               <TabsTrigger
                 key={tab.key}
                 value={tab.key}
-                className={`!flex-none min-h-[2.55rem] rounded-xl border border-indigo-200/90 bg-white/88 px-3 py-1.5 text-center text-[12px] font-semibold leading-tight tracking-[0.01em] text-slate-700 whitespace-normal break-words transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:-translate-y-0.5 data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)] sm:text-sm ${tabWidthPresetByKey[tab.key]} ${tabTriggerToneByKey[tab.key].active}`}
+                onClick={() => {
+                  setSelectedSubject(tab.key);
+                  console.log('Selected Subject:', tab.key);
+                }}
+                className={`!flex-none min-h-[2.55rem] rounded-xl border border-indigo-200/90 bg-white/88 px-3 py-1.5 text-center text-[12px] font-semibold leading-tight tracking-[0.01em] text-slate-700 whitespace-normal break-words transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:-translate-y-0.5 data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)] sm:text-sm ${tabWidthPresetByKey[tab.key]} ${tabTriggerToneByKey[tab.key].active} ${selectedSubject === tab.key ? 'bg-gradient-to-r from-indigo-600 to-violet-500 !text-white border-indigo-600 shadow-[0_10px_22px_rgba(79,70,229,0.32)] scale-[1.02]' : ''}`}
               >
                 {tab.label}
               </TabsTrigger>
@@ -934,6 +939,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                               onClick={() => {
                                 setSelectedChapter((prev) => (prev === chapter.id ? null : chapter.id));
                                 setSelectedSection(null);
+                                console.log('Selected Chapter:', chapter.title);
                               }}
                             >
                               <div className="flex items-start justify-between gap-3">
@@ -962,6 +968,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                         className={`w-full rounded-lg border px-3 py-2 text-left transition-all duration-300 ease-out active:scale-[0.99] ${selectedSection === `${chapter.id}::${section}` ? `border-transparent bg-gradient-to-r ${tone.sectionActive} text-white ${tone.sectionShadow}` : `border-slate-200/80 bg-white text-slate-700 hover:-translate-y-0.5 ${tone.sectionHover} hover:shadow-[0_8px_14px_rgba(15,23,42,0.07)]`}`}
                                         onClick={() => {
                                           setSelectedSection(`${chapter.id}::${section}`);
+                                          console.log('Selected Section:', section);
                                           onSelectSection?.({
                                             subject,
                                             chapterTitle: chapter.title,
@@ -1063,6 +1070,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                             setSelectedPartBySubject((prev) => ({ ...prev, [subject]: part }));
                             setSelectedChapterBySubject((prev) => ({ ...prev, [subject]: null }));
                             setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
+                            console.log('Selected Part:', part);
                           }}
                           className={`rounded-xl border p-3 text-left transition-all duration-300 ease-out active:scale-[0.99] ${isSelected ? `border-transparent bg-gradient-to-r ${tone.partActive} text-white ${tone.partShadow}` : `${tone.partIdle} ${tone.partHover} hover:-translate-y-0.5 hover:shadow-[0_10px_16px_rgba(15,23,42,0.08)]`}`}
                         >
@@ -1095,6 +1103,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                   [subject]: prev[subject] === chapter.id ? null : chapter.id,
                                 }));
                                 setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
+                                console.log('Selected Chapter:', chapter.title);
                               }}
                             >
                               <div className="flex items-start justify-between gap-3">
@@ -1132,6 +1141,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                             ...prev,
                                             [subject]: `${chapter.id}::${section}`,
                                           }));
+                                          console.log('Selected Section:', section);
                                           onSelectSection?.(selection);
                                         }}
                                       >
