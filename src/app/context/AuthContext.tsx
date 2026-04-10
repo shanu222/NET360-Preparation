@@ -65,11 +65,14 @@ function getOrCreateDeviceId() {
 
 function redirectToLoginScreen() {
   if (typeof window === 'undefined') return;
-  const target = String(window.location.pathname || '').toLowerCase().startsWith('/admin')
-    ? '/admin'
-    : '/?tab=profile';
-  if (window.location.pathname + window.location.search === target) return;
-  window.location.assign(target);
+  const path = String(window.location.pathname || '').toLowerCase();
+  if (path.startsWith('/admin')) {
+    if (window.location.pathname + window.location.search === '/admin') return;
+    window.location.assign('/admin');
+    return;
+  }
+  if (path === '/login') return;
+  window.location.assign('/login');
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
