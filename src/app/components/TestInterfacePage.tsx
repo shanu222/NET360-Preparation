@@ -421,7 +421,7 @@ export function TestInterfacePage() {
       setError('Missing authentication token. Redirecting to login page...');
       setLoading(false);
       window.setTimeout(() => {
-        window.location.href = '/?tab=profile';
+        window.location.href = '/login';
       }, 900);
       return;
     }
@@ -1084,7 +1084,7 @@ export function TestInterfacePage() {
           type="button"
           className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
           onClick={() => {
-            window.location.href = '/?tab=profile';
+            window.location.href = '/login';
           }}
         >
           Go to Login Page
