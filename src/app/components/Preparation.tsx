@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { ChevronRight } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -579,6 +579,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
   const [selectedIntelligenceChapterId, setSelectedIntelligenceChapterId] = useState<string | null>(null);
   const [selectedIntelligenceSection, setSelectedIntelligenceSection] = useState<string | null>(null);
   const [launchingSectionKey, setLaunchingSectionKey] = useState<string | null>(null);
+  const launchingRef = useRef(false);
   const [difficultyMenuKey, setDifficultyMenuKey] = useState<string | null>(null);
   const [selectedFlatTopicByTab, setSelectedFlatTopicByTab] = useState<Record<'quantitative-mathematics' | 'design-aptitude', string | null>>({
     'quantitative-mathematics': null,
@@ -675,9 +676,13 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     sectionTitle: string;
     difficulty: 'Easy' | 'Medium' | 'Hard';
   }) => {
+    if (launchingRef.current) return;
+    launchingRef.current = true;
+
     const authToken = await resolveLaunchToken();
     if (!authToken) {
       toast.error('Please login first to start a section test from Preparation Materials.');
+      launchingRef.current = false;
       return;
     }
 
@@ -687,6 +692,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     const examWindow = isNativeRuntime ? null : window.open('/exam-interface', '_blank', 'width=1400,height=900');
     if (!isNativeRuntime && !examWindow) {
       toast.error('Popup blocked. Please allow popups and try again.');
+      launchingRef.current = false;
       return;
     }
 
@@ -712,6 +718,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       toast.error(error instanceof Error ? error.message : 'Could not start section test.');
     } finally {
       setLaunchingSectionKey(null);
+      launchingRef.current = false;
     }
   };
 
@@ -720,9 +727,13 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     topicTitle: string,
     difficulty: 'Easy' | 'Medium' | 'Hard',
   ) => {
+    if (launchingRef.current) return;
+    launchingRef.current = true;
+
     const authToken = await resolveLaunchToken();
     if (!authToken) {
       toast.error('Please login first to start a topic test from Preparation Materials.');
+      launchingRef.current = false;
       return;
     }
 
@@ -730,6 +741,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     const examWindow = isNativeRuntime ? null : window.open('/exam-interface', '_blank', 'width=1400,height=900');
     if (!isNativeRuntime && !examWindow) {
       toast.error('Popup blocked. Please allow popups and try again.');
+      launchingRef.current = false;
       return;
     }
 
@@ -764,6 +776,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       toast.error(error instanceof Error ? error.message : 'Could not start topic test.');
     } finally {
       setLaunchingSectionKey(null);
+      launchingRef.current = false;
     }
   };
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -193,6 +193,8 @@ export function Tests({ onNavigate }: TestsProps) {
   const [adaptiveRecommendation, setAdaptiveRecommendation] = useState<AdaptiveRecommendationPayload | null>(null);
   const [adaptiveLoading, setAdaptiveLoading] = useState(false);
 
+  const launchingRef = useRef(false);
+
   const resolveLaunchToken = async () => {
     const inMemory = token;
     if (inMemory) return inMemory;
@@ -291,6 +293,7 @@ export function Tests({ onNavigate }: TestsProps) {
   ) => {
     if (!selectedNetType) {
       toast.error('Select a NET type first.');
+      launchingRef.current = false;
       return;
     }
 
@@ -298,6 +301,7 @@ export function Tests({ onNavigate }: TestsProps) {
     if (!authToken) {
       toast.error('Please login first to start a test. Redirecting to login...');
       onNavigate?.('profile');
+      launchingRef.current = false;
       return;
     }
 
@@ -307,6 +311,7 @@ export function Tests({ onNavigate }: TestsProps) {
     const examWindow = isNativeRuntime ? null : window.open('/exam-interface', '_blank', 'width=1400,height=900');
     if (!isNativeRuntime && !examWindow) {
       toast.error('Popup blocked. Please allow popups and try again.');
+      launchingRef.current = false;
       return;
     }
 
@@ -350,13 +355,17 @@ export function Tests({ onNavigate }: TestsProps) {
       toast.error(error instanceof Error ? error.message : 'Could not start test.');
     } finally {
       setLaunchingKind(null);
+      launchingRef.current = false;
     }
   };
 
   const handleStartTestClick = (kind: TestKind) => {
+    if (launchingRef.current) return;
+    launchingRef.current = true;
     setSelectedTestKind(kind);
     if (kind === 'subject-wise') {
       setSubjectPickerOpen(true);
+      launchingRef.current = false;
       return;
     }
     void beginTest(kind);
