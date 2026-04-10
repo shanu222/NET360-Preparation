@@ -15,7 +15,6 @@ import { ProgramExplorer } from './components/ProgramExplorer';
 import { NETTypes } from './components/NETTypes';
 import { SupportChatWidget } from './components/SupportChatWidget';
 import { SeoLandingPage } from './components/SeoLandingPage';
-import { SoftAuthRedirect } from './components/SoftAuthRedirect';
 import { 
   Home, 
   BookOpen, 
@@ -76,7 +75,6 @@ type SectionId =
   | 'merit-calculator'
   | 'community'
   | 'profile'
-  | 'login'
   | 'physics-mcqs-net'
   | 'math-mcqs-net'
   | 'net-preparation-pakistan'
@@ -97,7 +95,6 @@ const PATH_BY_SECTION: Record<SectionId, string> = {
   'merit-calculator': '/merit-calculator',
   community: '/community',
   profile: '/profile',
-  login: '/login',
   'physics-mcqs-net': '/physics-mcqs-net',
   'math-mcqs-net': '/math-mcqs-net',
   'net-preparation-pakistan': '/net-preparation-pakistan',
@@ -165,8 +162,7 @@ class SectionErrorBoundary extends Component<{ children: ReactNode; sectionName:
   }
 }
 
-function HeaderAuthControl() {
-  const navigate = useNavigate();
+function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
   const { user, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -204,7 +200,7 @@ function HeaderAuthControl() {
     return (
       <button
         type="button"
-        onClick={() => navigate('/login')}
+        onClick={onOpenProfile}
         className="ml-1 inline-flex items-center gap-2 rounded-xl px-2 py-1.5 text-slate-700 transition hover:bg-indigo-50"
       >
         <div className="h-8 w-8 rounded-full bg-gradient-to-br from-amber-300 to-orange-500" />
@@ -267,9 +263,6 @@ export default function App() {
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get('tab') as SectionId | null;
     if (!tab || !(tab in PATH_BY_SECTION)) return;
-    const hasCredential =
-      Boolean(localStorage.getItem('token')) || Boolean(localStorage.getItem('net360-auth-token'));
-    if (!hasCredential) return;
     navigate(PATH_BY_SECTION[tab], { replace: true });
   }, [navigate]);
 
@@ -434,7 +427,6 @@ export default function App() {
 
   const activeNavigationItem = navigationItems.find((item) => item.id === activeTab);
   const seoTitle = (() => {
-    if (activeTab === 'login') return 'Login';
     if (activeTab === 'physics-mcqs-net') return 'Physics MCQs NET';
     if (activeTab === 'math-mcqs-net') return 'Math MCQs NET';
     if (activeTab === 'net-preparation-pakistan') return 'NET Preparation Pakistan';
@@ -484,7 +476,6 @@ export default function App() {
   return (
     <AuthProvider>
       <AppDataProvider>
-      <SoftAuthRedirect>
       <div className="net360-viewport min-h-dvh p-1 sm:p-3 md:p-5 xl:p-6">
         <div className="net360-shell mx-auto flex w-full max-w-[1600px] flex-col gap-2 rounded-[20px] border border-white/70 bg-white/65 p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl sm:gap-3 sm:rounded-[24px] sm:p-2 xl:rounded-[28px]">
           <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white/85 to-[#f2f4ff]/80 backdrop-blur sm:rounded-3xl">
@@ -558,17 +549,12 @@ export default function App() {
                 >
                   <MessageSquare className="w-4 h-4" />
                 </Button>
-                <HeaderAuthControl />
+                <HeaderAuthControl onOpenProfile={() => navigate(PATH_BY_SECTION.profile)} />
               </div>
             </header>
 
             {/* Main Content */}
             <main className="net360-main min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-visible px-2 py-2.5 sm:px-5 sm:py-5">
-              {activeTab === 'login' ? (
-                <div className="mt-0 net360-page">
-                  <Profile onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} />
-                </div>
-              ) : null}
               {activeTab === 'home' ? (
                 <div className="mt-0 net360-page">
                   <Dashboard onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} />
@@ -617,7 +603,6 @@ export default function App() {
 
       <Toaster richColors position="top-right" />
       <SupportChatWidget />
-      </SoftAuthRedirect>
     </AppDataProvider>
     </AuthProvider>
   );
