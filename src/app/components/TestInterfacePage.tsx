@@ -214,6 +214,7 @@ export function TestInterfacePage() {
   const [remainingSeconds, setRemainingSeconds] = useState(0);
   const [result, setResult] = useState<ResultState | null>(null);
   const [reviewRows, setReviewRows] = useState<ReviewRow[]>([]);
+  const loadControllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     if (!result) return;
@@ -518,16 +519,40 @@ export function TestInterfacePage() {
     return new Date(session.startedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   }, [session]);
 
+  const resetTestUiState = () => {
+    setSession(null);
+    setCurrentIndex(0);
+    setAnswers({});
+    setMarkedForReview({});
+    setRemainingSeconds(0);
+    setResult(null);
+    setReviewRows([]);
+    setChallengeStartedAtMs(null);
+    setChallengeLockedAnswers({});
+  };
+
   useEffect(() => {
     if (isPreviewMode) return;
 
     async function loadSession() {
+      loadControllerRef.current?.abort();
+      const controller = new AbortController();
+      loadControllerRef.current = controller;
+
       try {
         if (!launchResolved || !resolvedToken) return;
 
+        setError(null);
+        setLoading(true);
+        resetTestUiState();
+
         if (isChallengeMode) {
           if (!resolvedChallengeId) return;
-          const response = await apiRequest<{ challenge: ChallengePayload }>(`/api/community/quiz-challenges/${resolvedChallengeId}`, {}, resolvedToken);
+          const response = await apiRequest<{ challenge: ChallengePayload }>(
+            `/api/community/quiz-challenges/${resolvedChallengeId}`,
+            { signal: controller.signal },
+            resolvedToken,
+          );
           const challenge = response.challenge;
 
           setChallengeType(String(challenge.challengeType || 'async'));
@@ -591,25 +616,31 @@ export function TestInterfacePage() {
 
         if (!resolvedSessionId) return;
 
-        const response = await apiRequest<{ session: TestSession }>(`/api/tests/${resolvedSessionId}`, {}, resolvedToken);
+        const response = await apiRequest<{ session: TestSession }>(
+          `/api/tests/${resolvedSessionId}`,
+          { signal: controller.signal },
+          resolvedToken,
+        );
         const payload = response.session;
         if (payload.cancelledAt) {
           throw new Error('This test session has already been cancelled.');
         }
         setSession(payload as unknown as TestSession);
         setRemainingSeconds(Math.max(1, payload.durationMinutes * 60));
-        setChallengeStartedAtMs(null);
-        setChallengeLockedAnswers({});
       } catch (err) {
+        if (controller.signal.aborted) return;
         setError(err instanceof Error ? err.message : 'Failed to load test session.');
       } finally {
-        if (launchResolved && resolvedToken) {
-          setLoading(false);
-        }
+        if (controller.signal.aborted) return;
+        if (launchResolved && resolvedToken) setLoading(false);
       }
     }
 
     void loadSession();
+
+    return () => {
+      loadControllerRef.current?.abort();
+    };
   }, [isChallengeMode, isPreviewMode, launchResolved, resolvedChallengeId, resolvedSessionId, resolvedToken]);
 
   useEffect(() => {
