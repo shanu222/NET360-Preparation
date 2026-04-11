@@ -305,6 +305,25 @@
     font-size: clamp(14px, 0.82rem + 0.45vw, 17px);
   }
 
+  .net360-page-enter {
+    animation: net360-page-fade-in 0.22s ease-out;
+  }
+
+  @keyframes net360-page-fade-in {
+    from {
+      opacity: 0.88;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .net360-page-enter {
+      animation: none;
+    }
+  }
+
   .net360-page > * {
     min-width: 0;
     max-width: 100%;

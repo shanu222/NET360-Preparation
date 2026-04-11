@@ -1,16 +1,20 @@
+import { createRoot } from "react-dom/client";
+import { lazy, Suspense } from "react";
+import App from "./app/App.tsx";
+import { AuthProvider } from "./app/context/AuthContext.tsx";
+import { AppDataProvider } from "./app/context/AppDataContext.tsx";
+import { Toaster } from "sonner";
+import { ErrorBoundary } from "./app/components/ErrorBoundary.tsx";
+import { FullViewportRouteFallback } from "./app/components/PageRouteFallback.tsx";
+import { initializeNativeExperience } from "./app/lib/nativeMobile.ts";
+import { BrowserRouter } from "react-router-dom";
+import { HelmetProvider } from "react-helmet-async";
+import "./styles/index.css";
 
-  import { createRoot } from "react-dom/client";
-  import App from "./app/App.tsx";
-  import AdminApp from "./admin/AdminApp.tsx";
-  import { AuthProvider } from "./app/context/AuthContext.tsx";
-  import { AppDataProvider } from "./app/context/AppDataContext.tsx";
-  import { Toaster } from "sonner";
-  import { TestInterfacePage } from "./app/components/TestInterfacePage.tsx";
-  import { ErrorBoundary } from "./app/components/ErrorBoundary.tsx";
-  import { initializeNativeExperience } from "./app/lib/nativeMobile.ts";
-  import { BrowserRouter } from "react-router-dom";
-  import { HelmetProvider } from "react-helmet-async";
-  import "./styles/index.css";
+const AdminApp = lazy(() => import("./admin/AdminApp.tsx"));
+const TestInterfacePage = lazy(() =>
+  import("./app/components/TestInterfacePage.tsx").then((m) => ({ default: m.TestInterfacePage })),
+);
   const isAdminOnlyBuild = String((import.meta as any).env?.VITE_ADMIN_ONLY || '').toLowerCase() === 'true';
   const currentHost = window.location.hostname.toLowerCase();
   const isAdminHost = currentHost.includes('net360-admin') || currentHost.startsWith('admin.');
@@ -25,26 +29,28 @@
   createRoot(document.getElementById("root")!).render(
     <ErrorBoundary>
       <HelmetProvider>
-      {
-        // Keep exam/test routes highest priority so admin preview windows
-        // still render the real test interface on admin-host deployments.
-        isTestInterfaceRoute
-          ? (
-            <AuthProvider>
-              <AppDataProvider>
-                <TestInterfacePage />
-                <Toaster richColors position="top-right" />
-              </AppDataProvider>
-            </AuthProvider>
-          )
-          : shouldRenderAdminApp
-            ? <AdminApp />
-            : (
-              <BrowserRouter>
-                <App />
-              </BrowserRouter>
-            )
-      }
+        <Suspense fallback={<FullViewportRouteFallback />}>
+          {
+            // Keep exam/test routes highest priority so admin preview windows
+            // still render the real test interface on admin-host deployments.
+            isTestInterfaceRoute
+              ? (
+                <AuthProvider>
+                  <AppDataProvider>
+                    <TestInterfacePage />
+                    <Toaster richColors position="top-right" />
+                  </AppDataProvider>
+                </AuthProvider>
+              )
+              : shouldRenderAdminApp
+                ? <AdminApp />
+                : (
+                  <BrowserRouter>
+                    <App />
+                  </BrowserRouter>
+                )
+          }
+        </Suspense>
       </HelmetProvider>
     </ErrorBoundary>,
   );

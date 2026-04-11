@@ -1,20 +1,21 @@
-import { Component, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
-import { ScrollArea } from './components/ui/scroll-area';
-import { Dashboard } from './components/Dashboard';
-import { NUSTGuide } from './components/NUSTGuide';
-import { NUSTSchoolsCampuses } from './components/NUSTSchoolsCampuses';
-import { PracticeBoard } from './components/PracticeBoard';
-import { QuestionContribution } from './components/QuestionContribution';
-import { Preparation } from './components/Preparation';
-import { Tests } from './components/Tests';
-import { Analytics } from './components/Analytics';
-import { MeritCalculator } from './components/MeritCalculator';
-import { Profile } from './components/Profile';
-import { Community } from './components/Community';
-import { ProgramExplorer } from './components/ProgramExplorer';
-import { NETTypes } from './components/NETTypes';
+import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
 import { SupportChatWidget } from './components/SupportChatWidget';
-import { SeoLandingPage } from './components/SeoLandingPage';
+import { PageRouteFallback } from './components/PageRouteFallback';
+
+const Dashboard = lazy(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
+const NUSTGuide = lazy(() => import('./components/NUSTGuide').then((m) => ({ default: m.NUSTGuide })));
+const NUSTSchoolsCampuses = lazy(() => import('./components/NUSTSchoolsCampuses').then((m) => ({ default: m.NUSTSchoolsCampuses })));
+const PracticeBoard = lazy(() => import('./components/PracticeBoard').then((m) => ({ default: m.PracticeBoard })));
+const QuestionContribution = lazy(() => import('./components/QuestionContribution').then((m) => ({ default: m.QuestionContribution })));
+const Preparation = lazy(() => import('./components/Preparation').then((m) => ({ default: m.Preparation })));
+const Tests = lazy(() => import('./components/Tests').then((m) => ({ default: m.Tests })));
+const Analytics = lazy(() => import('./components/Analytics').then((m) => ({ default: m.Analytics })));
+const MeritCalculator = lazy(() => import('./components/MeritCalculator').then((m) => ({ default: m.MeritCalculator })));
+const Profile = lazy(() => import('./components/Profile').then((m) => ({ default: m.Profile })));
+const Community = lazy(() => import('./components/Community').then((m) => ({ default: m.Community })));
+const ProgramExplorer = lazy(() => import('./components/ProgramExplorer').then((m) => ({ default: m.ProgramExplorer })));
+const NETTypes = lazy(() => import('./components/NETTypes').then((m) => ({ default: m.NETTypes })));
+const SeoLandingPage = lazy(() => import('./components/SeoLandingPage').then((m) => ({ default: m.SeoLandingPage })));
 import { 
   Home, 
   BookOpen, 
@@ -565,49 +566,51 @@ export default function App() {
               </div>
             </header>
 
-            {/* Main Content */}
+            {/* Main Content — lazy routes + Suspense avoid blank flash while chunks load */}
             <main className="net360-main min-h-0 min-w-0 flex-1 overflow-y-auto px-0 py-2.5 sm:py-5">
-              {activeTab === 'home' ? (
-                <div className="mt-0 net360-page">
-                  <Dashboard onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} />
-                </div>
-              ) : null}
-              {activeTab === 'physics-mcqs-net' ? <div className="mt-0 net360-page"><SeoLandingPage page="physics-mcqs-net" /></div> : null}
-              {activeTab === 'math-mcqs-net' ? <div className="mt-0 net360-page"><SeoLandingPage page="math-mcqs-net" /></div> : null}
-              {activeTab === 'net-preparation-pakistan' ? <div className="mt-0 net360-page"><SeoLandingPage page="net-preparation-pakistan" /></div> : null}
-              {activeTab === 'nust-entry-test-preparation' ? <div className="mt-0 net360-page"><SeoLandingPage page="nust-entry-test-preparation" /></div> : null}
-              {activeTab === 'guide' ? <div className="mt-0 net360-page"><NUSTGuide /></div> : null}
-              {activeTab === 'programs' ? (
-                <div className="mt-0 net360-page">
-                  <SectionErrorBoundary sectionName="Programs" resetKey={activeTab}>
-                    <ProgramExplorer />
-                  </SectionErrorBoundary>
-                </div>
-              ) : null}
-              {activeTab === 'schools-campuses' ? <div className="mt-0 net360-page"><NUSTSchoolsCampuses /></div> : null}
-              {activeTab === 'net-types' ? (
-                <div className="mt-0 net360-page">
-                  <SectionErrorBoundary sectionName="NET Types" resetKey={activeTab}>
-                    <NETTypes />
-                  </SectionErrorBoundary>
-                </div>
-              ) : null}
-              {activeTab === 'practice-board' ? <div className="mt-0 net360-page"><PracticeBoard /></div> : null}
-              {activeTab === 'question-contribution' ? <div className="mt-0 net360-page"><QuestionContribution /></div> : null}
-              {activeTab === 'smart-mentor' ? (
-                <div className="mt-0 net360-page">
-                  <div className="rounded-2xl border border-indigo-100 bg-white/90 p-8 text-center shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
-                    <p className="text-xl font-semibold text-indigo-950">Coming Soon for Smart Study Mentor</p>
-                    <p className="mt-2 text-sm text-slate-600">This feature is currently unavailable.</p>
+              <Suspense fallback={<PageRouteFallback />}>
+                {activeTab === 'home' ? (
+                  <div className="mt-0 net360-page net360-page-enter">
+                    <Dashboard onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} />
                   </div>
-                </div>
-              ) : null}
-              {activeTab === 'preparation' ? <div className="mt-0 net360-page"><Preparation /></div> : null}
-              {activeTab === 'tests' ? <div className="mt-0 net360-page"><Tests onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} /></div> : null}
-              {activeTab === 'analytics' ? <div className="mt-0 net360-page"><Analytics /></div> : null}
-              {activeTab === 'merit-calculator' ? <div className="mt-0 net360-page"><MeritCalculator /></div> : null}
-              {activeTab === 'profile' ? <div className="mt-0 net360-page"><Profile onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} /></div> : null}
-              {activeTab === 'community' ? <div className="mt-0 net360-page"><Community /></div> : null}
+                ) : null}
+                {activeTab === 'physics-mcqs-net' ? <div className="mt-0 net360-page net360-page-enter"><SeoLandingPage page="physics-mcqs-net" /></div> : null}
+                {activeTab === 'math-mcqs-net' ? <div className="mt-0 net360-page net360-page-enter"><SeoLandingPage page="math-mcqs-net" /></div> : null}
+                {activeTab === 'net-preparation-pakistan' ? <div className="mt-0 net360-page net360-page-enter"><SeoLandingPage page="net-preparation-pakistan" /></div> : null}
+                {activeTab === 'nust-entry-test-preparation' ? <div className="mt-0 net360-page net360-page-enter"><SeoLandingPage page="nust-entry-test-preparation" /></div> : null}
+                {activeTab === 'guide' ? <div className="mt-0 net360-page net360-page-enter"><NUSTGuide /></div> : null}
+                {activeTab === 'programs' ? (
+                  <div className="mt-0 net360-page net360-page-enter">
+                    <SectionErrorBoundary sectionName="Programs" resetKey={activeTab}>
+                      <ProgramExplorer />
+                    </SectionErrorBoundary>
+                  </div>
+                ) : null}
+                {activeTab === 'schools-campuses' ? <div className="mt-0 net360-page net360-page-enter"><NUSTSchoolsCampuses /></div> : null}
+                {activeTab === 'net-types' ? (
+                  <div className="mt-0 net360-page net360-page-enter">
+                    <SectionErrorBoundary sectionName="NET Types" resetKey={activeTab}>
+                      <NETTypes />
+                    </SectionErrorBoundary>
+                  </div>
+                ) : null}
+                {activeTab === 'practice-board' ? <div className="mt-0 net360-page net360-page-enter"><PracticeBoard /></div> : null}
+                {activeTab === 'question-contribution' ? <div className="mt-0 net360-page net360-page-enter"><QuestionContribution /></div> : null}
+                {activeTab === 'smart-mentor' ? (
+                  <div className="mt-0 net360-page net360-page-enter">
+                    <div className="rounded-2xl border border-indigo-100 bg-white/90 p-8 text-center shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
+                      <p className="text-xl font-semibold text-indigo-950">Coming Soon for Smart Study Mentor</p>
+                      <p className="mt-2 text-sm text-slate-600">This feature is currently unavailable.</p>
+                    </div>
+                  </div>
+                ) : null}
+                {activeTab === 'preparation' ? <div className="mt-0 net360-page net360-page-enter"><Preparation /></div> : null}
+                {activeTab === 'tests' ? <div className="mt-0 net360-page net360-page-enter"><Tests onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} /></div> : null}
+                {activeTab === 'analytics' ? <div className="mt-0 net360-page net360-page-enter"><Analytics /></div> : null}
+                {activeTab === 'merit-calculator' ? <div className="mt-0 net360-page net360-page-enter"><MeritCalculator /></div> : null}
+                {activeTab === 'profile' ? <div className="mt-0 net360-page net360-page-enter"><Profile onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} /></div> : null}
+                {activeTab === 'community' ? <div className="mt-0 net360-page net360-page-enter"><Community /></div> : null}
+              </Suspense>
             </main>
           </section>
         </div>
