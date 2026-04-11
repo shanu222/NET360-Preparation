@@ -14,3 +14,6 @@ pnpm-debug.log*
 Thumbs.db
 .vscode/
 .idea/
+
+# Local-only full-resolution backup after compressing for git (do not commit)
+public/assets/videos/net360-guide.source-*-backup.mp4
