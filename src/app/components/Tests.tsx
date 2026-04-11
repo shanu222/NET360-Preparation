@@ -329,7 +329,13 @@ export function Tests({ onNavigate }: TestsProps) {
     } catch (error) {
       examWindow?.close();
       console.error('Test start error:', error);
-      toast.error('Could not start your test. Please try again.');
+      const msg = error instanceof Error ? error.message : '';
+      if (/login|authentication|Missing authentication|sign in/i.test(msg)) {
+        toast.error('Please sign in to start a test.');
+        onNavigate?.('profile');
+      } else {
+        toast.error('Could not start your test. Please try again.');
+      }
     } finally {
       setLaunchingKind(null);
       launchingRef.current = false;

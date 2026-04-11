@@ -900,10 +900,10 @@ export function TestInterfacePage() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#f2f6fb] p-2 sm:p-3 text-[#0d2c5a]">
-        <div className="mx-auto w-full max-w-[min(100%,1200px)] rounded border border-[#2b5f9f] bg-white px-3 py-4 sm:px-6 sm:py-6">
-          <p className="text-center text-base font-medium text-[#0d2c5a]">Starting your test…</p>
-          <p className="mt-2 text-center text-sm text-slate-600">Please wait while we prepare your session.</p>
+      <div className="min-h-dvh bg-[#eef2f6] p-2 text-[#0d2c5a] dark:bg-[#0f172a] dark:text-slate-100 sm:p-3">
+        <div className="mx-auto w-full max-w-[min(100%,1200px)] rounded border border-[#2b5f9f]/40 bg-white/95 px-3 py-6 shadow-sm dark:border-slate-600/50 dark:bg-slate-900/90 sm:px-6">
+          <p className="text-center text-base font-medium text-[#0d2c5a] dark:text-slate-100">Starting your test…</p>
+          <p className="mt-2 text-center text-sm text-slate-600 dark:text-slate-400">Please wait while we prepare your session.</p>
         </div>
       </div>
     );
@@ -911,8 +911,8 @@ export function TestInterfacePage() {
 
   if (error || !session || !question) {
     return (
-      <div className="min-h-screen bg-[#f2f6fb] p-2 sm:p-3 text-[#0d2c5a]">
-        <div className="mx-auto w-full max-w-[min(100%,1200px)] rounded border border-[#2b5f9f] bg-white px-3 py-4 sm:px-6 sm:py-6">
+      <div className="min-h-dvh bg-[#eef2f6] p-2 text-[#0d2c5a] dark:bg-[#0f172a] dark:text-slate-100 sm:p-3">
+        <div className="mx-auto w-full max-w-[min(100%,1200px)] rounded border border-[#2b5f9f]/40 bg-white/95 px-3 py-4 shadow-sm dark:border-slate-600/50 dark:bg-slate-900/90 sm:px-6 sm:py-6">
           <p className="mb-4 text-red-700">{error || 'Session could not be loaded.'}</p>
           <button
             type="button"

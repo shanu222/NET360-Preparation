@@ -34,17 +34,17 @@ export function PageRouteFallback() {
 export function FullViewportRouteFallback() {
   return (
     <div
-      className="flex min-h-dvh items-center justify-center bg-[#f2f6fb] p-4 text-[#0d2c5a]"
+      className="flex min-h-dvh items-center justify-center bg-[#eef2f6] p-4 text-[#0d2c5a] dark:bg-[#0f172a] dark:text-slate-100"
       role="status"
       aria-live="polite"
       aria-busy="true"
     >
-      <div className="w-full max-w-md space-y-4 rounded-2xl border border-[#2b5f9f]/30 bg-white px-6 py-8 shadow-sm">
-        <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-[#2b5f9f] border-t-transparent" />
-        <p className="text-center text-sm font-medium text-[#0d2c5a]">Loading…</p>
+      <div className="w-full max-w-md space-y-4 rounded-2xl border border-[#2b5f9f]/30 bg-white/95 px-6 py-8 shadow-sm dark:border-slate-600/50 dark:bg-slate-900/90">
+        <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-[#2b5f9f] border-t-transparent dark:border-indigo-400" />
+        <p className="text-center text-sm font-medium text-[#0d2c5a] dark:text-slate-100">Loading…</p>
         <div className="space-y-2">
-          <div className="h-3 animate-pulse rounded bg-slate-200" />
-          <div className="h-3 w-4/5 animate-pulse rounded bg-slate-100" />
+          <div className="h-3 animate-pulse rounded bg-slate-200 dark:bg-slate-700" />
+          <div className="h-3 w-4/5 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
         </div>
       </div>
     </div>

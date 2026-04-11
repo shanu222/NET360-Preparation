@@ -2,6 +2,7 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, 
 import { Difficulty, MCQ, McqImageFile, McqOptionMedia, SubjectKey, SUBJECT_KEYS } from '../lib/mcq';
 import { apiRequest, buildSseStreamUrl } from '../lib/api';
 import { COOKIE_SESSION_API_MARKER, readPersistedStudentAccessToken } from '../lib/authSession';
+import { waitUntilAuthHydrated } from '../lib/authTiming';
 import { useAuth } from './AuthContext';
 
 interface TestAttempt {
@@ -159,6 +160,8 @@ const AppDataContext = createContext<AppDataContextValue | undefined>(undefined)
 
 export function AppDataProvider({ children }: { children: ReactNode }) {
   const { token, user, loading: authLoading } = useAuth();
+  const authLoadingRef = useRef(authLoading);
+  authLoadingRef.current = authLoading;
 
   const resolveClientAuthToken = useCallback((): string | null => {
     if (token) return token;
@@ -446,6 +449,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     testType,
     selectedSubject,
   }) => {
+    await waitUntilAuthHydrated(() => authLoadingRef.current);
     const authToken = resolveClientAuthToken();
     if (!authToken) {
       throw new Error('Please login first to start a server-backed test session.');
