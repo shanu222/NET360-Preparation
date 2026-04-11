@@ -382,17 +382,30 @@ const PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024;
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.set('query parser', 'simple');
+const hstsHttpsOnly = helmet.hsts({
+  maxAge: 86400,
+  includeSubDomains: false,
+  preload: false,
+});
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
     referrerPolicy: { policy: 'no-referrer' },
     xFrameOptions: { action: 'deny' },
+    strictTransportSecurity: false,
     contentSecurityPolicy: {
       useDefaults: false,
       directives: buildCspDirectives(),
     },
   }),
 );
+app.use((req, res, next) => {
+  if (!req.secure) {
+    next();
+    return;
+  }
+  hstsHttpsOnly(req, res, next);
+});
 
 function sanitizePrimitive(value) {
   if (typeof value !== 'string') return value;

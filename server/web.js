@@ -47,14 +47,27 @@ const robotsFile = 'robots.txt';
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
+const hstsHttpsOnly = helmet.hsts({
+  maxAge: 86400,
+  includeSubDomains: false,
+  preload: false,
+});
 app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
     referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
     xFrameOptions: { action: 'deny' },
+    strictTransportSecurity: false,
     contentSecurityPolicy: buildSpaContentSecurityPolicy(),
   }),
 );
+app.use((req, res, next) => {
+  if (!req.secure) {
+    next();
+    return;
+  }
+  hstsHttpsOnly(req, res, next);
+});
 app.use(compression());
 
 if (!distHasIndex) {
