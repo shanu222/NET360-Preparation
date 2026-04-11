@@ -13,22 +13,28 @@ export function MeritCalculator() {
   const [meritPosition, setMeritPosition] = useState<string | null>(null);
 
   const calculateMerit = () => {
-    const ssc = parseFloat(sscMarks);
-    const hssc = parseFloat(hsscMarks);
-    const net = parseFloat(netScore);
+    const sscValue = parseFloat(sscMarks);
+    const hsscValue = parseFloat(hsscMarks);
+    const netValue = parseFloat(netScore);
 
-    if (Number.isNaN(ssc) || Number.isNaN(hssc) || Number.isNaN(net)) {
+    if (Number.isNaN(sscValue) || Number.isNaN(hsscValue) || Number.isNaN(netValue)) {
       return;
     }
 
-    const calculatedAggregate = ssc * 0.1 + hssc * 0.4 + net * 0.5;
-    setAggregate(calculatedAggregate);
+    if (sscValue > 100 || hsscValue > 100 || netValue > 200) {
+      console.warn('Invalid input range');
+      return;
+    }
 
-    if (calculatedAggregate >= 85) {
+    const result = sscValue * 0.1 + hsscValue * 0.15 + netValue * 0.75;
+    const finalAggregate = Math.min(result, 100);
+    setAggregate(finalAggregate);
+
+    if (finalAggregate >= 85) {
       setMeritPosition('Excellent - Top 500');
-    } else if (calculatedAggregate >= 75) {
+    } else if (finalAggregate >= 75) {
       setMeritPosition('Very Good - Top 1500');
-    } else if (calculatedAggregate >= 65) {
+    } else if (finalAggregate >= 65) {
       setMeritPosition('Good - Top 3000');
     } else {
       setMeritPosition('Fair - Top 5000');
@@ -102,22 +108,22 @@ export function MeritCalculator() {
                   max="100"
                   className="border-indigo-100"
                 />
-                <p className="text-xs text-slate-500">Weightage: 40%</p>
+                <p className="text-xs text-slate-500">Weightage: 15%</p>
               </div>
 
               <div className="space-y-1.5">
-                <Label htmlFor="net">NET Score (Percentage)</Label>
+                <Label htmlFor="net">NET Score (out of 200)</Label>
                 <Input
                   id="net"
                   type="number"
-                  placeholder="Eg. 78"
+                  placeholder="Eg. 144"
                   value={netScore}
                   onChange={(e) => setNetScore(e.target.value)}
                   min="0"
-                  max="100"
+                  max="200"
                   className="border-indigo-100"
                 />
-                <p className="text-xs text-slate-500">Weightage: 50%</p>
+                <p className="text-xs text-slate-500">Weightage: 75%</p>
               </div>
             </div>
 
@@ -134,7 +140,7 @@ export function MeritCalculator() {
               <p className="text-sm text-slate-600 inline-flex items-center gap-2">
                 <Info className="h-4 w-4 text-indigo-500" />
                 <span className="font-medium text-indigo-900">Formula</span>
-                Aggregate = (SSC% × 0.1) + (HSSC% × 0.4) + (NET Score × 0.5)
+                Aggregate = (SSC% × 0.10) + (HSSC% × 0.15) + (NET Score × 0.75)
               </p>
               <p className="mt-1 text-xs text-slate-500">Maximum: 100</p>
             </div>
