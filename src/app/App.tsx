@@ -41,6 +41,7 @@ import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from './components/ui/sheet';
 import { AppDataProvider } from './context/AppDataContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { preloadCommunityCache } from './lib/communityPreload';
 import { Toaster, toast } from 'sonner';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
@@ -102,6 +103,61 @@ const PATH_BY_SECTION: Record<SectionId, string> = {
   'net-preparation-pakistan': '/net-preparation-pakistan',
   'nust-entry-test-preparation': '/nust-entry-test-preparation',
 };
+
+function SidebarNavigation({
+  navigationItems,
+  activeTab,
+  smartMentorTabId,
+  navigate,
+  setSidebarMenuOpen,
+  onSmartMentorClick,
+}: {
+  navigationItems: Array<{ id: SectionId; label: string; icon: typeof Home }>;
+  activeTab: SectionId;
+  smartMentorTabId: SectionId;
+  navigate: (to: string) => void;
+  setSidebarMenuOpen: (open: boolean) => void;
+  onSmartMentorClick: () => void;
+}) {
+  const { token } = useAuth();
+
+  return (
+    <nav className="space-y-1.5">
+      {navigationItems.map((item) => {
+        const Icon = item.icon;
+        return (
+          <button
+            key={item.id}
+            onClick={() => {
+              if (item.id === smartMentorTabId) {
+                onSmartMentorClick();
+                return;
+              }
+              if (item.id === 'community') {
+                preloadCommunityCache(token);
+              }
+              navigate(PATH_BY_SECTION[item.id]);
+              setSidebarMenuOpen(false);
+            }}
+            aria-disabled={item.id === smartMentorTabId}
+            className={`w-full grid grid-cols-[18px_minmax(0,1fr)] items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 ${
+              item.id === smartMentorTabId
+                ? 'cursor-not-allowed opacity-70 text-indigo-100/85 hover:bg-white/8 dark:text-slate-400 dark:hover:bg-slate-100/5'
+                : ''
+            } ${
+              activeTab === item.id
+                ? 'bg-white/22 text-white shadow-[0_8px_20px_rgba(26,24,89,0.38)] dark:bg-slate-100/12 dark:text-slate-50 dark:shadow-[0_10px_22px_rgba(2,6,23,0.55)]'
+                : 'text-indigo-100 hover:bg-white/12 dark:text-slate-200 dark:hover:bg-slate-100/8'
+            }`}
+          >
+            <Icon className="w-4 h-4 shrink-0" />
+            <span className="min-w-0 text-sm font-medium leading-5 break-words">{item.label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
 
 function resolveSectionFromPath(pathname: string): SectionId | null {
   const normalized = pathname === '/' ? '/' : pathname.replace(/\/+$/, '');
@@ -441,40 +497,6 @@ export default function App() {
     toast.message('Coming Soon');
   };
 
-  const NavigationContent = () => (
-    <nav className="space-y-1.5">
-      {navigationItems.map((item) => {
-        const Icon = item.icon;
-        return (
-          <button
-            key={item.id}
-            onClick={() => {
-              if (item.id === smartMentorTabId) {
-                handleSmartMentorComingSoon();
-                return;
-              }
-              navigate(PATH_BY_SECTION[item.id]);
-              setSidebarMenuOpen(false);
-            }}
-            aria-disabled={item.id === smartMentorTabId}
-            className={`w-full grid grid-cols-[18px_minmax(0,1fr)] items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 ${
-              item.id === smartMentorTabId
-                ? 'cursor-not-allowed opacity-70 text-indigo-100/85 hover:bg-white/8 dark:text-slate-400 dark:hover:bg-slate-100/5'
-                : ''
-            } ${
-              activeTab === item.id
-                ? 'bg-white/22 text-white shadow-[0_8px_20px_rgba(26,24,89,0.38)] dark:bg-slate-100/12 dark:text-slate-50 dark:shadow-[0_10px_22px_rgba(2,6,23,0.55)]'
-                : 'text-indigo-100 hover:bg-white/12 dark:text-slate-200 dark:hover:bg-slate-100/8'
-            }`}
-          >
-            <Icon className="w-4 h-4 shrink-0" />
-            <span className="min-w-0 text-sm font-medium leading-5 break-words">{item.label}</span>
-          </button>
-        );
-      })}
-    </nav>
-  );
-
   return (
     <AuthProvider>
       <AppDataProvider>
@@ -513,7 +535,14 @@ export default function App() {
                       </div>
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-8 [scrollbar-gutter:stable]">
-                      <NavigationContent />
+                      <SidebarNavigation
+                        navigationItems={navigationItems}
+                        activeTab={activeTab}
+                        smartMentorTabId={smartMentorTabId}
+                        navigate={navigate}
+                        setSidebarMenuOpen={setSidebarMenuOpen}
+                        onSmartMentorClick={handleSmartMentorComingSoon}
+                      />
                     </div>
                     </div>
                   </SheetContent>

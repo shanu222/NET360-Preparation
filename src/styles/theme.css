@@ -707,6 +707,47 @@
     box-shadow: 0 14px 34px rgba(6, 10, 28, 0.58);
   }
 
+  /* Community: readable badge / outline button contrast + stable card height */
+  .community-page [data-slot='card'] {
+    min-height: 120px;
+  }
+
+  .community-page [data-slot='badge'],
+  .community-page .match-percentage {
+    background: #e2e8f0;
+    color: #1e293b;
+    border-color: rgba(30, 41, 59, 0.2);
+  }
+
+  .community-page [data-slot='button'].border {
+    background: #e2e8f0;
+    color: #1e293b;
+    border-color: rgba(30, 41, 59, 0.22);
+  }
+
+  .community-page [data-slot='button'].border:hover {
+    background: #cbd5e1;
+    color: #0f172a;
+  }
+
+  .dark .community-page [data-slot='badge'],
+  .dark .community-page .match-percentage {
+    background: #334155;
+    color: #f1f5f9;
+    border-color: rgba(241, 245, 249, 0.22);
+  }
+
+  .dark .community-page [data-slot='button'].border {
+    background: #334155;
+    color: #f1f5f9;
+    border-color: rgba(241, 245, 249, 0.2);
+  }
+
+  .dark .community-page [data-slot='button'].border:hover {
+    background: #475569;
+    color: #f8fafc;
+  }
+
   .dark .net360-icon-circle {
     border-color: rgba(142, 166, 255, 0.62);
     background: linear-gradient(145deg, rgba(70, 89, 170, 0.9), rgba(47, 63, 132, 0.94));

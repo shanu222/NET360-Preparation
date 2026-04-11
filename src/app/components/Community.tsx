@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -9,7 +9,6 @@ import { ScrollArea } from './ui/scroll-area';
 import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { Skeleton } from './ui/skeleton';
 import { apiRequest, buildSseStreamUrl } from '../lib/api';
 import { bearerForLaunchUrl } from '../lib/authSession';
 import { useAuth } from '../context/AuthContext';
@@ -211,6 +210,21 @@ type CommunityCacheEntry = {
   payload: unknown;
 };
 
+function readExpiredCommunityCachePayload<T>(path: string): T | null {
+  const now = Date.now();
+  try {
+    const raw = localStorage.getItem(`${COMMUNITY_CACHE_PREFIX}${path}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as CommunityCacheEntry;
+    if (!parsed || typeof parsed.expiresAt !== 'number' || parsed.expiresAt <= now) {
+      return null;
+    }
+    return parsed.payload as T;
+  } catch {
+    return null;
+  }
+}
+
 const CHAT_ATTACHMENT_ACCEPT = [
   '.pdf',
   '.doc',
@@ -278,34 +292,6 @@ const CommunityAvatar = memo(function CommunityAvatar({
   );
 });
 
-function CommunitySkeleton() {
-  return (
-    <div className="space-y-4">
-      <div className="net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1 [scrollbar-gutter:stable]">
-        <div className="inline-flex h-auto min-w-max flex-nowrap gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 via-indigo-50 to-fuchsia-50 p-1.5">
-          {Array.from({ length: 6 }).map((_, idx) => (
-            <Skeleton key={idx} className="h-10 w-[132px] rounded-xl" />
-          ))}
-        </div>
-      </div>
-      <Card>
-        <CardHeader>
-          <Skeleton className="h-6 w-48" />
-          <Skeleton className="h-4 w-80 max-w-full" />
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Skeleton className="h-10 w-full" />
-          <Skeleton className="h-28 w-full" />
-          <div className="grid gap-3 md:grid-cols-2">
-            <Skeleton className="h-24 w-full" />
-            <Skeleton className="h-24 w-full" />
-          </div>
-        </CardContent>
-      </Card>
-    </div>
-  );
-}
-
 function displayName(user: CommunityUser) {
   const full = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
   return full || user.username || 'Student';
@@ -315,13 +301,10 @@ function canSendConnectionRequest(status?: string) {
   return !status || status === 'none';
 }
 
-export function Community() {
+function CommunityInner() {
   const { token, user } = useAuth();
 
-  const [loading, setLoading] = useState(true);
   const [searchLoading, setSearchLoading] = useState(false);
-  const [leaderboardLoading, setLeaderboardLoading] = useState(false);
-  const [quizLoading, setQuizLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('discover-students');
   const [leaderboardPeriod, setLeaderboardPeriod] = useState<'weekly' | 'monthly'>('weekly');
 
@@ -518,7 +501,6 @@ export function Community() {
 
   const loadLeaderboardAndBadges = useCallback(async (period: 'weekly' | 'monthly', force = false) => {
     if (!token) return;
-    setLeaderboardLoading(true);
     try {
       const [leaderboardPayload, badgesPayload] = await Promise.all([
         requestCached<{ leaderboard: LeaderboardRow[] }>(`/api/community/leaderboard?period=${period}`, { force }),
@@ -526,14 +508,13 @@ export function Community() {
       ]);
       setLeaderboard(leaderboardPayload.leaderboard || []);
       setBadges(badgesPayload.badges || []);
-    } finally {
-      setLeaderboardLoading(false);
+    } catch {
+      // Silent; tab-specific loads are best-effort.
     }
   }, [token, requestCached]);
 
   const loadQuizData = useCallback(async (force = false) => {
     if (!token) return;
-    setQuizLoading(true);
     try {
       const [challengesPayload, quizBoardPayload] = await Promise.all([
         requestCached<{ challenges: QuizChallengeRow[] }>('/api/community/quiz-challenges', { force }),
@@ -549,8 +530,8 @@ export function Community() {
       } else if (selectedQuizChallengeId && !challengeRows.some((row) => row.id === selectedQuizChallengeId)) {
         setSelectedQuizChallengeId(challengeRows[0]?.id || '');
       }
-    } finally {
-      setQuizLoading(false);
+    } catch {
+      // Silent; quiz tab refreshes retry via polling.
     }
   }, [token, requestCached, selectedQuizChallengeId]);
 
@@ -631,29 +612,87 @@ export function Community() {
     return refreshInFlightRef.current;
   }, [token, requestCached, activeRoomId, activeConnectionId, loadDiscussionRoomPosts]);
 
-  useEffect(() => {
-    if (!token) {
-      setLoading(false);
-      return;
+  useLayoutEffect(() => {
+    if (!token) return;
+    const profilePayload = readExpiredCommunityCachePayload<{ profile: CommunityUser }>('/api/community/profile');
+    if (profilePayload?.profile) {
+      const p = profilePayload.profile;
+      setProfile(p);
+      setUsernameInput(p.username || '');
+      setProfilePictureDataUrl(p.profilePictureUrl || '');
+      setProfilePictureUploadName('');
+      setShareProfilePicture(Boolean(p.shareProfilePicture));
+      setTargetNetType(p.targetNetType || 'net-engineering');
+      setSubjectsNeedHelpInput((p.subjectsNeedHelp || []).join(', '));
+      setPreparationLevel((p.preparationLevel as 'beginner' | 'intermediate' | 'advanced') || 'intermediate');
+      setStudyTimePreference((p.studyTimePreference as 'morning' | 'evening' | 'night' | 'flexible') || 'flexible');
+      setScoreRangeMin(Number(p.testScoreRange?.min ?? 0));
+      setScoreRangeMax(Number(p.testScoreRange?.max ?? 200));
+      setBio(p.bio || '');
+      setIsCommunityProfileExpanded(!(p.username || p.bio));
     }
 
+    const requestsPayload = readExpiredCommunityCachePayload<{ incoming: CommunityRequestRow[]; outgoing: CommunityRequestRow[] }>(
+      '/api/community/connections/requests',
+    );
+    if (requestsPayload) {
+      setIncomingRequests(requestsPayload.incoming || []);
+      setOutgoingRequests(requestsPayload.outgoing || []);
+    }
+
+    const connectionsPayload = readExpiredCommunityCachePayload<{ connections: ConnectionRow[] }>('/api/community/connections');
+    if (connectionsPayload?.connections?.length) {
+      setConnections(connectionsPayload.connections);
+      setActiveConnectionId((prev) => prev || connectionsPayload.connections[0]?.connectionId || '');
+    }
+
+    const roomsPayload = readExpiredCommunityCachePayload<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms');
+    if (roomsPayload?.rooms?.length) {
+      setRooms(roomsPayload.rooms);
+      setActiveRoomId((prev) => prev || roomsPayload.rooms[0]?.id || '');
+    }
+
+    const partnersPayload = readExpiredCommunityCachePayload<{
+      studyPartners: Array<{ compatibility: number; user: CommunityUser; reasons?: string[] }>;
+    }>('/api/community/study-partners');
+    if (partnersPayload?.studyPartners) {
+      setStudyPartners(partnersPayload.studyPartners);
+    }
+
+    const lbWeekly = readExpiredCommunityCachePayload<{ leaderboard: LeaderboardRow[] }>('/api/community/leaderboard?period=weekly');
+    if (lbWeekly?.leaderboard?.length) {
+      setLeaderboard(lbWeekly.leaderboard);
+    }
+    const badgesCached = readExpiredCommunityCachePayload<{ badges: BadgeRow[] }>('/api/community/achievements');
+    if (badgesCached?.badges?.length) {
+      setBadges(badgesCached.badges);
+    }
+
+    const quizCh = readExpiredCommunityCachePayload<{ challenges: QuizChallengeRow[] }>('/api/community/quiz-challenges');
+    const quizLb = readExpiredCommunityCachePayload<{ leaderboard: QuizLeaderboardRow[] }>('/api/community/quiz-leaderboard');
+    if (quizCh?.challenges?.length) {
+      setQuizChallenges(quizCh.challenges);
+      const firstId = quizCh.challenges[0]?.id || '';
+      setSelectedQuizChallengeId((prev) => prev || firstId);
+    }
+    if (quizLb?.leaderboard?.length) {
+      setQuizLeaderboard(quizLb.leaderboard);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+
     let cancelled = false;
-    async function bootstrap() {
-      setLoading(true);
+    void (async () => {
       try {
         await refreshCommunity(false);
       } catch (error) {
         if (!cancelled) {
           toast.error(error instanceof Error ? error.message : 'Could not load community data.');
         }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
       }
-    }
-
-    void bootstrap();
+    })();
     return () => {
       cancelled = true;
     };
@@ -1412,17 +1451,13 @@ export function Community() {
     );
   }
 
-  if (loading) {
-    return <CommunitySkeleton />;
-  }
-
   const sectionTabTriggerClassName =
     'shrink-0 whitespace-nowrap rounded-xl border border-slate-200/90 bg-white/90 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:scale-[1.02] hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 hover:shadow-[0_10px_20px_rgba(34,211,238,0.2)] active:scale-[0.98] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!via-violet-500 data-[state=active]:!to-fuchsia-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_14px_26px_rgba(109,40,217,0.34)]';
   const viewProfileButtonClassName =
     'border-cyan-300 bg-gradient-to-r from-white to-cyan-50 text-cyan-700 transition-all duration-250 ease-out hover:-translate-y-0.5 hover:scale-[1.03] hover:border-cyan-400 hover:from-cyan-50 hover:to-blue-50 hover:text-cyan-800 hover:shadow-[0_10px_16px_rgba(34,211,238,0.22)] active:scale-[0.98]';
 
   return (
-    <div className="min-w-0 space-y-4">
+    <div className="community-page min-w-0 space-y-4">
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-4">
         <div className="net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1 [scrollbar-gutter:stable]">
           <TabsList className="inline-flex h-auto w-max min-w-max flex-nowrap gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 via-indigo-50 to-fuchsia-50 p-1.5 shadow-[0_10px_20px_rgba(99,102,241,0.12)]">
@@ -1436,7 +1471,7 @@ export function Community() {
         </div>
 
         <TabsContent value="discover-students" className="mt-0 space-y-4">
-          <Card>
+          <Card className="min-h-[120px]">
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
@@ -1579,7 +1614,7 @@ export function Community() {
           </Card>
 
           <div className="grid gap-4 xl:grid-cols-3">
-            <Card className="min-w-0 xl:col-span-1">
+            <Card className="min-h-[120px] min-w-0 xl:col-span-1">
               <CardHeader>
                 <CardTitle>Find Students</CardTitle>
                 <CardDescription>Search users, send connection requests, and build your study network.</CardDescription>
@@ -1593,11 +1628,7 @@ export function Community() {
                 </div>
                 <div className="space-y-2 max-h-[320px] overflow-auto">
                   {searchLoading && !searchResults.length ? (
-                    <div className="space-y-2">
-                      <Skeleton className="h-16 w-full" />
-                      <Skeleton className="h-16 w-full" />
-                      <Skeleton className="h-16 w-full" />
-                    </div>
+                    <p className="py-3 text-center text-xs text-muted-foreground">Searching…</p>
                   ) : null}
                   {searchResults.map((result) => (
                     <div key={result.id} className="rounded-lg border p-3">
@@ -1723,7 +1754,7 @@ export function Community() {
                         {item.reasons?.length ? <p className="text-xs text-emerald-700 mt-1">{item.reasons.join(' | ')}</p> : null}
                       </div>
                     </div>
-                    <Badge>{Math.round(item.compatibility)}% match</Badge>
+                        <Badge className="match-percentage">{Math.round(item.compatibility)}% match</Badge>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {canSendConnectionRequest(item.user.connectionStatus) ? (
@@ -2080,13 +2111,6 @@ export function Community() {
                     <CardDescription>Top performers by wins, win rate, and volume.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-2 max-h-[220px] overflow-auto">
-                        {quizLoading && !quizLeaderboard.length ? (
-                          <div className="space-y-2">
-                            <Skeleton className="h-14 w-full" />
-                            <Skeleton className="h-14 w-full" />
-                            <Skeleton className="h-14 w-full" />
-                          </div>
-                        ) : null}
                     {quizLeaderboard.map((entry) => (
                       <div key={entry.userId} className="rounded-md border p-2 text-sm">
                         <p className="font-medium">#{entry.rank} {entry.name || entry.username || 'Student'}</p>
@@ -2113,13 +2137,6 @@ export function Community() {
                 <Button size="sm" variant={leaderboardPeriod === 'monthly' ? 'default' : 'outline'} onClick={() => setLeaderboardPeriod('monthly')}>Monthly</Button>
               </div>
               <div className="space-y-2 max-h-[360px] overflow-auto">
-                {leaderboardLoading && !leaderboard.length ? (
-                  <div className="space-y-2">
-                    <Skeleton className="h-14 w-full" />
-                    <Skeleton className="h-14 w-full" />
-                    <Skeleton className="h-14 w-full" />
-                  </div>
-                ) : null}
                 {leaderboard.map((entry) => (
                   <div key={entry.id} className="flex items-center justify-between rounded-lg border p-3">
                     <div>
@@ -2139,14 +2156,7 @@ export function Community() {
               <CardTitle>Achievement Badges</CardTitle>
               <CardDescription>Gamified milestones for consistency and contribution.</CardDescription>
             </CardHeader>
-            <CardContent className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-              {leaderboardLoading && !badges.length ? (
-                <>
-                  <Skeleton className="h-24 w-full" />
-                  <Skeleton className="h-24 w-full" />
-                  <Skeleton className="h-24 w-full" />
-                </>
-              ) : null}
+            <CardContent className="grid min-h-[120px] gap-2 md:grid-cols-2 xl:grid-cols-3">
               {badges.map((badge) => (
                 <div key={badge.id} className={`rounded-lg border p-3 ${badge.earned ? 'border-emerald-300 bg-emerald-50/60' : ''}`}>
                   <p className="text-sm">{badge.icon} {badge.label}</p>
@@ -2338,3 +2348,5 @@ export function Community() {
     </div>
   );
 }
+
+export const Community = memo(CommunityInner);
