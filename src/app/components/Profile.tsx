@@ -16,6 +16,7 @@ import { apiRequest } from '../lib/api';
 import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK, PAYMENT_METHODS } from '../lib/paymentMethods';
 import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
+import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 
 const BRAND_LOGO_SRC = '/net360-logo.png';
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
@@ -1134,25 +1135,29 @@ export function Profile({ onNavigate }: ProfileProps) {
             </CardContent>
           </Card>
 
-          <Card className="relative overflow-hidden rounded-2xl border-indigo-100 bg-gradient-to-br from-white to-[#eef1ff] shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
-            <div className="pointer-events-none absolute -left-24 -bottom-16 h-56 w-80 rounded-full bg-indigo-400/12 blur-3xl" />
-            <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-72 rounded-full bg-violet-300/14 blur-3xl" />
-            <CardHeader>
-              <CardTitle className="text-slate-800">Featured Advertisement</CardTitle>
-              <CardDescription className="text-slate-600">Latest update and announcements for NET360 students.</CardDescription>
-            </CardHeader>
-            <CardContent className="relative pb-7">
-              <div className="mx-auto mt-4 flex w-full max-w-[min(100%,680px)] justify-center rounded-2xl border border-indigo-100/80 bg-white/70 p-2 shadow-[0_18px_34px_rgba(79,70,229,0.14)] backdrop-blur-sm">
-                <img
-                  src="/advertisement-page.webp"
-                  alt="NET360 advertisement"
-                  className="mx-auto h-auto w-full max-w-full object-contain rounded-xl"
-                  loading="lazy"
-                  decoding="async"
-                />
-              </div>
-            </CardContent>
-          </Card>
+          <div className="flex min-w-0 flex-col gap-4 lg:min-h-0">
+            <Net360UserGuideVideoSection />
+
+            <Card className="relative overflow-hidden rounded-2xl border-indigo-100 bg-gradient-to-br from-white to-[#eef1ff] shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
+              <div className="pointer-events-none absolute -left-24 -bottom-16 h-56 w-80 rounded-full bg-indigo-400/12 blur-3xl" />
+              <div className="pointer-events-none absolute -right-16 -top-16 h-48 w-72 rounded-full bg-violet-300/14 blur-3xl" />
+              <CardHeader>
+                <CardTitle className="text-slate-800">Featured Advertisement</CardTitle>
+                <CardDescription className="text-slate-600">Latest update and announcements for NET360 students.</CardDescription>
+              </CardHeader>
+              <CardContent className="relative pb-7">
+                <div className="mx-auto mt-4 flex w-full max-w-[min(100%,680px)] justify-center rounded-2xl border border-indigo-100/80 bg-white/70 p-2 shadow-[0_18px_34px_rgba(79,70,229,0.14)] backdrop-blur-sm">
+                  <img
+                    src="/advertisement-page.webp"
+                    alt="NET360 advertisement"
+                    className="mx-auto h-auto w-full max-w-full object-contain rounded-xl"
+                    loading="lazy"
+                    decoding="async"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         </div>
       </div>
     );
