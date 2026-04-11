@@ -386,6 +386,7 @@ app.use(
   helmet({
     crossOriginResourcePolicy: { policy: 'cross-origin' },
     referrerPolicy: { policy: 'no-referrer' },
+    xFrameOptions: { action: 'deny' },
     contentSecurityPolicy: {
       useDefaults: false,
       directives: buildCspDirectives(),
