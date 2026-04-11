@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { cn } from './ui/utils';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
+import { PasswordInput } from './ui/password-input';
 import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Badge } from './ui/badge';
@@ -750,9 +751,8 @@ export function Profile({ onNavigate }: ProfileProps) {
                   {forgotToken ? (
                     <div className="space-y-1">
                       <Label htmlFor="new-password">New Password</Label>
-                      <Input
+                      <PasswordInput
                         id="new-password"
-                        type="password"
                         value={newPassword}
                         onChange={(e) => setNewPassword(e.target.value)}
                         placeholder="Minimum 8 characters"
@@ -832,9 +832,8 @@ export function Profile({ onNavigate }: ProfileProps) {
 
               <div className="space-y-1.5">
                 <Label htmlFor="auth-password">Password</Label>
-                <Input
+                <PasswordInput
                   id="auth-password"
-                  type="password"
                   value={authForm.password}
                   onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
                   placeholder="Enter your password"
@@ -1526,10 +1525,9 @@ export function Profile({ onNavigate }: ProfileProps) {
 
             <div className="space-y-2">
               <Label htmlFor="delete-account-password">Confirm with your registration password</Label>
-              <Input
+              <PasswordInput
                 id="delete-account-password"
                 name="delete-account-password"
-                type="password"
                 autoComplete="new-password"
                 value={deleteAccountPassword}
                 onChange={(e) => setDeleteAccountPassword(e.target.value)}

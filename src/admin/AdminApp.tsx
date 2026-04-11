@@ -35,6 +35,7 @@ import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../app/lib/hie
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
 import { Button } from '../app/components/ui/button';
 import { Input } from '../app/components/ui/input';
+import { PasswordInput } from '../app/components/ui/password-input';
 import { Label } from '../app/components/ui/label';
 import { Tabs, TabsContent } from '../app/components/ui/tabs';
 import { Badge } from '../app/components/ui/badge';
@@ -6308,9 +6309,8 @@ export default function AdminApp() {
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="admin-password">Password</Label>
-              <Input
+              <PasswordInput
                 id="admin-password"
-                type="password"
                 value={authForm.password}
                 onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
               />
@@ -7231,9 +7231,8 @@ export default function AdminApp() {
                 </div>
                 <div className="space-y-1">
                   <Label htmlFor="admin-create-password">Temporary Password</Label>
-                  <Input
+                  <PasswordInput
                     id="admin-create-password"
-                    type="password"
                     value={createUserForm.password}
                     onChange={(e) => setCreateUserForm((prev) => ({ ...prev, password: e.target.value }))}
                     placeholder="At least 8 characters"
