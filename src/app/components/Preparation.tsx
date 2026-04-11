@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from 'sonner';
-import { apiRequest, resolveLaunchAuthToken } from '../lib/api';
+import { resolveLaunchAuthToken } from '../lib/api';
 import {
   bearerForLaunchUrl,
   formatStudentTokenDebugPreview,
@@ -30,6 +30,14 @@ export interface ChapterItem {
 export interface PartItem {
   label: string;
   chapters: ChapterItem[];
+}
+
+/** Mobile Safari/Chrome (not Capacitor). Same-tab exam launch avoids a blank popup tab while the session API runs. */
+function isMobileBrowserRuntime() {
+  if (typeof window === 'undefined') return false;
+  const native = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+  if (native) return false;
+  return /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
 }
 
 function uniqueSections(sections: string[]) {
@@ -553,7 +561,7 @@ interface PreparationProps {
 }
 
 export function Preparation({ showStartTestButton = true, onSelectSection, onSelectFlatTopic }: PreparationProps = {}) {
-  const { attempts } = useAppData();
+  const { attempts, startTestSession } = useAppData();
   const { token: authContextToken, user, loading: authLoading } = useAuth();
   const authLoadingRef = useRef(authLoading);
   authLoadingRef.current = authLoading;
@@ -590,6 +598,8 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
   const [selectedIntelligenceSection, setSelectedIntelligenceSection] = useState<string | null>(null);
   const [launchingSectionKey, setLaunchingSectionKey] = useState<string | null>(null);
   const launchingRef = useRef(false);
+  const mobileSectionStartRetryRef = useRef(0);
+  const mobileFlatStartRetryRef = useRef(0);
   const [difficultyMenuKey, setDifficultyMenuKey] = useState<string | null>(null);
   const [selectedFlatTopicByTab, setSelectedFlatTopicByTab] = useState<Record<'quantitative-mathematics' | 'design-aptitude', string | null>>({
     'quantitative-mathematics': null,
@@ -620,46 +630,10 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     return Math.round((completedSections / totalSections) * 100);
   };
 
-  const createTestSession = async (
-    authToken: string,
-    payload: {
-      subject: string;
-      difficulty: 'Easy' | 'Medium' | 'Hard';
-      topic: string;
-      mode: 'topic' | 'mock' | 'adaptive';
-      questionCount: number;
-      part?: string;
-      chapter?: string;
-      section?: string;
-    },
-  ) => {
-    console.log('Token before request:', formatStudentTokenDebugPreview());
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        if (attempt > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        }
-        const response = await apiRequest<{ session: { id: string } }>(
-          '/api/tests/start',
-          {
-            method: 'POST',
-            body: JSON.stringify(payload),
-          },
-          authToken,
-        );
-        return response.session;
-      } catch (error) {
-        if (attempt === 1) {
-          throw error;
-        }
-      }
-    }
-  };
-
   const resolveLaunchToken = async () => resolveLaunchAuthToken(authContextToken);
 
-  const openExamWindow = (params: { sessionId: string; token: string; examWindow: Window | null }) => {
-    const { sessionId, token: authToken, examWindow } = params;
+  const openExamWindow = (params: { sessionId: string; token: string; examWindow: Window | null; sameTab?: boolean }) => {
+    const { sessionId, token: authToken, examWindow, sameTab } = params;
     const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
     const urlAuth = bearerForLaunchUrl(authToken);
 
@@ -677,8 +651,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       ? `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=topic&authToken=${encodeURIComponent(urlAuth)}`
       : `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=topic`;
 
-    if (isNativeRuntime) {
-      // Android WebView commonly blocks popups; navigate in-place after session is ready.
+    if (isNativeRuntime || sameTab) {
       window.location.href = url;
       return;
     }
@@ -701,13 +674,19 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     if (launchingRef.current || !authReady) return;
     launchingRef.current = true;
 
+    const mobileBrowser = isMobileBrowserRuntime();
+    const clientTokenWaitMs = mobileBrowser ? 12_000 : 6_000;
+
     await waitUntilAuthHydrated(() => authLoadingRef.current);
     if (!readPersistedStudentAccessToken() && !tokenRef.current && !userRef.current) {
       toast.error('Please login first to start a section test from Preparation Materials.');
       launchingRef.current = false;
       return;
     }
-    await waitUntilClientAuthToken(() => resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current));
+    await waitUntilClientAuthToken(
+      () => resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current),
+      clientTokenWaitMs,
+    );
     if (!resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current)) {
       console.warn('Auth not ready yet');
       toast.error('Please login first to start a section test from Preparation Materials.');
@@ -723,35 +702,70 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     }
 
     const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+    const isMobileLikeRuntime =
+      isNativeRuntime || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
 
-    // Blank window first so exam-interface never loads without sessionId (avoids missing-ID flash).
-    const examWindow = isNativeRuntime ? null : window.open('about:blank', '_blank', 'width=1400,height=900');
-    if (!isNativeRuntime && !examWindow) {
-      toast.error('Popup blocked. Please allow popups and try again.');
-      launchingRef.current = false;
-      return;
+    if (import.meta.env.DEV || isMobileLikeRuntime) {
+      console.log(
+        '[Preparation] Token before startTestSession:',
+        formatStudentTokenDebugPreview(),
+        readPersistedStudentAccessToken() ? '(jwt in storage)' : '(cookie or pending)',
+      );
+    }
+
+    // Desktop: open blank tab synchronously (popup stays tied to the user gesture). Mobile browser: defer until API succeeds (same-tab) to avoid a white blank tab.
+    let examWindow: Window | null = null;
+    if (!isNativeRuntime && !mobileBrowser) {
+      examWindow = window.open('about:blank', '_blank', 'width=1400,height=900');
+      if (!examWindow) {
+        toast.error('Popup blocked. Please allow popups and try again.');
+        launchingRef.current = false;
+        return;
+      }
+    }
+
+    if (mobileBrowser) {
+      await new Promise((r) => setTimeout(r, 200));
     }
 
     const launchKey = `${payload.subject}|${payload.part || ''}|${payload.chapterTitle}|${payload.sectionTitle}|${payload.difficulty}`;
 
     try {
       setLaunchingSectionKey(launchKey);
-      const session = await createTestSession(authToken, {
+      const session = await startTestSession({
         subject: payload.subject,
         difficulty: payload.difficulty,
         topic: payload.sectionTitle,
         mode: 'topic',
         questionCount: 25,
-          part: payload.part || '',
+        part: payload.part || '',
         chapter: payload.chapterTitle,
         section: payload.sectionTitle,
       });
 
-      openExamWindow({ sessionId: session.id, token: authToken, examWindow });
+      mobileSectionStartRetryRef.current = 0;
+      const launchToken = (await resolveLaunchToken()) || authToken;
+      openExamWindow({ sessionId: session.id, token: launchToken, examWindow, sameTab: mobileBrowser });
       toast.success(isNativeRuntime ? 'Section test launched.' : 'Section test launched in a new window.');
     } catch (error) {
       if (examWindow) examWindow.close();
       console.error('Section test start error:', error);
+      const msg = error instanceof Error ? error.message : '';
+      if (
+        isMobileLikeRuntime
+        && mobileSectionStartRetryRef.current === 0
+        && !/login|authentication|Missing authentication|sign in/i.test(msg)
+      ) {
+        mobileSectionStartRetryRef.current = 1;
+        setLaunchingSectionKey(null);
+        launchingRef.current = false;
+        toast.message('Retrying test start…');
+        window.setTimeout(() => {
+          void handleStartSectionTest(payload);
+        }, 500);
+        return;
+      }
+      mobileSectionStartRetryRef.current = 0;
       toast.error('Could not start your test. Please try again.');
     } finally {
       setLaunchingSectionKey(null);
@@ -767,13 +781,19 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     if (launchingRef.current || !authReady) return;
     launchingRef.current = true;
 
+    const mobileBrowser = isMobileBrowserRuntime();
+    const clientTokenWaitMs = mobileBrowser ? 12_000 : 6_000;
+
     await waitUntilAuthHydrated(() => authLoadingRef.current);
     if (!readPersistedStudentAccessToken() && !tokenRef.current && !userRef.current) {
       toast.error('Please login first to start a topic test from Preparation Materials.');
       launchingRef.current = false;
       return;
     }
-    await waitUntilClientAuthToken(() => resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current));
+    await waitUntilClientAuthToken(
+      () => resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current),
+      clientTokenWaitMs,
+    );
     if (!resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current)) {
       console.warn('Auth not ready yet');
       toast.error('Please login first to start a topic test from Preparation Materials.');
@@ -789,11 +809,29 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     }
 
     const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
-    const examWindow = isNativeRuntime ? null : window.open('about:blank', '_blank', 'width=1400,height=900');
-    if (!isNativeRuntime && !examWindow) {
-      toast.error('Popup blocked. Please allow popups and try again.');
-      launchingRef.current = false;
-      return;
+    const isMobileLikeRuntime =
+      isNativeRuntime || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+
+    if (import.meta.env.DEV || isMobileLikeRuntime) {
+      console.log(
+        '[Preparation] Token before startTestSession (flat topic):',
+        formatStudentTokenDebugPreview(),
+        readPersistedStudentAccessToken() ? '(jwt in storage)' : '(cookie or pending)',
+      );
+    }
+
+    let examWindow: Window | null = null;
+    if (!isNativeRuntime && !mobileBrowser) {
+      examWindow = window.open('about:blank', '_blank', 'width=1400,height=900');
+      if (!examWindow) {
+        toast.error('Popup blocked. Please allow popups and try again.');
+        launchingRef.current = false;
+        return;
+      }
+    }
+
+    if (mobileBrowser) {
+      await new Promise((r) => setTimeout(r, 200));
     }
 
     const launchKey = `${tabKey}|${topicTitle}|${difficulty}`;
@@ -805,7 +843,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
 
       for (const candidateSubject of candidateSubjects) {
         try {
-          const session = await createTestSession(authToken, {
+          const session = await startTestSession({
             subject: candidateSubject,
             difficulty,
             topic: topicTitle,
@@ -813,7 +851,9 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
             questionCount: 25,
           });
 
-          openExamWindow({ sessionId: session.id, token: authToken, examWindow });
+          mobileFlatStartRetryRef.current = 0;
+          const launchToken = (await resolveLaunchToken()) || authToken;
+          openExamWindow({ sessionId: session.id, token: launchToken, examWindow, sameTab: mobileBrowser });
           toast.success(isNativeRuntime ? 'Topic test launched.' : 'Topic test launched in a new window.');
           return;
         } catch (error) {
@@ -825,6 +865,22 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     } catch (error) {
       if (examWindow) examWindow.close();
       console.error('Topic test start error:', error);
+      const msg = error instanceof Error ? error.message : '';
+      if (
+        isMobileLikeRuntime
+        && mobileFlatStartRetryRef.current === 0
+        && !/login|authentication|Missing authentication|sign in/i.test(msg)
+      ) {
+        mobileFlatStartRetryRef.current = 1;
+        setLaunchingSectionKey(null);
+        launchingRef.current = false;
+        toast.message('Retrying test start…');
+        window.setTimeout(() => {
+          void handleStartFlatTopicTest(tabKey, topicTitle, difficulty);
+        }, 500);
+        return;
+      }
+      mobileFlatStartRetryRef.current = 0;
       toast.error('Could not start your test. Please try again.');
     } finally {
       setLaunchingSectionKey(null);
@@ -832,8 +888,23 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     }
   };
 
+  const showMobilePreparingOverlay = isMobileBrowserRuntime() && Boolean(launchingSectionKey);
+
   return (
     <div className="space-y-6">
+      {showMobilePreparingOverlay ? (
+        <div
+          className="fixed inset-0 z-[100] flex items-center justify-center bg-background/85 backdrop-blur-[2px]"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <div className="mx-4 max-w-sm rounded-xl border border-indigo-200/80 bg-card px-6 py-5 shadow-lg">
+            <p className="text-center text-base font-semibold text-foreground">Preparing your test…</p>
+            <p className="mt-2 text-center text-sm text-muted-foreground">Please wait while we start your session.</p>
+          </div>
+        </div>
+      ) : null}
+
       <div>
         <h1>Preparation Materials</h1>
         <p className="text-muted-foreground">Syllabus browser by subject, part, chapter, and section</p>
