@@ -26,6 +26,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { apiRequest, buildApiUrl, buildSseStreamUrl } from '../app/lib/api';
+import { COOKIE_SESSION_API_MARKER } from '../app/lib/authSession';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../app/lib/hierarchyDedup';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
 import { Button } from '../app/components/ui/button';
@@ -3451,7 +3452,7 @@ export default function AdminApp() {
 
     try {
       setLoading(true);
-      const payload = await apiRequest<{ token: string; refreshToken: string; user: LoginUser }>('/api/auth/login', {
+      const payload = await apiRequest<{ token?: string; refreshToken?: string; user: LoginUser }>('/api/auth/login', {
         method: 'POST',
         body: JSON.stringify(authForm),
       });
@@ -3461,14 +3462,27 @@ export default function AdminApp() {
         return;
       }
 
-      localStorage.setItem(TOKEN_KEY, payload.token);
-      localStorage.setItem(REFRESH_TOKEN_KEY, payload.refreshToken);
-      setToken(payload.token);
-      setRefreshToken(payload.refreshToken);
+      // Production API often omits JWTs from JSON (`ISSUE_AUTH_BODY_TOKENS=false`) and uses httpOnly cookies instead.
+      if (payload.token) {
+        localStorage.setItem(TOKEN_KEY, payload.token);
+        if (payload.refreshToken) {
+          localStorage.setItem(REFRESH_TOKEN_KEY, payload.refreshToken);
+        } else {
+          localStorage.removeItem(REFRESH_TOKEN_KEY);
+        }
+        setToken(payload.token);
+        setRefreshToken(payload.refreshToken ?? null);
+      } else {
+        localStorage.setItem(TOKEN_KEY, COOKIE_SESSION_API_MARKER);
+        localStorage.removeItem(REFRESH_TOKEN_KEY);
+        setToken(COOKIE_SESSION_API_MARKER);
+        setRefreshToken(null);
+      }
       navigateToSection('dashboard');
       toast.success('Admin login successful.');
 
-      void loadAdminData(payload.token).catch((error) => {
+      const tokenForAdminRequests = payload.token ?? COOKIE_SESSION_API_MARKER;
+      void loadAdminData(tokenForAdminRequests).catch((error) => {
         const status = Number((error as { status?: number } | null)?.status || 0);
         if (status === 401 || status === 403) {
           clearAdminSession();
@@ -3485,12 +3499,10 @@ export default function AdminApp() {
   };
 
   const logout = () => {
-    if (refreshToken) {
-      void apiRequest('/api/auth/logout', {
-        method: 'POST',
-        body: JSON.stringify({ refreshToken }),
-      }).catch(() => undefined);
-    }
+    void apiRequest('/api/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify(refreshToken ? { refreshToken } : {}),
+    }).catch(() => undefined);
     clearAdminSession();
   };
 
