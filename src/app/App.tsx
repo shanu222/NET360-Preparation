@@ -43,6 +43,7 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { Toaster, toast } from 'sonner';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
 
 const BRAND_LOGO_SRC = '/net360-logo.png';
 const THEME_STORAGE_KEY = 'net360-theme-mode';
@@ -476,6 +477,15 @@ export default function App() {
   return (
     <AuthProvider>
       <AppDataProvider>
+      <Helmet>
+        <title>{activeTitle} | NUST Entry Test Preparation</title>
+        <meta name="description" content="Practice MCQs and prepare for NUST entry test with high-quality questions and tests." />
+        <meta name="keywords" content="NUST, NET, MCQs, Entry Test, Physics MCQs, Math MCQs, Pakistan" />
+        <meta name="robots" content="index, follow" />
+        <meta property="og:title" content={`${activeTitle} | NUST Entry Test Preparation`} />
+        <meta property="og:description" content="Prepare for NUST entry test with MCQs and tests" />
+        <meta property="og:type" content="website" />
+      </Helmet>
       <div className="net360-viewport min-h-dvh p-1 sm:p-3 md:p-5 xl:p-6">
         <div className="net360-shell mx-auto flex w-full max-w-[1600px] flex-col gap-2 rounded-[20px] border border-white/70 bg-white/65 p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl sm:gap-3 sm:rounded-[24px] sm:p-2 xl:rounded-[28px]">
           <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white/85 to-[#f2f4ff]/80 backdrop-blur sm:rounded-3xl">
