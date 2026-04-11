@@ -1,8 +1,35 @@
 import express from 'express';
 import compression from 'compression';
+import helmet from 'helmet';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+function buildSpaContentSecurityPolicy() {
+  const extraConnect = String(process.env.CSP_EXTRA_CONNECT_SRC || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const isProd = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+
+  return {
+    useDefaults: false,
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],
+      connectSrc: ["'self'", 'https:', 'wss:', ...extraConnect],
+      workerSrc: ["'self'", 'blob:'],
+      manifestSrc: ["'self'"],
+      upgradeInsecureRequests: isProd ? [] : null,
+    },
+  };
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,6 +45,14 @@ const sitemapFile = 'sitemap.xml';
 const robotsFile = 'robots.txt';
 
 app.disable('x-powered-by');
+app.set('trust proxy', 1);
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+    contentSecurityPolicy: buildSpaContentSecurityPolicy(),
+  }),
+);
 app.use(compression());
 
 if (!distHasIndex) {

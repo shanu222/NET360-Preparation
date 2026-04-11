@@ -288,9 +288,10 @@ function buildCspDirectives() {
     objectSrc: ["'none'"],
     frameAncestors: ["'none'"],
     imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-    fontSrc: ["'self'", 'data:'],
-    styleSrc: ["'self'", "'unsafe-inline'"],
-    scriptSrc: ["'self'"],
+    fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+    styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+    // API JSON responses; allow CDN in case any HTML/error page references scripts
+    scriptSrc: ["'self'", 'https://cdn.jsdelivr.net'],
     connectSrc: connectSources,
     upgradeInsecureRequests: IS_PRODUCTION ? [] : null,
   };
