@@ -5,7 +5,13 @@ import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from 'sonner';
 import { apiRequest, resolveLaunchAuthToken } from '../lib/api';
-import { bearerForLaunchUrl } from '../lib/authSession';
+import {
+  bearerForLaunchUrl,
+  formatStudentTokenDebugPreview,
+  readPersistedStudentAccessToken,
+  resolveSnapshotStudentAuthToken,
+} from '../lib/authSession';
+import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTiming';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../lib/hierarchyDedup';
 import { useAppData } from '../context/AppDataContext';
@@ -548,7 +554,14 @@ interface PreparationProps {
 
 export function Preparation({ showStartTestButton = true, onSelectSection, onSelectFlatTopic }: PreparationProps = {}) {
   const { attempts } = useAppData();
-  const { token: authContextToken } = useAuth();
+  const { token: authContextToken, user, loading: authLoading } = useAuth();
+  const authLoadingRef = useRef(authLoading);
+  authLoadingRef.current = authLoading;
+  const tokenRef = useRef(authContextToken);
+  const userRef = useRef(user);
+  tokenRef.current = authContextToken;
+  userRef.current = user;
+  const authReady = !authLoading && Boolean(resolveSnapshotStudentAuthToken(authContextToken, user));
   const difficultyLevels: Array<'Easy' | 'Medium' | 'Hard'> = ['Easy', 'Medium', 'Hard'];
   const [selectedSubject, setSelectedSubject] = useState<TabKey>('mathematics');
   const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<PartStructuredSubjectKey, AcademicPart | null>>(() => (
@@ -620,15 +633,27 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       section?: string;
     },
   ) => {
-    const response = await apiRequest<{ session: { id: string } }>(
-      '/api/tests/start',
-      {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      },
-      authToken,
-    );
-    return response.session;
+    console.log('Token before request:', formatStudentTokenDebugPreview());
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        if (attempt > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        const response = await apiRequest<{ session: { id: string } }>(
+          '/api/tests/start',
+          {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          },
+          authToken,
+        );
+        return response.session;
+      } catch (error) {
+        if (attempt === 1) {
+          throw error;
+        }
+      }
+    }
   };
 
   const resolveLaunchToken = async () => resolveLaunchAuthToken(authContextToken);
@@ -673,8 +698,22 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     sectionTitle: string;
     difficulty: 'Easy' | 'Medium' | 'Hard';
   }) => {
-    if (launchingRef.current) return;
+    if (launchingRef.current || !authReady) return;
     launchingRef.current = true;
+
+    await waitUntilAuthHydrated(() => authLoadingRef.current);
+    if (!readPersistedStudentAccessToken() && !tokenRef.current && !userRef.current) {
+      toast.error('Please login first to start a section test from Preparation Materials.');
+      launchingRef.current = false;
+      return;
+    }
+    await waitUntilClientAuthToken(() => resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current));
+    if (!resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current)) {
+      console.warn('Auth not ready yet');
+      toast.error('Please login first to start a section test from Preparation Materials.');
+      launchingRef.current = false;
+      return;
+    }
 
     const authToken = await resolveLaunchToken();
     if (!authToken) {
@@ -725,8 +764,22 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     topicTitle: string,
     difficulty: 'Easy' | 'Medium' | 'Hard',
   ) => {
-    if (launchingRef.current) return;
+    if (launchingRef.current || !authReady) return;
     launchingRef.current = true;
+
+    await waitUntilAuthHydrated(() => authLoadingRef.current);
+    if (!readPersistedStudentAccessToken() && !tokenRef.current && !userRef.current) {
+      toast.error('Please login first to start a topic test from Preparation Materials.');
+      launchingRef.current = false;
+      return;
+    }
+    await waitUntilClientAuthToken(() => resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current));
+    if (!resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current)) {
+      console.warn('Auth not ready yet');
+      toast.error('Please login first to start a topic test from Preparation Materials.');
+      launchingRef.current = false;
+      return;
+    }
 
     const authToken = await resolveLaunchToken();
     if (!authToken) {
@@ -840,7 +893,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                             <div className="mt-2 rounded-lg border border-indigo-200 bg-white p-3">
                               <Button
                                 className="bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
-                                disabled={Boolean(launchingSectionKey)}
+                                disabled={Boolean(launchingSectionKey) || !authReady}
                                 onClick={() => {
                                   const baseKey = `${flatKey}|${topic}`;
                                   setDifficultyMenuKey((prev) => (prev === baseKey ? null : baseKey));
@@ -858,7 +911,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                         key={difficulty}
                                         type="button"
                                         variant="outline"
-                                        disabled={Boolean(launchingSectionKey)}
+                                        disabled={Boolean(launchingSectionKey) || !authReady}
                                         onClick={() => {
                                           setDifficultyMenuKey(null);
                                           void handleStartFlatTopicTest(flatKey, topic, difficulty);
@@ -965,7 +1018,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                         <div className={`mt-2 rounded-lg border bg-white p-3 ${tone.panelSurface}`}>
                                           <Button
                                             className={`bg-gradient-to-r ${tone.sectionActive} text-white transition-all duration-200 hover:brightness-105`}
-                                            disabled={Boolean(launchingSectionKey)}
+                                            disabled={Boolean(launchingSectionKey) || !authReady}
                                             onClick={() => {
                                               const baseKey = `${subject}||${chapter.title}|${section}`;
                                               setDifficultyMenuKey((prev) => (prev === baseKey ? null : baseKey));
@@ -983,7 +1036,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                                     key={difficulty}
                                                     type="button"
                                                     variant="outline"
-                                                    disabled={Boolean(launchingSectionKey)}
+                                                    disabled={Boolean(launchingSectionKey) || !authReady}
                                                     onClick={() => {
                                                       setDifficultyMenuKey(null);
                                                       void handleStartSectionTest({
@@ -1134,7 +1187,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                         <div className={`mt-2 rounded-lg border bg-white p-3 ${tone.panelSurface}`}>
                                           <Button
                                             className={`bg-gradient-to-r ${tone.sectionActive} text-white transition-all duration-200 hover:brightness-105`}
-                                            disabled={Boolean(launchingSectionKey)}
+                                            disabled={Boolean(launchingSectionKey) || !authReady}
                                             onClick={() => {
                                               const baseKey = `${subject}|${selectedPart}|${chapter.title}|${section}`;
                                               setDifficultyMenuKey((prev) => (prev === baseKey ? null : baseKey));
@@ -1152,7 +1205,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                                     key={difficulty}
                                                     type="button"
                                                     variant="outline"
-                                                    disabled={Boolean(launchingSectionKey)}
+                                                    disabled={Boolean(launchingSectionKey) || !authReady}
                                                     onClick={() => {
                                                       setDifficultyMenuKey(null);
                                                       void handleStartSectionTest({

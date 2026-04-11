@@ -29,6 +29,30 @@ export function readPersistedStudentAccessToken(): string | null {
   return localStorage.getItem(STUDENT_ACCESS_KEY);
 }
 
+/**
+ * Synchronous auth snapshot for gating API calls (context token, localStorage, or cookie-session marker when user exists).
+ * Matches AppDataContext.resolveClientAuthToken without needing a hook.
+ */
+export function resolveSnapshotStudentAuthToken(
+  contextToken: string | null | undefined,
+  user: unknown,
+): string | null {
+  if (contextToken) return contextToken;
+  const stored = readPersistedStudentAccessToken();
+  if (stored) return stored;
+  if (user) return COOKIE_SESSION_API_MARKER;
+  return null;
+}
+
+/** Debug-only: avoids logging full JWTs. */
+export function formatStudentTokenDebugPreview(): string {
+  const raw = readPersistedStudentAccessToken();
+  if (!raw) return '(none)';
+  if (raw === COOKIE_SESSION_API_MARKER) return 'cookie-session-marker';
+  if (raw.length <= 12) return `${raw.slice(0, 4)}…`;
+  return `${raw.slice(0, 8)}…`;
+}
+
 export function persistStudentTokens(access: string | null, refresh: string | null) {
   if (!shouldPersistAuthTokens()) return;
   if (access) localStorage.setItem(STUDENT_ACCESS_KEY, access);

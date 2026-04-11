@@ -1,8 +1,12 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Difficulty, MCQ, McqImageFile, McqOptionMedia, SubjectKey, SUBJECT_KEYS } from '../lib/mcq';
 import { apiRequest, buildSseStreamUrl } from '../lib/api';
-import { COOKIE_SESSION_API_MARKER, readPersistedStudentAccessToken } from '../lib/authSession';
-import { waitUntilAuthHydrated } from '../lib/authTiming';
+import {
+  formatStudentTokenDebugPreview,
+  readPersistedStudentAccessToken,
+  resolveSnapshotStudentAuthToken,
+} from '../lib/authSession';
+import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTiming';
 import { useAuth } from './AuthContext';
 
 interface TestAttempt {
@@ -164,12 +168,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   authLoadingRef.current = authLoading;
 
   const resolveClientAuthToken = useCallback((): string | null => {
-    if (token) return token;
-    const stored = readPersistedStudentAccessToken();
-    if (stored) return stored;
-    // Cookie-only or slow hydration: context user is set but token hint not yet in storage.
-    if (user) return COOKIE_SESSION_API_MARKER;
-    return null;
+    return resolveSnapshotStudentAuthToken(token, user);
   }, [token, user]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -450,10 +449,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     selectedSubject,
   }) => {
     await waitUntilAuthHydrated(() => authLoadingRef.current);
+    if (!readPersistedStudentAccessToken() && !token && !user) {
+      throw new Error('Please login first to start a server-backed test session.');
+    }
+    await waitUntilClientAuthToken(resolveClientAuthToken);
     const authToken = resolveClientAuthToken();
     if (!authToken) {
       throw new Error('Please login first to start a server-backed test session.');
     }
+    console.log('Token before request:', formatStudentTokenDebugPreview());
 
     const normalizedPayload = {
       subject: String(subject || '').toLowerCase().trim(),
@@ -469,23 +473,34 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       selectedSubject: String(selectedSubject || '').toLowerCase().trim(),
     };
     console.log('[MCQ Test Request] Sending:', normalizedPayload);
-    const startPayload = await apiRequest<{ session: TestSession }>(
-      '/api/tests/start',
-      {
-        method: 'POST',
-        body: JSON.stringify(normalizedPayload),
-      },
-      authToken,
-    );
-    console.log('[MCQ Test Response]', {
-      subject: normalizedPayload.subject,
-      chapter: normalizedPayload.chapter,
-      topic: normalizedPayload.topic,
-      section: normalizedPayload.section,
-      returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
-    });
 
-    return startPayload.session;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        if (attempt > 0) {
+          await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        const startPayload = await apiRequest<{ session: TestSession }>(
+          '/api/tests/start',
+          {
+            method: 'POST',
+            body: JSON.stringify(normalizedPayload),
+          },
+          authToken,
+        );
+        console.log('[MCQ Test Response]', {
+          subject: normalizedPayload.subject,
+          chapter: normalizedPayload.chapter,
+          topic: normalizedPayload.topic,
+          section: normalizedPayload.section,
+          returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
+        });
+        return startPayload.session;
+      } catch (error) {
+        if (attempt === 1) {
+          throw error;
+        }
+      }
+    }
   };
 
   const getTestSession: AppDataContextValue['getTestSession'] = async (sessionId) => {

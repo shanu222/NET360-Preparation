@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -20,7 +20,8 @@ import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest, resolveLaunchAuthToken } from '../lib/api';
-import { bearerForLaunchUrl, readPersistedStudentAccessToken } from '../lib/authSession';
+import { bearerForLaunchUrl, readPersistedStudentAccessToken, resolveSnapshotStudentAuthToken } from '../lib/authSession';
+import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTiming';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 
 interface TestsProps {
@@ -184,7 +185,16 @@ const TEST_TYPE_CARDS: Array<{
 
 export function Tests({ onNavigate }: TestsProps) {
   const { attempts, startTestSession } = useAppData();
-  const { token } = useAuth();
+  const { token, user, loading: authLoading } = useAuth();
+
+  const authLoadingRef = useRef(authLoading);
+  authLoadingRef.current = authLoading;
+  const tokenRef = useRef(token);
+  const userRef = useRef(user);
+  tokenRef.current = token;
+  userRef.current = user;
+
+  const authReady = !authLoading && Boolean(resolveSnapshotStudentAuthToken(token, user));
 
   const [selectedNetTypeId, setSelectedNetTypeId] = useState<string | null>(null);
   const [selectedTestKind, setSelectedTestKind] = useState<TestKind | null>(null);
@@ -271,7 +281,29 @@ export function Tests({ onNavigate }: TestsProps) {
       return;
     }
 
+    if (!authReady) {
+      console.warn('Auth not ready yet');
+      launchingRef.current = false;
+      return;
+    }
+
     launchingRef.current = true;
+
+    await waitUntilAuthHydrated(() => authLoadingRef.current);
+    if (!readPersistedStudentAccessToken() && !tokenRef.current && !userRef.current) {
+      toast.error('Please login first to start a test. Redirecting to login...');
+      onNavigate?.('profile');
+      launchingRef.current = false;
+      return;
+    }
+    await waitUntilClientAuthToken(() => resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current));
+    if (!resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current)) {
+      console.warn('Auth not ready yet');
+      toast.error('Please login first to start a test. Redirecting to login...');
+      onNavigate?.('profile');
+      launchingRef.current = false;
+      return;
+    }
 
     const authToken = await resolveLaunchToken();
     if (!authToken) {
@@ -343,7 +375,7 @@ export function Tests({ onNavigate }: TestsProps) {
   };
 
   const handleStartTestClick = (kind: TestKind) => {
-    if (launchingRef.current) return;
+    if (launchingRef.current || !authReady) return;
     launchingRef.current = true;
     setSelectedTestKind(kind);
     if (kind === 'subject-wise') {
@@ -589,7 +621,7 @@ export function Tests({ onNavigate }: TestsProps) {
                         'Adaptive Recommendation Set',
                       );
                     }}
-                    disabled={Boolean(launchingKind)}
+                    disabled={Boolean(launchingKind) || !authReady}
                   >
                     {launchingKind === 'adaptive' ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />}
                     Start Recommended Adaptive Test
@@ -638,7 +670,7 @@ export function Tests({ onNavigate }: TestsProps) {
                             : 'bg-gradient-to-r from-indigo-600 to-violet-500 text-white hover:-translate-y-0.5'
                       }`}
                       onClick={() => handleStartTestClick(card.id)}
-                      disabled={Boolean(launchingKind)}
+                      disabled={Boolean(launchingKind) || !authReady}
                     >
                       {isLaunchingThis ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />}
                       {isLaunchingThis ? 'Launching...' : 'Start Test'}
@@ -666,7 +698,7 @@ export function Tests({ onNavigate }: TestsProps) {
                 key={item.key}
                 variant="outline"
                 className="h-auto min-h-11 justify-start rounded-xl border-indigo-200 bg-white px-3 py-2 text-indigo-900 hover:bg-indigo-50"
-                disabled={Boolean(launchingKind)}
+                disabled={Boolean(launchingKind) || !authReady}
                 onClick={() => {
                   setSelectedSubject(item.key);
                   setSubjectPickerOpen(false);
