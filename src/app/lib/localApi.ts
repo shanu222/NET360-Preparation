@@ -4518,6 +4518,40 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     return { requests } as T;
   }
 
+  if (url.pathname === '/api/admin/users/security-info' && method === 'GET') {
+    const { db } = requireAdmin(token);
+    const page = Math.max(1, parseInt(String(url.searchParams.get('page') || '1'), 10) || 1);
+    const rawLimit = parseInt(String(url.searchParams.get('limit') || url.searchParams.get('pageSize') || '20'), 10);
+    const pageSize = Math.min(100, Math.max(5, Number.isFinite(rawLimit) ? rawLimit : 20));
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase();
+
+    let list = [...db.users];
+    if (q) {
+      list = list.filter((u) => String(u.email || '').toLowerCase().includes(q));
+    }
+    list.sort((a, b) => String(a.email).localeCompare(String(b.email)));
+    const total = list.length;
+    const totalPages = Math.max(1, Math.ceil(total / pageSize));
+    const slice = list.slice((page - 1) * pageSize, page * pageSize);
+
+    const securityAnswerNote =
+      'Answers are stored only as bcrypt hashes; plaintext is not retained and cannot be shown.';
+
+    return {
+      items: slice.map((u) => ({
+        userId: u.id,
+        email: u.email,
+        securityQuestion: String(u.securityQuestion || '').trim() || '—',
+        hasSecurityAnswerHash: Boolean(String(u.securityAnswerHash || '').trim()),
+        securityAnswerNote,
+      })),
+      page,
+      pageSize,
+      total,
+      totalPages,
+    } as T;
+  }
+
   if (url.pathname === '/api/admin/users' && method === 'GET') {
     const { db } = requireAdmin(token);
     const users = db.users

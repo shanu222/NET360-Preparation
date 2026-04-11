@@ -11029,6 +11029,53 @@ app.get('/api/admin/password-recovery-requests', authMiddleware, requireAdmin, a
   res.json({ requests: requests.map((item) => serializePasswordRecoveryRequest(item)) });
 });
 
+app.get('/api/admin/users/security-info', authMiddleware, requireAdmin, async (req, res) => {
+  const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
+  const rawLimit = parseInt(String(req.query.limit || req.query.pageSize || '20'), 10);
+  const pageSize = Math.min(100, Math.max(5, Number.isFinite(rawLimit) ? rawLimit : 20));
+  const q = String(req.query.q || '').trim();
+
+  const escapeRegexText = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const filter = {};
+  if (q) {
+    filter.email = { $regex: escapeRegexText(q), $options: 'i' };
+  }
+
+  const total = await UserModel.countDocuments(filter);
+  const skip = (page - 1) * pageSize;
+  const users = await UserModel.find(filter)
+    .select('email securityQuestion securityAnswerHash')
+    .sort({ email: 1 })
+    .skip(skip)
+    .limit(pageSize)
+    .lean();
+
+  await logSecurityEvent(req, {
+    eventType: 'admin.security_info_list',
+    severity: 'info',
+    actorUserId: req.user._id,
+    actorEmail: req.user.email,
+    metadata: { page, pageSize, hasQuery: Boolean(q) },
+  });
+
+  const securityAnswerNote =
+    'Answers are stored only as bcrypt hashes; plaintext is not retained and cannot be shown.';
+
+  res.json({
+    items: users.map((u) => ({
+      userId: String(u._id),
+      email: String(u.email || ''),
+      securityQuestion: String(u.securityQuestion || '').trim() || '—',
+      hasSecurityAnswerHash: Boolean(String(u.securityAnswerHash || '').trim()),
+      securityAnswerNote,
+    })),
+    page,
+    pageSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+  });
+});
+
 app.get('/api/admin/question-submissions', authMiddleware, requireAdmin, async (req, res) => {
   const status = String(req.query.status || 'all').trim().toLowerCase();
   const subject = String(req.query.subject || '').trim();

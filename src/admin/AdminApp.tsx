@@ -1,14 +1,18 @@
-import { createElement, type ChangeEvent, type FormEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, type ChangeEvent, type FormEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
   BookCheck,
   Boxes,
   ClipboardList,
+  Copy,
   CreditCard,
+  Eye,
+  EyeOff,
   FileCheck2,
   FileQuestion,
   Gauge,
+  KeyRound,
   LayoutDashboard,
   Loader2,
   MessageSquare,
@@ -671,6 +675,7 @@ type AdminSection =
   | 'premium-requests'
   | 'support-chat'
   | 'password-recovery'
+  | 'security-info'
   | 'mcqs'
   | 'practice-board'
   | 'submissions'
@@ -685,6 +690,7 @@ const ADMIN_SECTION_ROUTES: Record<AdminSection, string> = {
   'premium-requests': '/admin/premium-requests',
   'support-chat': '/admin/support-chat',
   'password-recovery': '/admin/password-recovery',
+  'security-info': '/admin/security-info',
   mcqs: '/admin/mcqs',
   'practice-board': '/admin/practice-board',
   submissions: '/admin/submissions',
@@ -705,6 +711,7 @@ const ADMIN_SECTION_META: Array<{ section: AdminSection; label: string; icon: Lu
   { section: 'requests', label: 'Signup Requests', icon: ClipboardList },
   { section: 'premium-requests', label: 'Premium Requests', icon: Sparkles },
   { section: 'password-recovery', label: 'Recovery', icon: Activity },
+  { section: 'security-info', label: 'Security Info', icon: KeyRound },
   { section: 'system-config', label: 'Settings', icon: Settings },
 ];
 
@@ -718,6 +725,7 @@ function getSectionFromPath(pathname: string): AdminSection {
   if (normalized.startsWith('/admin/signup-requests')) return 'requests';
   if (normalized.startsWith('/admin/premium-requests')) return 'premium-requests';
   if (normalized.startsWith('/admin/support-chat')) return 'support-chat';
+  if (normalized.startsWith('/admin/security-info')) return 'security-info';
   if (normalized.startsWith('/admin/password-recovery')) return 'password-recovery';
   if (normalized.startsWith('/admin/mcqs')) return 'mcqs';
   if (normalized.startsWith('/admin/practice-board')) return 'practice-board';
@@ -792,6 +800,14 @@ interface PasswordRecoveryRequest {
   }>;
   tokenExpiresAt: string | null;
   createdAt: string | null;
+}
+
+interface AdminSecurityInfoRow {
+  userId: string;
+  email: string;
+  securityQuestion: string;
+  hasSecurityAnswerHash: boolean;
+  securityAnswerNote: string;
 }
 
 interface AdminQuestionSubmissionAttachment {
@@ -2155,6 +2171,15 @@ export default function AdminApp() {
   const [passwordRecoveryRequests, setPasswordRecoveryRequests] = useState<PasswordRecoveryRequest[]>([]);
   const [passwordRecoveryStatusFilter, setPasswordRecoveryStatusFilter] = useState('all');
   const [passwordRecoveryQuery, setPasswordRecoveryQuery] = useState('');
+  const [securityInfoRows, setSecurityInfoRows] = useState<AdminSecurityInfoRow[]>([]);
+  const [securityInfoPage, setSecurityInfoPage] = useState(1);
+  const [securityInfoPageSize] = useState(20);
+  const [securityInfoTotal, setSecurityInfoTotal] = useState(0);
+  const [securityInfoTotalPages, setSecurityInfoTotalPages] = useState(1);
+  const [securityInfoSearchInput, setSecurityInfoSearchInput] = useState('');
+  const [securityInfoSearchApplied, setSecurityInfoSearchApplied] = useState('');
+  const [securityInfoLoading, setSecurityInfoLoading] = useState(false);
+  const [securityInfoReveal, setSecurityInfoReveal] = useState<Record<string, boolean>>({});
   const [practiceQuestions, setPracticeQuestions] = useState<AdminPracticeBoardQuestion[]>([]);
   const [practiceQuery, setPracticeQuery] = useState('');
   const [practiceBankSubjectKey, setPracticeBankSubjectKey] = useState('');
@@ -3084,6 +3109,33 @@ export default function AdminApp() {
     setConfigVariables(configVariablesPayload.variables || []);
   };
 
+  const loadSecurityInfoPage = useCallback(async () => {
+    if (!authToken) return;
+    setSecurityInfoLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: String(securityInfoPage),
+        limit: String(securityInfoPageSize),
+        q: securityInfoSearchApplied.trim(),
+      });
+      const payload = await apiRequest<{
+        items: AdminSecurityInfoRow[];
+        page: number;
+        pageSize: number;
+        total: number;
+        totalPages: number;
+      }>(`/api/admin/users/security-info?${params.toString()}`, {}, authToken);
+      setSecurityInfoRows(payload.items || []);
+      setSecurityInfoTotal(Number(payload.total) || 0);
+      setSecurityInfoTotalPages(Math.max(1, Number(payload.totalPages) || 1));
+      setSecurityInfoReveal({});
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not load security info.');
+    } finally {
+      setSecurityInfoLoading(false);
+    }
+  }, [authToken, securityInfoPage, securityInfoPageSize, securityInfoSearchApplied]);
+
   const loadBankMcqs = async (
     activeToken: string,
     subject: string,
@@ -3280,6 +3332,11 @@ export default function AdminApp() {
     passwordRecoveryStatusFilter,
     passwordRecoveryQuery,
   ]);
+
+  useEffect(() => {
+    if (!authToken || !ready || activeSection !== 'security-info') return;
+    void loadSecurityInfoPage();
+  }, [authToken, ready, activeSection, loadSecurityInfoPage]);
 
   useEffect(() => {
     if (!authToken || !ready) return;
@@ -7606,6 +7663,182 @@ export default function AdminApp() {
                 {!passwordRecoveryRequests.length ? (
                   <p className="text-sm text-muted-foreground">No recovery requests matched the current filter.</p>
                 ) : null}
+              </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="security-info" className="space-y-3">
+          <Card>
+            <CardHeader>
+              <CardTitle>Account recovery — security questions</CardTitle>
+              <CardDescription>
+                Read-only view of stored recovery questions. Answers are not stored in plaintext (only bcrypt hashes).
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div
+                className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950"
+                role="status"
+              >
+                Sensitive information – handle carefully.
+              </div>
+
+              <form
+                className="flex flex-col gap-2 sm:flex-row sm:items-end"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  setSecurityInfoPage(1);
+                  setSecurityInfoSearchApplied(securityInfoSearchInput);
+                }}
+              >
+                <div className="min-w-0 flex-1 space-y-1">
+                  <Label htmlFor="security-info-search">Search by email</Label>
+                  <Input
+                    id="security-info-search"
+                    value={securityInfoSearchInput}
+                    onChange={(e) => setSecurityInfoSearchInput(e.target.value)}
+                    placeholder="user@example.com"
+                    autoComplete="off"
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button type="submit" size="sm" disabled={securityInfoLoading}>
+                    {securityInfoLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      'Search'
+                    )}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={securityInfoLoading}
+                    onClick={() => void loadSecurityInfoPage()}
+                  >
+                    Refresh
+                  </Button>
+                </div>
+              </form>
+
+              <div className="overflow-x-auto rounded-md border min-h-[120px]">
+                {securityInfoLoading ? (
+                  <div className="flex items-center justify-center gap-2 py-12 text-muted-foreground">
+                    <Loader2 className="h-5 w-5 animate-spin" />
+                    Loading…
+                  </div>
+                ) : !securityInfoRows.length ? (
+                  <p className="px-3 py-10 text-center text-sm text-muted-foreground">No users matched this search.</p>
+                ) : (
+                  <table className="w-full min-w-[640px] text-left text-sm">
+                    <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">User email</th>
+                        <th className="px-3 py-2 font-medium">Security question</th>
+                        <th className="px-3 py-2 font-medium">Security answer</th>
+                        <th className="px-3 py-2 font-medium w-[140px]">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {securityInfoRows.map((row) => {
+                        const revealed = Boolean(securityInfoReveal[row.userId]);
+                        return (
+                          <tr key={row.userId} className="border-t">
+                            <td className="px-3 py-2 align-top break-all">{row.email || '—'}</td>
+                            <td className="px-3 py-2 align-top">{row.securityQuestion}</td>
+                            <td className="px-3 py-2 align-top">
+                              {revealed ? (
+                                <span className="text-xs leading-relaxed text-slate-700">
+                                  {row.securityAnswerNote}
+                                  {row.hasSecurityAnswerHash ? (
+                                    <Badge variant="outline" className="ml-2 align-middle text-[10px]">
+                                      Hash on file
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="secondary" className="ml-2 align-middle text-[10px]">
+                                      No hash
+                                    </Badge>
+                                  )}
+                                </span>
+                              ) : (
+                                <span className="font-mono text-xs tracking-widest text-muted-foreground">••••••••</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 align-top">
+                              <div className="flex flex-wrap gap-1">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 px-2"
+                                  aria-label={revealed ? 'Hide answer details' : 'Show answer details'}
+                                  onClick={() =>
+                                    setSecurityInfoReveal((prev) => ({
+                                      ...prev,
+                                      [row.userId]: !prev[row.userId],
+                                    }))
+                                  }
+                                >
+                                  {revealed ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-8 px-2"
+                                  onClick={async () => {
+                                    const text = [
+                                      `Email: ${row.email}`,
+                                      `Security question: ${row.securityQuestion}`,
+                                      `Answer note: ${row.securityAnswerNote}`,
+                                      `Recovery hash stored: ${row.hasSecurityAnswerHash ? 'yes' : 'no'}`,
+                                    ].join('\n');
+                                    try {
+                                      await navigator.clipboard.writeText(text);
+                                      toast.success('Copied to clipboard.');
+                                    } catch {
+                                      toast.error('Could not copy.');
+                                    }
+                                  }}
+                                >
+                                  <Copy className="h-4 w-4" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
+                <span>
+                  Page {securityInfoPage} of {securityInfoTotalPages} · {securityInfoTotal} user
+                  {securityInfoTotal === 1 ? '' : 's'}
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={securityInfoLoading || securityInfoPage <= 1}
+                    onClick={() => setSecurityInfoPage((p) => Math.max(1, p - 1))}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    disabled={securityInfoLoading || securityInfoPage >= securityInfoTotalPages}
+                    onClick={() => setSecurityInfoPage((p) => p + 1)}
+                  >
+                    Next
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
