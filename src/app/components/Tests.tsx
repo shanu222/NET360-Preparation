@@ -271,6 +271,8 @@ export function Tests({ onNavigate }: TestsProps) {
       return;
     }
 
+    launchingRef.current = true;
+
     const authToken = await resolveLaunchToken();
     if (!authToken) {
       toast.error('Please login first to start a test. Redirecting to login...');
@@ -281,8 +283,8 @@ export function Tests({ onNavigate }: TestsProps) {
 
     const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
 
-    // Open popup synchronously for browsers to avoid popup blockers.
-    const examWindow = isNativeRuntime ? null : window.open('/exam-interface', '_blank', 'width=1400,height=900');
+    // Open a blank window first so /exam-interface never loads without sessionId (avoids missing-ID flash).
+    const examWindow = isNativeRuntime ? null : window.open('about:blank', '_blank', 'width=1400,height=900');
     if (!isNativeRuntime && !examWindow) {
       toast.error('Popup blocked. Please allow popups and try again.');
       launchingRef.current = false;
@@ -326,7 +328,8 @@ export function Tests({ onNavigate }: TestsProps) {
       toast.success(isNativeRuntime ? 'Test launched.' : 'Test launched in a new window.');
     } catch (error) {
       examWindow?.close();
-      toast.error(error instanceof Error ? error.message : 'Could not start test.');
+      console.error('Test start error:', error);
+      toast.error('Could not start your test. Please try again.');
     } finally {
       setLaunchingKind(null);
       launchingRef.current = false;

@@ -685,8 +685,8 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
 
     const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
 
-    // Open popup synchronously for browsers. Native uses same-window redirect after session creation.
-    const examWindow = isNativeRuntime ? null : window.open('/exam-interface', '_blank', 'width=1400,height=900');
+    // Blank window first so exam-interface never loads without sessionId (avoids missing-ID flash).
+    const examWindow = isNativeRuntime ? null : window.open('about:blank', '_blank', 'width=1400,height=900');
     if (!isNativeRuntime && !examWindow) {
       toast.error('Popup blocked. Please allow popups and try again.');
       launchingRef.current = false;
@@ -712,7 +712,8 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       toast.success(isNativeRuntime ? 'Section test launched.' : 'Section test launched in a new window.');
     } catch (error) {
       if (examWindow) examWindow.close();
-      toast.error(error instanceof Error ? error.message : 'Could not start section test.');
+      console.error('Section test start error:', error);
+      toast.error('Could not start your test. Please try again.');
     } finally {
       setLaunchingSectionKey(null);
       launchingRef.current = false;
@@ -735,7 +736,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     }
 
     const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
-    const examWindow = isNativeRuntime ? null : window.open('/exam-interface', '_blank', 'width=1400,height=900');
+    const examWindow = isNativeRuntime ? null : window.open('about:blank', '_blank', 'width=1400,height=900');
     if (!isNativeRuntime && !examWindow) {
       toast.error('Popup blocked. Please allow popups and try again.');
       launchingRef.current = false;
@@ -770,7 +771,8 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       throw lastError instanceof Error ? lastError : new Error('No questions available for this topic.');
     } catch (error) {
       if (examWindow) examWindow.close();
-      toast.error(error instanceof Error ? error.message : 'Could not start topic test.');
+      console.error('Topic test start error:', error);
+      toast.error('Could not start your test. Please try again.');
     } finally {
       setLaunchingSectionKey(null);
       launchingRef.current = false;

@@ -427,7 +427,8 @@ export function TestInterfacePage() {
       }
 
       if (!resolvedAuth) {
-        setError('Missing authentication token. Redirecting to login page...');
+        console.error('[exam-interface] No authentication context for this test.');
+        setError('Please sign in to take this test.');
         setLoading(false);
         window.setTimeout(() => {
           window.location.href = '/?tab=profile';
@@ -436,7 +437,8 @@ export function TestInterfacePage() {
       }
 
       if (challengeLaunch && !challengeId) {
-        setError('Missing challenge id. Redirecting to community page...');
+        console.error('[exam-interface] Challenge launch without challenge id.');
+        setError('This challenge could not be opened.');
         setLoading(false);
         window.setTimeout(() => {
           window.location.href = '/?tab=community';
@@ -445,7 +447,8 @@ export function TestInterfacePage() {
       }
 
       if (!challengeLaunch && !sessionId) {
-        setError('Missing session id. Redirecting to tests page...');
+        console.error('[exam-interface] Test launch without session id.');
+        setError('This test could not be opened. Please start again from Tests.');
         setLoading(false);
         window.setTimeout(() => {
           window.location.href = '/?tab=tests';
@@ -630,7 +633,8 @@ export function TestInterfacePage() {
         }
 
         if (!resolvedSessionId) {
-          setError('Invalid test session');
+          console.error('[exam-interface] Session id missing after launch resolve.');
+          setError('We could not load this test. Please start again from Tests.');
           setLoading(false);
           return;
         }
@@ -897,7 +901,10 @@ export function TestInterfacePage() {
   if (loading) {
     return (
       <div className="min-h-screen bg-[#f2f6fb] p-2 sm:p-3 text-[#0d2c5a]">
-        <div className="mx-auto w-full max-w-[min(100%,1200px)] rounded border border-[#2b5f9f] bg-white px-3 py-4 sm:px-6 sm:py-6">Loading test interface...</div>
+        <div className="mx-auto w-full max-w-[min(100%,1200px)] rounded border border-[#2b5f9f] bg-white px-3 py-4 sm:px-6 sm:py-6">
+          <p className="text-center text-base font-medium text-[#0d2c5a]">Starting your test…</p>
+          <p className="mt-2 text-center text-sm text-slate-600">Please wait while we prepare your session.</p>
+        </div>
       </div>
     );
   }

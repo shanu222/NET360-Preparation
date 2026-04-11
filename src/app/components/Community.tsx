@@ -1345,7 +1345,7 @@ export function Community() {
     }
 
     const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
-    const examWindow = isNativeRuntime ? null : window.open('/exam-interface', '_blank', 'width=1400,height=900');
+    const examWindow = isNativeRuntime ? null : window.open('about:blank', '_blank', 'width=1400,height=900');
 
     if (!isNativeRuntime && !examWindow) {
       toast.error('Popup blocked. Please allow popups and try again.');
