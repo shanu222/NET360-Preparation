@@ -79,6 +79,7 @@ if (!distHasIndex) {
 }
 
 app.get('/healthz', (_req, res) => {
+  res.setHeader('Cache-Control', 'private, no-store');
   res.status(200).json({ ok: true });
 });
 
@@ -108,12 +109,14 @@ app.use(
 app.get(`/${googleVerificationFile}`, (_req, res) => {
   const distFilePath = path.join(distDir, googleVerificationFile);
   if (fs.existsSync(distFilePath)) {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     res.sendFile(distFilePath);
     return;
   }
 
   const publicFilePath = path.join(publicDir, googleVerificationFile);
   if (fs.existsSync(publicFilePath)) {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     res.sendFile(publicFilePath);
     return;
   }
@@ -124,6 +127,7 @@ app.get(`/${googleVerificationFile}`, (_req, res) => {
 app.get('/sitemap.xml', (_req, res) => {
   const distFilePath = path.join(distDir, sitemapFile);
   if (fs.existsSync(distFilePath)) {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     res.type('application/xml');
     res.sendFile(distFilePath);
     return;
@@ -131,6 +135,7 @@ app.get('/sitemap.xml', (_req, res) => {
 
   const publicFilePath = path.join(publicDir, sitemapFile);
   if (fs.existsSync(publicFilePath)) {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     res.type('application/xml');
     res.sendFile(publicFilePath);
     return;
@@ -142,6 +147,7 @@ app.get('/sitemap.xml', (_req, res) => {
 app.get('/robots.txt', (_req, res) => {
   const distFilePath = path.join(distDir, robotsFile);
   if (fs.existsSync(distFilePath)) {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     res.type('text/plain');
     res.sendFile(distFilePath);
     return;
@@ -149,6 +155,7 @@ app.get('/robots.txt', (_req, res) => {
 
   const publicFilePath = path.join(publicDir, robotsFile);
   if (fs.existsSync(publicFilePath)) {
+    res.setHeader('Cache-Control', 'public, max-age=3600');
     res.type('text/plain');
     res.sendFile(publicFilePath);
     return;
