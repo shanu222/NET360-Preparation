@@ -1,4 +1,5 @@
 import express from 'express';
+import compression from 'compression';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,6 +18,7 @@ const sitemapFile = 'sitemap.xml';
 const robotsFile = 'robots.txt';
 
 app.disable('x-powered-by');
+app.use(compression());
 
 if (!distHasIndex) {
   console.warn(
@@ -38,8 +40,13 @@ app.use(
         res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
         return;
       }
-      if (filePath.replace(/\\/g, '/').includes('/assets/')) {
+      const normalized = filePath.replace(/\\/g, '/');
+      if (normalized.includes('/assets/')) {
         res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        return;
+      }
+      if (/\.(png|jpg|jpeg|gif|webp|svg|ico|woff2?|ttf|eot)$/i.test(base)) {
+        res.setHeader('Cache-Control', 'public, max-age=604800');
         return;
       }
       res.setHeader('Cache-Control', 'public, max-age=3600');

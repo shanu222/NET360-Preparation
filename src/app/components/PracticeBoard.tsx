@@ -462,7 +462,13 @@ export function PracticeBoard() {
             </p>
             {questionFile ? (
               isImageMimeType(questionFile.mimeType) ? (
-                <img src={questionFile.dataUrl} alt="Question diagram" className="mt-3 max-h-48 w-auto rounded-lg border border-indigo-100 bg-white object-contain sm:max-h-56" />
+                <img
+                  src={questionFile.dataUrl}
+                  alt="Question diagram"
+                  className="mt-3 max-h-48 w-auto rounded-lg border border-indigo-100 bg-white object-contain sm:max-h-56"
+                  loading="lazy"
+                  decoding="async"
+                />
               ) : (
                 <div className="mt-3 rounded-md border border-indigo-100 bg-white p-2 text-xs text-slate-600">
                   <p>Question file: {questionFile.name}</p>

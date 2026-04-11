@@ -45,6 +45,7 @@ export default defineConfig(({ mode }) => {
     assetsInclude: ['**/*.svg', '**/*.csv'],
 
     build: {
+      modulePreload: { polyfill: true },
       rollupOptions: {
         output: {
           // Avoid stacking extra manual chunk rules on Vite defaults (reduces odd split edge cases).

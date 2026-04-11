@@ -282,7 +282,15 @@ const CommunityAvatar = memo(function CommunityAvatar({
   const fallback = getAvatarFallback(userLike);
 
   if (image) {
-    return <img src={image} alt={fallback} className={`${sizeClass} rounded-full border object-cover`} />;
+    return (
+      <img
+        src={image}
+        alt={fallback}
+        className={`${sizeClass} rounded-full border object-cover`}
+        loading="lazy"
+        decoding="async"
+      />
+    );
   }
 
   return (
@@ -1520,7 +1528,13 @@ function CommunityInner() {
                   {profilePictureUploadName ? <p className="text-xs text-muted-foreground">Selected: {profilePictureUploadName}</p> : null}
                   {profilePictureDataUrl ? (
                     <div className="flex items-center gap-3 rounded-md border p-2">
-                      <img src={profilePictureDataUrl} alt="Profile preview" className="h-12 w-12 rounded-full border object-cover" />
+                      <img
+                        src={profilePictureDataUrl}
+                        alt="Profile preview"
+                        className="h-12 w-12 rounded-full border object-cover"
+                        loading="lazy"
+                        decoding="async"
+                      />
                       <Button
                         type="button"
                         size="sm"

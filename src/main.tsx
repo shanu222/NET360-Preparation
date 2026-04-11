@@ -10,7 +10,8 @@ import { checkAppVersionFromServer, installChunkLoadRecovery } from "./app/lib/c
 import { initializeNativeExperience } from "./app/lib/nativeMobile.ts";
 import { BrowserRouter } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
-import "./styles/index.css";
+import "./styles/tailwind.css";
+import "./styles/theme.css";
 
 installChunkLoadRecovery();
 checkAppVersionFromServer();

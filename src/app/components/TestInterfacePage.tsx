@@ -1218,7 +1218,13 @@ export function TestInterfacePage() {
                   <div key={`${row.questionId}-${idx}`} className="rounded border border-slate-200 p-2 text-xs sm:text-sm">
                     <p className="font-semibold">Q{idx + 1}. <McqMathText value={row.question} /></p>
                     {normalizeMcqImageSrc(row.questionImage?.dataUrl) ? (
-                      <img src={normalizeMcqImageSrc(row.questionImage?.dataUrl)} alt={`Review question ${idx + 1}`} className="mcq-image mt-2 max-h-48 w-full" />
+                      <img
+                        src={normalizeMcqImageSrc(row.questionImage?.dataUrl)}
+                        alt={`Review question ${idx + 1}`}
+                        className="mcq-image mt-2 max-h-48 w-full"
+                        loading="lazy"
+                        decoding="async"
+                      />
                     ) : null}
                     {Array.isArray(row.optionMedia) && row.optionMedia.length ? (
                       <div className="mt-2 space-y-1">
@@ -1231,6 +1237,8 @@ export function TestInterfacePage() {
                                 src={normalizeMcqImageSrc(option.image?.dataUrl)}
                                 alt={`Review option ${option.key}`}
                                 className="option-image mt-1"
+                                loading="lazy"
+                                decoding="async"
                               />
                             ) : null}
                           </div>

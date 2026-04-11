@@ -204,8 +204,20 @@ export function McqMathText({
           if (!leftSrc || !rightSrc) return null;
           return (
             <span key={`math-image-row-${index}`} className="mcq-inline-image-row">
-              <img src={leftSrc} alt={`Embedded MCQ visual ${index + 1} left`} className="mcq-inline-image" />
-              <img src={rightSrc} alt={`Embedded MCQ visual ${index + 1} right`} className="mcq-inline-image" />
+              <img
+                src={leftSrc}
+                alt={`Embedded MCQ visual ${index + 1} left`}
+                className="mcq-inline-image"
+                loading="lazy"
+                decoding="async"
+              />
+              <img
+                src={rightSrc}
+                alt={`Embedded MCQ visual ${index + 1} right`}
+                className="mcq-inline-image"
+                loading="lazy"
+                decoding="async"
+              />
             </span>
           );
         }
@@ -217,6 +229,8 @@ export function McqMathText({
               src={segment.value}
               alt={`Embedded MCQ visual ${index + 1}`}
               className="mcq-inline-image"
+              loading="lazy"
+              decoding="async"
             />
           );
         }
