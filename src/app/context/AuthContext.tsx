@@ -4,6 +4,7 @@ import {
   COOKIE_SESSION_API_MARKER,
   clearPersistedStudentTokens,
   isCookieSessionApiMarker,
+  persistCookieSessionMode,
   persistStudentTokens,
   shouldPersistAuthTokens,
 } from '../lib/authSession';
@@ -100,6 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(me.user);
           if (!bearer) {
             setToken(COOKIE_SESSION_API_MARKER);
+            persistCookieSessionMode();
           } else {
             setToken(storedToken);
           }
@@ -126,6 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             } else {
               setToken(COOKIE_SESSION_API_MARKER);
               setRefreshToken(null);
+              persistCookieSessionMode();
             }
             return;
           } catch {
@@ -147,6 +150,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else {
             setToken(COOKIE_SESSION_API_MARKER);
             setRefreshToken(null);
+            persistCookieSessionMode();
           }
         } catch {
           if (!cancelled) {
@@ -196,7 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else {
       setToken(COOKIE_SESSION_API_MARKER);
       setRefreshToken(null);
-      clearPersistedStudentTokens();
+      persistCookieSessionMode();
     }
   }, [deviceId]);
 
@@ -248,7 +252,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } else {
       setToken(COOKIE_SESSION_API_MARKER);
       setRefreshToken(null);
-      clearPersistedStudentTokens();
+      persistCookieSessionMode();
     }
   }, [deviceId]);
 

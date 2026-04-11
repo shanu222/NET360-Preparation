@@ -20,7 +20,7 @@ import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest, resolveLaunchAuthToken } from '../lib/api';
-import { bearerForLaunchUrl, shouldPersistAuthTokens } from '../lib/authSession';
+import { bearerForLaunchUrl, readPersistedStudentAccessToken } from '../lib/authSession';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 
 interface TestsProps {
@@ -351,7 +351,7 @@ export function Tests({ onNavigate }: TestsProps) {
       return;
     }
 
-    const authToken = token || (shouldPersistAuthTokens() ? localStorage.getItem('net360-auth-token') : null);
+    const authToken = token || readPersistedStudentAccessToken();
     if (!authToken) {
       setAdaptiveRecommendation(null);
       return;

@@ -13,17 +13,33 @@ export function isCookieSessionApiMarker(value: string | null | undefined): bool
   return value === COOKIE_SESSION_API_MARKER;
 }
 
+const STUDENT_ACCESS_KEY = 'net360-auth-token';
+const STUDENT_REFRESH_KEY = 'net360-auth-refresh-token';
+
+/** Persist cookie-only session hint so AppData / exam flows see a stable token (Authorization omitted; fetch uses credentials). */
+export function persistCookieSessionMode() {
+  if (!shouldPersistAuthTokens()) return;
+  localStorage.setItem(STUDENT_ACCESS_KEY, COOKIE_SESSION_API_MARKER);
+  localStorage.removeItem(STUDENT_REFRESH_KEY);
+}
+
+/** Read stored student access JWT or cookie-session marker (same key as AuthContext). */
+export function readPersistedStudentAccessToken(): string | null {
+  if (!shouldPersistAuthTokens()) return null;
+  return localStorage.getItem(STUDENT_ACCESS_KEY);
+}
+
 export function persistStudentTokens(access: string | null, refresh: string | null) {
   if (!shouldPersistAuthTokens()) return;
-  if (access) localStorage.setItem('net360-auth-token', access);
-  else localStorage.removeItem('net360-auth-token');
-  if (refresh) localStorage.setItem('net360-auth-refresh-token', refresh);
-  else localStorage.removeItem('net360-auth-refresh-token');
+  if (access) localStorage.setItem(STUDENT_ACCESS_KEY, access);
+  else localStorage.removeItem(STUDENT_ACCESS_KEY);
+  if (refresh) localStorage.setItem(STUDENT_REFRESH_KEY, refresh);
+  else localStorage.removeItem(STUDENT_REFRESH_KEY);
 }
 
 export function clearPersistedStudentTokens() {
-  localStorage.removeItem('net360-auth-token');
-  localStorage.removeItem('net360-auth-refresh-token');
+  localStorage.removeItem(STUDENT_ACCESS_KEY);
+  localStorage.removeItem(STUDENT_REFRESH_KEY);
 }
 
 /** Omit cookie-only sessions from query strings / launch payloads (avoid useless markers in URLs). */

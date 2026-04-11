@@ -1,7 +1,7 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Difficulty, MCQ, McqImageFile, McqOptionMedia, SubjectKey, SUBJECT_KEYS } from '../lib/mcq';
 import { apiRequest, buildSseStreamUrl } from '../lib/api';
-import { shouldPersistAuthTokens } from '../lib/authSession';
+import { COOKIE_SESSION_API_MARKER, readPersistedStudentAccessToken } from '../lib/authSession';
 import { useAuth } from './AuthContext';
 
 interface TestAttempt {
@@ -162,11 +162,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
   const resolveClientAuthToken = useCallback((): string | null => {
     if (token) return token;
-    if (shouldPersistAuthTokens()) {
-      return localStorage.getItem('net360-auth-token');
-    }
+    const stored = readPersistedStudentAccessToken();
+    if (stored) return stored;
+    // Cookie-only or slow hydration: context user is set but token hint not yet in storage.
+    if (user) return COOKIE_SESSION_API_MARKER;
     return null;
-  }, [token]);
+  }, [token, user]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mcqs, setMcqs] = useState<MCQ[]>([]);

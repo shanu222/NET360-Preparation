@@ -4,7 +4,7 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest, probeAuthenticatedSession } from '../lib/api';
-import { COOKIE_SESSION_API_MARKER, shouldPersistAuthTokens } from '../lib/authSession';
+import { COOKIE_SESSION_API_MARKER, readPersistedStudentAccessToken, shouldPersistAuthTokens } from '../lib/authSession';
 import { McqMathText, normalizeMcqImageSrc } from './McqRender';
 import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
 
@@ -417,7 +417,7 @@ export function TestInterfacePage() {
     void (async () => {
       const fromQuery = params.get('authToken');
       const fromLaunchPayload = launchFallback?.authToken || null;
-      const fromStorage = shouldPersistAuthTokens() ? localStorage.getItem('net360-auth-token') : null;
+      const fromStorage = readPersistedStudentAccessToken();
       let resolvedAuth = fromQuery || fromLaunchPayload || fromStorage;
 
       if (!resolvedAuth) {
