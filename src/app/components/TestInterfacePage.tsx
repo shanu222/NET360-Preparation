@@ -413,6 +413,10 @@ export function TestInterfacePage() {
     setResolvedSessionId(sessionId);
     setResolvedChallengeId(challengeId);
 
+    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+    const isMobileLikeRuntime =
+      isNativeRuntime || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+
     let cancelled = false;
     void (async () => {
       const fromQuery = params.get('authToken');
@@ -420,10 +424,23 @@ export function TestInterfacePage() {
       const fromStorage = readPersistedStudentAccessToken();
       let resolvedAuth = fromQuery || fromLaunchPayload || fromStorage;
 
+      // Mobile browsers / WebViews sometimes lag writing auth to localStorage after navigation.
+      if (!resolvedAuth && isMobileLikeRuntime) {
+        await new Promise((r) => setTimeout(r, 200));
+        if (cancelled) return;
+        resolvedAuth = readPersistedStudentAccessToken();
+      }
+
       if (!resolvedAuth) {
         const ok = await probeAuthenticatedSession();
         if (cancelled) return;
         if (ok) resolvedAuth = COOKIE_SESSION_API_MARKER;
+      }
+
+      if (!resolvedAuth && isMobileLikeRuntime) {
+        await new Promise((r) => setTimeout(r, 350));
+        if (cancelled) return;
+        resolvedAuth = readPersistedStudentAccessToken();
       }
 
       if (!resolvedAuth) {
@@ -461,6 +478,9 @@ export function TestInterfacePage() {
       }
 
       if (cancelled) return;
+      if (import.meta.env.DEV) {
+        console.log('[exam-interface] Auth resolved for session load');
+      }
       setResolvedToken(resolvedAuth);
       setLaunchResolved(true);
     })();
@@ -557,15 +577,21 @@ export function TestInterfacePage() {
       loadControllerRef.current = controller;
       const timeoutId = window.setTimeout(() => controller.abort(), 10000);
 
+      let beganLoad = false;
+
       try {
         if (!launchResolved || !resolvedToken) return;
 
+        beganLoad = true;
         setError(null);
         setLoading(true);
         resetTestUiState();
 
         if (isChallengeMode) {
-          if (!resolvedChallengeId) return;
+          if (!resolvedChallengeId) {
+            setError('This challenge could not be opened (missing challenge id).');
+            return;
+          }
           const response = await apiRequest<{ challenge: ChallengePayload }>(
             `/api/community/quiz-challenges/${resolvedChallengeId}`,
             { signal: controller.signal },
@@ -664,7 +690,9 @@ export function TestInterfacePage() {
         setError(err instanceof Error ? err.message : 'Failed to load test. Please try again.');
       } finally {
         window.clearTimeout(timeoutId);
-        if (launchResolved && resolvedToken) setLoading(false);
+        if (beganLoad) {
+          setLoading(false);
+        }
       }
     }
 
@@ -902,8 +930,8 @@ export function TestInterfacePage() {
     return (
       <div className="min-h-dvh bg-[#eef2f6] p-2 text-[#0d2c5a] dark:bg-[#0f172a] dark:text-slate-100 sm:p-3">
         <div className="mx-auto w-full max-w-[min(100%,1200px)] rounded border border-[#2b5f9f]/40 bg-white/95 px-3 py-6 shadow-sm dark:border-slate-600/50 dark:bg-slate-900/90 sm:px-6">
-          <p className="text-center text-base font-medium text-[#0d2c5a] dark:text-slate-100">Starting your test…</p>
-          <p className="mt-2 text-center text-sm text-slate-600 dark:text-slate-400">Please wait while we prepare your session.</p>
+          <p className="text-center text-base font-medium text-[#0d2c5a] dark:text-slate-100">Preparing your test…</p>
+          <p className="mt-2 text-center text-sm text-slate-600 dark:text-slate-400">Please wait while we load your session.</p>
         </div>
       </div>
     );

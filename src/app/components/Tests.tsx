@@ -20,7 +20,12 @@ import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest, resolveLaunchAuthToken } from '../lib/api';
-import { bearerForLaunchUrl, readPersistedStudentAccessToken, resolveSnapshotStudentAuthToken } from '../lib/authSession';
+import {
+  bearerForLaunchUrl,
+  formatStudentTokenDebugPreview,
+  readPersistedStudentAccessToken,
+  resolveSnapshotStudentAuthToken,
+} from '../lib/authSession';
 import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTiming';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 
@@ -205,6 +210,8 @@ export function Tests({ onNavigate }: TestsProps) {
   const [adaptiveLoading, setAdaptiveLoading] = useState(false);
 
   const launchingRef = useRef(false);
+  /** One automatic retry on native after failed /api/tests/start (storage / timing). */
+  const mobileTestStartRetryRef = useRef(0);
 
   const resolveLaunchToken = async () => resolveLaunchAuthToken(token);
 
@@ -314,6 +321,12 @@ export function Tests({ onNavigate }: TestsProps) {
     }
 
     const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+    const isMobileLikeRuntime =
+      isNativeRuntime || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
+
+    if (import.meta.env.DEV || isMobileLikeRuntime) {
+      console.log('[Tests] Token before startTestSession:', formatStudentTokenDebugPreview());
+    }
 
     // Open a blank window first so /exam-interface never loads without sessionId (avoids missing-ID flash).
     const examWindow = isNativeRuntime ? null : window.open('about:blank', '_blank', 'width=1400,height=900');
@@ -356,12 +369,28 @@ export function Tests({ onNavigate }: TestsProps) {
         selectedSubject: subjectToUse,
       });
 
+      mobileTestStartRetryRef.current = 0;
       openExamWindow({ sessionId: session.id, testType: kind, token: authToken, examWindow });
       toast.success(isNativeRuntime ? 'Test launched.' : 'Test launched in a new window.');
     } catch (error) {
       examWindow?.close();
       console.error('Test start error:', error);
       const msg = error instanceof Error ? error.message : '';
+      if (
+        isMobileLikeRuntime
+        && mobileTestStartRetryRef.current === 0
+        && !/login|authentication|Missing authentication|sign in/i.test(msg)
+      ) {
+        mobileTestStartRetryRef.current = 1;
+        setLaunchingKind(null);
+        launchingRef.current = false;
+        toast.message('Retrying test start…');
+        window.setTimeout(() => {
+          void beginTest(kind, subjectOverride, questionCountOverride, topicOverride);
+        }, 500);
+        return;
+      }
+      mobileTestStartRetryRef.current = 0;
       if (/login|authentication|Missing authentication|sign in/i.test(msg)) {
         toast.error('Please sign in to start a test.');
         onNavigate?.('profile');
