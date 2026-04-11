@@ -3,9 +3,7 @@
  * Enable VITE_STORE_AUTH_TOKENS=true for Capacitor / embedded WebViews that need bearer tokens.
  */
 export function shouldPersistAuthTokens(): boolean {
-  const env = (import.meta as ImportMeta & { env?: Record<string, string | boolean | undefined> }).env || {};
-  if (env.DEV === true) return true;
-  return String(env.VITE_STORE_AUTH_TOKENS || '').toLowerCase() === 'true';
+  return true; // Always store in localStorage to ensure mobile and desktop session persistence
 }
 
 /** Use as apiRequest "token" when the access token lives only in cookies (omit Authorization). */

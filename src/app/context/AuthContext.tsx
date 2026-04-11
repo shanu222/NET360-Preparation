@@ -84,9 +84,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     async function loadSession() {
+      if (typeof window === 'undefined') return;
+
       setLoading(true);
-      const bearer = token && !isCookieSessionApiMarker(token) ? token : undefined;
-      const rt = shouldPersistAuthTokens() ? refreshToken : null;
+      const storedToken = shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+      const storedRefresh = shouldPersistAuthTokens() ? localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY) : null;
+      
+      const bearer = storedToken && !isCookieSessionApiMarker(storedToken) ? storedToken : undefined;
+      const rt = storedRefresh;
 
       try {
         try {
@@ -95,7 +100,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(me.user);
           if (!bearer) {
             setToken(COOKIE_SESSION_API_MARKER);
+          } else {
+            setToken(storedToken);
           }
+          console.log('Auth state: authenticated as', me.user.email);
           return;
         } catch {
           /* try refresh */
@@ -163,7 +171,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [token, refreshToken]);
+  }, []); // Run only on mount to prevent instant logout cycles
 
   const login = useCallback<AuthContextValue['login']>(async (email, password, opts) => {
     const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
@@ -184,6 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setToken(payload.token);
       setRefreshToken(payload.refreshToken ?? null);
       persistStudentTokens(payload.token, payload.refreshToken ?? null);
+      console.log("Token after login:", localStorage.getItem(TOKEN_STORAGE_KEY));
     } else {
       setToken(COOKIE_SESSION_API_MARKER);
       setRefreshToken(null);
