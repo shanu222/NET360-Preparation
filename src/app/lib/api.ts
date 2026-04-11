@@ -867,3 +867,29 @@ export async function downloadBinary(path: string, options: RequestInit = {}, to
   const blob = await response.blob();
   return { blob, filename };
 }
+
+/**
+ * Production often uses httpOnly cookies only (no JWT in localStorage). Mobile Safari and some
+ * cross-origin API setups omit cookies on POST fetch; Authorization: Bearer works reliably.
+ * Call POST /api/auth/refresh to obtain JWTs in the JSON body (requires ISSUE_AUTH_BODY_TOKENS on server)
+ * and persist them before sensitive POSTs like /api/tests/start.
+ */
+export async function ensureStudentBearerTokenFromRefresh(
+  contextToken: string | null | undefined,
+): Promise<void> {
+  const stored = readStoredAccessToken();
+  if (stored && !isCookieSessionApiMarker(stored)) return;
+
+  try {
+    const out = await apiRequest<{ token?: string; refreshToken?: string }>(
+      '/api/auth/refresh',
+      { method: 'POST', body: JSON.stringify({}) },
+      contextToken ?? undefined,
+    );
+    if (out?.token && shouldPersistAuthTokens()) {
+      persistStudentTokens(out.token, out.refreshToken ?? null);
+    }
+  } catch {
+    // Cookie-only same-origin sessions may still succeed without a bearer.
+  }
+}

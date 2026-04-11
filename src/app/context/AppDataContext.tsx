@@ -1,6 +1,6 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Difficulty, MCQ, McqImageFile, McqOptionMedia, SubjectKey, SUBJECT_KEYS } from '../lib/mcq';
-import { apiRequest, buildSseStreamUrl, resolveLaunchAuthToken } from '../lib/api';
+import { apiRequest, buildSseStreamUrl, ensureStudentBearerTokenFromRefresh, resolveLaunchAuthToken } from '../lib/api';
 import {
   formatStudentTokenDebugPreview,
   isCookieSessionApiMarker,
@@ -475,6 +475,17 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
     if (!authToken) {
       throw new Error('Please login first to start a server-backed test session.');
+    }
+
+    const persistedJwt = readPersistedStudentAccessToken();
+    if (persistedJwt && !isCookieSessionApiMarker(persistedJwt)) {
+      authToken = persistedJwt;
+    }
+
+    await ensureStudentBearerTokenFromRefresh(token);
+    const bearerAfterPrime = readPersistedStudentAccessToken();
+    if (bearerAfterPrime && !isCookieSessionApiMarker(bearerAfterPrime)) {
+      authToken = bearerAfterPrime;
     }
 
     console.log('Token before request:', formatStudentTokenDebugPreview());

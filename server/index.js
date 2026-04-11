@@ -172,7 +172,7 @@ const rawIssueAuthBodyTokens = process.env.ISSUE_AUTH_BODY_TOKENS;
 const ISSUE_AUTH_BODY_TOKENS =
   rawIssueAuthBodyTokens != null && String(rawIssueAuthBodyTokens).trim() !== ''
     ? String(rawIssueAuthBodyTokens).toLowerCase() === 'true'
-    : !IS_PRODUCTION;
+    : true;
 
 const rawAllowQueryTokenAuth = process.env.ALLOW_QUERY_TOKEN_AUTH;
 const ALLOW_QUERY_TOKEN_AUTH =
