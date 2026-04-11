@@ -552,6 +552,7 @@ export function TestInterfacePage() {
       loadControllerRef.current?.abort();
       const controller = new AbortController();
       loadControllerRef.current = controller;
+      const timeoutId = window.setTimeout(() => controller.abort(), 10000);
 
       try {
         if (!launchResolved || !resolvedToken) return;
@@ -628,7 +629,11 @@ export function TestInterfacePage() {
           return;
         }
 
-        if (!resolvedSessionId) return;
+        if (!resolvedSessionId) {
+          setError('Invalid test session');
+          setLoading(false);
+          return;
+        }
 
         const response = await apiRequest<{ session: TestSession }>(
           `/api/tests/${resolvedSessionId}`,
@@ -636,16 +641,25 @@ export function TestInterfacePage() {
           resolvedToken,
         );
         const payload = response.session;
+        if (!payload || !payload.questions) {
+          throw new Error('Invalid test data');
+        }
         if (payload.cancelledAt) {
           throw new Error('This test session has already been cancelled.');
         }
+        console.log('Session ID:', resolvedSessionId);
+        console.log('API response:', response);
         setSession(payload as unknown as TestSession);
         setRemainingSeconds(Math.max(1, payload.durationMinutes * 60));
       } catch (err) {
-        if (controller.signal.aborted) return;
-        setError(err instanceof Error ? err.message : 'Failed to load test session.');
+        console.error('Test loading error:', err);
+        if (controller.signal.aborted) {
+          setError('Failed to load test. Request timed out. Please try again.');
+          return;
+        }
+        setError(err instanceof Error ? err.message : 'Failed to load test. Please try again.');
       } finally {
-        if (controller.signal.aborted) return;
+        window.clearTimeout(timeoutId);
         if (launchResolved && resolvedToken) setLoading(false);
       }
     }
