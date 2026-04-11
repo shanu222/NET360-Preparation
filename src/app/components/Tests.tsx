@@ -367,6 +367,7 @@ export function Tests({ onNavigate }: TestsProps) {
         netType: selectedNetType.id,
         testType: kind,
         selectedSubject: subjectToUse,
+        authTokenHint: authToken,
       });
 
       mobileTestStartRetryRef.current = 0;

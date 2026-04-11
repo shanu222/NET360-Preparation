@@ -1,8 +1,9 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Difficulty, MCQ, McqImageFile, McqOptionMedia, SubjectKey, SUBJECT_KEYS } from '../lib/mcq';
-import { apiRequest, buildSseStreamUrl } from '../lib/api';
+import { apiRequest, buildSseStreamUrl, resolveLaunchAuthToken } from '../lib/api';
 import {
   formatStudentTokenDebugPreview,
+  isCookieSessionApiMarker,
   readPersistedStudentAccessToken,
   resolveSnapshotStudentAuthToken,
 } from '../lib/authSession';
@@ -129,6 +130,8 @@ interface AppDataContextValue {
     netType?: string;
     testType?: 'subject-wise' | 'full-mock' | 'adaptive';
     selectedSubject?: SubjectKey;
+    /** When set (e.g. from resolveLaunchAuthToken), used for /api/tests/start so mobile Safari is not stuck with stale React context vs localStorage. */
+    authTokenHint?: string | null;
   }) => Promise<TestSession>;
   getTestSession: (sessionId: string) => Promise<TestSession>;
   submitTestSession: (params: {
@@ -447,16 +450,33 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     netType,
     testType,
     selectedSubject,
+    authTokenHint,
   }) => {
     await waitUntilAuthHydrated(() => authLoadingRef.current);
     if (!readPersistedStudentAccessToken() && !token && !user) {
       throw new Error('Please login first to start a server-backed test session.');
     }
     await waitUntilClientAuthToken(resolveClientAuthToken);
-    const authToken = resolveClientAuthToken();
+
+    const trimmedHint =
+      typeof authTokenHint === 'string' && authTokenHint.trim() ? authTokenHint.trim() : null;
+    let authToken: string | null =
+      trimmedHint && !isCookieSessionApiMarker(trimmedHint) ? trimmedHint : null;
+
+    const storedAccess = readPersistedStudentAccessToken();
+    if (!authToken && storedAccess && !isCookieSessionApiMarker(storedAccess)) {
+      authToken = storedAccess;
+    }
+    if (!authToken) {
+      authToken = resolveClientAuthToken();
+    }
+    if (!authToken || isCookieSessionApiMarker(authToken)) {
+      authToken = await resolveLaunchAuthToken(token);
+    }
     if (!authToken) {
       throw new Error('Please login first to start a server-backed test session.');
     }
+
     console.log('Token before request:', formatStudentTokenDebugPreview());
 
     const normalizedPayload = {

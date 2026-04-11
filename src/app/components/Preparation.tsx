@@ -741,6 +741,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
         part: payload.part || '',
         chapter: payload.chapterTitle,
         section: payload.sectionTitle,
+        authTokenHint: authToken,
       });
 
       mobileSectionStartRetryRef.current = 0;
@@ -849,6 +850,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
             topic: topicTitle,
             mode: 'topic',
             questionCount: 25,
+            authTokenHint: authToken,
           });
 
           mobileFlatStartRetryRef.current = 0;
