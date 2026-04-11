@@ -21,6 +21,7 @@ import multer from 'multer';
 import * as cheerio from 'cheerio';
 import { connectMongo } from './lib/mongo.js';
 import { buildMcqContentFingerprint } from './lib/mcqIdentity.js';
+import { encryptSecurityAnswerPlaintext, decryptSecurityAnswerCiphertext } from './lib/securityAnswerCrypto.js';
 import { UserModel } from './models/User.js';
 import { MCQModel } from './models/MCQ.js';
 import { TestSessionModel } from './models/TestSession.js';
@@ -6316,6 +6317,7 @@ app.post('/api/auth/register-with-token', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
     const securityAnswerHash = await bcrypt.hash(securityAnswer, 12);
+    const securityAnswerEncrypted = encryptSecurityAnswerPlaintext(securityAnswer);
     const activeSession = {
       sessionId: crypto.randomUUID(),
       deviceId,
@@ -6332,6 +6334,7 @@ app.post('/api/auth/register-with-token', async (req, res) => {
       role: ADMIN_EMAILS.includes(email) ? 'admin' : 'student',
       securityQuestion,
       securityAnswerHash,
+      securityAnswerEncrypted: securityAnswerEncrypted || '',
       activeSession,
       preferences: defaultPreferences(),
       progress: defaultProgress(),
@@ -11044,7 +11047,7 @@ app.get('/api/admin/users/security-info', authMiddleware, requireAdmin, async (r
   const total = await UserModel.countDocuments(filter);
   const skip = (page - 1) * pageSize;
   const users = await UserModel.find(filter)
-    .select('email securityQuestion securityAnswerHash')
+    .select('email securityQuestion securityAnswerHash securityAnswerEncrypted')
     .sort({ email: 1 })
     .skip(skip)
     .limit(pageSize)
@@ -11058,17 +11061,19 @@ app.get('/api/admin/users/security-info', authMiddleware, requireAdmin, async (r
     metadata: { page, pageSize, hasQuery: Boolean(q) },
   });
 
-  const securityAnswerNote =
-    'Answers are stored only as bcrypt hashes; plaintext is not retained and cannot be shown.';
-
   res.json({
-    items: users.map((u) => ({
-      userId: String(u._id),
-      email: String(u.email || ''),
-      securityQuestion: String(u.securityQuestion || '').trim() || '—',
-      hasSecurityAnswerHash: Boolean(String(u.securityAnswerHash || '').trim()),
-      securityAnswerNote,
-    })),
+    items: users.map((u) => {
+      const decrypted = decryptSecurityAnswerCiphertext(String(u.securityAnswerEncrypted || '').trim());
+      const securityAnswerPlaintext =
+        decrypted && String(decrypted).length > 0 ? String(decrypted) : null;
+      return {
+        userId: String(u._id),
+        email: String(u.email || ''),
+        securityQuestion: String(u.securityQuestion || '').trim() || '—',
+        hasSecurityAnswerHash: Boolean(String(u.securityAnswerHash || '').trim()),
+        securityAnswerPlaintext,
+      };
+    }),
     page,
     pageSize,
     total,

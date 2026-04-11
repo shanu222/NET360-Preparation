@@ -808,7 +808,8 @@ interface AdminSecurityInfoRow {
   email: string;
   securityQuestion: string;
   hasSecurityAnswerHash: boolean;
-  securityAnswerNote: string;
+  /** Decrypted admin-only copy when encrypted at registration; null if legacy or key missing */
+  securityAnswerPlaintext: string | null;
 }
 
 interface AdminQuestionSubmissionAttachment {
@@ -7672,7 +7673,7 @@ export default function AdminApp() {
             <CardHeader>
               <CardTitle>Account recovery — security questions</CardTitle>
               <CardDescription>
-                Read-only view of stored recovery questions. Answers are not stored in plaintext (only bcrypt hashes).
+                Read-only admin view. Verification still uses bcrypt; plaintext below is from encrypted storage when available.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -7680,7 +7681,7 @@ export default function AdminApp() {
                 className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950"
                 role="status"
               >
-                Sensitive information – handle carefully.
+                Sensitive data – visible to admins only.
               </div>
 
               <form
@@ -7749,7 +7750,13 @@ export default function AdminApp() {
                             <td className="px-3 py-2 align-top">
                               {revealed ? (
                                 <span className="text-xs leading-relaxed text-slate-700">
-                                  {row.securityAnswerNote}
+                                  {row.securityAnswerPlaintext != null && row.securityAnswerPlaintext !== '' ? (
+                                    row.securityAnswerPlaintext
+                                  ) : (
+                                    <span className="italic text-muted-foreground">
+                                      Plaintext not available (legacy account, encryption key unset, or ciphertext missing).
+                                    </span>
+                                  )}
                                   {row.hasSecurityAnswerHash ? (
                                     <Badge variant="outline" className="ml-2 align-middle text-[10px]">
                                       Hash on file
@@ -7790,7 +7797,7 @@ export default function AdminApp() {
                                     const text = [
                                       `Email: ${row.email}`,
                                       `Security question: ${row.securityQuestion}`,
-                                      `Answer note: ${row.securityAnswerNote}`,
+                                      `Security answer: ${row.securityAnswerPlaintext != null && row.securityAnswerPlaintext !== '' ? row.securityAnswerPlaintext : '(not available)'}`,
                                       `Recovery hash stored: ${row.hasSecurityAnswerHash ? 'yes' : 'no'}`,
                                     ].join('\n');
                                     try {

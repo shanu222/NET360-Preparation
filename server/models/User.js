@@ -84,6 +84,8 @@ const userSchema = new mongoose.Schema(
     resetPasswordExpiresAt: { type: Date, default: null },
     securityQuestion: { type: String, default: '' },
     securityAnswerHash: { type: String, default: '' },
+    /** AES-256-GCM ciphertext (base64); admin-only recovery. Bcrypt remains canonical for verification. */
+    securityAnswerEncrypted: { type: String, default: '' },
     securityChallengeTokenHash: { type: String, default: null },
     securityChallengeExpiresAt: { type: Date, default: null },
   },

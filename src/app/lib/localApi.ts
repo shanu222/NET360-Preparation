@@ -64,8 +64,31 @@ interface LocalUser {
   resetPasswordExpiresAt: string | null;
   securityQuestion: string;
   securityAnswerHash: string;
+  /** Local dev only (prefixed blob); production uses server AES ciphertext */
+  securityAnswerEncrypted: string;
   securityChallengeToken: string | null;
   securityChallengeExpiresAt: string | null;
+}
+
+const LOCAL_SECURITY_ANSWER_STORE_PREFIX = 'local-dev:';
+
+function encodeLocalSecurityAnswerForStorage(plain: string): string {
+  try {
+    return LOCAL_SECURITY_ANSWER_STORE_PREFIX + btoa(unescape(encodeURIComponent(plain)));
+  } catch {
+    return '';
+  }
+}
+
+function decodeLocalSecurityAnswerStorage(stored: string): string | null {
+  const s = String(stored || '');
+  if (!s.startsWith(LOCAL_SECURITY_ANSWER_STORE_PREFIX)) return null;
+  try {
+    const b64 = s.slice(LOCAL_SECURITY_ANSWER_STORE_PREFIX.length);
+    return decodeURIComponent(escape(atob(b64)));
+  } catch {
+    return null;
+  }
 }
 
 interface LocalSubscription {
@@ -1067,6 +1090,7 @@ function readDb(): LocalDb {
         ...item,
         securityQuestion: String((item as any).securityQuestion || ''),
         securityAnswerHash: String((item as any).securityAnswerHash || ''),
+        securityAnswerEncrypted: String((item as any).securityAnswerEncrypted || ''),
         securityChallengeToken: String((item as any).securityChallengeToken || '') || null,
         securityChallengeExpiresAt: String((item as any).securityChallengeExpiresAt || '') || null,
         subscription: {
@@ -2098,6 +2122,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       resetPasswordExpiresAt: null,
       securityQuestion,
       securityAnswerHash: hashLocalSecurityAnswer(securityAnswer),
+      securityAnswerEncrypted: encodeLocalSecurityAnswerForStorage(securityAnswer),
       securityChallengeToken: null,
       securityChallengeExpiresAt: null,
     };
@@ -4534,16 +4559,13 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
     const slice = list.slice((page - 1) * pageSize, page * pageSize);
 
-    const securityAnswerNote =
-      'Answers are stored only as bcrypt hashes; plaintext is not retained and cannot be shown.';
-
     return {
       items: slice.map((u) => ({
         userId: u.id,
         email: u.email,
         securityQuestion: String(u.securityQuestion || '').trim() || '—',
         hasSecurityAnswerHash: Boolean(String(u.securityAnswerHash || '').trim()),
-        securityAnswerNote,
+        securityAnswerPlaintext: decodeLocalSecurityAnswerStorage(String(u.securityAnswerEncrypted || '')),
       })),
       page,
       pageSize,
@@ -4638,6 +4660,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       resetPasswordExpiresAt: null,
       securityQuestion: '',
       securityAnswerHash: '',
+      securityAnswerEncrypted: '',
       securityChallengeToken: null,
       securityChallengeExpiresAt: null,
     };
