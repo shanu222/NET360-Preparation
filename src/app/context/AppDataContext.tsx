@@ -1,6 +1,7 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Difficulty, MCQ, McqImageFile, McqOptionMedia, SubjectKey, SUBJECT_KEYS } from '../lib/mcq';
-import { apiRequest, buildApiUrl } from '../lib/api';
+import { apiRequest, buildSseStreamUrl } from '../lib/api';
+import { shouldPersistAuthTokens } from '../lib/authSession';
 import { useAuth } from './AuthContext';
 
 interface TestAttempt {
@@ -157,7 +158,15 @@ const defaultPreferences: PreferencesState = {
 const AppDataContext = createContext<AppDataContextValue | undefined>(undefined);
 
 export function AppDataProvider({ children }: { children: ReactNode }) {
-  const { token, user } = useAuth();
+  const { token, user, loading: authLoading } = useAuth();
+
+  const resolveClientAuthToken = useCallback((): string | null => {
+    if (token) return token;
+    if (shouldPersistAuthTokens()) {
+      return localStorage.getItem('net360-auth-token');
+    }
+    return null;
+  }, [token]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [mcqs, setMcqs] = useState<MCQ[]>([]);
@@ -251,6 +260,23 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
+    if (authLoading) {
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    if (!user) {
+      setMcqs([]);
+      setMcqTotalsBySubject(
+        Object.fromEntries(SUBJECT_KEYS.map((subject) => [subject, 0])) as Record<SubjectKey, number>,
+      );
+      setError(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
     void loadMcqData().catch((err) => {
       if (!cancelled) {
         const message = err instanceof Error ? err.message : 'Could not load MCQ dataset';
@@ -262,7 +288,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [loadMcqData]);
+  }, [authLoading, user, loadMcqData]);
 
   useEffect(() => {
     if (!user) {
@@ -273,11 +299,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    void loadUserData(token || localStorage.getItem('net360-auth-token') || '').catch(() => undefined);
-  }, [token, user, loadUserData]);
+    const authToken = resolveClientAuthToken();
+    if (!authToken) return;
+    void loadUserData(authToken).catch(() => undefined);
+  }, [token, user, loadUserData, resolveClientAuthToken]);
 
   useEffect(() => {
-    const authToken = token || localStorage.getItem('net360-auth-token');
+    const authToken = resolveClientAuthToken();
     if (!authToken) return;
 
     let closed = false;
@@ -296,7 +324,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (closed) return;
       closeCurrent();
 
-      source = new EventSource(`${buildApiUrl('/api/stream')}?token=${encodeURIComponent(authToken)}`);
+      source = new EventSource(buildSseStreamUrl(authToken), { withCredentials: true });
 
       source.onopen = () => {
         reconnectDelay = 1500;
@@ -332,11 +360,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }
       closeCurrent();
     };
-  }, [token, runForegroundSync]);
+  }, [token, runForegroundSync, resolveClientAuthToken]);
 
   useEffect(() => {
     if (!user) return;
-    const authToken = token || localStorage.getItem('net360-auth-token');
+    const authToken = resolveClientAuthToken();
     if (!authToken) return;
 
     const onVisibility = () => {
@@ -362,7 +390,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('focus', onFocus);
     };
-  }, [token, user, runForegroundSync]);
+  }, [token, user, runForegroundSync, resolveClientAuthToken]);
 
   const mcqsBySubject = useMemo(() => {
     const grouped = Object.fromEntries(SUBJECT_KEYS.map((subject) => [subject, [] as MCQ[]])) as Record<SubjectKey, MCQ[]>;
@@ -398,7 +426,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, [mcqs]);
 
   const refreshAttempts = async () => {
-    const authToken = token || localStorage.getItem('net360-auth-token');
+    const authToken = resolveClientAuthToken();
     if (!authToken) return;
     const payload = await apiRequest<{ attempts: TestAttempt[] }>('/api/tests/attempts', {}, authToken);
     setAttempts((payload.attempts || []) as TestAttempt[]);
@@ -417,7 +445,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     testType,
     selectedSubject,
   }) => {
-    const authToken = token || localStorage.getItem('net360-auth-token');
+    const authToken = resolveClientAuthToken();
     if (!authToken) {
       throw new Error('Please login first to start a server-backed test session.');
     }
@@ -456,7 +484,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   };
 
   const getTestSession: AppDataContextValue['getTestSession'] = async (sessionId) => {
-    const authToken = token || localStorage.getItem('net360-auth-token');
+    const authToken = resolveClientAuthToken();
     if (!authToken) {
       throw new Error('Please login first to load a test session.');
     }
@@ -466,7 +494,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   };
 
   const submitTestSession: AppDataContextValue['submitTestSession'] = async ({ sessionId, answers, elapsedSeconds }) => {
-    const authToken = token || localStorage.getItem('net360-auth-token');
+    const authToken = resolveClientAuthToken();
     if (!authToken) {
       throw new Error('Please login first to submit a test session.');
     }
@@ -516,7 +544,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   };
 
   const saveProfile = async (partial: Partial<ProfileState>) => {
-    if (!token || !user) {
+    const authToken = resolveClientAuthToken();
+    if (!authToken || !user) {
       throw new Error('Please login first to save profile.');
     }
 
@@ -526,7 +555,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         method: 'PUT',
         body: JSON.stringify(partial),
       },
-      token,
+      authToken,
     );
 
     setProfile({
@@ -544,7 +573,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   };
 
   const savePreferences = async (partial: Partial<PreferencesState>) => {
-    if (!token || !user) {
+    const authToken = resolveClientAuthToken();
+    if (!authToken || !user) {
       throw new Error('Please login first to save preferences.');
     }
 
@@ -554,7 +584,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         method: 'PUT',
         body: JSON.stringify(partial),
       },
-      token,
+      authToken,
     );
 
     setPreferences(payload.user.preferences || defaultPreferences);

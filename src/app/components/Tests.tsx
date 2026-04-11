@@ -19,7 +19,8 @@ import {
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
-import { apiRequest } from '../lib/api';
+import { apiRequest, resolveLaunchAuthToken } from '../lib/api';
+import { bearerForLaunchUrl, shouldPersistAuthTokens } from '../lib/authSession';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 
 interface TestsProps {
@@ -195,37 +196,7 @@ export function Tests({ onNavigate }: TestsProps) {
 
   const launchingRef = useRef(false);
 
-  const resolveLaunchToken = async () => {
-    const inMemory = token;
-    if (inMemory) return inMemory;
-
-    const stored = localStorage.getItem('net360-auth-token');
-    if (stored) return stored;
-
-    const refreshToken = localStorage.getItem('net360-auth-refresh-token');
-    if (!refreshToken) return null;
-
-    try {
-      const refreshed = await apiRequest<{ token: string; refreshToken: string }>(
-        '/api/auth/refresh',
-        {
-          method: 'POST',
-          body: JSON.stringify({ refreshToken }),
-        },
-      );
-
-      if (refreshed?.token) {
-        localStorage.setItem('net360-auth-token', refreshed.token);
-      }
-      if (refreshed?.refreshToken) {
-        localStorage.setItem('net360-auth-refresh-token', refreshed.refreshToken);
-      }
-
-      return refreshed?.token || null;
-    } catch {
-      return null;
-    }
-  };
+  const resolveLaunchToken = async () => resolveLaunchAuthToken(token);
 
   const selectedNetType = useMemo(
     () => NET_PROFILES.find((profile) => profile.id === selectedNetTypeId) || null,
@@ -257,6 +228,7 @@ export function Tests({ onNavigate }: TestsProps) {
   const openExamWindow = (params: { sessionId: string; testType: TestKind; token: string; examWindow: Window | null }) => {
     const { sessionId, testType, token: authToken, examWindow } = params;
     const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+    const urlAuth = bearerForLaunchUrl(authToken);
 
     // Fallback handoff in case query params are stripped or navigation races in popup.
     localStorage.setItem(
@@ -264,12 +236,14 @@ export function Tests({ onNavigate }: TestsProps) {
       JSON.stringify({
         sessionId,
         testType,
-        authToken,
+        ...(urlAuth ? { authToken: urlAuth } : {}),
         launchedAt: Date.now(),
       }),
     );
 
-    const url = `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=${encodeURIComponent(testType)}&authToken=${encodeURIComponent(authToken)}`;
+    const url = urlAuth
+      ? `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=${encodeURIComponent(testType)}&authToken=${encodeURIComponent(urlAuth)}`
+      : `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=${encodeURIComponent(testType)}`;
 
     if (isNativeRuntime) {
       // Android WebView commonly blocks popup windows, so navigate in the same view.
@@ -377,7 +351,7 @@ export function Tests({ onNavigate }: TestsProps) {
       return;
     }
 
-    const authToken = token || localStorage.getItem('net360-auth-token');
+    const authToken = token || (shouldPersistAuthTokens() ? localStorage.getItem('net360-auth-token') : null);
     if (!authToken) {
       setAdaptiveRecommendation(null);
       return;

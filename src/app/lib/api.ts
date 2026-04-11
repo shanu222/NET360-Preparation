@@ -1,4 +1,10 @@
 import { localApiRequest, localDownloadReport } from './localApi';
+import {
+  COOKIE_SESSION_API_MARKER,
+  isCookieSessionApiMarker,
+  persistStudentTokens,
+  shouldPersistAuthTokens,
+} from './authSession';
 
 type RuntimeEnv = {
   VITE_API_URL?: string;
@@ -240,18 +246,81 @@ export function buildApiUrl(path: string) {
   return resolveApiPath(path);
 }
 
+/** SSE: prefer httpOnly cookies (`withCredentials`); add `?token=` only when persisting bearer tokens (e.g. native). */
+export function buildSseStreamUrl(authToken?: string | null): string {
+  const base = buildApiUrl('/api/stream');
+  const bearer = authToken && !isCookieSessionApiMarker(authToken) ? authToken : '';
+  if (bearer && shouldPersistAuthTokens()) {
+    return `${base}?token=${encodeURIComponent(bearer)}`;
+  }
+  return base;
+}
+
 function shouldUseForcedLocalMode() {
   return env.VITE_FORCE_LOCAL_API === 'true' && canFallbackToLocalMode();
 }
 
 function readStoredAccessToken() {
-  return localStorage.getItem(TOKEN_STORAGE_KEY) || localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY);
+  const adminToken = localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY);
+  if (adminToken) return adminToken;
+  if (!shouldPersistAuthTokens()) return null;
+  return localStorage.getItem(TOKEN_STORAGE_KEY);
+}
+
+/** True if an httpOnly cookie session is active (no bearer token required). */
+export async function probeAuthenticatedSession(): Promise<boolean> {
+  try {
+    await apiRequest<{ user: unknown }>('/api/auth/me', { method: 'GET' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Token for opening exam windows / API calls: context token, LS refresh, or cookie session marker. */
+export async function resolveLaunchAuthToken(contextToken: string | null | undefined): Promise<string | null> {
+  if (contextToken) return contextToken;
+
+  if (shouldPersistAuthTokens()) {
+    const stored = localStorage.getItem(TOKEN_STORAGE_KEY);
+    if (stored) return stored;
+
+    const rt = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+    if (rt) {
+      try {
+        const refreshed = await apiRequest<{ token?: string; refreshToken?: string; user?: unknown }>(
+          '/api/auth/refresh',
+          { method: 'POST', body: JSON.stringify({ refreshToken: rt }) },
+        );
+        if (refreshed.token) {
+          persistStudentTokens(refreshed.token, refreshed.refreshToken ?? null);
+          return refreshed.token;
+        }
+        if (refreshed.user) {
+          return COOKIE_SESSION_API_MARKER;
+        }
+      } catch {
+        // Fall through to cookie session probe.
+      }
+    }
+  }
+
+  try {
+    await apiRequest<{ user: unknown }>('/api/auth/me', { method: 'GET' });
+    return COOKIE_SESSION_API_MARKER;
+  } catch {
+    return null;
+  }
 }
 
 function readStoredRefreshCandidates() {
   const seen = new Set<string>();
   const candidates: Array<{ key: string; value: string }> = [];
-  [REFRESH_TOKEN_STORAGE_KEY, ADMIN_REFRESH_TOKEN_STORAGE_KEY].forEach((key) => {
+  const keys = [ADMIN_REFRESH_TOKEN_STORAGE_KEY];
+  if (shouldPersistAuthTokens()) {
+    keys.unshift(REFRESH_TOKEN_STORAGE_KEY);
+  }
+  keys.forEach((key) => {
     const value = localStorage.getItem(key);
     if (!value) return;
     if (seen.has(value)) return;
@@ -395,7 +464,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     if (!headers.has('Content-Type') && hasBody && !isFormDataBody) {
       headers.set('Content-Type', 'application/json');
     }
-    if (authToken) {
+    if (authToken && !isCookieSessionApiMarker(authToken)) {
       headers.set('Authorization', `Bearer ${authToken}`);
     }
     return headers;
@@ -431,24 +500,27 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
           user?: { role?: 'admin' | 'student' };
         };
 
-        if (!payload?.token) {
-          return null;
-        }
-
         const role = String(payload?.user?.role || '').toLowerCase();
         if (role === 'admin') {
-          localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, payload.token);
-          if (payload.refreshToken) {
-            localStorage.setItem(ADMIN_REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
+          if (payload?.token) {
+            localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, payload.token);
+            if (payload.refreshToken) {
+              localStorage.setItem(ADMIN_REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
+            }
+            return payload.token;
           }
-        } else {
+          return COOKIE_SESSION_API_MARKER;
+        }
+
+        if (payload?.token && shouldPersistAuthTokens()) {
           localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
           if (payload.refreshToken) {
             localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
           }
+          return payload.token;
         }
 
-        return payload.token;
+        return COOKIE_SESSION_API_MARKER;
       };
 
       if (!refreshCandidates.length) {
@@ -482,9 +554,9 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
             continue;
           }
 
-          let payload: { token?: string; refreshToken?: string };
+          let payload: { token?: string; refreshToken?: string; user?: { role?: string } };
           try {
-            payload = await response.json() as { token?: string; refreshToken?: string };
+            payload = await response.json() as { token?: string; refreshToken?: string; user?: { role?: string } };
           } catch {
             const bodyText = await response.text().catch(() => '');
             if (isLikelyHtmlResponse(response, bodyText)) {
@@ -492,22 +564,32 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
             }
             continue;
           }
-          if (!payload?.token) continue;
 
           if (candidate.key === ADMIN_REFRESH_TOKEN_STORAGE_KEY) {
+            if (!payload?.token) continue;
             localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, payload.token);
             if (payload.refreshToken) {
               localStorage.setItem(ADMIN_REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
             }
-          } else {
+            refreshBlockedUntil = 0;
+            return payload.token;
+          }
+
+          if (payload?.token && shouldPersistAuthTokens()) {
             localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
             if (payload.refreshToken) {
               localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
             }
+            refreshBlockedUntil = 0;
+            return payload.token;
           }
 
-          refreshBlockedUntil = 0;
-          return payload.token;
+          if (!shouldPersistAuthTokens()) {
+            refreshBlockedUntil = 0;
+            return COOKIE_SESSION_API_MARKER;
+          }
+
+          continue;
         } catch {
           // Try next refresh token candidate.
         }
@@ -698,10 +780,10 @@ export async function downloadReport(path: string, token?: string | null): Promi
   }
 
   const headers = new Headers();
-  if (token) {
+  if (token && !isCookieSessionApiMarker(token)) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const hasAuthToken = Boolean(token || readStoredAccessToken());
+  const hasAuthToken = Boolean((token && !isCookieSessionApiMarker(token)) || readStoredAccessToken());
 
   let response: Response;
   try {
@@ -755,7 +837,7 @@ export async function downloadBinary(path: string, options: RequestInit = {}, to
   if (!headers.has('Content-Type') && hasBody && !isFormDataBody) {
     headers.set('Content-Type', 'application/json');
   }
-  if (token) {
+  if (token && !isCookieSessionApiMarker(token)) {
     headers.set('Authorization', `Bearer ${token}`);
   }
 

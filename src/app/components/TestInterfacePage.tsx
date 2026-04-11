@@ -3,7 +3,8 @@ import { ArrowLeft, ArrowRight, Bookmark, CircleHelp, FastForward, Rewind, Save,
 import { App as CapacitorApp } from '@capacitor/app';
 import { toast } from 'sonner';
 import { useAuth } from '../context/AuthContext';
-import { apiRequest } from '../lib/api';
+import { apiRequest, probeAuthenticatedSession } from '../lib/api';
+import { COOKIE_SESSION_API_MARKER, shouldPersistAuthTokens } from '../lib/authSession';
 import { McqMathText, normalizeMcqImageSrc } from './McqRender';
 import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
 
@@ -396,12 +397,7 @@ export function TestInterfacePage() {
 
     setIsPreviewReadOnly(false);
 
-    const fromQuery = params.get('authToken');
     const launchFallback = getLaunchFallback();
-    const fromLaunchPayload = launchFallback?.authToken || null;
-    const fromStorage = localStorage.getItem('net360-auth-token');
-    const token = fromQuery || fromLaunchPayload || fromStorage;
-
     const queryTestType = String(params.get('testType') || '').trim().toLowerCase();
     const queryChallengeId = String(params.get('challengeId') || '').trim();
     const fallbackChallengeId = String(launchFallback?.challengeId || '').trim();
@@ -417,40 +413,58 @@ export function TestInterfacePage() {
     setResolvedSessionId(sessionId);
     setResolvedChallengeId(challengeId);
 
-    if (!token) {
-      setError('Missing authentication token. Redirecting to login page...');
-      setLoading(false);
-      window.setTimeout(() => {
-        window.location.href = '/?tab=profile';
-      }, 900);
-      return;
-    }
+    let cancelled = false;
+    void (async () => {
+      const fromQuery = params.get('authToken');
+      const fromLaunchPayload = launchFallback?.authToken || null;
+      const fromStorage = shouldPersistAuthTokens() ? localStorage.getItem('net360-auth-token') : null;
+      let resolvedAuth = fromQuery || fromLaunchPayload || fromStorage;
 
-    if (challengeLaunch && !challengeId) {
-      setError('Missing challenge id. Redirecting to community page...');
-      setLoading(false);
-      window.setTimeout(() => {
-        window.location.href = '/?tab=community';
-      }, 900);
-      return;
-    }
+      if (!resolvedAuth) {
+        const ok = await probeAuthenticatedSession();
+        if (cancelled) return;
+        if (ok) resolvedAuth = COOKIE_SESSION_API_MARKER;
+      }
 
-    if (!challengeLaunch && !sessionId) {
-      setError('Missing session id. Redirecting to tests page...');
-      setLoading(false);
-      window.setTimeout(() => {
-        window.location.href = '/?tab=tests';
-      }, 900);
-      return;
-    }
+      if (!resolvedAuth) {
+        setError('Missing authentication token. Redirecting to login page...');
+        setLoading(false);
+        window.setTimeout(() => {
+          window.location.href = '/?tab=profile';
+        }, 900);
+        return;
+      }
 
-    // Always persist query token so follow-up API calls and refresh flow use the launched token.
-    if (fromQuery) {
-      localStorage.setItem('net360-auth-token', fromQuery);
-    }
+      if (challengeLaunch && !challengeId) {
+        setError('Missing challenge id. Redirecting to community page...');
+        setLoading(false);
+        window.setTimeout(() => {
+          window.location.href = '/?tab=community';
+        }, 900);
+        return;
+      }
 
-    setResolvedToken(token);
-    setLaunchResolved(true);
+      if (!challengeLaunch && !sessionId) {
+        setError('Missing session id. Redirecting to tests page...');
+        setLoading(false);
+        window.setTimeout(() => {
+          window.location.href = '/?tab=tests';
+        }, 900);
+        return;
+      }
+
+      if (fromQuery && shouldPersistAuthTokens()) {
+        localStorage.setItem('net360-auth-token', fromQuery);
+      }
+
+      if (cancelled) return;
+      setResolvedToken(resolvedAuth);
+      setLaunchResolved(true);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const getChallengeAttemptStorageKey = (challengeId: string) => `net360-challenge-attempt-${challengeId}`;

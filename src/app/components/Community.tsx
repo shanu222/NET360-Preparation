@@ -10,7 +10,8 @@ import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Skeleton } from './ui/skeleton';
-import { apiRequest, buildApiUrl } from '../lib/api';
+import { apiRequest, buildSseStreamUrl } from '../lib/api';
+import { bearerForLaunchUrl } from '../lib/authSession';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'sonner';
 
@@ -780,7 +781,7 @@ export function Community() {
       if (closed) return;
       closeCurrent();
 
-      source = new EventSource(`${buildApiUrl('/api/stream')}?token=${encodeURIComponent(token)}`);
+      source = new EventSource(buildSseStreamUrl(token), { withCredentials: true });
       source.addEventListener('sync', () => {
         if (document.hidden) return;
         void refreshCommunity(true).catch(() => undefined);
@@ -1351,14 +1352,17 @@ export function Community() {
       return;
     }
 
+    const urlAuth = bearerForLaunchUrl(token);
     localStorage.setItem('net360-exam-launch', JSON.stringify({
       testType: 'challenge',
       challengeId,
-      authToken: token,
+      ...(urlAuth ? { authToken: urlAuth } : {}),
       launchedAt: Date.now(),
     }));
 
-    const url = `/exam-interface?testType=challenge&challengeId=${encodeURIComponent(challengeId)}&authToken=${encodeURIComponent(token)}`;
+    const url = urlAuth
+      ? `/exam-interface?testType=challenge&challengeId=${encodeURIComponent(challengeId)}&authToken=${encodeURIComponent(urlAuth)}`
+      : `/exam-interface?testType=challenge&challengeId=${encodeURIComponent(challengeId)}`;
     if (isNativeRuntime) {
       window.location.href = url;
       return;

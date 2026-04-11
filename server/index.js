@@ -8,6 +8,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
+import { z } from 'zod';
 import bcrypt from 'bcryptjs';
 import OpenAI from 'openai';
 import nodemailer from 'nodemailer';
@@ -104,6 +105,19 @@ function clearAuthCookies(res) {
   res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, expiredOptions);
 }
 
+function buildAuthJsonBody(payload) {
+  if (!payload || typeof payload !== 'object') return payload;
+  if (ISSUE_AUTH_BODY_TOKENS) return payload;
+  return { user: payload.user };
+}
+
+const loginBodySchema = z.object({
+  email: z.string().max(254),
+  password: z.string().max(500),
+  deviceId: z.union([z.string().max(400), z.null(), z.undefined()]).optional(),
+  forceLogoutOtherDevice: z.union([z.boolean(), z.null(), z.undefined()]).optional(),
+});
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -153,6 +167,18 @@ const CORS_ALLOWED_ORIGINS = Array.from(new Set([
   ...parseOriginList(process.env.RAILWAY_DEFAULT_ORIGINS || 'https://net360-admin-production.up.railway.app,https://net360-preparation-production.up.railway.app'),
 ]))
   .filter(Boolean);
+
+const rawIssueAuthBodyTokens = process.env.ISSUE_AUTH_BODY_TOKENS;
+const ISSUE_AUTH_BODY_TOKENS =
+  rawIssueAuthBodyTokens != null && String(rawIssueAuthBodyTokens).trim() !== ''
+    ? String(rawIssueAuthBodyTokens).toLowerCase() === 'true'
+    : !IS_PRODUCTION;
+
+const rawAllowQueryTokenAuth = process.env.ALLOW_QUERY_TOKEN_AUTH;
+const ALLOW_QUERY_TOKEN_AUTH =
+  rawAllowQueryTokenAuth != null && String(rawAllowQueryTokenAuth).trim() !== ''
+    ? String(rawAllowQueryTokenAuth).toLowerCase() === 'true'
+    : !IS_PRODUCTION;
 
 const MOBILE_RUNTIME_ORIGINS = new Set([
   'capacitor://localhost',
@@ -467,11 +493,11 @@ app.use(
 app.use(
   '/api/auth/login',
   rateLimit({
-    windowMs: 10 * 60 * 1000,
-    max: 20,
+    windowMs: 60 * 1000,
+    max: 5,
     standardHeaders: true,
     legacyHeaders: false,
-    message: { error: 'Too many login attempts. Please try again shortly.' },
+    message: { error: 'Too many login attempts. Please wait a minute and try again.' },
   }),
 );
 
@@ -507,6 +533,15 @@ app.use(
     message: { error: 'AI endpoint rate limit reached. Please wait a moment and retry.' },
   }),
 );
+
+const mcqsReadLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: IS_PRODUCTION ? 90 : 400,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => String(req.user?._id || req.ip || 'unknown'),
+  message: { error: 'Too many MCQ data requests. Please try again later.' },
+});
 
 const DEFAULT_NUST_IMPORTANT_DATES = [
   {
@@ -5461,7 +5496,11 @@ function extractAccessToken(req) {
   if (cookieAccessToken) {
     return cookieAccessToken;
   }
-  return String(req.query?.token || '').trim() || null;
+  if (ALLOW_QUERY_TOKEN_AUTH) {
+    const queryToken = String(req.query?.token || '').trim();
+    if (queryToken) return queryToken;
+  }
+  return null;
 }
 
 async function resolveAuthenticatedUserFromToken(token) {
@@ -6292,7 +6331,7 @@ app.post('/api/auth/register-with-token', async (req, res) => {
 
     const payload = await issueAuthPayload(user, req);
     setAuthCookies(res, payload.token, payload.refreshToken);
-    res.status(201).json(payload);
+    res.status(201).json(buildAuthJsonBody(payload));
   } catch {
     res.status(500).json({ error: 'Registration failed.' });
   }
@@ -6306,10 +6345,20 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    const email = normalizeEmail(req.body?.email);
-    const password = String(req.body?.password || '');
-    const forceLogoutOtherDevice = Boolean(req.body?.forceLogoutOtherDevice);
-    const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
+    const parsed = loginBodySchema.safeParse(req.body || {});
+    if (!parsed.success) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.login_invalid_payload',
+        severity: 'warning',
+      });
+      res.status(400).json({ error: 'Invalid login request.' });
+      return;
+    }
+
+    const email = normalizeEmail(parsed.data.email);
+    const password = String(parsed.data.password || '');
+    const forceLogoutOtherDevice = Boolean(parsed.data.forceLogoutOtherDevice);
+    const deviceId = sanitizeDeviceId(parsed.data.deviceId || req.headers['user-agent'] || '');
     if (!email || !password) {
       await logSecurityEvent(req, {
         eventType: 'auth.login_missing_credentials',
@@ -6402,7 +6451,7 @@ app.post('/api/auth/login', async (req, res) => {
       actorUserId: user._id,
       actorEmail: user.email,
     });
-    res.json(payload);
+    res.json(buildAuthJsonBody(payload));
   } catch {
     await logSecurityEvent(req, {
       eventType: 'auth.login_error',
@@ -6490,7 +6539,7 @@ app.post('/api/auth/refresh', async (req, res) => {
       actorUserId: user._id,
       actorEmail: user.email,
     });
-    res.json(newPayload);
+    res.json(buildAuthJsonBody(newPayload));
   } catch {
     await logSecurityEvent(req, {
       eventType: 'auth.refresh_invalid_token',
@@ -9246,7 +9295,7 @@ app.post('/api/admin/community/reports/:reportId/review', authMiddleware, requir
   res.json({ ok: true, status: report.status });
 });
 
-app.get('/api/mcqs', async (req, res) => {
+app.get('/api/mcqs', authMiddleware, mcqsReadLimiter, async (req, res) => {
   try {
     const { subject, part, chapter, section, difficulty, topic } = req.query;
     console.log('[MCQ FETCH] Incoming filters:', {
@@ -9345,7 +9394,7 @@ app.get('/api/mcqs', async (req, res) => {
   }
 });
 
-app.get('/api/mcqs/counts', async (_req, res) => {
+app.get('/api/mcqs/counts', authMiddleware, mcqsReadLimiter, async (_req, res) => {
   try {
     const rows = await MCQModel.aggregate([
       {

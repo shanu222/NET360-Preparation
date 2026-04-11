@@ -28,6 +28,11 @@ export default defineConfig(({ mode }) => {
     },
 
     server: {
+      // Default 3000 matches many IDE “Simple Browser” / live preview URLs (127.0.0.1:3000).
+      // Override: VITE_DEV_SERVER_PORT=5173 npm run dev
+      port: Number(process.env.VITE_DEV_SERVER_PORT || 3000),
+      strictPort: false,
+      host: '127.0.0.1',
       proxy: {
         '/api': {
           target: devApiOrigin,

@@ -25,7 +25,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { apiRequest, buildApiUrl } from '../app/lib/api';
+import { apiRequest, buildApiUrl, buildSseStreamUrl } from '../app/lib/api';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../app/lib/hierarchyDedup';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
 import { Button } from '../app/components/ui/button';
@@ -3297,7 +3297,7 @@ export default function AdminApp() {
     const connect = () => {
       if (closed) return;
       closeCurrent();
-      source = new EventSource(`${buildApiUrl('/api/stream')}?token=${encodeURIComponent(authToken)}`);
+      source = new EventSource(buildSseStreamUrl(authToken), { withCredentials: true });
 
       source.addEventListener('sync', () => {
         if (document.hidden) return;

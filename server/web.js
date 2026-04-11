@@ -9,12 +9,21 @@ const __dirname = path.dirname(__filename);
 const PORT = Number(process.env.PORT || 10000);
 const app = express();
 const distDir = path.resolve(__dirname, '../dist');
+const indexHtmlPath = path.join(distDir, 'index.html');
+const distHasIndex = fs.existsSync(indexHtmlPath);
 const publicDir = path.resolve(__dirname, '../public');
 const googleVerificationFile = 'google408182c27152cb87.html';
 const sitemapFile = 'sitemap.xml';
 const robotsFile = 'robots.txt';
 
 app.disable('x-powered-by');
+
+if (!distHasIndex) {
+  console.warn(
+    '[NET360 web] dist/index.html not found. For local preview run: npm run dev (Vite, hot reload). ' +
+      'To use this static server instead, run: npm run build',
+  );
+}
 
 app.get('/healthz', (_req, res) => {
   res.status(200).json({ ok: true });
@@ -78,7 +87,22 @@ app.get('/robots.txt', (_req, res) => {
 });
 
 app.get('*', (_req, res) => {
-  res.sendFile(path.join(distDir, 'index.html'));
+  if (!distHasIndex) {
+    res
+      .status(503)
+      .type('html')
+      .send(`<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>NET360 — build required</title></head>
+<body style="font-family:system-ui,sans-serif;max-width:36rem;margin:2rem auto;padding:0 1rem;line-height:1.5">
+<h1>No production build yet</h1>
+<p>This server only serves the <code>dist/</code> folder. There is no <code>dist/index.html</code> yet.</p>
+<p><strong>For live development</strong> (recommended), stop this process and run:</p>
+<pre style="background:#f4f4f5;padding:0.75rem;border-radius:8px">npm run dev</pre>
+<p>Then open the URL Vite prints (default <code>http://127.0.0.1:3000</code> unless the port is in use).</p>
+<p><strong>To use this server</strong>, run <code>npm run build</code> first, then start again.</p>
+</body></html>`);
+    return;
+  }
+  res.sendFile(indexHtmlPath);
 });
 
 app.listen(PORT, '0.0.0.0', () => {

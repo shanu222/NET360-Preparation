@@ -1,5 +1,12 @@
-import { createContext, ReactNode, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api';
+import {
+  COOKIE_SESSION_API_MARKER,
+  clearPersistedStudentTokens,
+  isCookieSessionApiMarker,
+  persistStudentTokens,
+  shouldPersistAuthTokens,
+} from '../lib/authSession';
 
 interface AuthUser {
   id: string;
@@ -7,16 +14,6 @@ interface AuthUser {
   firstName: string;
   lastName: string;
   role?: 'student' | 'admin';
-}
-
-interface ActiveSessionInfo {
-  deviceId: string;
-  lastSeenAt: string;
-}
-
-interface AuthApiError extends Error {
-  code?: string;
-  activeSession?: ActiveSessionInfo;
 }
 
 interface AuthContextValue {
@@ -73,61 +70,85 @@ function redirectToLoginScreen() {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_STORAGE_KEY));
-  const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY));
+  const [token, setToken] = useState<string | null>(() =>
+    shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null,
+  );
+  const [refreshToken, setRefreshToken] = useState<string | null>(() =>
+    shouldPersistAuthTokens() ? localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY) : null,
+  );
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [deviceId] = useState<string>(() => getOrCreateDeviceId());
 
   useEffect(() => {
-    if (!token) {
-      setUser(null);
-      setLoading(false);
-      return;
-    }
-
     let cancelled = false;
 
-    async function loadMe() {
+    async function loadSession() {
       setLoading(true);
+      const bearer = token && !isCookieSessionApiMarker(token) ? token : undefined;
+      const rt = shouldPersistAuthTokens() ? refreshToken : null;
+
       try {
-        const payload = await apiRequest<{ user: AuthUser }>('/api/auth/me', {}, token);
-        if (!cancelled) {
-          setUser(payload.user);
+        try {
+          const me = await apiRequest<{ user: AuthUser }>('/api/auth/me', {}, bearer);
+          if (cancelled) return;
+          setUser(me.user);
+          if (!bearer) {
+            setToken(COOKIE_SESSION_API_MARKER);
+          }
+          return;
+        } catch {
+          /* try refresh */
         }
-      } catch {
+
         if (cancelled) return;
 
-        if (!refreshToken) {
-          setToken(null);
-          setUser(null);
-          localStorage.removeItem(TOKEN_STORAGE_KEY);
-          localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
-          redirectToLoginScreen();
-          return;
+        if (rt) {
+          try {
+            const refreshed = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+              '/api/auth/refresh',
+              { method: 'POST', body: JSON.stringify({ refreshToken: rt }) },
+            );
+            if (cancelled) return;
+            setUser(refreshed.user);
+            if (refreshed.token && shouldPersistAuthTokens()) {
+              setToken(refreshed.token);
+              setRefreshToken(refreshed.refreshToken ?? null);
+              persistStudentTokens(refreshed.token, refreshed.refreshToken ?? null);
+            } else {
+              setToken(COOKIE_SESSION_API_MARKER);
+              setRefreshToken(null);
+            }
+            return;
+          } catch {
+            /* cookie refresh */
+          }
         }
 
         try {
-          const refreshed = await apiRequest<{ token: string; refreshToken: string; user: AuthUser }>('/api/auth/refresh', {
-            method: 'POST',
-            body: JSON.stringify({ refreshToken }),
-          });
-
-          if (!cancelled) {
+          const refreshed = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+            '/api/auth/refresh',
+            { method: 'POST', body: JSON.stringify({}) },
+          );
+          if (cancelled) return;
+          setUser(refreshed.user);
+          if (refreshed.token && shouldPersistAuthTokens()) {
             setToken(refreshed.token);
-            setRefreshToken(refreshed.refreshToken);
-            setUser(refreshed.user);
-            localStorage.setItem(TOKEN_STORAGE_KEY, refreshed.token);
-            localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, refreshed.refreshToken);
+            setRefreshToken(refreshed.refreshToken ?? null);
+            persistStudentTokens(refreshed.token, refreshed.refreshToken ?? null);
+          } else {
+            setToken(COOKIE_SESSION_API_MARKER);
+            setRefreshToken(null);
           }
         } catch {
           if (!cancelled) {
             setToken(null);
             setRefreshToken(null);
             setUser(null);
-            localStorage.removeItem(TOKEN_STORAGE_KEY);
-            localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
-            redirectToLoginScreen();
+            clearPersistedStudentTokens();
+            if (bearer) {
+              redirectToLoginScreen();
+            }
           }
         }
       } finally {
@@ -137,47 +158,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
 
-    void loadMe();
+    void loadSession();
 
     return () => {
       cancelled = true;
     };
   }, [token, refreshToken]);
 
-  const login: AuthContextValue['login'] = async (email, password, opts) => {
-    try {
-      const payload = await apiRequest<{ token: string; refreshToken: string; user: AuthUser }>(
-        '/api/auth/login',
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            email,
-            password,
-            deviceId,
-            forceLogoutOtherDevice: Boolean(opts?.forceLogoutOtherDevice),
-          }),
-        },
-      );
+  const login = useCallback<AuthContextValue['login']>(async (email, password, opts) => {
+    const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+      '/api/auth/login',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          email,
+          password,
+          deviceId,
+          forceLogoutOtherDevice: Boolean(opts?.forceLogoutOtherDevice),
+        }),
+      },
+    );
 
+    setUser(payload.user);
+    if (payload.token && shouldPersistAuthTokens()) {
       setToken(payload.token);
-      setRefreshToken(payload.refreshToken);
-      setUser(payload.user);
-      localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
-      localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
-    } catch (error) {
-      if (error && typeof error === 'object') {
-        const typed = error as AuthApiError;
-        if (typeof (error as any).code === 'string') {
-          typed.code = (error as any).code;
-          typed.activeSession = (error as any).activeSession;
-        }
-        throw typed;
-      }
-      throw error;
+      setRefreshToken(payload.refreshToken ?? null);
+      persistStudentTokens(payload.token, payload.refreshToken ?? null);
+    } else {
+      setToken(COOKIE_SESSION_API_MARKER);
+      setRefreshToken(null);
+      clearPersistedStudentTokens();
     }
-  };
+  }, [deviceId]);
 
-  const submitSignupRequest: AuthContextValue['submitSignupRequest'] = async ({
+  const submitSignupRequest = useCallback<AuthContextValue['submitSignupRequest']>(async ({
     email,
     firstName = '',
     lastName = '',
@@ -198,9 +212,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         paymentProof,
       }),
     });
-  };
+  }, []);
 
-  const registerWithToken: AuthContextValue['registerWithToken'] = async ({
+  const registerWithToken = useCallback<AuthContextValue['registerWithToken']>(async ({
     email,
     password,
     tokenCode,
@@ -209,7 +223,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     securityQuestion,
     securityAnswer,
   }) => {
-    const payload = await apiRequest<{ token: string; refreshToken: string; user: AuthUser }>(
+    const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
       '/api/auth/register-with-token',
       {
         method: 'POST',
@@ -217,30 +231,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
     );
 
-    setToken(payload.token);
-    setRefreshToken(payload.refreshToken);
     setUser(payload.user);
-    localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
-    localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
-  };
-
-  const logout = () => {
-    if (refreshToken) {
-      void apiRequest('/api/auth/logout', {
-        method: 'POST',
-        body: JSON.stringify({ refreshToken }),
-      }).catch(() => undefined);
+    if (payload.token && shouldPersistAuthTokens()) {
+      setToken(payload.token);
+      setRefreshToken(payload.refreshToken ?? null);
+      persistStudentTokens(payload.token, payload.refreshToken ?? null);
+    } else {
+      setToken(COOKIE_SESSION_API_MARKER);
+      setRefreshToken(null);
+      clearPersistedStudentTokens();
     }
+  }, [deviceId]);
+
+  const logout = useCallback(() => {
+    const rt = shouldPersistAuthTokens() ? refreshToken : null;
+    void apiRequest('/api/auth/logout', {
+      method: 'POST',
+      body: JSON.stringify(rt ? { refreshToken: rt } : {}),
+    }).catch(() => undefined);
     setToken(null);
     setRefreshToken(null);
     setUser(null);
-    localStorage.removeItem(TOKEN_STORAGE_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
-  };
+    clearPersistedStudentTokens();
+  }, [refreshToken]);
 
   const value = useMemo(
     () => ({ token, user, loading, login, submitSignupRequest, registerWithToken, logout }),
-    [token, user, loading],
+    [token, user, loading, login, submitSignupRequest, registerWithToken, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

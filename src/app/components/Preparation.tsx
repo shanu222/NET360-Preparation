@@ -4,10 +4,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { toast } from 'sonner';
-import { apiRequest } from '../lib/api';
+import { apiRequest, resolveLaunchAuthToken } from '../lib/api';
+import { bearerForLaunchUrl } from '../lib/authSession';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../lib/hierarchyDedup';
 import { useAppData } from '../context/AppDataContext';
+import { useAuth } from '../context/AuthContext';
 
 type AcademicPart = 'part1' | 'part2';
 type TabKey = SubjectKey;
@@ -546,6 +548,7 @@ interface PreparationProps {
 
 export function Preparation({ showStartTestButton = true, onSelectSection, onSelectFlatTopic }: PreparationProps = {}) {
   const { attempts } = useAppData();
+  const { token: authContextToken } = useAuth();
   const difficultyLevels: Array<'Easy' | 'Medium' | 'Hard'> = ['Easy', 'Medium', 'Hard'];
   const [selectedSubject, setSelectedSubject] = useState<TabKey>('mathematics');
   const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<PartStructuredSubjectKey, AcademicPart | null>>(() => (
@@ -628,50 +631,26 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     return response.session;
   };
 
-  const resolveLaunchToken = async () => {
-    const stored = localStorage.getItem('net360-auth-token');
-    if (stored) return stored;
-
-    const refreshToken = localStorage.getItem('net360-auth-refresh-token');
-    if (!refreshToken) return null;
-
-    try {
-      const refreshed = await apiRequest<{ token: string; refreshToken: string }>(
-        '/api/auth/refresh',
-        {
-          method: 'POST',
-          body: JSON.stringify({ refreshToken }),
-        },
-      );
-
-      if (refreshed?.token) {
-        localStorage.setItem('net360-auth-token', refreshed.token);
-      }
-      if (refreshed?.refreshToken) {
-        localStorage.setItem('net360-auth-refresh-token', refreshed.refreshToken);
-      }
-
-      return refreshed?.token || null;
-    } catch {
-      return null;
-    }
-  };
+  const resolveLaunchToken = async () => resolveLaunchAuthToken(authContextToken);
 
   const openExamWindow = (params: { sessionId: string; token: string; examWindow: Window | null }) => {
     const { sessionId, token: authToken, examWindow } = params;
     const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+    const urlAuth = bearerForLaunchUrl(authToken);
 
     localStorage.setItem(
       'net360-exam-launch',
       JSON.stringify({
         sessionId,
         testType: 'topic',
-        authToken,
+        ...(urlAuth ? { authToken: urlAuth } : {}),
         launchedAt: Date.now(),
       }),
     );
 
-    const url = `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=topic&authToken=${encodeURIComponent(authToken)}`;
+    const url = urlAuth
+      ? `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=topic&authToken=${encodeURIComponent(urlAuth)}`
+      : `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=topic`;
 
     if (isNativeRuntime) {
       // Android WebView commonly blocks popups; navigate in-place after session is ready.
