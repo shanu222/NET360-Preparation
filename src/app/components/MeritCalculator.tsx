@@ -26,7 +26,7 @@ export function MeritCalculator() {
       return;
     }
 
-    const result = sscValue * 0.1 + hsscValue * 0.15 + netValue * 0.75;
+    const result = sscValue * 0.1 + hsscValue * 0.15 + (netValue / 2) * 0.75;
     const finalAggregate = Math.min(result, 100);
     setAggregate(finalAggregate);
 
@@ -140,7 +140,7 @@ export function MeritCalculator() {
               <p className="text-sm text-slate-600 inline-flex items-center gap-2">
                 <Info className="h-4 w-4 text-indigo-500" />
                 <span className="font-medium text-indigo-900">Formula</span>
-                Aggregate = (SSC% × 0.10) + (HSSC% × 0.15) + (NET Score × 0.75)
+                Aggregate = (SSC% × 0.10) + (HSSC% × 0.15) + ((NET Score ÷ 2) × 0.75)
               </p>
               <p className="mt-1 text-xs text-slate-500">Maximum: 100</p>
             </div>
