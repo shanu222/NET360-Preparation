@@ -177,6 +177,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []); // Run only on mount to prevent instant logout cycles
 
+  // Mobile / multi-tab: keep React token in sync with localStorage after resume, refresh, or writes in another tab.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !shouldPersistAuthTokens()) return;
+
+    const syncFromStorage = () => {
+      try {
+        setToken(localStorage.getItem(TOKEN_STORAGE_KEY));
+        setRefreshToken(localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY));
+      } catch {
+        /* ignore */
+      }
+    };
+
+    const onVisibility = () => {
+      if (!document.hidden) syncFromStorage();
+    };
+
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === TOKEN_STORAGE_KEY || event.key === REFRESH_TOKEN_STORAGE_KEY) {
+        syncFromStorage();
+      }
+    };
+
+    window.addEventListener('focus', syncFromStorage);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('storage', onStorage);
+    return () => {
+      window.removeEventListener('focus', syncFromStorage);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('storage', onStorage);
+    };
+  }, []);
+
   const login = useCallback<AuthContextValue['login']>(async (email, password, opts) => {
     const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
       '/api/auth/login',

@@ -47,6 +47,14 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 
+function SessionReady({ children }: { children: ReactNode }) {
+  const { loading } = useAuth();
+  if (loading) {
+    return <PageRouteFallback />;
+  }
+  return <>{children}</>;
+}
+
 const BRAND_LOGO_SRC = '/net360-logo.png';
 const THEME_STORAGE_KEY = 'net360-theme-mode';
 
@@ -499,6 +507,7 @@ export default function App() {
 
   return (
     <AuthProvider>
+      <SessionReady>
       <AppDataProvider>
       <Helmet>
         <title>{activeTitle} | NUST Entry Test Preparation</title>
@@ -648,6 +657,7 @@ export default function App() {
       <Toaster richColors position="top-right" />
       <SupportChatWidget />
     </AppDataProvider>
+      </SessionReady>
     </AuthProvider>
   );
 }

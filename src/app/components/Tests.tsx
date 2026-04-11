@@ -23,6 +23,7 @@ import { apiRequest, resolveLaunchAuthToken } from '../lib/api';
 import {
   bearerForLaunchUrl,
   formatStudentTokenDebugPreview,
+  hasResolvableStudentAuth,
   readPersistedStudentAccessToken,
   resolveSnapshotStudentAuthToken,
 } from '../lib/authSession';
@@ -199,7 +200,7 @@ export function Tests({ onNavigate }: TestsProps) {
   tokenRef.current = token;
   userRef.current = user;
 
-  const authReady = !authLoading && Boolean(resolveSnapshotStudentAuthToken(token, user));
+  const authReady = !authLoading && hasResolvableStudentAuth(token, user);
 
   const [selectedNetTypeId, setSelectedNetTypeId] = useState<string | null>(null);
   const [selectedTestKind, setSelectedTestKind] = useState<TestKind | null>(null);

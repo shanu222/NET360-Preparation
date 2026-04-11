@@ -616,7 +616,8 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     }
   };
 
-  const initialToken = token || readStoredAccessToken();
+  const explicitToken = token && String(token).trim() ? token : null;
+  const initialToken = explicitToken || readStoredAccessToken();
   const hasAuthToken = Boolean(initialToken);
 
   let response: Response;

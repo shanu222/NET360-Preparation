@@ -8,6 +8,7 @@ import { resolveLaunchAuthToken } from '../lib/api';
 import {
   bearerForLaunchUrl,
   formatStudentTokenDebugPreview,
+  hasResolvableStudentAuth,
   readPersistedStudentAccessToken,
   resolveSnapshotStudentAuthToken,
 } from '../lib/authSession';
@@ -569,7 +570,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
   const userRef = useRef(user);
   tokenRef.current = authContextToken;
   userRef.current = user;
-  const authReady = !authLoading && Boolean(resolveSnapshotStudentAuthToken(authContextToken, user));
+  const authReady = !authLoading && hasResolvableStudentAuth(authContextToken, user);
   const difficultyLevels: Array<'Easy' | 'Medium' | 'Hard'> = ['Easy', 'Medium', 'Hard'];
   const [selectedSubject, setSelectedSubject] = useState<TabKey>('mathematics');
   const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<PartStructuredSubjectKey, AcademicPart | null>>(() => (

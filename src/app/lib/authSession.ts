@@ -44,6 +44,18 @@ export function resolveSnapshotStudentAuthToken(
   return null;
 }
 
+/**
+ * Whether the client can attempt authenticated student API calls.
+ * Re-reads localStorage so mobile Safari is not blocked when React state lags behind persisted JWT/marker.
+ */
+export function hasResolvableStudentAuth(
+  contextToken: string | null | undefined,
+  user: unknown,
+): boolean {
+  if (resolveSnapshotStudentAuthToken(contextToken, user)) return true;
+  return Boolean(readPersistedStudentAccessToken());
+}
+
 /** Debug-only: avoids logging full JWTs. */
 export function formatStudentTokenDebugPreview(): string {
   const raw = readPersistedStudentAccessToken();
