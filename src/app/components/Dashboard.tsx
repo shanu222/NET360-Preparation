@@ -224,7 +224,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     return dailyCounts.map((value, index) => ({
       label: labels[index],
       value,
-      height: 18 + Math.round((value / maxCount) * 68),
+      height: 22 + Math.round((value / maxCount) * 88),
     }));
   }, [attempts]);
 
@@ -335,15 +335,19 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <h4 className="text-base text-indigo-950">This Week Performance</h4>
               <span className="rounded-full bg-indigo-50 px-2 py-1 text-xs text-indigo-700">7D</span>
             </div>
-            <div className="net360-horizontal-scroll net360-swipe-row" aria-label="Weekly performance scroll">
-                <div className="grid w-max min-w-[260px] grid-cols-7 items-end gap-1.5 rounded-xl bg-slate-50 p-2 sm:min-w-[300px] sm:gap-2 sm:p-3 md:min-w-[340px]">
+            <div className="w-full rounded-xl bg-slate-50 p-3 sm:p-4" aria-label="Weekly performance">
+              <div className="grid w-full grid-cols-7 gap-2 sm:gap-3">
                 {weekChart.map((point) => (
-                  <div key={point.label} className="text-center">
-                    <div
-                      className="mx-auto w-5 rounded-md bg-gradient-to-t from-indigo-600 to-violet-400"
-                      style={{ height: `${point.height}px` }}
-                    />
-                    <p className="mt-2 text-[11px] text-slate-500">{point.label}</p>
+                  <div key={point.label} className="flex min-w-0 flex-col items-stretch gap-2">
+                    <div className="flex h-[100px] w-full items-end justify-center sm:h-[108px]">
+                      <div
+                        className="w-full max-w-[2.25rem] rounded-md bg-gradient-to-t from-indigo-600 to-violet-400 shadow-sm transition duration-200 hover:brightness-110 hover:shadow-[0_0_14px_rgba(99,102,241,0.4)] sm:max-w-[2.5rem]"
+                        style={{ height: `${point.height}px` }}
+                      />
+                    </div>
+                    <p className="truncate text-center text-[10px] leading-tight text-slate-500 sm:text-[11px]">
+                      {point.label}
+                    </p>
                   </div>
                 ))}
               </div>
