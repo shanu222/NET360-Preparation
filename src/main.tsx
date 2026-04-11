@@ -6,10 +6,14 @@ import { AppDataProvider } from "./app/context/AppDataContext.tsx";
 import { Toaster } from "sonner";
 import { ErrorBoundary } from "./app/components/ErrorBoundary.tsx";
 import { FullViewportRouteFallback } from "./app/components/PageRouteFallback.tsx";
+import { checkAppVersionFromServer, installChunkLoadRecovery } from "./app/lib/chunkLoadRecovery.ts";
 import { initializeNativeExperience } from "./app/lib/nativeMobile.ts";
 import { BrowserRouter } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
 import "./styles/index.css";
+
+installChunkLoadRecovery();
+checkAppVersionFromServer();
 
 const AdminApp = lazy(() => import("./admin/AdminApp.tsx"));
 const TestInterfacePage = lazy(() =>

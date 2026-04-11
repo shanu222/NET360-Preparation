@@ -43,5 +43,14 @@ export default defineConfig(({ mode }) => {
 
     // File types to support raw imports. Never add .css, .tsx, or .ts files to this.
     assetsInclude: ['**/*.svg', '**/*.csv'],
+
+    build: {
+      rollupOptions: {
+        output: {
+          // Avoid stacking extra manual chunk rules on Vite defaults (reduces odd split edge cases).
+          manualChunks: undefined,
+        },
+      },
+    },
   }
 })

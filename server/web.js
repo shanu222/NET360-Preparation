@@ -29,10 +29,23 @@ app.get('/healthz', (_req, res) => {
   res.status(200).json({ ok: true });
 });
 
-app.use(express.static(distDir, {
-  maxAge: '1h',
-  etag: true,
-}));
+app.use(
+  express.static(distDir, {
+    etag: true,
+    setHeaders(res, filePath) {
+      const base = path.basename(filePath);
+      if (base === 'index.html') {
+        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+        return;
+      }
+      if (filePath.replace(/\\/g, '/').includes('/assets/')) {
+        res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        return;
+      }
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+    },
+  }),
+);
 
 app.get(`/${googleVerificationFile}`, (_req, res) => {
   const distFilePath = path.join(distDir, googleVerificationFile);
@@ -102,6 +115,7 @@ app.get('*', (_req, res) => {
 </body></html>`);
     return;
   }
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(indexHtmlPath);
 });
 
