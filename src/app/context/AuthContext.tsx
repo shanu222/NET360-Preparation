@@ -3,6 +3,7 @@ import { apiRequest } from '../lib/api';
 import {
   COOKIE_SESSION_API_MARKER,
   clearPersistedStudentTokens,
+  hasStoredAuthCredentials,
   isCookieSessionApiMarker,
   persistCookieSessionMode,
   persistStudentTokens,
@@ -70,6 +71,8 @@ function redirectToLoginScreen() {
   window.location.assign(target);
 }
 
+let authSessionLoadGeneration = 0;
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() =>
     shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null,
@@ -87,17 +90,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async function loadSession() {
       if (typeof window === 'undefined') return;
 
+      const loadId = ++authSessionLoadGeneration;
       setLoading(true);
-      const storedToken = shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
-      const storedRefresh = shouldPersistAuthTokens() ? localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY) : null;
-      
+
+      if (!shouldPersistAuthTokens()) {
+        if (!cancelled && loadId === authSessionLoadGeneration) setLoading(false);
+        return;
+      }
+
+      if (!hasStoredAuthCredentials()) {
+        if (!cancelled && loadId === authSessionLoadGeneration) setLoading(false);
+        return;
+      }
+
+      const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+      const storedRefresh = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
       const bearer = storedToken && !isCookieSessionApiMarker(storedToken) ? storedToken : undefined;
       const rt = storedRefresh;
 
       try {
         try {
           const me = await apiRequest<{ user: AuthUser }>('/api/auth/me', {}, bearer);
-          if (cancelled) return;
+          if (cancelled || loadId !== authSessionLoadGeneration) return;
           setUser(me.user);
           if (!bearer) {
             setToken(COOKIE_SESSION_API_MARKER);
@@ -108,10 +122,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.log('Auth state: authenticated as', me.user.email);
           return;
         } catch {
-          /* try refresh */
+          /* /me failed — try refresh only when a refresh token exists, else cookie-only refresh if marked */
         }
 
-        if (cancelled) return;
+        if (cancelled || loadId !== authSessionLoadGeneration) return;
 
         if (rt) {
           try {
@@ -119,7 +133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               '/api/auth/refresh',
               { method: 'POST', body: JSON.stringify({ refreshToken: rt }) },
             );
-            if (cancelled) return;
+            if (cancelled || loadId !== authSessionLoadGeneration) return;
             setUser(refreshed.user);
             if (refreshed.token && shouldPersistAuthTokens()) {
               setToken(refreshed.token);
@@ -132,39 +146,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }
             return;
           } catch {
-            /* cookie refresh */
+            /* fall through */
           }
         }
 
-        try {
-          const refreshed = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
-            '/api/auth/refresh',
-            { method: 'POST', body: JSON.stringify({}) },
-          );
-          if (cancelled) return;
-          setUser(refreshed.user);
-          if (refreshed.token && shouldPersistAuthTokens()) {
-            setToken(refreshed.token);
-            setRefreshToken(refreshed.refreshToken ?? null);
-            persistStudentTokens(refreshed.token, refreshed.refreshToken ?? null);
-          } else {
-            setToken(COOKIE_SESSION_API_MARKER);
-            setRefreshToken(null);
-            persistCookieSessionMode();
-          }
-        } catch {
-          if (!cancelled) {
-            setToken(null);
-            setRefreshToken(null);
-            setUser(null);
-            clearPersistedStudentTokens();
-            if (bearer) {
-              redirectToLoginScreen();
+        if (storedToken === COOKIE_SESSION_API_MARKER) {
+          try {
+            const refreshed = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+              '/api/auth/refresh',
+              { method: 'POST', body: JSON.stringify({}) },
+            );
+            if (cancelled || loadId !== authSessionLoadGeneration) return;
+            setUser(refreshed.user);
+            if (refreshed.token && shouldPersistAuthTokens()) {
+              setToken(refreshed.token);
+              setRefreshToken(refreshed.refreshToken ?? null);
+              persistStudentTokens(refreshed.token, refreshed.refreshToken ?? null);
+            } else {
+              setToken(COOKIE_SESSION_API_MARKER);
+              setRefreshToken(null);
+              persistCookieSessionMode();
             }
+            return;
+          } catch {
+            /* logout below */
           }
         }
+
+        if (cancelled || loadId !== authSessionLoadGeneration) return;
+        setToken(null);
+        setRefreshToken(null);
+        setUser(null);
+        clearPersistedStudentTokens();
+        if (bearer) {
+          redirectToLoginScreen();
+        }
       } finally {
-        if (!cancelled) {
+        if (!cancelled && loadId === authSessionLoadGeneration) {
           setLoading(false);
         }
       }

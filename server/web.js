@@ -20,7 +20,7 @@ function buildSpaContentSecurityPolicy() {
       objectSrc: ["'none'"],
       frameAncestors: ["'none'"],
       imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-      fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+      fontSrc: ["'self'", 'data:', 'blob:', 'https://fonts.gstatic.com'],
       styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       // CWE-829: external JS only from same origin or jsDelivr; 'unsafe-inline' for index.html boot/JSON-LD scripts
       scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.jsdelivr.net'],

@@ -29,6 +29,14 @@ export function readPersistedStudentAccessToken(): string | null {
   return localStorage.getItem(STUDENT_ACCESS_KEY);
 }
 
+/** True if localStorage has any student auth material (JWT, cookie-session marker, or refresh token). */
+export function hasStoredAuthCredentials(): boolean {
+  if (!shouldPersistAuthTokens() || typeof localStorage === 'undefined') return false;
+  const access = localStorage.getItem(STUDENT_ACCESS_KEY);
+  const refresh = localStorage.getItem(STUDENT_REFRESH_KEY);
+  return Boolean((access && access.trim()) || (refresh && refresh.trim()));
+}
+
 /**
  * Synchronous auth snapshot for gating API calls (context token, localStorage, or cookie-session marker when user exists).
  * Matches AppDataContext.resolveClientAuthToken without needing a hook.

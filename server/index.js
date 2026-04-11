@@ -288,7 +288,7 @@ function buildCspDirectives() {
     objectSrc: ["'none'"],
     frameAncestors: ["'none'"],
     imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
-    fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+    fontSrc: ["'self'", 'data:', 'blob:', 'https://fonts.gstatic.com'],
     styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
     // CWE-829: external JS only from same origin or jsDelivr (MathJax); no other script hosts
     scriptSrc: ["'self'", 'https://cdn.jsdelivr.net'],
@@ -6432,23 +6432,15 @@ app.post('/api/auth/login', async (req, res) => {
       if (activeSession && activeSession.deviceId && activeSession.deviceId !== deviceId && !forceLogoutOtherDevice) {
         await logSecurityEvent(req, {
           eventType: 'auth.active_session_conflict',
-          severity: 'warning',
+          severity: 'info',
           actorUserId: user._id,
           actorEmail: user.email,
           metadata: {
             existingDeviceId: activeSession.deviceId,
             attemptedDeviceId: deviceId,
+            note: 'Rotating session (same success as login) instead of 409',
           },
         });
-        res.status(409).json({
-          error: 'You are already logged in on another device. Logout there first or confirm switch.',
-          code: 'active_session_exists',
-          activeSession: {
-            deviceId: activeSession.deviceId,
-            lastSeenAt: activeSession.lastSeenAt,
-          },
-        });
-        return;
       }
 
       user.activeSession = {

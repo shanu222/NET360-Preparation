@@ -1,6 +1,7 @@
 import { localApiRequest, localDownloadReport } from './localApi';
 import {
   COOKIE_SESSION_API_MARKER,
+  hasStoredAuthCredentials,
   isCookieSessionApiMarker,
   persistStudentTokens,
   shouldPersistAuthTokens,
@@ -269,6 +270,7 @@ function readStoredAccessToken() {
 
 /** True if an httpOnly cookie session is active (no bearer token required). */
 export async function probeAuthenticatedSession(): Promise<boolean> {
+  if (typeof window === 'undefined' || !hasStoredAuthCredentials()) return false;
   try {
     await apiRequest<{ user: unknown }>('/api/auth/me', { method: 'GET' });
     return true;
@@ -303,6 +305,10 @@ export async function resolveLaunchAuthToken(contextToken: string | null | undef
         // Fall through to cookie session probe.
       }
     }
+  }
+
+  if (!hasStoredAuthCredentials()) {
+    return null;
   }
 
   try {
