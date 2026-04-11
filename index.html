@@ -8,6 +8,7 @@
       <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
       <link rel="preconnect" href="https://fonts.googleapis.com" />
       <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+      <!-- Google Fonts CSS is not pinned with SRI: the stylesheet response can vary (UA/capabilities), so a fixed hash would break. -->
       <link
         rel="stylesheet"
         href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Sora:wght@500;600;700&display=swap"
@@ -64,7 +65,13 @@
 
     <body>
       <div id="root"></div>
-      <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      <script
+        id="MathJax-script"
+        async
+        src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+        integrity="sha384-Wuix6BuhrWbjDBs24bXrjf4ZQ5aFeFWBuKkFekO2t8xFU0iNaLQfp2K6/1Nxveei"
+        crossorigin="anonymous"
+      ></script>
       <script type="module" src="/src/main.tsx"></script>
     </body>
   </html>
