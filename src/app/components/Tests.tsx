@@ -29,6 +29,7 @@ import {
 } from '../lib/authSession';
 import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTiming';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
+import { formatTestStartFailureToast } from '../lib/testStartToast';
 
 interface TestsProps {
   onNavigate?: (section: string) => void;
@@ -397,7 +398,7 @@ export function Tests({ onNavigate }: TestsProps) {
         toast.error('Please sign in to start a test.');
         onNavigate?.('profile');
       } else {
-        toast.error('Could not start your test. Please try again.');
+        toast.error(formatTestStartFailureToast(error));
       }
     } finally {
       setLaunchingKind(null);

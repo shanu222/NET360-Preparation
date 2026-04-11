@@ -15,6 +15,7 @@ import {
 import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTiming';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../lib/hierarchyDedup';
+import { formatTestStartFailureToast } from '../lib/testStartToast';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 
@@ -768,7 +769,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
         return;
       }
       mobileSectionStartRetryRef.current = 0;
-      toast.error('Could not start your test. Please try again.');
+      toast.error(formatTestStartFailureToast(error));
     } finally {
       setLaunchingSectionKey(null);
       launchingRef.current = false;
@@ -884,7 +885,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
         return;
       }
       mobileFlatStartRetryRef.current = 0;
-      toast.error('Could not start your test. Please try again.');
+      toast.error(formatTestStartFailureToast(error));
     } finally {
       setLaunchingSectionKey(null);
       launchingRef.current = false;
