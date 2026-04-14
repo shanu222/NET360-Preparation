@@ -1148,7 +1148,7 @@ export function Profile({ onNavigate }: ProfileProps) {
               <CardContent className="relative pb-7">
                 <div className="mx-auto mt-4 flex w-full max-w-[min(100%,680px)] justify-center rounded-2xl border border-indigo-100/80 bg-white/70 p-2 shadow-[0_18px_34px_rgba(79,70,229,0.14)] backdrop-blur-sm">
                   <img
-                    src="/advertisement-page.webp"
+                    src="/app promo image.png"
                     alt="NET360 advertisement"
                     className="mx-auto h-auto w-full max-w-full object-contain rounded-xl"
                     loading="lazy"
