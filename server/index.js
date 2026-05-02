@@ -1,4 +1,3 @@
-import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -47,6 +46,12 @@ import { PasswordRecoveryRequestModel } from './models/PasswordRecoveryRequest.j
 import { SupportChatMessageModel } from './models/SupportChatMessage.js';
 import { SecurityAuditEventModel } from './models/SecurityAuditEvent.js';
 import { RuntimeConfigModel } from './models/RuntimeConfig.js';
+import dotenv from 'dotenv';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 function parseOriginList(rawValue) {
   return String(rawValue || '')
@@ -119,9 +124,6 @@ const loginBodySchema = z.object({
   forceLogoutOtherDevice: z.union([z.boolean(), z.null(), z.undefined()]).optional(),
 });
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
 const PORT = Number(process.env.PORT || 5000);
 const MONGODB_URI = process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO_URI || '';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
@@ -135,7 +137,7 @@ const ACCESS_TOKEN_COOKIE_MAX_AGE_MS = clamp(Number(process.env.ACCESS_TOKEN_COO
 const ACCESS_TOKEN_COOKIE_NAME = String(process.env.ACCESS_TOKEN_COOKIE_NAME || 'net360_access_token').trim() || 'net360_access_token';
 const REFRESH_TOKEN_COOKIE_NAME = String(process.env.REFRESH_TOKEN_COOKIE_NAME || 'net360_refresh_token').trim() || 'net360_refresh_token';
 const AUTH_COOKIE_DOMAIN = String(process.env.AUTH_COOKIE_DOMAIN || '').trim();
-const AUTH_COOKIE_SECURE = IS_PRODUCTION || String(process.env.AUTH_COOKIE_SECURE || '').toLowerCase() === 'true';
+const AUTH_COOKIE_SECURE = String(process.env.AUTH_COOKIE_SECURE || '').toLowerCase() === 'true';
 const AI_DAILY_LIMIT = Number(process.env.SMART_DAILY_LIMIT || process.env.AI_DAILY_LIMIT || 50);
 const OPENAI_MODEL = process.env.MODEL_PROVIDER_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const SIGNUP_TOKEN_TTL_MINUTES = Number(
@@ -155,17 +157,14 @@ const ADMIN_EMAILS = `${process.env.ADMIN_EMAILS || ''},shahnawaz9974balouch@gma
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
 const CORS_ALLOWED_ORIGINS = Array.from(new Set([
-  'https://net360-admin-production.up.railway.app',
-  'https://net360-preparation-production.up.railway.app',
-  'https://net360-admin.onrender.com',
-  'https://net360-preparation.onrender.com',
-  'http://localhost:5173',
-  'http://localhost:3000',
+  'http://13.233.216.163',
+  'http://13.233.216.163:3000',
+  'http://13.233.216.163:5000',
   ...parseOriginList(process.env.CORS_ALLOWED_ORIGINS || ''),
   ...parseOriginList(process.env.FRONTEND_URL || ''),
   ...parseOriginList(process.env.FRONTEND_ORIGIN || ''),
   ...parseOriginList(process.env.WEB_ORIGIN || ''),
-  ...parseOriginList(process.env.RAILWAY_DEFAULT_ORIGINS || 'https://net360-admin-production.up.railway.app,https://net360-preparation-production.up.railway.app'),
+  ...parseOriginList(process.env.RAILWAY_DEFAULT_ORIGINS || ''),
 ]))
   .filter(Boolean);
 
@@ -452,9 +451,11 @@ function isAllowedOrigin(origin) {
 const corsOptions = {
   origin(origin, callback) {
     if (isAllowedOrigin(origin)) {
+      if (origin) console.log('[cors] allow', origin);
       callback(null, true);
       return;
     }
+    console.warn('[cors] deny', origin || '(no-origin)');
     callback(new Error('CORS origin denied.'));
   },
   credentials: true,
@@ -6362,6 +6363,10 @@ app.post('/api/auth/register', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
+    console.log('[auth/login]', {
+      origin: String(req.headers.origin || '').trim() || '(no-origin)',
+      ip: String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').trim(),
+    });
     const parsed = loginBodySchema.safeParse(req.body || {});
     if (!parsed.success) {
       await logSecurityEvent(req, {

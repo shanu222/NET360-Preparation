@@ -26,10 +26,11 @@ type ApiRequestOptions = RequestInit & {
   retryOnStatuses?: number[];
 };
 
+const EC2_PUBLIC_API = 'http://13.233.216.163:5000';
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
-const API_BASE_URL = env.VITE_API_URL || env.VITE_API_BASE_URL || env.REACT_APP_API_URL || '';
+const API_BASE_URL = env.VITE_API_URL || env.VITE_API_BASE_URL || env.REACT_APP_API_URL || (import.meta.env.PROD ? EC2_PUBLIC_API : '');
 const MOBILE_API_BASE_URL = env.VITE_MOBILE_API_BASE_URL || API_BASE_URL;
-const DEV_API_ORIGIN = env.VITE_DEV_API_ORIGIN || 'http://localhost:4000';
+const DEV_API_ORIGIN = env.VITE_DEV_API_ORIGIN || env.VITE_API_URL || env.VITE_API_BASE_URL || EC2_PUBLIC_API;
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
 const ADMIN_TOKEN_STORAGE_KEY = 'net360-admin-access-token';
