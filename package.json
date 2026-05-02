@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
+    "serve:dist": "serve -s dist -l 3000",
     "dev": "vite",
     "start": "npm run start:web",
     "start:web": "node server/web.js",
@@ -114,6 +115,7 @@
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "4.7.0",
+    "serve": "^14.2.6",
     "sharp": "^0.34.5",
     "tailwindcss": "4.1.12",
     "vite": "6.3.5"
