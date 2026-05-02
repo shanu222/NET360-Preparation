@@ -41,9 +41,9 @@ services:
     startCommand: npm run start:web
     autoDeploy: true
     envVars:
-      - key: VITE_API_BASE_URL
+      - key: VITE_API_URL
         # Replace with your live backend URL after the API service is created.
-        value: https://net360-api.onrender.com
+        value: https://api.net360preparation.com
       - key: VITE_FORCE_LOCAL_API
         value: "false"
       - key: VITE_DISABLE_LOCAL_API_FALLBACK

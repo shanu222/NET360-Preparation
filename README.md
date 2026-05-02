@@ -15,8 +15,7 @@ https://www.figma.com/design/y9bYMsJLVtoN2SMwfEKBLc/NET360-Preparation-App
 3. Start backend API:
 `npm run dev:server`
 
-Note: Vite dev proxy forwards `/api/*` to `VITE_DEV_API_ORIGIN` (or `VITE_API_BASE_URL`) and defaults to `http://localhost:4000`.
-If your backend runs on a different port (for example `5000`), set `VITE_DEV_API_ORIGIN=http://localhost:5000`.
+Note: Set `VITE_API_URL` (for example `http://localhost:5000`) in `.env` or `.env.development` so the Vite dev proxy forwards `/api/*` to your API. If unset, the proxy is disabled.
 
 Frontend runs on Vite, backend runs on Express.
 
@@ -69,10 +68,7 @@ Create environment variables for backend service:
 
 Frontend environment variable:
 
-- `VITE_API_URL` = preferred full backend URL in production, for example `https://net360-preparation-production-62d2.up.railway.app`
-- `VITE_API_BASE_URL` = backward-compatible alias for backend URL
-- `VITE_MOBILE_API_BASE_URL` = optional native override for Android/iOS builds
-- `VITE_DEV_API_ORIGIN` = optional local backend origin override for browser dev mode, default `http://localhost:4000`
+- `VITE_API_URL` = required full backend URL for web and native builds (for example `https://api.net360preparation.com`; local dev often `http://localhost:5000`)
 - `VITE_DISABLE_LOCAL_API_FALLBACK` = set `true` for production mobile builds to require live backend
 
 For Android packaging, create `.env.android` from `.env.android.example`.
@@ -96,8 +92,7 @@ Deploy as two Render services:
 If admin/client requests fail with network errors in production:
 
 1. Verify frontend base URL variables
-- `VITE_API_URL` (or `VITE_API_BASE_URL`) must point to API service (for example `https://net360-preparation-production-62d2.up.railway.app`)
-- `VITE_MOBILE_API_BASE_URL` should point to the same API service for native builds
+- `VITE_API_URL` must point to the API service (for example `https://api.net360preparation.com`)
 - Set `VITE_DISABLE_LOCAL_API_FALLBACK=true` in production to avoid silent local fallback
 
 2. Verify backend CORS variables

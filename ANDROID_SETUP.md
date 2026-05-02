@@ -8,8 +8,8 @@ This project now supports a native Android app shell using Capacitor while reusi
 - Capacitor config in `capacitor.config.json`
 - Build/sync scripts in `package.json`
 - Mobile-safe API behavior in `src/app/lib/api.ts`
-  - Native runtime uses `VITE_MOBILE_API_BASE_URL` (or falls back to `VITE_API_BASE_URL`)
-  - If no API base URL is provided, non-premium endpoints can fall back to local mode (unless disabled)
+  - Native and web use the same `VITE_API_URL` (`import.meta.env.VITE_API_URL`)
+  - If no API base URL is provided, the app fails fast at startup
   - Local fallback can be disabled via `VITE_DISABLE_LOCAL_API_FALLBACK=true`
 - Global UI crash guard via `ErrorBoundary`
 - Optional native plugins:
@@ -34,8 +34,7 @@ Install on your machine:
 
 Use `.env.android.example` as reference and create your own `.env.android` (or CI env vars with Android mode):
 
-- `VITE_API_BASE_URL=https://your-api-domain.com`
-- optional `VITE_MOBILE_API_BASE_URL=https://your-api-domain.com`
+- `VITE_API_URL=https://api.net360preparation.com`
 - `VITE_DISABLE_LOCAL_API_FALLBACK=true`
 - `VITE_ENABLE_PUSH_NOTIFICATIONS=false` (set `true` only after Firebase setup)
 

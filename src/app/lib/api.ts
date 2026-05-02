@@ -8,11 +8,6 @@ import {
 } from './authSession';
 
 type RuntimeEnv = {
-  VITE_API_URL?: string;
-  VITE_API_BASE_URL?: string;
-  REACT_APP_API_URL?: string;
-  VITE_MOBILE_API_BASE_URL?: string;
-  VITE_DEV_API_ORIGIN?: string;
   VITE_FORCE_LOCAL_API?: string;
   VITE_DISABLE_LOCAL_API_FALLBACK?: string;
   VITE_ADMIN_ONLY?: string;
@@ -28,32 +23,21 @@ type ApiRequestOptions = RequestInit & {
 
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
 
-function getApiBase(): string {
-  const envUrl =
-    import.meta.env.VITE_API_URL
-    || import.meta.env.VITE_API_BASE_URL
-    || import.meta.env.REACT_APP_API_URL;
+console.log("API BASE:", import.meta.env.VITE_API_URL);
 
-  if (envUrl && String(envUrl).trim()) {
-    return String(envUrl).replace(/\/$/, '').trim();
-  }
-
-  if (import.meta.env.DEV) {
-    return 'http://localhost:5000';
-  }
-
-  throw new Error('❌ API URL not configured. Set VITE_API_URL');
+if (!import.meta.env.VITE_API_URL) {
+  throw new Error('Missing VITE_API_URL in production');
 }
 
-export const API_BASE = getApiBase();
+export const API_BASE = String(import.meta.env.VITE_API_URL).replace(/\/$/, '').trim();
 
-console.log('🌐 API BASE URL:', API_BASE);
-
-if (!API_BASE.startsWith('https') && !import.meta.env.DEV) {
-  console.warn('⚠️ API is not using HTTPS in production');
+if (!API_BASE) {
+  throw new Error('Missing VITE_API_URL in production');
 }
 
-const MOBILE_API_BASE_URL = String(import.meta.env.VITE_MOBILE_API_BASE_URL || '').trim() || API_BASE;
+if (!API_BASE.startsWith('https') && import.meta.env.PROD) {
+  console.warn('API is not using HTTPS in production');
+}
 
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
@@ -80,7 +64,6 @@ function logApiConfigurationIssue(level: 'warn' | 'error', message: string, deta
   const payload = {
     ...details,
     apiBaseUrl: API_BASE || '(empty)',
-    mobileApiBaseUrl: MOBILE_API_BASE_URL || '(empty)',
     effectiveApiBaseUrl: getEffectiveApiBaseUrl() || '(empty)',
     isNative: isNativeCapacitorRuntime(),
   };
@@ -101,12 +84,6 @@ function isSecureNativeApiBaseUrl(apiBaseUrl: string) {
 }
 
 function getEffectiveApiBaseUrl() {
-  if (isNativeCapacitorRuntime()) {
-    const mobile = String(import.meta.env.VITE_MOBILE_API_BASE_URL || '').trim();
-    if (mobile) {
-      return mobile.replace(/\/$/, '');
-    }
-  }
   return API_BASE;
 }
 
@@ -249,7 +226,7 @@ function mapTransportError(path: string, resolvedUrl: string, error: unknown) {
 
   if (normalized.includes('failed to fetch') || normalized.includes('networkerror') || normalized.includes('load failed')) {
     return new Error(
-      `Network error while calling ${resolvedUrl}. Check backend URL/port, CORS settings, confirm the API server is running, and ensure VITE_API_URL / VITE_MOBILE_API_BASE_URL points to the backend API service.`,
+      `Network error while calling ${resolvedUrl}. Check backend URL/port, CORS settings, confirm the API server is running, and ensure VITE_API_URL is set.`,
     );
   }
 
@@ -425,14 +402,14 @@ function isLikelyHtmlResponse(response: Response, bodyText: string) {
 function buildHtmlInsteadOfJsonError(path: string) {
   return new Error(
     `API configuration error: ${path} returned HTML instead of JSON. ` +
-    'Set VITE_API_URL or VITE_MOBILE_API_BASE_URL for Android builds.',
+    'Set VITE_API_URL for Android builds.',
   );
 }
 
 function buildMissingNativeApiBaseUrlError(path: string) {
   return new Error(
     `API configuration error: ${path} is running in native mode without backend URL. ` +
-    'Set VITE_API_URL or VITE_MOBILE_API_BASE_URL for Android builds.',
+    'Set VITE_API_URL for Android builds.',
   );
 }
 
