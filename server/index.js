@@ -1,3 +1,4 @@
+import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -46,8 +47,8 @@ import { PasswordRecoveryRequestModel } from './models/PasswordRecoveryRequest.j
 import { SupportChatMessageModel } from './models/SupportChatMessage.js';
 import { SecurityAuditEventModel } from './models/SecurityAuditEvent.js';
 import { RuntimeConfigModel } from './models/RuntimeConfig.js';
-import dotenv from 'dotenv';
 
+dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
@@ -130,10 +131,14 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || `${JWT_SECRET}-refresh`;
 const NODE_ENV = String(process.env.NODE_ENV || 'development').toLowerCase();
 const IS_PRODUCTION = NODE_ENV === 'production';
+console.log('[env] Mongo:', !!(process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO_URI));
+console.log('[env] JWT_SECRET:', !!process.env.JWT_SECRET);
+console.log('[env] JWT_REFRESH_SECRET:', !!process.env.JWT_REFRESH_SECRET);
+console.log('[env] CORS_ALLOWED_ORIGINS:', !!String(process.env.CORS_ALLOWED_ORIGINS || '').trim());
 if (IS_PRODUCTION) {
-  console.log(`[env] MONGODB_URI: ${MONGODB_URI.trim() ? 'set' : 'MISSING (use repo-root .env with PM2 cwd)'}`);
+  console.log(`[env] MONGODB_URI resolved: ${MONGODB_URI.trim() ? 'yes' : 'MISSING (repo-root .env for PM2 cwd)'}`);
 } else {
-  console.log(`[env] MONGODB_URI: ${MONGODB_URI.trim() ? 'set' : 'empty (dev)'}`);
+  console.log(`[env] MONGODB_URI resolved: ${MONGODB_URI.trim() ? 'yes' : 'empty (dev)'}`);
 }
 const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '15m';
 const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
@@ -175,6 +180,8 @@ const CORS_ALLOWED_ORIGINS = Array.from(new Set([
   ...parseOriginList(process.env.RAILWAY_DEFAULT_ORIGINS || ''),
 ]))
   .filter(Boolean);
+
+console.log('[env] CORS allowlist size:', CORS_ALLOWED_ORIGINS.length);
 
 const rawIssueAuthBodyTokens = process.env.ISSUE_AUTH_BODY_TOKENS;
 const ISSUE_AUTH_BODY_TOKENS =
@@ -476,11 +483,11 @@ const corsOptions = {
       callback(null, true);
       return;
     }
-    console.warn('[cors] deny', origin || '(no-origin)', '| allowed count:', CORS_ALLOWED_ORIGINS.length);
-    callback(new Error('CORS origin denied.'));
+    console.warn('[cors] blocked origin:', origin || '(no-origin)', '| allowlist:', CORS_ALLOWED_ORIGINS.length);
+    callback(null, false);
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With'],
   optionsSuccessStatus: 204,
   maxAge: 24 * 60 * 60,
@@ -6495,6 +6502,7 @@ app.post('/api/auth/login', async (req, res) => {
       actorUserId: user._id,
       actorEmail: user.email,
     });
+    console.log('[auth/login] success', { email: user.email, role });
     res.json(buildAuthJsonBody(payload));
   } catch (error) {
     console.error('[auth/login] server error:', error?.message || error);
