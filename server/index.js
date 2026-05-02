@@ -481,9 +481,7 @@ app.use((req, _res, next) => {
   next();
 });
 
-app.get('/', (_req, res) => {
-  res.send('API is running');
-});
+app.get('/', (req, res) => res.send('API is running'));
 
 app.use(
   '/api',
@@ -13538,9 +13536,22 @@ process.on('uncaughtException', (error) => {
 });
 
 async function bootstrap() {
-  validateCriticalConfiguration();
+  try {
+    validateCriticalConfiguration();
+  } catch (error) {
+    console.error('[startup] Configuration validation failed; server will still listen:', error?.message || error);
+  }
+
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[server] HTTP listening on 0.0.0.0:${PORT} (NODE_ENV=${NODE_ENV})`);
+    console.log(`[server] running on 0.0.0.0:${PORT}`);
+    if (NODE_ENV) {
+      console.log(`[server] NODE_ENV=${NODE_ENV}`);
+    }
+  });
+
+  server.on('error', (error) => {
+    console.error('[server] HTTP server error:', error?.message || error);
+    process.exit(1);
   });
 
   server.headersTimeout = clamp(REQUEST_TIMEOUT_MS + 5_000, 10_000, 180_000);
@@ -13551,33 +13562,51 @@ async function bootstrap() {
   // so deployment health checks are not blocked by Mongo/network latency.
   void (async () => {
     try {
-      const openAiProbe = await runOpenAiConnectionProbe('startup');
-      logOpenAiProbeStatus(openAiProbe);
+      try {
+        const openAiProbe = await runOpenAiConnectionProbe('startup');
+        logOpenAiProbeStatus(openAiProbe);
+      } catch (error) {
+        console.error('[openai] Startup probe failed unexpectedly:', error?.message || error);
+      }
+
+      let mongoConnection;
+      try {
+        mongoConnection = await connectMongo(MONGODB_URI);
+      } catch (error) {
+        console.error('[startup] MongoDB connect threw (non-fatal):', error?.message || error);
+        mongoConnection = null;
+      }
+
+      if (mongoConnection?.readyState === 1) {
+        console.log('[startup] MongoDB is connected and ready.');
+      } else {
+        const rs = mongoConnection?.readyState ?? '(no connection)';
+        console.warn(`[startup] MongoDB not ready (readyState=${rs}). Background reconnect may be active; see [mongo] logs.`);
+      }
+
+      try {
+        await bootstrapAdminAccounts();
+      } catch (error) {
+        console.error('[startup] Admin bootstrap deferred:', error?.message || error);
+      }
+
+      try {
+        await refreshNustAdmissionsCache({ force: true });
+      } catch (error) {
+        console.error('[startup] NUST admissions cache refresh failed (non-fatal):', error?.message || error);
+      }
+
+      setInterval(() => {
+        void refreshNustAdmissionsCache({ force: true }).catch((err) => {
+          console.error('[nust-cache] Scheduled refresh failed:', err?.message || err);
+        });
+      }, NUST_ADMISSIONS_REFRESH_MS);
     } catch (error) {
-      console.error('[openai] Startup probe failed unexpectedly:', error?.message || error);
+      console.error('[startup] Deferred initialization error (server keeps running):', error?.message || error);
     }
-
-    const mongoConnection = await connectMongo(MONGODB_URI);
-    if (mongoConnection.readyState === 1) {
-      console.log('[startup] MongoDB is connected and ready.');
-    } else {
-      console.warn(
-        `[startup] MongoDB not ready yet (readyState=${mongoConnection.readyState}). `
-        + 'Background reconnect is enabled; watch [mongo] logs.',
-      );
-    }
-
-    try {
-      await bootstrapAdminAccounts();
-    } catch (error) {
-      console.error('[startup] Admin bootstrap deferred because MongoDB is unavailable:', error?.message || error);
-    }
-
-    await refreshNustAdmissionsCache({ force: true });
-    setInterval(() => {
-      void refreshNustAdmissionsCache({ force: true });
-    }, NUST_ADMISSIONS_REFRESH_MS);
-  })();
+  })().catch((error) => {
+    console.error('[startup] Unhandled deferred initialization rejection:', error?.message || error);
+  });
 }
 
 bootstrap().catch((error) => {
