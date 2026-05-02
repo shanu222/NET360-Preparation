@@ -1,14 +1,10 @@
 /**
- * PM2 process file — run from repository root:
- *   pm2 start ecosystem.config.cjs
- *   pm2 save
- *
- * Prereqs: `npm ci` (or `npm install`), `npm run build`, server `.env` present for API.
+ * PM2 — from repo root: pm2 start ecosystem.config.cjs && pm2 save
  */
 module.exports = {
   apps: [
     {
-      name: 'net360-backend',
+      name: 'backend',
       cwd: __dirname,
       script: 'server/index.js',
       interpreter: 'node',
@@ -18,6 +14,7 @@ module.exports = {
       max_memory_restart: '750M',
       env: {
         NODE_ENV: 'production',
+        PORT: '5000',
       },
     },
     {
@@ -30,6 +27,9 @@ module.exports = {
       autorestart: true,
       watch: false,
       max_memory_restart: '250M',
+      env: {
+        NODE_ENV: 'production',
+      },
     },
   ],
 };

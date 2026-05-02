@@ -89,7 +89,7 @@ function attachConnectionListeners() {
 
   mongoose.connection.on('connected', () => {
     clearReconnectTimer();
-    console.log('[mongo] Connected.');
+    console.log('[mongo] connected');
   });
 
   mongoose.connection.on('disconnected', () => {
@@ -99,7 +99,7 @@ function attachConnectionListeners() {
 
   mongoose.connection.on('reconnected', () => {
     clearReconnectTimer();
-    console.log('[mongo] Reconnected event received.');
+    console.log('[mongo] connected (reconnected)');
   });
 
   mongoose.connection.on('error', (error) => {
@@ -111,8 +111,9 @@ function attachConnectionListeners() {
 }
 
 export async function connectMongo(uri) {
-  if (!uri) {
-    throw new Error('MONGODB_URI is required for production backend mode.');
+  if (!uri || !String(uri).trim()) {
+    console.error('[mongo] failed: MONGODB_URI / DATABASE_URL / MONGO_URI is not set.');
+    return mongoose.connection;
   }
 
   if (isConnected()) {
@@ -126,11 +127,11 @@ export async function connectMongo(uri) {
   try {
     await mongoose.connect(uri, MONGO_CONNECT_OPTIONS);
     attachMongoClientListeners();
-    console.log('[mongo] mongoose.connect() completed successfully.');
+    console.log('[mongo] connected (mongoose.connect resolved)');
   } catch (error) {
     const name = String(error?.name || 'Error');
     const message = String(error?.message || '').trim();
-    console.error(`[mongo] Initial connect failed: ${name}: ${message}`);
+    console.error('[mongo] failed:', `${name}: ${message}`);
     console.warn('[mongo] Server will continue running and retry MongoDB connection in the background.');
     scheduleReconnect();
   }

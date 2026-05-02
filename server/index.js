@@ -130,6 +130,11 @@ const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || `${JWT_SECRET}-refresh`;
 const NODE_ENV = String(process.env.NODE_ENV || 'development').toLowerCase();
 const IS_PRODUCTION = NODE_ENV === 'production';
+if (IS_PRODUCTION) {
+  console.log(`[env] MONGODB_URI: ${MONGODB_URI.trim() ? 'set' : 'MISSING (use repo-root .env with PM2 cwd)'}`);
+} else {
+  console.log(`[env] MONGODB_URI: ${MONGODB_URI.trim() ? 'set' : 'empty (dev)'}`);
+}
 const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '15m';
 const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
 const REFRESH_TOKEN_TTL_MS = REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000;
@@ -160,7 +165,10 @@ const CORS_ALLOWED_ORIGINS = Array.from(new Set([
   'http://13.233.216.163',
   'http://13.233.216.163:3000',
   'http://13.233.216.163:5000',
+  'https://net360preparation.com',
+  'https://www.net360preparation.com',
   ...parseOriginList(process.env.CORS_ALLOWED_ORIGINS || ''),
+  ...parseOriginList(process.env.CORS_EXTRA_ORIGINS || ''),
   ...parseOriginList(process.env.FRONTEND_URL || ''),
   ...parseOriginList(process.env.FRONTEND_ORIGIN || ''),
   ...parseOriginList(process.env.WEB_ORIGIN || ''),
@@ -433,34 +441,47 @@ function sanitizePayload(value) {
   return sanitizePrimitive(value);
 }
 
+function isVercelPreviewOrigin(origin) {
+  const raw = String(origin || '').trim().replace(/\/+$/, '');
+  if (!raw) return false;
+  try {
+    const host = new URL(raw).hostname.toLowerCase();
+    return host === 'vercel.app' || host.endsWith('.vercel.app');
+  } catch {
+    return false;
+  }
+}
+
 function isAllowedOrigin(origin) {
   const normalizedOrigin = String(origin || '').trim().replace(/\/+$/, '').toLowerCase();
   if (!normalizedOrigin) return true;
   if (MOBILE_RUNTIME_ORIGINS.has(normalizedOrigin)) return true;
   if (!IS_PRODUCTION) return true;
+  if (String(process.env.CORS_ALLOW_VERCEL || '').toLowerCase() === 'true' && isVercelPreviewOrigin(origin)) {
+    return true;
+  }
   if (CORS_ALLOWED_ORIGINS.length === 0) return false;
 
-  const matches = CORS_ALLOWED_ORIGINS.some((allowedOrigin) => {
+  return CORS_ALLOWED_ORIGINS.some((allowedOrigin) => {
     if (!allowedOrigin) return false;
     return allowedOrigin === normalizedOrigin;
   });
-
-  return matches;
 }
 
 const corsOptions = {
   origin(origin, callback) {
+    console.log('[cors] incoming origin:', origin || '(none — same-origin or non-browser)');
     if (isAllowedOrigin(origin)) {
       if (origin) console.log('[cors] allow', origin);
       callback(null, true);
       return;
     }
-    console.warn('[cors] deny', origin || '(no-origin)');
+    console.warn('[cors] deny', origin || '(no-origin)', '| allowed count:', CORS_ALLOWED_ORIGINS.length);
     callback(new Error('CORS origin denied.'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With'],
   optionsSuccessStatus: 204,
   maxAge: 24 * 60 * 60,
 };
@@ -478,7 +499,8 @@ app.use((req, res, next) => {
 });
 
 app.use((req, _res, next) => {
-  console.log(`[request] ${String(req.method || '').toUpperCase()} ${String(req.originalUrl || req.url || '').trim()}`);
+  const origin = String(req.headers.origin || '').trim() || '(no-origin)';
+  console.log(`[request] ${String(req.method || '').toUpperCase()} ${String(req.originalUrl || req.url || '').trim()} origin=${origin}`);
   next();
 });
 
@@ -4098,16 +4120,24 @@ async function bootstrapAdminAccounts() {
       const existing = await UserModel.findOne({ email }).lean();
       if (existing) continue;
 
-      await UserModel.create({
-        email,
-        passwordHash,
-        firstName: 'Admin',
-        lastName: '',
-        role: 'admin',
-        preferences: defaultPreferences(),
-        progress: defaultProgress(),
-      });
-      createdCount += 1;
+      try {
+        await UserModel.create({
+          email,
+          passwordHash,
+          firstName: 'Admin',
+          lastName: '',
+          role: 'admin',
+          preferences: defaultPreferences(),
+          progress: defaultProgress(),
+        });
+        createdCount += 1;
+      } catch (err) {
+        if (err && err.code === 11000) {
+          console.warn('[admin-bootstrap] duplicate email skipped:', email);
+          continue;
+        }
+        throw err;
+      }
     }
   }
 
@@ -6466,12 +6496,13 @@ app.post('/api/auth/login', async (req, res) => {
       actorEmail: user.email,
     });
     res.json(buildAuthJsonBody(payload));
-  } catch {
+  } catch (error) {
+    console.error('[auth/login] server error:', error?.message || error);
     await logSecurityEvent(req, {
       eventType: 'auth.login_error',
       severity: 'critical',
     });
-    res.status(500).json({ error: 'Login failed.' });
+    res.status(500).json({ error: 'Login failed.', detail: IS_PRODUCTION ? undefined : String(error?.message || error) });
   }
 });
 
@@ -13491,11 +13522,19 @@ function validateCriticalConfiguration() {
   const warnings = [];
 
   if (IS_PRODUCTION && (!JWT_SECRET || JWT_SECRET === 'dev-secret-change-me' || JWT_SECRET.length < 32)) {
-    problems.push('JWT_SECRET must be set to a strong random value with at least 32 characters in production.');
+    if (String(process.env.ALLOW_WEAK_JWT_BOOTSTRAP || '').toLowerCase() === 'true') {
+      warnings.push('JWT_SECRET is weak or default; set a strong secret before public traffic.');
+    } else {
+      problems.push('JWT_SECRET must be set to a strong random value with at least 32 characters in production.');
+    }
   }
 
   if (IS_PRODUCTION && (!JWT_REFRESH_SECRET || JWT_REFRESH_SECRET.length < 32)) {
-    problems.push('JWT_REFRESH_SECRET must be set to a strong random value with at least 32 characters in production.');
+    if (String(process.env.ALLOW_WEAK_JWT_BOOTSTRAP || '').toLowerCase() === 'true') {
+      warnings.push('JWT_REFRESH_SECRET is weak; set a strong secret before public traffic.');
+    } else {
+      problems.push('JWT_REFRESH_SECRET must be set to a strong random value with at least 32 characters in production.');
+    }
   }
 
   if (IS_PRODUCTION && CORS_ALLOWED_ORIGINS.length === 0) {
