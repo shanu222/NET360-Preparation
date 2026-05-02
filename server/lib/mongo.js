@@ -126,6 +126,7 @@ export async function connectMongo(uri) {
   try {
     await mongoose.connect(uri, MONGO_CONNECT_OPTIONS);
     attachMongoClientListeners();
+    console.log('[mongo] mongoose.connect() completed successfully.');
   } catch (error) {
     const name = String(error?.name || 'Error');
     const message = String(error?.message || '').trim();

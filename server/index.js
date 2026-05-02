@@ -122,7 +122,7 @@ const loginBodySchema = z.object({
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const PORT = process.env.PORT || 4000;
+const PORT = Number(process.env.PORT || 5000);
 const MONGODB_URI = process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO_URI || '';
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || `${JWT_SECRET}-refresh`;
@@ -482,7 +482,7 @@ app.use((req, _res, next) => {
 });
 
 app.get('/', (_req, res) => {
-  res.send('Backend is running successfully');
+  res.send('API is running');
 });
 
 app.use(
@@ -13540,7 +13540,7 @@ process.on('uncaughtException', (error) => {
 async function bootstrap() {
   validateCriticalConfiguration();
   const server = app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`[server] HTTP listening on 0.0.0.0:${PORT} (NODE_ENV=${NODE_ENV})`);
   });
 
   server.headersTimeout = clamp(REQUEST_TIMEOUT_MS + 5_000, 10_000, 180_000);
@@ -13557,7 +13557,16 @@ async function bootstrap() {
       console.error('[openai] Startup probe failed unexpectedly:', error?.message || error);
     }
 
-    await connectMongo(MONGODB_URI);
+    const mongoConnection = await connectMongo(MONGODB_URI);
+    if (mongoConnection.readyState === 1) {
+      console.log('[startup] MongoDB is connected and ready.');
+    } else {
+      console.warn(
+        `[startup] MongoDB not ready yet (readyState=${mongoConnection.readyState}). `
+        + 'Background reconnect is enabled; watch [mongo] logs.',
+      );
+    }
+
     try {
       await bootstrapAdminAccounts();
     } catch (error) {
