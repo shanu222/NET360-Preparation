@@ -91,7 +91,7 @@ function attachConnectionListeners() {
 
   mongoose.connection.on('connected', () => {
     clearReconnectTimer();
-    console.log('[mongo] connected');
+    console.log('Mongo connected');
   });
 
   mongoose.connection.on('disconnected', () => {

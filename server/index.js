@@ -721,6 +721,10 @@ function containsRegex(value, maxLen = 80) {
   return { $regex: escaped, $options: 'i' };
 }
 
+async function hashPassword(plain) {
+  return bcrypt.hash(String(plain || ''), 12);
+}
+
 const COMMUNITY_PROFILE_SELECT = 'userId username shareProfilePicture profilePictureUrl favoriteSubjects targetNetType subjectsNeedHelp preparationLevel studyTimePreference testScoreRange bio quizStats createdAt';
 const COMMUNITY_USER_SELECT = 'firstName lastName targetProgram city progress.averageScore progress.weakTopics role';
 const COMMUNITY_CONNECTION_SELECT = 'participantA participantB createdAt blockedByUserIds';
@@ -6421,12 +6425,63 @@ app.post('/api/auth/register', async (req, res) => {
   });
 });
 
+/** Emergency / dev-only open registration. Set ALLOW_OPEN_REGISTER=true to enable. */
+app.post('/api/auth/register-fallback', async (req, res) => {
+  if (String(process.env.ALLOW_OPEN_REGISTER || '').toLowerCase() !== 'true') {
+    res.status(404).json({ error: 'Not found.' });
+    return;
+  }
+  try {
+    const email = normalizeEmail(req.body?.email || '');
+    const password = String(req.body?.password || '');
+    const roleRaw = String(req.body?.role || 'student').toLowerCase();
+    const role = roleRaw === 'admin' ? 'admin' : 'student';
+    if (!email || !password) {
+      res.status(400).json({ error: 'Email and password are required.' });
+      return;
+    }
+    if (!isValidEmail(email)) {
+      res.status(400).json({ error: 'Enter a valid email address.' });
+      return;
+    }
+    const escaped = escapeRegexLiteral(email, 254);
+    const existing = escaped
+      ? await UserModel.findOne({ email: { $regex: `^${escaped}$`, $options: 'i' } })
+      : null;
+    if (existing) {
+      res.status(409).json({ error: 'An account with this email already exists.' });
+      return;
+    }
+    const passwordHash = await hashPassword(password);
+    const user = await UserModel.create({
+      email,
+      passwordHash,
+      firstName: sanitizeHumanName(req.body?.firstName || ''),
+      lastName: sanitizeHumanName(req.body?.lastName || ''),
+      role,
+      preferences: defaultPreferences(),
+      progress: defaultProgress(),
+    });
+    res.status(201).json({
+      ok: true,
+      user: {
+        id: String(user._id),
+        email: user.email,
+        role: user.role || 'student',
+      },
+    });
+  } catch (error) {
+    if (error && error.code === 11000) {
+      res.status(409).json({ error: 'An account with this email already exists.' });
+      return;
+    }
+    console.error('[auth/register-fallback]', error?.message || error);
+    res.status(500).json({ error: 'Registration failed.' });
+  }
+});
+
 app.post('/api/auth/login', async (req, res) => {
   try {
-    console.log('[auth/login]', {
-      origin: String(req.headers.origin || '').trim() || '(no-origin)',
-      ip: String(req.headers['x-forwarded-for'] || req.socket?.remoteAddress || '').trim(),
-    });
     const parsed = loginBodySchema.safeParse(req.body || {});
     if (!parsed.success) {
       await logSecurityEvent(req, {
@@ -6461,7 +6516,19 @@ app.post('/api/auth/login', async (req, res) => {
       return;
     }
 
-    const user = await UserModel.findOne({ email });
+    const escapedEmail = escapeRegexLiteral(email, 254);
+    const user = escapedEmail
+      ? await UserModel.findOne({
+          email: { $regex: `^${escapedEmail}$`, $options: 'i' },
+        })
+      : null;
+
+    const authDebug = String(process.env.DEBUG_AUTH || '').toLowerCase() === 'true' || !IS_PRODUCTION;
+    if (authDebug) {
+      console.log('LOGIN EMAIL:', email);
+      console.log('USER FOUND:', user ? { id: String(user._id), email: user.email } : null);
+    }
+
     if (!user) {
       await logSecurityEvent(req, {
         eventType: 'auth.login_user_not_found',
@@ -6472,7 +6539,22 @@ app.post('/api/auth/login', async (req, res) => {
       return;
     }
 
-    const isValid = await bcrypt.compare(String(password), user.passwordHash || '');
+    const storedHash = String(user.passwordHash || '').trim();
+    if (!storedHash) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.login_missing_password_hash',
+        severity: 'warning',
+        actorUserId: user._id,
+        actorEmail: user.email,
+      });
+      res.status(401).json({ error: 'Invalid credentials.' });
+      return;
+    }
+
+    const isValid = await bcrypt.compare(String(password), storedHash);
+    if (authDebug) {
+      console.log('PASSWORD MATCH:', isValid);
+    }
     if (!isValid) {
       await logSecurityEvent(req, {
         eventType: 'auth.login_invalid_password',
