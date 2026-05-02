@@ -6,7 +6,7 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const devApiOrigin = env.VITE_DEV_API_ORIGIN || env.VITE_API_BASE_URL || env.VITE_API_URL || 'http://13.233.216.163:5000'
+  const devApiOrigin = env.VITE_DEV_API_ORIGIN || env.VITE_API_BASE_URL || env.VITE_API_URL || 'http://localhost:5000'
 
   return {
     plugins: [

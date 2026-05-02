@@ -125,20 +125,32 @@ const loginBodySchema = z.object({
   forceLogoutOtherDevice: z.union([z.boolean(), z.null(), z.undefined()]).optional(),
 });
 
-const PORT = Number(process.env.PORT || 5000);
-const MONGODB_URI = process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO_URI || '';
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-me';
-const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || `${JWT_SECRET}-refresh`;
 const NODE_ENV = String(process.env.NODE_ENV || 'development').toLowerCase();
 const IS_PRODUCTION = NODE_ENV === 'production';
-console.log('[env] Mongo:', !!(process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO_URI));
-console.log('[env] JWT_SECRET:', !!process.env.JWT_SECRET);
-console.log('[env] JWT_REFRESH_SECRET:', !!process.env.JWT_REFRESH_SECRET);
-console.log('[env] CORS_ALLOWED_ORIGINS:', !!String(process.env.CORS_ALLOWED_ORIGINS || '').trim());
+const PORT = Number(process.env.PORT || 5000);
+const MONGODB_URI = String(process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO_URI || '').trim();
+const JWT_SECRET_RAW = String(process.env.JWT_SECRET || '').trim();
+const JWT_REFRESH_SECRET_RAW = String(process.env.JWT_REFRESH_SECRET || '').trim();
+const JWT_SECRET = JWT_SECRET_RAW || (!IS_PRODUCTION ? 'dev-secret-change-me' : '');
+const JWT_REFRESH_SECRET = JWT_REFRESH_SECRET_RAW || (!IS_PRODUCTION ? `${JWT_SECRET}-refresh` : '');
+
+if (!IS_PRODUCTION) {
+  console.log('[env] Mongo configured:', Boolean(MONGODB_URI));
+  console.log('[env] JWT_SECRET configured:', Boolean(JWT_SECRET_RAW));
+  console.log('[env] JWT_REFRESH_SECRET configured:', Boolean(JWT_REFRESH_SECRET_RAW));
+  console.log('[env] CORS_ALLOWED_ORIGINS env present:', Boolean(String(process.env.CORS_ALLOWED_ORIGINS || '').trim()));
+  console.log(`[env] MONGODB_URI resolved: ${MONGODB_URI ? 'yes' : 'empty (dev)'}`);
+}
 if (IS_PRODUCTION) {
-  console.log(`[env] MONGODB_URI resolved: ${MONGODB_URI.trim() ? 'yes' : 'MISSING (repo-root .env for PM2 cwd)'}`);
-} else {
-  console.log(`[env] MONGODB_URI resolved: ${MONGODB_URI.trim() ? 'yes' : 'empty (dev)'}`);
+  const missingRequired = [];
+  if (!MONGODB_URI) missingRequired.push('MONGODB_URI (or DATABASE_URL / MONGO_URI)');
+  if (!JWT_SECRET_RAW) missingRequired.push('JWT_SECRET');
+  if (!JWT_REFRESH_SECRET_RAW) missingRequired.push('JWT_REFRESH_SECRET');
+  if (missingRequired.length) {
+    console.error('[env] Missing required environment variables:', missingRequired.join(', '));
+    console.error('[env] The server will continue to run; configure these values for database and authentication to work.');
+  }
+  console.log('[env] MONGODB_URI resolved:', MONGODB_URI ? 'yes' : 'MISSING');
 }
 const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '15m';
 const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
@@ -147,7 +159,8 @@ const ACCESS_TOKEN_COOKIE_MAX_AGE_MS = clamp(Number(process.env.ACCESS_TOKEN_COO
 const ACCESS_TOKEN_COOKIE_NAME = String(process.env.ACCESS_TOKEN_COOKIE_NAME || 'net360_access_token').trim() || 'net360_access_token';
 const REFRESH_TOKEN_COOKIE_NAME = String(process.env.REFRESH_TOKEN_COOKIE_NAME || 'net360_refresh_token').trim() || 'net360_refresh_token';
 const AUTH_COOKIE_DOMAIN = String(process.env.AUTH_COOKIE_DOMAIN || '').trim();
-const AUTH_COOKIE_SECURE = String(process.env.AUTH_COOKIE_SECURE || '').toLowerCase() === 'true';
+/** Production uses HTTPS + cross-site cookies; development uses lax + non-secure. */
+const AUTH_COOKIE_SECURE = IS_PRODUCTION;
 const AI_DAILY_LIMIT = Number(process.env.SMART_DAILY_LIMIT || process.env.AI_DAILY_LIMIT || 50);
 const OPENAI_MODEL = process.env.MODEL_PROVIDER_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const SIGNUP_TOKEN_TTL_MINUTES = Number(
@@ -166,12 +179,18 @@ const ADMIN_EMAILS = `${process.env.ADMIN_EMAILS || ''},shahnawaz9974balouch@gma
   .split(',')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
-const CORS_ALLOWED_ORIGINS = Array.from(new Set([
-  'http://13.233.216.163',
-  'http://13.233.216.163:3000',
-  'http://13.233.216.163:5000',
+const DEFAULT_CORS_ORIGINS = [
+  'https://net-360-preparation.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:5173',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:5173',
   'https://net360preparation.com',
   'https://www.net360preparation.com',
+];
+
+const CORS_ALLOWED_ORIGINS = Array.from(new Set([
+  ...DEFAULT_CORS_ORIGINS.flatMap((origin) => parseOriginList(origin)),
   ...parseOriginList(process.env.CORS_ALLOWED_ORIGINS || ''),
   ...parseOriginList(process.env.CORS_EXTRA_ORIGINS || ''),
   ...parseOriginList(process.env.FRONTEND_URL || ''),
@@ -181,7 +200,9 @@ const CORS_ALLOWED_ORIGINS = Array.from(new Set([
 ]))
   .filter(Boolean);
 
-console.log('[env] CORS allowlist size:', CORS_ALLOWED_ORIGINS.length);
+if (!IS_PRODUCTION) {
+  console.log('[env] CORS allowlist size:', CORS_ALLOWED_ORIGINS.length);
+}
 
 const rawIssueAuthBodyTokens = process.env.ISSUE_AUTH_BODY_TOKENS;
 const ISSUE_AUTH_BODY_TOKENS =
@@ -459,32 +480,33 @@ function isVercelPreviewOrigin(origin) {
   }
 }
 
-function isAllowedOrigin(origin) {
-  const normalizedOrigin = String(origin || '').trim().replace(/\/+$/, '').toLowerCase();
-  if (!normalizedOrigin) return true;
-  if (MOBILE_RUNTIME_ORIGINS.has(normalizedOrigin)) return true;
-  if (!IS_PRODUCTION) return true;
-  if (String(process.env.CORS_ALLOW_VERCEL || '').toLowerCase() === 'true' && isVercelPreviewOrigin(origin)) {
-    return true;
-  }
-  if (CORS_ALLOWED_ORIGINS.length === 0) return false;
-
-  return CORS_ALLOWED_ORIGINS.some((allowedOrigin) => {
-    if (!allowedOrigin) return false;
-    return allowedOrigin === normalizedOrigin;
-  });
+function normalizeCorsOrigin(origin) {
+  return String(origin || '').trim().replace(/\/+$/, '').toLowerCase();
 }
 
 const corsOptions = {
   origin(origin, callback) {
-    console.log('[cors] incoming origin:', origin || '(none — same-origin or non-browser)');
-    if (isAllowedOrigin(origin)) {
-      if (origin) console.log('[cors] allow', origin);
+    if (!origin) {
       callback(null, true);
       return;
     }
-    console.warn('[cors] blocked origin:', origin || '(no-origin)', '| allowlist:', CORS_ALLOWED_ORIGINS.length);
-    callback(null, false);
+    const normalized = normalizeCorsOrigin(origin);
+    if (MOBILE_RUNTIME_ORIGINS.has(normalized)) {
+      callback(null, true);
+      return;
+    }
+    if (String(process.env.CORS_ALLOW_VERCEL || '').toLowerCase() === 'true' && isVercelPreviewOrigin(origin)) {
+      callback(null, true);
+      return;
+    }
+    if (CORS_ALLOWED_ORIGINS.includes(normalized)) {
+      callback(null, true);
+      return;
+    }
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('[cors] blocked origin:', origin, '| allowlist entries:', CORS_ALLOWED_ORIGINS.length);
+    }
+    callback(new Error('CORS not allowed'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
@@ -495,7 +517,7 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use(express.urlencoded({ extended: false, limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use((req, res, next) => {
   req.body = sanitizePayload(req.body);
@@ -506,8 +528,9 @@ app.use((req, res, next) => {
 });
 
 app.use((req, _res, next) => {
-  const origin = String(req.headers.origin || '').trim() || '(no-origin)';
-  console.log(`[request] ${String(req.method || '').toUpperCase()} ${String(req.originalUrl || req.url || '').trim()} origin=${origin}`);
+  if (process.env.NODE_ENV !== 'production') {
+    console.log(`[request] ${String(req.method || '').toUpperCase()} ${String(req.originalUrl || req.url || '').trim()}`);
+  }
   next();
 });
 
@@ -10395,26 +10418,28 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
     if (!normalized) return null;
     return { $regex: `^${escapeRegexText(normalized)}$`, $options: 'i' };
   };
-  const maskedMongoUri = MONGODB_URI
-    ? MONGODB_URI.replace(/\/\/([^:]+):[^@]+@/, '//$1:***@')
-    : '(missing)';
-  console.log('[TEST START] Incoming params', {
-    subject,
-    part,
-    chapter,
-    section,
-    topic,
-    difficulty,
-    mode,
-    questionCount,
-    testType,
-    desiredQuestions,
-  });
-  console.log('[TEST START] Mongo context', {
-    uri: maskedMongoUri,
-    db: MCQModel?.db?.name || '(unknown)',
-    collection: MCQModel?.collection?.name || '(unknown)',
-  });
+  if (!IS_PRODUCTION) {
+    const maskedMongoUri = MONGODB_URI
+      ? MONGODB_URI.replace(/\/\/([^:]+):[^@]+@/, '//$1:***@')
+      : '(missing)';
+    console.log('[TEST START] Incoming params', {
+      subject,
+      part,
+      chapter,
+      section,
+      topic,
+      difficulty,
+      mode,
+      questionCount,
+      testType,
+      desiredQuestions,
+    });
+    console.log('[TEST START] Mongo context', {
+      uri: maskedMongoUri,
+      db: MCQModel?.db?.name || '(unknown)',
+      collection: MCQModel?.collection?.name || '(unknown)',
+    });
+  }
 
   let selected = [];
   const profileSubjectMatchers = buildSubjectInMatchers(Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects))));
@@ -10503,11 +10528,13 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
       pool = await MCQModel.find(baseFilter).lean();
     }
 
-    console.log('[TEST START] Mongo filtered count', {
-      withDifficulty: Array.isArray(pool) ? pool.length : 0,
-      usedFilterKeys: Object.keys(difficultyFilter || {}),
-      usedBaseFilterKeys: Object.keys(baseFilter || {}),
-    });
+    if (!IS_PRODUCTION) {
+      console.log('[TEST START] Mongo filtered count', {
+        withDifficulty: Array.isArray(pool) ? pool.length : 0,
+        usedFilterKeys: Object.keys(difficultyFilter || {}),
+        usedBaseFilterKeys: Object.keys(baseFilter || {}),
+      });
+    }
 
     if (!pool.length) {
       // Debug fallback: inspect subject-level pool to explain why filters removed all records.
@@ -10526,24 +10553,26 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
         .limit(200)
         .lean();
 
-      console.log('[TEST START] Empty filtered result diagnostics', {
-        requested: {
-          subject: normalizedSubject,
-          part: normalizedPart,
-          chapter: normalizedChapter,
-          section: normalizedSection,
-          topic: normalizedTopic,
-          difficulty: normalizedDifficulty,
-        },
-        subjectOnlyCount: subjectOnlyPool.length,
-        sample: subjectOnlyPool.slice(0, 5).map((item) => ({
-          chapter: String(item?.chapter || ''),
-          section: String(item?.section || ''),
-          topic: String(item?.topic || ''),
-          topics: String(item?.topics || ''),
-          difficulty: String(item?.difficulty || ''),
-        })),
-      });
+      if (!IS_PRODUCTION) {
+        console.log('[TEST START] Empty filtered result diagnostics', {
+          requested: {
+            subject: normalizedSubject,
+            part: normalizedPart,
+            chapter: normalizedChapter,
+            section: normalizedSection,
+            topic: normalizedTopic,
+            difficulty: normalizedDifficulty,
+          },
+          subjectOnlyCount: subjectOnlyPool.length,
+          sample: subjectOnlyPool.slice(0, 5).map((item) => ({
+            chapter: String(item?.chapter || ''),
+            section: String(item?.section || ''),
+            topic: String(item?.topic || ''),
+            topics: String(item?.topics || ''),
+            difficulty: String(item?.difficulty || ''),
+          })),
+        });
+      }
     }
 
     const shuffledPool = shuffle(pool);
@@ -13500,7 +13529,8 @@ app.use((err, req, res, next) => {
     return;
   }
 
-  if (String(err?.message || '').toLowerCase().includes('cors origin denied')) {
+  const errMsgLower = String(err?.message || '').toLowerCase();
+  if (errMsgLower.includes('cors not allowed') || errMsgLower.includes('cors origin denied')) {
     res.status(403).json({
       error: 'CORS origin denied. Add your exact frontend origin to CORS_ALLOWED_ORIGINS.',
     });
@@ -13526,34 +13556,39 @@ app.use((err, req, res, next) => {
 });
 
 function validateCriticalConfiguration() {
-  const problems = [];
   const warnings = [];
 
-  if (IS_PRODUCTION && (!JWT_SECRET || JWT_SECRET === 'dev-secret-change-me' || JWT_SECRET.length < 32)) {
+  if (IS_PRODUCTION && !MONGODB_URI) {
+    warnings.push('MONGODB_URI (or DATABASE_URL / MONGO_URI) is not set; database features will be unavailable.');
+  }
+  if (IS_PRODUCTION && !JWT_SECRET_RAW) {
+    warnings.push('JWT_SECRET is not set; authentication cannot issue or verify access tokens.');
+  }
+  if (IS_PRODUCTION && !JWT_REFRESH_SECRET_RAW) {
+    warnings.push('JWT_REFRESH_SECRET is not set; refresh tokens cannot be verified.');
+  }
+
+  if (IS_PRODUCTION && JWT_SECRET && (JWT_SECRET === 'dev-secret-change-me' || JWT_SECRET.length < 32)) {
     if (String(process.env.ALLOW_WEAK_JWT_BOOTSTRAP || '').toLowerCase() === 'true') {
       warnings.push('JWT_SECRET is weak or default; set a strong secret before public traffic.');
     } else {
-      problems.push('JWT_SECRET must be set to a strong random value with at least 32 characters in production.');
+      warnings.push('JWT_SECRET must be a strong random value with at least 32 characters in production.');
     }
   }
 
-  if (IS_PRODUCTION && (!JWT_REFRESH_SECRET || JWT_REFRESH_SECRET.length < 32)) {
+  if (IS_PRODUCTION && JWT_REFRESH_SECRET && JWT_REFRESH_SECRET.length < 32) {
     if (String(process.env.ALLOW_WEAK_JWT_BOOTSTRAP || '').toLowerCase() === 'true') {
       warnings.push('JWT_REFRESH_SECRET is weak; set a strong secret before public traffic.');
     } else {
-      problems.push('JWT_REFRESH_SECRET must be set to a strong random value with at least 32 characters in production.');
+      warnings.push('JWT_REFRESH_SECRET must be a strong random value with at least 32 characters in production.');
     }
   }
 
   if (IS_PRODUCTION && CORS_ALLOWED_ORIGINS.length === 0) {
-    warnings.push('CORS_ALLOWED_ORIGINS is not configured in production. Credentialed cross-origin requests will be denied until exact frontend origins are configured.');
+    warnings.push('CORS allowlist is empty; credentialed cross-origin requests may be denied until origins are configured.');
   }
 
-  if (problems.length) {
-    throw new Error(`Security configuration validation failed: ${problems.join(' ')}`);
-  }
-
-  warnings.forEach((message) => console.warn(`Security warning: ${message}`));
+  warnings.forEach((message) => console.warn(`[config] ${message}`));
 }
 
 function isMongoNetworkError(error) {
@@ -13588,11 +13623,7 @@ process.on('uncaughtException', (error) => {
 });
 
 async function bootstrap() {
-  try {
-    validateCriticalConfiguration();
-  } catch (error) {
-    console.error('[startup] Configuration validation failed; server will still listen:', error?.message || error);
-  }
+  validateCriticalConfiguration();
 
   const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`[server] running on 0.0.0.0:${PORT}`);
@@ -13636,10 +13667,14 @@ async function bootstrap() {
         console.warn(`[startup] MongoDB not ready (readyState=${rs}). Background reconnect may be active; see [mongo] logs.`);
       }
 
-      try {
-        await bootstrapAdminAccounts();
-      } catch (error) {
-        console.error('[startup] Admin bootstrap deferred:', error?.message || error);
+      if (mongoConnection?.readyState === 1) {
+        try {
+          await bootstrapAdminAccounts();
+        } catch (error) {
+          console.error('[startup] Admin bootstrap deferred:', error?.message || error);
+        }
+      } else {
+        console.warn('[startup] Admin bootstrap skipped until MongoDB is connected.');
       }
 
       try {

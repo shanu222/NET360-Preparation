@@ -15,6 +15,8 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: '5000',
+        CORS_ALLOWED_ORIGINS:
+          'https://net-360-preparation.vercel.app,http://localhost:3000,http://localhost:5173',
       },
     },
     {

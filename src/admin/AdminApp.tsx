@@ -1175,17 +1175,15 @@ const BULK_ANALYZE_MAX_ATTEMPTS = 3;
 const BULK_ANALYZE_RETRY_DELAY_MS = 650;
 const BULK_ANALYZE_REQUEST_TIMEOUT_MS = 120_000;
 const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 30_000;
-const EC2_PUBLIC_API = 'http://13.233.216.163:5000';
 const API_BASE = String(
   (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_BASE_URL
     || (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_URL
-    || (import.meta.env.PROD ? EC2_PUBLIC_API : ''),
+    || '',
 ).trim().replace(/\/+$/, '');
 const API_PREFIX = `${API_BASE}/api`;
 const AI_PARSE_ENDPOINT = `${API_PREFIX}/ai/parse-mcqs`;
 const AI_GENERATE_ENDPOINT = `${API_PREFIX}/generate-mcqs`;
 const AI_GENERATE_HEALTH_ENDPOINT = `${API_PREFIX}/health`;
-const API_FALLBACK_BASE = EC2_PUBLIC_API;
 const AI_GENERATE_TARGET_COUNT = 5;
 const AI_GENERATE_RETRY_COUNT = 3;
 const AI_GENERATE_RETRY_DELAY_MS = 2_500;
@@ -1635,7 +1633,6 @@ function buildApiBaseCandidates() {
 
   return Array.from(new Set([
     fromEnv,
-    API_FALLBACK_BASE,
     runtimeOrigin,
   ].filter(Boolean)));
 }

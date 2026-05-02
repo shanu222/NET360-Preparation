@@ -6,6 +6,8 @@ const MONGO_CONNECT_OPTIONS = {
   maxIdleTimeMS: 30_000,
   socketTimeoutMS: 45_000,
   serverSelectionTimeoutMS: 15_000,
+  /** Reduce false “buffering timed out” during Atlas cold start / brief outages */
+  bufferTimeoutMS: 120_000,
   autoIndex: process.env.NODE_ENV !== 'production',
 };
 
