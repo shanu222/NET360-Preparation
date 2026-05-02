@@ -27,9 +27,34 @@ type ApiRequestOptions = RequestInit & {
 };
 
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
-const API_BASE_URL = env.VITE_API_URL || env.VITE_API_BASE_URL || env.REACT_APP_API_URL || '';
-const MOBILE_API_BASE_URL = env.VITE_MOBILE_API_BASE_URL || API_BASE_URL;
-const DEV_API_ORIGIN = env.VITE_DEV_API_ORIGIN || env.VITE_API_URL || env.VITE_API_BASE_URL || 'http://localhost:5000';
+
+function getApiBase(): string {
+  const envUrl =
+    import.meta.env.VITE_API_URL
+    || import.meta.env.VITE_API_BASE_URL
+    || import.meta.env.REACT_APP_API_URL;
+
+  if (envUrl && String(envUrl).trim()) {
+    return String(envUrl).replace(/\/$/, '').trim();
+  }
+
+  if (import.meta.env.DEV) {
+    return 'http://localhost:5000';
+  }
+
+  throw new Error('❌ API URL not configured. Set VITE_API_URL');
+}
+
+export const API_BASE = getApiBase();
+
+console.log('🌐 API BASE URL:', API_BASE);
+
+if (!API_BASE.startsWith('https') && !import.meta.env.DEV) {
+  console.warn('⚠️ API is not using HTTPS in production');
+}
+
+const MOBILE_API_BASE_URL = String(import.meta.env.VITE_MOBILE_API_BASE_URL || '').trim() || API_BASE;
+
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
 const ADMIN_TOKEN_STORAGE_KEY = 'net360-admin-access-token';
@@ -54,7 +79,7 @@ function isNativeCapacitorRuntime() {
 function logApiConfigurationIssue(level: 'warn' | 'error', message: string, details: Record<string, unknown> = {}) {
   const payload = {
     ...details,
-    apiBaseUrl: API_BASE_URL || '(empty)',
+    apiBaseUrl: API_BASE || '(empty)',
     mobileApiBaseUrl: MOBILE_API_BASE_URL || '(empty)',
     effectiveApiBaseUrl: getEffectiveApiBaseUrl() || '(empty)',
     isNative: isNativeCapacitorRuntime(),
@@ -76,22 +101,22 @@ function isSecureNativeApiBaseUrl(apiBaseUrl: string) {
 }
 
 function getEffectiveApiBaseUrl() {
-  // Native Android should call a real backend URL to keep data in sync.
   if (isNativeCapacitorRuntime()) {
-    return MOBILE_API_BASE_URL || API_BASE_URL;
+    const mobile = String(import.meta.env.VITE_MOBILE_API_BASE_URL || '').trim();
+    if (mobile) {
+      return mobile.replace(/\/$/, '');
+    }
   }
+  return API_BASE;
+}
 
-  const isLocalBrowserDev = Boolean(env.DEV)
-    && typeof window !== 'undefined'
-    && /^(localhost|127\.0\.0\.1)$/i.test(String(window.location.hostname || ''));
-
-  // In local browser development, default to explicit backend origin
-  // so API calls remain stable even if Vite proxy is unavailable.
-  if (!API_BASE_URL && isLocalBrowserDev) {
-    return DEV_API_ORIGIN;
+export function buildUrl(path: string): string {
+  const p = String(path || '');
+  if (/^https?:\/\//i.test(p)) {
+    return p;
   }
-
-  return API_BASE_URL;
+  const base = getEffectiveApiBaseUrl().replace(/\/$/, '');
+  return `${base}${p.startsWith('/') ? p : `/${p}`}`;
 }
 
 function canFallbackToLocalMode() {
@@ -107,14 +132,7 @@ function canFallbackToLocalMode() {
 }
 
 function resolveApiPath(path: string) {
-  const effectiveBaseUrl = getEffectiveApiBaseUrl();
-  if (/^https?:\/\//i.test(path)) {
-    return path;
-  }
-  if (!effectiveBaseUrl) {
-    return path;
-  }
-  return `${effectiveBaseUrl.replace(/\/$/, '')}${path.startsWith('/') ? path : `/${path}`}`;
+  return buildUrl(path);
 }
 
 function resolveRequestTimeoutMs(path: string, explicitTimeoutMs?: number) {
@@ -181,7 +199,6 @@ function computeRetryDelayMs(attemptIndex: number, baseDelayMs: number, retryAft
 }
 
 async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: number) {
-  console.log('Calling API:', input);
   const externalSignal = init.signal;
   const controller = new AbortController();
   let didTimeout = false;
@@ -244,7 +261,7 @@ function mapTransportError(path: string, resolvedUrl: string, error: unknown) {
 }
 
 export function buildApiUrl(path: string) {
-  return resolveApiPath(path);
+  return buildUrl(path);
 }
 
 /** SSE: prefer httpOnly cookies (`withCredentials`); add `?token=` only when persisting bearer tokens (e.g. native). */
@@ -795,7 +812,6 @@ export async function downloadReport(path: string, token?: string | null): Promi
   let response: Response;
   try {
     const requestUrl = resolveApiPath(path);
-    console.log('Calling API:', requestUrl);
     response = await fetch(requestUrl, {
       headers,
       credentials: 'include',
@@ -849,7 +865,6 @@ export async function downloadBinary(path: string, options: RequestInit = {}, to
   }
 
   const requestUrl = resolveApiPath(path);
-  console.log('Calling API:', requestUrl);
   const response = await fetch(requestUrl, {
     ...options,
     headers,

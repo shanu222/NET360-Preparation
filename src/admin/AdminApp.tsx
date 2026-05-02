@@ -29,7 +29,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { apiRequest, buildApiUrl, buildSseStreamUrl } from '../app/lib/api';
+import { apiRequest, API_BASE, buildApiUrl, buildSseStreamUrl, buildUrl } from '../app/lib/api';
 import { COOKIE_SESSION_API_MARKER } from '../app/lib/authSession';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../app/lib/hierarchyDedup';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
@@ -1175,11 +1175,6 @@ const BULK_ANALYZE_MAX_ATTEMPTS = 3;
 const BULK_ANALYZE_RETRY_DELAY_MS = 650;
 const BULK_ANALYZE_REQUEST_TIMEOUT_MS = 120_000;
 const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 30_000;
-const API_BASE = String(
-  (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_BASE_URL
-    || (import.meta as ImportMeta & { env?: Record<string, string> }).env?.VITE_API_URL
-    || '',
-).trim().replace(/\/+$/, '');
 const API_PREFIX = `${API_BASE}/api`;
 const AI_PARSE_ENDPOINT = `${API_PREFIX}/ai/parse-mcqs`;
 const AI_GENERATE_ENDPOINT = `${API_PREFIX}/generate-mcqs`;
@@ -1627,14 +1622,7 @@ async function fetchWithRetry(url: string, options: RequestInit, retries = 3): P
 
 function buildApiBaseCandidates() {
   const fromEnv = String(API_BASE || '').trim().replace(/\/+$/, '');
-  const runtimeOrigin = typeof window !== 'undefined'
-    ? String(window.location.origin || '').trim().replace(/\/+$/, '')
-    : '';
-
-  return Array.from(new Set([
-    fromEnv,
-    runtimeOrigin,
-  ].filter(Boolean)));
+  return Array.from(new Set([fromEnv].filter(Boolean)));
 }
 
 function toApiPrefix(apiBase: string) {
@@ -1746,7 +1734,7 @@ async function runBackendPreflightCheck(options?: {
   }
 
   const detail = lastError instanceof Error ? ` ${lastError.message}` : '';
-  throw new Error(`Backend offline on ${healthUrl}. Start the backend API server or fix VITE_API_URL/VITE_DEV_API_ORIGIN.${detail}`);
+    throw new Error(`Backend offline on ${healthUrl}. Start the backend API server or set VITE_API_URL.${detail}`);
 }
 
 function parseBulkMcqsAsync(raw: string): Promise<{ parsed: ParsedBulkMcq[]; errors: string[] }> {
@@ -3890,10 +3878,11 @@ export default function AdminApp() {
     }
 
     try {
-      const response = await fetch(path, {
+      const response = await fetch(buildUrl(path), {
         headers: {
           Authorization: `Bearer ${authToken}`,
         },
+        credentials: 'include',
       });
 
       if (!response.ok) {
