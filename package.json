@@ -21,6 +21,7 @@
     "android:run": "npx cap run android"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1041.0",
     "@capacitor/android": "^8.2.0",
     "@capacitor/app": "^8.0.1",
     "@capacitor/camera": "^8.0.2",

@@ -30,6 +30,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { apiRequest, API_BASE, buildApiUrl, buildSseStreamUrl, buildUrl } from '../app/lib/api';
+import { uploadMediaToS3 } from '../app/lib/uploadMedia';
 import { COOKIE_SESSION_API_MARKER } from '../app/lib/authSession';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../app/lib/hierarchyDedup';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
@@ -917,6 +918,8 @@ interface AdminMCQ {
   topic: string;
   question: string;
   questionImageUrl?: string;
+  imageUrl?: string;
+  videoUrl?: string;
   questionImage?: {
     name: string;
     mimeType: string;
@@ -976,6 +979,8 @@ interface EditableBankMcq {
   topic: string;
   questionType: 'text' | 'image';
   question: string;
+  questionImageUrl: string;
+  videoUrl: string;
   questionImage: AdminMcqImageFile | null;
   optionMedia: AdminMcqOptionMedia[];
   optionTypes: Array<'text' | 'image'>;
@@ -1195,6 +1200,8 @@ interface AdminMcqPreviewQuestion {
   options: string[];
   optionMedia: AdminMcqOptionMedia[];
   questionImage: AdminMcqImageFile | null;
+  questionImageUrl?: string;
+  videoUrl?: string;
   answerKey?: string;
   difficulty: 'Easy' | 'Medium' | 'Hard';
 }
@@ -1230,6 +1237,8 @@ function emptyForm() {
     topic: 'General',
     questionType: 'text' as 'text' | 'image',
     question: '',
+    questionImageUrl: '',
+    videoUrl: '',
     questionImage: null as AdminMcqImageFile | null,
     optionMedia: [
       { key: 'A', text: '', image: null },
@@ -1967,6 +1976,10 @@ function createEditableBankMcq(item: AdminMCQ): EditableBankMcq {
     ? resolvedDifficulty
     : 'Medium';
 
+  const remoteQuestionUrl = String(item.questionImageUrl || item.imageUrl || '').trim();
+  const hasRemoteQuestionImage = Boolean(remoteQuestionUrl);
+  const hasQuestionVideo = Boolean(String(item.videoUrl || '').trim());
+
   return {
     id: item.id,
     subject: String(item.subject || '').trim().toLowerCase(),
@@ -1974,8 +1987,10 @@ function createEditableBankMcq(item: AdminMCQ): EditableBankMcq {
     chapter: String(item.chapter || '').trim(),
     section: String(item.section || '').trim(),
     topic: String(item.topic || '').trim(),
-    questionType: item.questionImage ? 'image' : 'text',
+    questionType: (item.questionImage || hasRemoteQuestionImage || hasQuestionVideo) ? 'image' : 'text',
     question: String(item.question || ''),
+    questionImageUrl: remoteQuestionUrl,
+    videoUrl: String(item.videoUrl || '').trim(),
     questionImage: item.questionImage || null,
     optionMedia: normalizedOptions,
     optionTypes: normalizedOptions.map((option) => (option.image ? 'image' : 'text')),
@@ -2189,6 +2204,7 @@ export default function AdminApp() {
   const bulkAnalyzeLastClickRef = useRef(0);
   const bulkAnalyzeRunIdRef = useRef(0);
   const [isSavingMcq, setIsSavingMcq] = useState(false);
+  const [mcqS3UploadBusy, setMcqS3UploadBusy] = useState(false);
   const [bulkDeleteMode, setBulkDeleteMode] = useState<BulkDeleteMode>('section-topic');
   const [bulkDeleteSubject, setBulkDeleteSubject] = useState('mathematics');
   const [bulkDeletePart, setBulkDeletePart] = useState('');
@@ -4344,6 +4360,30 @@ export default function AdminApp() {
     setForm(fresh);
   };
 
+  const handleMcqQuestionS3Upload = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !authToken) return;
+    try {
+      setMcqS3UploadBusy(true);
+      const { url } = await uploadMediaToS3(file, authToken);
+      const isVideo = /^video\//i.test(file.type) || /\.(mp4|webm|mov)$/i.test(file.name);
+      setForm((prev) => ({
+        ...prev,
+        questionType: 'image',
+        questionImage: null,
+        ...(isVideo
+          ? { videoUrl: url, questionImageUrl: '' }
+          : { questionImageUrl: url }),
+      }));
+      toast.success('Uploaded to S3. Submit the form to save this MCQ.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Upload failed.');
+    } finally {
+      setMcqS3UploadBusy(false);
+    }
+  }, [authToken]);
+
   const handleAddMCQ = async (event?: Pick<FormEvent<HTMLFormElement>, 'preventDefault'> & { stopPropagation?: () => void }) => {
     event?.preventDefault();
     event?.stopPropagation?.();
@@ -4370,8 +4410,8 @@ export default function AdminApp() {
       return;
     }
 
-    if (normalizedQuestionType === 'image' && !form.questionImage) {
-      toast.error('Question Image is required when Question Input Type is Image.');
+    if (normalizedQuestionType === 'image' && !form.questionImage && !String(form.questionImageUrl || '').trim() && !String(form.videoUrl || '').trim()) {
+      toast.error('Question Image is required when Question Input Type is Image (upload a file, use S3, or paste a URL).');
       return;
     }
 
@@ -4482,6 +4522,9 @@ export default function AdminApp() {
       shortTrickText: '',
       shortTrickImage: null,
       difficulty: form.difficulty,
+      questionImageUrl: String(form.questionImageUrl || '').trim(),
+      imageUrl: String(form.questionImageUrl || '').trim(),
+      videoUrl: String(form.videoUrl || '').trim(),
     };
 
     try {
@@ -5621,7 +5664,12 @@ export default function AdminApp() {
       image: option.image || null,
     }));
 
-    const hasQuestionContent = Boolean(String(draft.question || '').trim() || draft.questionImage?.dataUrl);
+    const hasQuestionContent = Boolean(
+      String(draft.question || '').trim()
+      || draft.questionImage?.dataUrl
+      || String(draft.questionImageUrl || '').trim()
+      || String(draft.videoUrl || '').trim(),
+    );
     const hasOptionContent = optionMedia.some((option) => option.text || option.image?.dataUrl);
     if (!hasQuestionContent || !hasOptionContent) {
       toast.error('Add question and options before opening preview.');
@@ -5648,6 +5696,8 @@ export default function AdminApp() {
           options: optionMedia.map((option) => option.text || `[${option.key}]`),
           optionMedia,
           questionImage: draft.questionImage || null,
+          questionImageUrl: String(draft.questionImageUrl || '').trim(),
+          videoUrl: String(draft.videoUrl || '').trim(),
           answerKey,
           difficulty: draft.difficulty === 'Easy' || draft.difficulty === 'Hard' ? draft.difficulty : 'Medium',
         },
@@ -5721,6 +5771,30 @@ export default function AdminApp() {
     });
   };
 
+  const handleBankMcqQuestionS3Upload = async (mcqId: string, event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file || !authToken) return;
+    try {
+      setMcqS3UploadBusy(true);
+      const { url } = await uploadMediaToS3(file, authToken);
+      const isVideo = /^video\//i.test(file.type) || /\.(mp4|webm|mov)$/i.test(file.name);
+      updateBankEditDraft(mcqId, (prev) => ({
+        ...prev,
+        questionType: 'image',
+        questionImage: null,
+        ...(isVideo
+          ? { videoUrl: url, questionImageUrl: '' }
+          : { questionImageUrl: url }),
+      }));
+      toast.success('Uploaded to S3. Save changes to persist.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Upload failed.');
+    } finally {
+      setMcqS3UploadBusy(false);
+    }
+  };
+
   const saveBankMcqChanges = async (mcqId: string) => {
     if (!authToken) return;
     if (!selectedHierarchy) {
@@ -5763,8 +5837,8 @@ export default function AdminApp() {
       return;
     }
 
-    if (draft.questionType === 'image' && !draft.questionImage) {
-      toast.error('Question image is required when question type is image.');
+    if (draft.questionType === 'image' && !draft.questionImage && !String(draft.questionImageUrl || '').trim() && !String(draft.videoUrl || '').trim()) {
+      toast.error('Question image or hosted URL is required when question type is Image.');
       return;
     }
 
@@ -5819,6 +5893,9 @@ export default function AdminApp() {
       shortTrickText: String(draft.shortTrickText || '').trim(),
       shortTrickImage: draft.shortTrickImage || null,
       difficulty: draft.difficulty,
+      questionImageUrl: String(draft.questionImageUrl || '').trim(),
+      imageUrl: String(draft.questionImageUrl || '').trim(),
+      videoUrl: String(draft.videoUrl || '').trim(),
     };
 
     try {
@@ -8575,6 +8652,62 @@ export default function AdminApp() {
                         </div>
                         ) : null}
 
+                        <div className="space-y-2 rounded-md border border-dashed border-indigo-200/80 bg-white/50 p-2">
+                          <Label>Hosted media (S3)</Label>
+                          <p className="text-xs text-muted-foreground">
+                            Upload to your bucket (admin) or paste a URL. Still images and PDFs use the image URL; MP4, WebM, and MOV use the video URL.
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Input
+                              type="file"
+                              accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml,video/mp4,video/webm,video/quicktime,application/pdf"
+                              disabled={mcqS3UploadBusy}
+                              onChange={(e) => void handleMcqQuestionS3Upload(e)}
+                              className="max-w-sm text-xs"
+                            />
+                            {mcqS3UploadBusy ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-indigo-600" aria-hidden /> : null}
+                          </div>
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            <div className="space-y-1">
+                              <Label className="text-xs">Question image / PDF URL</Label>
+                              <Input
+                                value={form.questionImageUrl}
+                                onChange={(e) => setForm((prev) => ({ ...prev, questionImageUrl: e.target.value }))}
+                                placeholder="https://..."
+                              />
+                            </div>
+                            <div className="space-y-1">
+                              <Label className="text-xs">Question video URL</Label>
+                              <Input
+                                value={form.videoUrl}
+                                onChange={(e) => setForm((prev) => ({ ...prev, videoUrl: e.target.value }))}
+                                placeholder="https://...mp4"
+                              />
+                            </div>
+                          </div>
+                          {form.questionImageUrl ? (
+                            /\.pdf(\?|$)/i.test(form.questionImageUrl) ? (
+                              <a
+                                href={normalizeMcqImageSrc(form.questionImageUrl)}
+                                className="mt-2 inline-block text-xs font-medium text-indigo-600 underline"
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Open PDF preview
+                              </a>
+                            ) : (
+                              <img
+                                src={normalizeMcqImageSrc(form.questionImageUrl)}
+                                alt="Question media preview"
+                                className="mt-2 max-h-40 rounded border object-contain"
+                              />
+                            )
+                          ) : null}
+                          {form.videoUrl ? (
+                            <video src={form.videoUrl} controls className="mt-2 max-h-48 w-full rounded border bg-black" />
+                          ) : null}
+                        </div>
+
                         <div className="space-y-2">
                           <div className="flex items-center justify-between gap-2">
                             <Label>Options (A-D)</Label>
@@ -9228,9 +9361,9 @@ export default function AdminApp() {
 
                           <div className="space-y-1.5">
                             <Label>Question Image</Label>
-                            {normalizeMcqImageSrc(draft.questionImage?.dataUrl) ? (
+                            {normalizeMcqImageSrc(draft.questionImage?.dataUrl || draft.questionImageUrl) ? (
                               <img
-                                src={normalizeMcqImageSrc(draft.questionImage?.dataUrl)}
+                                src={normalizeMcqImageSrc(draft.questionImage?.dataUrl || draft.questionImageUrl)}
                                 alt="Current question image"
                                 className="edit-image-preview"
                               />
@@ -9271,6 +9404,58 @@ export default function AdminApp() {
                                   Remove
                                 </Button>
                               </div>
+                            ) : null}
+                          </div>
+
+                          <div className="space-y-2 rounded-md border border-dashed border-indigo-200/70 p-2">
+                            <Label className="text-xs">Hosted media (S3)</Label>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <Input
+                                type="file"
+                                accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml,video/mp4,video/webm,video/quicktime,application/pdf"
+                                disabled={mcqS3UploadBusy}
+                                onChange={(e) => void handleBankMcqQuestionS3Upload(item.id, e)}
+                                className="max-w-sm text-xs"
+                              />
+                              {mcqS3UploadBusy ? <Loader2 className="h-4 w-4 animate-spin text-indigo-600" aria-hidden /> : null}
+                            </div>
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <div className="space-y-1">
+                                <Label className="text-xs">Image / PDF URL</Label>
+                                <Input
+                                  value={draft.questionImageUrl}
+                                  onChange={(e) => updateBankEditDraft(item.id, (current) => ({ ...current, questionImageUrl: e.target.value }))}
+                                  placeholder="https://..."
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <Label className="text-xs">Video URL</Label>
+                                <Input
+                                  value={draft.videoUrl}
+                                  onChange={(e) => updateBankEditDraft(item.id, (current) => ({ ...current, videoUrl: e.target.value }))}
+                                  placeholder="https://...mp4"
+                                />
+                              </div>
+                            </div>
+                            {draft.questionImageUrl && !/\.pdf(\?|$)/i.test(draft.questionImageUrl) ? (
+                              <img
+                                src={normalizeMcqImageSrc(draft.questionImageUrl)}
+                                alt="Hosted question preview"
+                                className="mt-2 max-h-36 rounded border object-contain"
+                              />
+                            ) : null}
+                            {draft.questionImageUrl && /\.pdf(\?|$)/i.test(draft.questionImageUrl) ? (
+                              <a
+                                href={normalizeMcqImageSrc(draft.questionImageUrl)}
+                                className="mt-2 inline-block text-xs text-indigo-600 underline"
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                Open PDF
+                              </a>
+                            ) : null}
+                            {draft.videoUrl ? (
+                              <video src={draft.videoUrl} controls className="mt-2 max-h-40 w-full rounded border bg-black" />
                             ) : null}
                           </div>
 

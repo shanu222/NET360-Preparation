@@ -31,6 +31,8 @@ const mcqSchema = new mongoose.Schema(
     topic: { type: String, required: true, index: true },
     question: { type: String, required: true },
     questionImageUrl: { type: String, default: '' },
+    imageUrl: { type: String, default: '' },
+    videoUrl: { type: String, default: '' },
     questionImage: { type: mcqImageSchema, default: null },
     options: { type: [String], required: true },
     optionMedia: { type: [mcqOptionSchema], default: [] },

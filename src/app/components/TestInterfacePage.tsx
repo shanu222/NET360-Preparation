@@ -32,6 +32,8 @@ interface SessionQuestion {
     size: number;
     dataUrl: string;
   } | null;
+  questionImageUrl?: string;
+  videoUrl?: string;
   difficulty: Difficulty;
 }
 
@@ -365,6 +367,8 @@ export function TestInterfacePage() {
               dataUrl: String(row.questionImage.dataUrl || ''),
             }
             : null,
+          questionImageUrl: String(row.questionImageUrl || row.imageUrl || '').trim(),
+          videoUrl: String(row.videoUrl || '').trim(),
           difficulty: (difficulty === 'Easy' || difficulty === 'Hard' ? difficulty : 'Medium') as Difficulty,
         };
       });
@@ -957,8 +961,9 @@ export function TestInterfacePage() {
   const questionNumber = currentIndex + 1;
   const optionRows = buildOptionMedia(question);
   const questionImageSrc = normalizeMcqImageSrc(
-    question.questionImage?.dataUrl || String((question as unknown as { questionImageUrl?: string }).questionImageUrl || ''),
+    question.questionImage?.dataUrl || String(question.questionImageUrl || ''),
   );
+  const questionVideoSrc = String(question.videoUrl || '').trim();
 
   return (
     <div className="min-h-screen bg-[#f2f6fb] p-1.5 text-[#0d2c5a] sm:p-2.5">
@@ -984,6 +989,13 @@ export function TestInterfacePage() {
                   src={questionImageSrc}
                   alt="Question visual"
                   className="mcq-image mt-3 max-h-60 w-full"
+                />
+              ) : null}
+              {questionVideoSrc ? (
+                <video
+                  src={questionVideoSrc}
+                  controls
+                  className="mcq-image mt-3 max-h-60 w-full bg-black"
                 />
               ) : null}
             </div>

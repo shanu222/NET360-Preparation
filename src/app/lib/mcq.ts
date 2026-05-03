@@ -44,6 +44,8 @@ export interface MCQ {
 	topic: string;
 	question: string;
 	questionImageUrl?: string;
+	imageUrl?: string;
+	videoUrl?: string;
 	questionImage?: McqImageFile | null;
 	options: string[];
 	optionMedia?: McqOptionMedia[];

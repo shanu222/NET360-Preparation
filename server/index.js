@@ -20,6 +20,7 @@ import mammoth from 'mammoth';
 import multer from 'multer';
 import * as cheerio from 'cheerio';
 import { connectMongo } from './lib/mongo.js';
+import { createUploadRouter } from './routes/upload.js';
 import { buildMcqContentFingerprint } from './lib/mcqIdentity.js';
 import { encryptSecurityAnswerPlaintext, decryptSecurityAnswerCiphertext } from './lib/securityAnswerCrypto.js';
 import { UserModel } from './models/User.js';
@@ -600,6 +601,18 @@ app.use(
     legacyHeaders: false,
     message: { error: 'AI endpoint rate limit reached. Please wait a moment and retry.' },
   }),
+);
+
+app.use(
+  '/api/upload',
+  rateLimit({
+    windowMs: 60 * 1000,
+    max: 40,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: 'Too many uploads. Please wait and try again.' },
+  }),
+  createUploadRouter({ authMiddleware, requireAdmin }),
 );
 
 const mcqsReadLimiter = rateLimit({
@@ -4358,6 +4371,8 @@ function serializeMcq(item) {
     topic,
     question: String(item.question || item.question_text || '').trim(),
     questionImageUrl: String(item.questionImageUrl || item.question_image_url || '').trim(),
+    imageUrl: String(item.imageUrl || item.questionImageUrl || item.question_image_url || '').trim(),
+    videoUrl: String(item.videoUrl || '').trim(),
     questionImage: normalizedQuestionImage,
     options: resolvedOptions,
     optionMedia: resolvedOptionMedia,
@@ -10734,6 +10749,8 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
       topic: question.topic,
       question: question.question,
       questionImageUrl: String(question.questionImageUrl || '').trim(),
+      imageUrl: String(question.imageUrl || question.questionImageUrl || '').trim(),
+      videoUrl: String(question.videoUrl || '').trim(),
       questionImage: serialized.questionImage || null,
       options: serialized.options,
       optionMedia: serialized.optionMedia || [],
@@ -13132,6 +13149,8 @@ function buildAdminMcqDocument(input = {}) {
   const {
     question,
     questionImageUrl = '',
+    imageUrl = '',
+    videoUrl = '',
     questionImage = null,
     options,
     optionMedia,
@@ -13174,6 +13193,7 @@ function buildAdminMcqDocument(input = {}) {
     throw new Error('topic is required for this subject.');
   }
 
+  const normalizedQuestionText = normalizeRichMcqText(question || '');
   const normalizedQuestionImage = normalizeMcqImageFile(questionImage, 'Question image');
   const normalizedExplanationImage = normalizeMcqImageFile(explanationImage, 'Explanation image');
   const normalizedShortTrickImage = normalizeMcqImageFile(shortTrickImage, 'Short trick image');
@@ -13181,10 +13201,12 @@ function buildAdminMcqDocument(input = {}) {
   const normalizedOptions = normalized.options;
   const normalizedOptionMedia = normalized.optionMedia;
 
-  const normalizedQuestionText = normalizeRichMcqText(question || '');
-  const hasQuestionImage = Boolean(normalizedQuestionImage) || Boolean(String(questionImageUrl || '').trim());
+  const resolvedQuestionImageUrl = String(questionImageUrl || imageUrl || '').trim();
+  const resolvedVideoUrl = String(videoUrl || '').trim();
+  const hasQuestionImage = Boolean(normalizedQuestionImage) || Boolean(resolvedQuestionImageUrl) || Boolean(resolvedVideoUrl);
+
   if (!normalizedQuestionText && !hasQuestionImage) {
-    throw new Error('Question text or question image is required.');
+    throw new Error('Question text, question image, or question video is required.');
   }
 
   const resolvedTopic = isFlatTopicSubject
@@ -13201,7 +13223,9 @@ function buildAdminMcqDocument(input = {}) {
 
   return {
     question: normalizedQuestionText || 'Refer to attached image.',
-    questionImageUrl: String(questionImageUrl || '').trim(),
+    questionImageUrl: resolvedQuestionImageUrl,
+    imageUrl: resolvedQuestionImageUrl,
+    videoUrl: resolvedVideoUrl,
     questionImage: normalizedQuestionImage,
     options: normalizedOptions,
     optionMedia: normalizedOptionMedia,
@@ -13302,7 +13326,7 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
   }
 
   const payload = {};
-  ['question', 'questionImageUrl', 'answer', 'subject', 'part', 'chapter', 'section', 'topic', 'difficulty', 'tip', 'explanationText', 'shortTrickText'].forEach((field) => {
+  ['question', 'questionImageUrl', 'imageUrl', 'videoUrl', 'answer', 'subject', 'part', 'chapter', 'section', 'topic', 'difficulty', 'tip', 'explanationText', 'shortTrickText'].forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(req.body, field)) {
       const value = String(req.body[field] ?? '');
       payload[field] = field === 'subject'
@@ -13314,6 +13338,18 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
           : value;
     }
   });
+
+  if (Object.prototype.hasOwnProperty.call(req.body, 'questionImageUrl') || Object.prototype.hasOwnProperty.call(req.body, 'imageUrl')) {
+    const fromQuestion = Object.prototype.hasOwnProperty.call(req.body, 'questionImageUrl')
+      ? String(req.body.questionImageUrl ?? '').trim()
+      : '';
+    const fromImage = Object.prototype.hasOwnProperty.call(req.body, 'imageUrl')
+      ? String(req.body.imageUrl ?? '').trim()
+      : '';
+    const merged = fromQuestion || fromImage;
+    payload.questionImageUrl = merged;
+    payload.imageUrl = merged;
+  }
 
   try {
     if (Object.prototype.hasOwnProperty.call(req.body, 'questionImage')) {
@@ -13382,22 +13418,41 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
     payload.tip = explanation;
   }
 
-  if (Object.prototype.hasOwnProperty.call(payload, 'question')) {
+  const needsQuestionValidation =
+    Object.prototype.hasOwnProperty.call(payload, 'question')
+    || Object.prototype.hasOwnProperty.call(payload, 'questionImage')
+    || Object.prototype.hasOwnProperty.call(payload, 'questionImageUrl')
+    || Object.prototype.hasOwnProperty.call(payload, 'imageUrl')
+    || Object.prototype.hasOwnProperty.call(payload, 'videoUrl');
+
+  if (needsQuestionValidation) {
     const existingForQuestion = await findMcqByAdminIdentifier(mcqId, { lean: true });
     if (!existingForQuestion) {
       res.status(404).json({ error: 'MCQ not found.' });
       return;
     }
 
-    const nextQuestion = normalizeRichMcqText(payload.question || '');
-    const nextQuestionImage = payload.questionImage || existingForQuestion.questionImage || null;
-    const nextLegacyImageUrl = String(payload.questionImageUrl || existingForQuestion.questionImageUrl || '').trim();
-    if (!nextQuestion && !nextQuestionImage && !nextLegacyImageUrl) {
-      res.status(400).json({ error: 'Question text or question image is required.' });
+    const nextQuestion = Object.prototype.hasOwnProperty.call(payload, 'question')
+      ? normalizeRichMcqText(payload.question || '')
+      : normalizeRichMcqText(existingForQuestion.question || '');
+    const nextQuestionImage = Object.prototype.hasOwnProperty.call(payload, 'questionImage')
+      ? payload.questionImage
+      : existingForQuestion.questionImage || null;
+    const nextLegacyImageUrl = String(
+      payload.questionImageUrl !== undefined ? payload.questionImageUrl : existingForQuestion.questionImageUrl || '',
+    ).trim()
+      || String(payload.imageUrl !== undefined ? payload.imageUrl : existingForQuestion.imageUrl || '').trim();
+    const nextVideoUrl = String(
+      payload.videoUrl !== undefined ? payload.videoUrl : existingForQuestion.videoUrl || '',
+    ).trim();
+    if (!nextQuestion && !nextQuestionImage && !nextLegacyImageUrl && !nextVideoUrl) {
+      res.status(400).json({ error: 'Question text, question image, or question video is required.' });
       return;
     }
 
-    payload.question = nextQuestion || 'Refer to attached image.';
+    if (Object.prototype.hasOwnProperty.call(payload, 'question')) {
+      payload.question = nextQuestion || 'Refer to attached image.';
+    }
   }
 
   if (!payload.topic && (payload.chapter || payload.section)) {
