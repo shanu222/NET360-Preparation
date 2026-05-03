@@ -427,22 +427,15 @@ function sanitizePayload(value) {
 }
 
 /**
- * Production SPA origins (apex vs www differ — both required). Dev servers + optional env extras.
- * Unknown origins receive 403 JSON (STEP 6) before Express completes CORS negotiation.
+ * CORS: fixed allowlist only (no env-based filtering, no 403 pre-middleware).
+ * `callback(null, false)` for disallowed origins — do not throw.
  */
-const baseAllowedOrigins = [
+const allowedOrigins = [
   'https://net360preparation.com',
   'https://www.net360preparation.com',
   'http://localhost:5173',
   'http://localhost:3000',
 ];
-
-const mergedExtraOrigins = String(process.env.CORS_ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((s) => s.trim().replace(/\/+$/, ''))
-  .filter(Boolean);
-
-const allowedOrigins = [...new Set([...baseAllowedOrigins, ...mergedExtraOrigins])];
 
 const corsMiddleware = cors({
   origin(origin, callback) {
@@ -452,25 +445,14 @@ const corsMiddleware = cors({
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-    console.warn('[cors] not allowed:', origin);
-    return callback(new Error('CORS not allowed'));
+    console.log('Blocked by CORS:', origin);
+    return callback(null, false);
   },
   credentials: true,
 });
 
 app.use((req, res, next) => {
   console.log('[request]', req.method, req.originalUrl || req.url);
-  next();
-});
-
-/** Reject browser/tab origins not on allowlist (explicit 403 for debugging non-browser clients too). */
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  if (origin && !allowedOrigins.includes(origin)) {
-    console.warn('[cors] origin denied:', origin);
-    res.status(403).json({ error: 'CORS origin denied' });
-    return;
-  }
   next();
 });
 
@@ -13591,11 +13573,6 @@ app.use((err, req, res, next) => {
 
   if (res.headersSent) {
     next(err);
-    return;
-  }
-
-  if (String(err?.message || '').includes('CORS not allowed')) {
-    res.status(403).json({ error: 'CORS origin denied' });
     return;
   }
 

@@ -62,7 +62,7 @@ Create environment variables for backend service:
 - `SMART_DAILY_LIMIT` = optional, default `50`
 - Admin access: set `role: "admin"` on the user document in MongoDB (no env email list)
 - `API_PORT` = optional when `PORT` is unset; server default is `5000`
-- `CORS_ALLOWED_ORIGINS` = optional comma-separated **extra** origins (production apex + `www` + local dev are built in)
+- CORS allowlist is **fixed in code** (`server/index.js`): production apex + `www` + local dev ports — **no env-based origin list**
 - `MAX_JSON_BODY_MB` = optional request body limit, default `10`
 - `REQUEST_TIMEOUT_MS` = optional API request timeout in milliseconds, default `30000`
 
@@ -93,9 +93,8 @@ If admin/client requests fail with network errors in production:
 1. Verify frontend base URL variables
 - `VITE_API_URL` must point to the API service (for example `https://api.net360preparation.com`)
 
-2. Verify backend CORS variables
-- Set `CORS_ALLOWED_ORIGINS` to comma-separated frontend origins (for example `https://net360-preparation.onrender.com,https://net360-admin.onrender.com`)
-- Optional aliases supported by backend: `FRONTEND_URL`, `FRONTEND_ORIGIN`, `WEB_ORIGIN`
+2. Verify backend CORS
+- Allowed origins are defined only in `server/index.js` (not via env). Ensure your frontend hostname matches (`https://net360preparation.com` or `https://www.net360preparation.com`).
 
 3. Verify API routes and health
 - Admin AI generation route: `POST /api/admin/ai-generate-mcq`

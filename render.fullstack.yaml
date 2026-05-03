@@ -27,9 +27,6 @@ services:
         value: gpt-4o-mini
       - key: AI_DAILY_LIMIT
         value: 50
-      - key: CORS_ALLOWED_ORIGINS
-        # Comma-separated frontend origins allowed to call this API.
-        value: https://net360-preparation.onrender.com,https://net360-admin.onrender.com
 
   - type: web
     name: net360-preparation

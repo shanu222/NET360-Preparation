@@ -15,9 +15,6 @@ module.exports = {
       env: {
         NODE_ENV: 'production',
         PORT: '5000',
-        // Optional merge into allowlist (apex + www are built into server/index.js).
-        CORS_ALLOWED_ORIGINS:
-          'https://net360preparation.com,https://www.net360preparation.com,https://net-360-preparation.vercel.app,http://localhost:3000,http://localhost:5173',
       },
     },
     {
