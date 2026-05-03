@@ -6394,6 +6394,7 @@ app.post('/api/auth/register-fallback', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
+    console.log('LOGIN HIT', req.body);
     console.log('Login attempt:', req.body?.email);
     const parsed = loginBodySchema.safeParse(req.body || {});
     if (!parsed.success) {
