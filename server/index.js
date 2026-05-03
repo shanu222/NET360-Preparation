@@ -432,15 +432,39 @@ function sanitizePayload(value) {
 }
 
 /**
- * Credentialed browser requests (cookies): reflect `Origin` in `Access-Control-Allow-Origin`.
- * Avoids production mismatches when the SPA runs on Vercel previews, www vs apex, or new domains.
- * Optional: set `CORS_ORIGIN` to a single origin string to restrict (otherwise allow any requesting origin).
+ * Browsers require `Access-Control-Allow-Origin` to match the page origin exactly.
+ * Apex (`net360preparation.com`) and `www` are different origins — both must be listed.
+ * Optional `CORS_ALLOWED_ORIGINS` (comma-separated) merges in previews / extra hosts.
  */
-const corsStaticOrigin = String(process.env.CORS_ORIGIN || '').trim();
-const corsMiddleware = cors({
-  origin: corsStaticOrigin || true,
+const defaultAllowedOrigins = [
+  'https://net360preparation.com',
+  'https://www.net360preparation.com',
+  'http://localhost:5173',
+  'http://localhost:3000',
+];
+
+const extraOrigins = String(process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim().replace(/\/+$/, ''))
+  .filter(Boolean);
+
+const allowedOrigins = [...new Set([...defaultAllowedOrigins, ...extraOrigins])];
+
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin) {
+      return callback(null, true);
+    }
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    console.log('CORS BLOCKED:', origin);
+    return callback(null, false);
+  },
   credentials: true,
-});
+};
+
+const corsMiddleware = cors(corsOptions);
 
 app.use((req, res, next) => {
   console.log('[request]', req.method, req.originalUrl || req.url);
