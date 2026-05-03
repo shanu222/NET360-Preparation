@@ -426,20 +426,8 @@ function sanitizePayload(value) {
   return sanitizePrimitive(value);
 }
 
-const allowedOrigins = ['https://net360preparation.com', 'https://www.net360preparation.com'];
-
 const corsMiddleware = cors({
-  origin(origin, callback) {
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    console.log('Blocked origin:', origin);
-    // Temporary: allow reflection so credentialed requests are not dropped by CORS (tighten later).
-    return callback(null, true);
-  },
+  origin: true,
   credentials: true,
 });
 
