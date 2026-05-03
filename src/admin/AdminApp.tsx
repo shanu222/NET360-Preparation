@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { apiRequest, API_BASE, buildApiUrl, buildSseStreamUrl, buildUrl } from '../app/lib/api';
 import { uploadMediaToS3 } from '../app/lib/uploadMedia';
+import { brandLogoUrl } from '../app/lib/publicMedia';
 import { COOKIE_SESSION_API_MARKER } from '../app/lib/authSession';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../app/lib/hierarchyDedup';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
@@ -75,7 +76,6 @@ const ADMIN_SUPPORT_REACTIONS = ['😀', '🙏', '👍', '❤️', '✅'];
 const ADMIN_SIDEBAR_EXPANDED_KEY = 'net360-admin-sidebar-expanded';
 const ADMIN_DESKTOP_MIN_WIDTH = 1024;
 const ADMIN_TABLET_COLLAPSE_MAX_WIDTH = 1280;
-const ADMIN_BRAND_LOGO_SRC = '/net360-logo.png';
 const ADMIN_MCQ_TEST_PREVIEW_STORAGE_KEY = 'net360-admin-mcq-test-preview';
 
 type MathFieldLikeElement = HTMLElement & {
@@ -6836,7 +6836,7 @@ export default function AdminApp() {
                   aria-hidden="true"
                 >
                   <img
-                    src={ADMIN_BRAND_LOGO_SRC}
+                    src={brandLogoUrl()}
                     alt=""
                     className="h-6 w-6 rounded-full object-cover"
                     loading="lazy"

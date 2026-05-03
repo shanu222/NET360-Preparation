@@ -1,7 +1,8 @@
 import { apiRequest } from './api';
 
 /**
- * Upload a file to S3 via POST /api/upload (admin-only). Returns the public URL and object key.
+ * Upload a file to S3 via POST /api/upload (admin-only). Uses streaming multer-s3 on the server.
+ * Returns the public URL and object key.
  */
 export async function uploadMediaToS3(
   file: File,

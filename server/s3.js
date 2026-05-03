@@ -1,56 +1,8 @@
 import path from 'node:path';
-import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
+import { PutObjectCommand } from '@aws-sdk/client-s3';
+import { getS3Client, getS3Config, buildVirtualHostedS3Url } from './config/s3.js';
 
-/**
- * Configure via:
- *   AWS_REGION (or AWS_DEFAULT_REGION)
- *   AWS_ACCESS_KEY_ID (or AWS_ACCESS_KEY)
- *   AWS_SECRET_ACCESS_KEY (or AWS_SECRET_KEY)
- *   AWS_BUCKET_NAME
- * Optional: AWS_PUBLIC_BASE_URL (e.g. CloudFront) for returned URLs; otherwise virtual-hosted S3 URL.
- * Optional: S3_OBJECT_ACL=public-read | none (default public-read; use "none" if bucket uses BucketOwnerEnforced)
- */
-
-export function getS3Config() {
-  const region = String(process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || '').trim();
-  const accessKeyId = String(
-    process.env.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY || '',
-  ).trim();
-  const secretAccessKey = String(
-    process.env.AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_KEY || '',
-  ).trim();
-  const bucket = String(process.env.AWS_BUCKET_NAME || '').trim();
-  return { region, accessKeyId, secretAccessKey, bucket };
-}
-
-export function isS3Configured() {
-  const c = getS3Config();
-  return Boolean(c.region && c.accessKeyId && c.secretAccessKey && c.bucket);
-}
-
-let cachedClient;
-
-export function getS3Client() {
-  if (!isS3Configured()) {
-    throw new Error('S3 is not configured (check AWS_REGION, credentials, AWS_BUCKET_NAME).');
-  }
-  if (!cachedClient) {
-    const { region, accessKeyId, secretAccessKey } = getS3Config();
-    cachedClient = new S3Client({
-      region,
-      credentials: { accessKeyId, secretAccessKey },
-    });
-  }
-  return cachedClient;
-}
-
-export function buildVirtualHostedS3Url(bucket, region, key) {
-  const safeKey = String(key || '')
-    .split('/')
-    .map((segment) => encodeURIComponent(segment))
-    .join('/');
-  return `https://${bucket}.s3.${region}.amazonaws.com/${safeKey}`;
-}
+export { getS3Config, isS3Configured, getS3Client, buildVirtualHostedS3Url } from './config/s3.js';
 
 function extensionFromMime(mime = '') {
   const m = String(mime || '').toLowerCase();
@@ -67,6 +19,8 @@ function extensionFromMime(mime = '') {
 }
 
 /**
+ * Buffer upload (e.g. legacy callers). Prefer streaming via middleware/upload + multer-s3 for large files.
+ *
  * @param {{ buffer: Buffer; mimetype?: string; originalname?: string }} file
  * @returns {Promise<{ url: string; key: string; bucket: string }>}
  */

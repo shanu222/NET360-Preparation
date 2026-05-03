@@ -57,6 +57,7 @@ import { Toaster, toast } from 'sonner';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
+import { brandLogoUrl } from './lib/publicMedia';
 
 function useMinWidthSm(): boolean {
   return useSyncExternalStore(
@@ -78,7 +79,6 @@ function SessionReady({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-const BRAND_LOGO_SRC = '/net360-logo.png';
 const THEME_STORAGE_KEY = 'net360-theme-mode';
 
 type ThemeMode = 'light' | 'dark';
@@ -559,7 +559,7 @@ export default function App() {
                     <div className="shrink-0 border-b border-white/20 p-5 dark:border-slate-600/50">
                       <div className="flex items-center gap-2">
                         <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg border border-white/25 bg-transparent shadow-sm dark:border-slate-500/55 dark:bg-slate-900/35">
-                          <img src={BRAND_LOGO_SRC} alt="NET360 logo" className="h-full w-full scale-[1.3] object-contain" loading="lazy" />
+                          <img src={brandLogoUrl()} alt="NET360 logo" className="h-full w-full scale-[1.3] object-contain" loading="lazy" />
                         </div>
                         <div>
                           <h2 className="text-lg font-semibold text-white dark:text-slate-100">NET360</h2>
@@ -582,7 +582,7 @@ export default function App() {
                 </Sheet>
                 <div className="flex min-w-0 items-center gap-2">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-indigo-100 bg-transparent shadow-[0_6px_12px_rgba(76,93,172,0.14)]">
-                    <img src={BRAND_LOGO_SRC} alt="NET360 logo" className="h-full w-full scale-[1.3] object-contain" loading="lazy" />
+                    <img src={brandLogoUrl()} alt="NET360 logo" className="h-full w-full scale-[1.3] object-contain" loading="lazy" />
                   </div>
                   <div className="min-w-0">
                     <h1 className="min-w-0 max-w-full text-base leading-snug text-indigo-950 line-clamp-2 sm:line-clamp-1 sm:text-lg md:line-clamp-none md:text-xl">

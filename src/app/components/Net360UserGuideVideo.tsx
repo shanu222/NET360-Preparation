@@ -1,5 +1,4 @@
-/** Public folder: `public/assets/videos/net360-guide.mp4` (Vite serves `public/` at site root). */
-const VIDEO_SRC = `${import.meta.env.BASE_URL}assets/videos/net360-guide.mp4`;
+import { userGuideVideoUrl } from '../lib/publicMedia';
 
 /**
  * Login-area user guide: native HTML5 video for broad mobile/desktop support.
@@ -20,7 +19,7 @@ export function Net360UserGuideVideoSection() {
           controls
           preload="metadata"
           playsInline
-          src={VIDEO_SRC}
+          src={userGuideVideoUrl()}
         >
           Your browser does not support the video tag.
         </video>

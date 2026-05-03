@@ -1,4 +1,5 @@
 import { MapPin } from 'lucide-react';
+import { publicMediaUrl } from '../lib/publicMedia';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 
@@ -18,7 +19,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'main-campus',
     shortName: 'NUST Main Campus',
     fullName: 'National University of Sciences and Technology (H-12, Islamabad)',
-    imageCandidates: ['/schools/islamabad-main-campus.png'],
+    imageCandidates: ['schools/islamabad-main-campus.png'],
     imageSourceLabel: 'islamabad-main-campus.png',
     location: 'NUST H-12 Main Campus, Islamabad',
     programmes: [
@@ -33,7 +34,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'smme',
     shortName: 'SMME',
     fullName: 'School of Mechanical & Manufacturing Engineering',
-    imageCandidates: ['/schools/smme.png'],
+    imageCandidates: ['schools/smme.png'],
     imageSourceLabel: 'smme.png',
     location: 'NUST H-12 Main Campus, Islamabad',
     programmes: ['Mechanical Engineering', 'Manufacturing Engineering', 'Robotics & Intelligent Systems'],
@@ -43,7 +44,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'seecs-school',
     shortName: 'SEECS',
     fullName: 'School of Electrical Engineering & Computer Science',
-    imageCandidates: ['/schools/scee.png'],
+    imageCandidates: ['schools/scee.png'],
     imageSourceLabel: 'scee.png',
     location: 'NUST H-12 Main Campus, Islamabad',
     programmes: ['Electrical Engineering', 'Computer Science', 'Software Engineering', 'Artificial Intelligence'],
@@ -53,7 +54,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'scme',
     shortName: 'SCME',
     fullName: 'School of Chemical & Materials Engineering',
-    imageCandidates: ['/schools/scme.png'],
+    imageCandidates: ['schools/scme.png'],
     imageSourceLabel: 'scme.png',
     location: 'NUST H-12 Main Campus, Islamabad',
     programmes: ['Chemical Engineering', 'Materials Engineering', 'Polymer Engineering'],
@@ -63,7 +64,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'sns',
     shortName: 'SNS',
     fullName: 'School of Natural Sciences',
-    imageCandidates: ['/schools/sns.png'],
+    imageCandidates: ['schools/sns.png'],
     imageSourceLabel: 'sns.png',
     location: 'NUST H-12 Main Campus, Islamabad',
     programmes: ['Mathematics', 'Physics', 'Chemistry', 'Biotechnology'],
@@ -73,7 +74,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'sines',
     shortName: 'SINES',
     fullName: 'School of Interdisciplinary Engineering & Sciences',
-    imageCandidates: ['/schools/sines.png'],
+    imageCandidates: ['schools/sines.png'],
     imageSourceLabel: 'sines.png',
     location: 'NUST H-12 Main Campus, Islamabad',
     programmes: ['Data Science', 'Systems Engineering', 'Engineering Management', 'Applied AI'],
@@ -83,7 +84,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'asab',
     shortName: 'ASAB',
     fullName: 'Atta-ur-Rahman School of Applied Biosciences',
-    imageCandidates: ['/schools/asab.png'],
+    imageCandidates: ['schools/asab.png'],
     imageSourceLabel: 'asab.png',
     location: 'NUST H-12 Main Campus, Islamabad',
     programmes: ['Applied Biosciences', 'Food Sciences', 'Agribusiness & Biosystems'],
@@ -93,7 +94,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'nbs',
     shortName: 'NBS',
     fullName: 'NUST Business School',
-    imageCandidates: ['/schools/nbs.png'],
+    imageCandidates: ['schools/nbs.png'],
     imageSourceLabel: 'nbs.png',
     location: 'NUST H-12 Main Campus, Islamabad',
     programmes: ['BBA', 'Accounting & Finance', 'Economics', 'Business Analytics'],
@@ -103,7 +104,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 's3h',
     shortName: 'S3H',
     fullName: 'School of Social Sciences & Humanities',
-    imageCandidates: ['/schools/s3h.png'],
+    imageCandidates: ['schools/s3h.png'],
     imageSourceLabel: 's3h.png',
     location: 'NUST H-12 Main Campus, Islamabad',
     programmes: ['Psychology', 'Mass Communication', 'International Relations', 'Public Administration'],
@@ -113,7 +114,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'sada',
     shortName: 'SADA',
     fullName: 'School of Art, Design & Architecture',
-    imageCandidates: ['/schools/sada.png'],
+    imageCandidates: ['schools/sada.png'],
     imageSourceLabel: 'sada.png',
     location: 'NUST H-12 Main Campus, Islamabad',
     programmes: ['Architecture', 'Industrial Design', 'Visual Communication Design', 'City & Regional Planning'],
@@ -123,7 +124,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'nls',
     shortName: 'NLS',
     fullName: 'NUST Law School',
-    imageCandidates: ['/schools/nls.png'],
+    imageCandidates: ['schools/nls.png'],
     imageSourceLabel: 'nls.png',
     location: 'NUST H-12 Main Campus, Islamabad',
     programmes: ['LLB', 'Legal Research', 'Constitutional & International Law'],
@@ -133,7 +134,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'nice',
     shortName: 'NICE',
     fullName: 'NUST Institute of Civil Engineering',
-    imageCandidates: ['/schools/nice.png'],
+    imageCandidates: ['schools/nice.png'],
     imageSourceLabel: 'nice.png',
     location: 'NUST Risalpur Campus, Khyber Pakhtunkhwa',
     programmes: ['Civil Engineering', 'Transportation Engineering', 'Geotechnical & Structural Studies'],
@@ -143,7 +144,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'karachi-campus',
     shortName: 'KHI Campus',
     fullName: 'NUST Karachi Campus',
-    imageCandidates: ['/schools/karachi-campus.png'],
+    imageCandidates: ['schools/karachi-campus.png'],
     imageSourceLabel: 'karachi-campus.png',
     location: 'Karachi, Sindh',
     programmes: ['Regional Program Support', 'Industry Linkages', 'Student Facilitation'],
@@ -153,7 +154,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'quetta-campus',
     shortName: 'Quetta Campus',
     fullName: 'NUST Quetta Campus',
-    imageCandidates: ['/schools/quetta-campus.png'],
+    imageCandidates: ['schools/quetta-campus.png'],
     imageSourceLabel: 'quetta-campus.png',
     location: 'Quetta, Balochistan',
     programmes: ['Regional Program Support', 'Student Facilitation', 'Academic Outreach'],
@@ -163,7 +164,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'rawalpindi-campuses',
     shortName: 'RWP Campuses',
     fullName: 'NUST Rawalpindi Campuses',
-    imageCandidates: ['/schools/rawalpindi-campuses.png'],
+    imageCandidates: ['schools/rawalpindi-campuses.png'],
     imageSourceLabel: 'rawalpindi-campuses.png',
     location: 'Rawalpindi, Punjab',
     programmes: ['Engineering Schools', 'Military-affiliated Institutes', 'Technical Program Streams'],
@@ -173,7 +174,7 @@ const SCHOOL_CARDS: SchoolCard[] = [
     id: 'risalpur-campuses',
     shortName: 'Risalpur Campuses',
     fullName: 'NUST Risalpur Campuses',
-    imageCandidates: ['/schools/risalpur-campuses.png'],
+    imageCandidates: ['schools/risalpur-campuses.png'],
     imageSourceLabel: 'risalpur-campuses.png',
     location: 'Risalpur, Khyber Pakhtunkhwa',
     programmes: ['Engineering Programs', 'Aviation-linked Academic Streams', 'Civil Engineering Tracks'],
@@ -182,10 +183,8 @@ const SCHOOL_CARDS: SchoolCard[] = [
 ];
 
 function resolveImagePath(card: SchoolCard) {
-  // First valid candidate wins; fallback intentionally points to missing asset,
-  // which triggers ImageWithFallback placeholder until a correct image is uploaded.
-  if (card.imageCandidates.length) return card.imageCandidates[0];
-  return '/schools/missing-image.png';
+  const raw = card.imageCandidates.length ? card.imageCandidates[0] : 'schools/missing-image.png';
+  return publicMediaUrl(raw.replace(/^\/+/, ''));
 }
 
 export function NUSTSchoolsCampuses() {

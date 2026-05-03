@@ -536,6 +536,29 @@ app.use((req, _res, next) => {
 
 app.get('/', (req, res) => res.send('API is running'));
 
+app.get('/api/public/media-config', (_req, res) => {
+  const mediaBaseUrl = String(
+    process.env.PUBLIC_MEDIA_BASE_URL || process.env.AWS_PUBLIC_BASE_URL || '',
+  )
+    .trim()
+    .replace(/\/+$/, '');
+  const withBase = (suffix) => {
+    if (!mediaBaseUrl) return '';
+    const s = suffix.startsWith('/') ? suffix : `/${suffix}`;
+    return `${mediaBaseUrl}${s}`;
+  };
+  res.json({
+    mediaBaseUrl,
+    brandLogoUrl: String(process.env.PUBLIC_BRAND_LOGO_URL || '').trim() || withBase('brand/net360-logo.png'),
+    userGuideVideoUrl: String(process.env.PUBLIC_USER_GUIDE_VIDEO_URL || '').trim() || withBase('videos/net360-guide.mp4'),
+    loginBannerUrl: String(process.env.PUBLIC_LOGIN_BANNER_URL || '').trim() || withBase('images/login-banner.png'),
+    appPromoImageUrl: String(process.env.PUBLIC_APP_PROMO_IMAGE_URL || '').trim() || withBase('images/app-promo.png'),
+    /** Browser resolves against the web app origin; use PUBLIC_FAVICON_URL for absolute CDN favicon. */
+    faviconUrl: String(process.env.PUBLIC_FAVICON_URL || '').trim() || '/logo.svg',
+    schoolsPathPrefix: withBase('schools'),
+  });
+});
+
 app.use(
   '/api',
   rateLimit({
@@ -5461,6 +5484,19 @@ async function buildAnalyticsPdfBuffer({ attempts, user, questionBankTotal = 0 }
     .sort((a, b) => a.week.localeCompare(b.week))
     .slice(-8);
 
+  let logoBuffer = null;
+  const logoUrl = String(process.env.PUBLIC_BRAND_LOGO_URL || '').trim();
+  if (logoUrl && typeof fetch === 'function') {
+    try {
+      const logoResponse = await fetch(logoUrl);
+      if (logoResponse.ok) {
+        logoBuffer = Buffer.from(await logoResponse.arrayBuffer());
+      }
+    } catch {
+      // Proceed without logo if remote asset is unavailable.
+    }
+  }
+
   return new Promise((resolve, reject) => {
     const doc = new PDFDocument({ size: 'A4', margins: { top: 48, bottom: 48, left: 46, right: 46 } });
     const chunks = [];
@@ -5468,11 +5504,12 @@ async function buildAnalyticsPdfBuffer({ attempts, user, questionBankTotal = 0 }
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    const logoPath = path.join(__dirname, '..', 'public', 'net360-logo.png');
-    try {
-      doc.image(logoPath, doc.page.margins.left, doc.page.margins.top - 4, { fit: [36, 36] });
-    } catch {
-      // Proceed without logo if the asset is unavailable.
+    if (logoBuffer) {
+      try {
+        doc.image(logoBuffer, doc.page.margins.left, doc.page.margins.top - 4, { fit: [36, 36] });
+      } catch {
+        // Proceed without logo if decode fails.
+      }
     }
 
     doc.fillColor('#0f172a').font('Helvetica-Bold').fontSize(20).text('NET360 Performance Report', doc.page.margins.left + 48, doc.page.margins.top, {
