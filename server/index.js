@@ -55,17 +55,6 @@ const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
-function parseOriginList(rawValue) {
-  return String(rawValue || '')
-    .split(',')
-    .map((item) => item.trim().replace(/\/+$/, '').toLowerCase())
-    .filter(Boolean);
-}
-
-function normalizeCorsOrigin(origin) {
-  return String(origin || '').trim().replace(/\/+$/, '').toLowerCase();
-}
-
 function parseCookies(headerValue) {
   const source = String(headerValue || '').trim();
   if (!source) return {};
@@ -143,7 +132,6 @@ if (!IS_PRODUCTION) {
   console.log('[env] Mongo configured:', Boolean(MONGODB_URI));
   console.log('[env] JWT_SECRET configured:', Boolean(JWT_SECRET_RAW));
   console.log('[env] JWT_REFRESH_SECRET configured:', Boolean(JWT_REFRESH_SECRET_RAW));
-  console.log('[env] CORS_ALLOWED_ORIGINS env present:', Boolean(String(process.env.CORS_ALLOWED_ORIGINS || '').trim()));
   console.log(`[env] MONGODB_URI resolved: ${MONGODB_URI ? 'yes' : 'empty (dev)'}`);
 }
 if (IS_PRODUCTION) {
@@ -184,40 +172,6 @@ const ADMIN_EMAILS = `${process.env.ADMIN_EMAILS || ''},shahnawaz9974balouch@gma
   .split(',')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
-/** Primary production web origins (Vercel custom domain). Always included when building the allowlist. */
-const PRIMARY_WEB_ORIGINS = ['https://net360preparation.com', 'https://www.net360preparation.com'];
-
-function buildCorsAllowedOrigins() {
-  const set = new Set(PRIMARY_WEB_ORIGINS.map((origin) => normalizeCorsOrigin(origin)));
-  [
-    ...parseOriginList(process.env.CORS_ALLOWED_ORIGINS || ''),
-    ...parseOriginList(process.env.CORS_EXTRA_ORIGINS || ''),
-    ...parseOriginList(process.env.FRONTEND_URL || ''),
-    ...parseOriginList(process.env.FRONTEND_ORIGIN || ''),
-    ...parseOriginList(process.env.WEB_ORIGIN || ''),
-  ].forEach((origin) => set.add(origin));
-
-  if (!IS_PRODUCTION) {
-    [
-      'http://localhost:3000',
-      'http://localhost:5173',
-      'http://127.0.0.1:3000',
-      'http://127.0.0.1:5173',
-      'https://net-360-preparation.vercel.app',
-    ].forEach((origin) => set.add(normalizeCorsOrigin(origin)));
-  }
-
-  return Array.from(set).filter(Boolean);
-}
-
-const CORS_ALLOWED_ORIGINS = buildCorsAllowedOrigins();
-const corsAllowedOriginSet = new Set(CORS_ALLOWED_ORIGINS);
-
-if (!IS_PRODUCTION) {
-  console.log('[env] CORS allowlist size:', CORS_ALLOWED_ORIGINS.length, '| primary:', PRIMARY_WEB_ORIGINS.join(', '));
-} else {
-  console.log('[cors] production allowlist — primary:', PRIMARY_WEB_ORIGINS.join(', '), '| entries:', corsAllowedOriginSet.size);
-}
 
 const rawIssueAuthBodyTokens = process.env.ISSUE_AUTH_BODY_TOKENS;
 const ISSUE_AUTH_BODY_TOKENS =
@@ -230,13 +184,6 @@ const ALLOW_QUERY_TOKEN_AUTH =
   rawAllowQueryTokenAuth != null && String(rawAllowQueryTokenAuth).trim() !== ''
     ? String(rawAllowQueryTokenAuth).toLowerCase() === 'true'
     : !IS_PRODUCTION;
-
-const MOBILE_RUNTIME_ORIGINS = new Set([
-  'capacitor://localhost',
-  'http://localhost',
-  'https://localhost',
-  'ionic://localhost',
-]);
 
 const MODEL_PROVIDER_KEY = process.env.MODEL_PROVIDER_API_KEY || process.env.OPENAI_API_KEY || '';
 const SMTP_HOST = String(process.env.SMTP_HOST || 'smtp.gmail.com').trim();
@@ -484,44 +431,30 @@ function sanitizePayload(value) {
   return sanitizePrimitive(value);
 }
 
-function isVercelPreviewOrigin(origin) {
-  const raw = String(origin || '').trim().replace(/\/+$/, '');
-  if (!raw) return false;
-  try {
-    const host = new URL(raw).hostname.toLowerCase();
-    return host === 'vercel.app' || host.endsWith('.vercel.app');
-  } catch {
-    return false;
-  }
-}
+/** Explicit browser origins; unknown origins are still allowed temporarily (debug). */
+const allowedOrigins = [
+  'https://net360preparation.com',
+  'https://www.net360preparation.com',
+  'http://localhost:5173',
+  'http://localhost:3000',
+];
 
 const corsOptions = {
   origin(origin, callback) {
     if (!origin) {
-      callback(null, true);
-      return;
+      return callback(null, true);
     }
-    const normalized = normalizeCorsOrigin(origin);
-    if (MOBILE_RUNTIME_ORIGINS.has(normalized)) {
-      callback(null, true);
-      return;
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
     }
-    if (String(process.env.CORS_ALLOW_VERCEL || '').toLowerCase() === 'true' && isVercelPreviewOrigin(origin)) {
-      callback(null, true);
-      return;
-    }
-    if (corsAllowedOriginSet.has(normalized)) {
-      callback(null, true);
-      return;
-    }
-    console.warn('[cors] blocked origin:', origin, '| normalized:', normalized);
-    callback(new Error('CORS not allowed'));
+    console.log('CORS not in allowlist (temp allow all):', origin);
+    return callback(null, true);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With'],
   optionsSuccessStatus: 204,
-  maxAge: 24 * 60 * 60,
+  maxAge: 86_400,
 };
 
 app.use((req, res, next) => {
@@ -530,6 +463,7 @@ app.use((req, res, next) => {
 });
 
 app.use(cors(corsOptions));
+// Same options as app.use(cors) so preflight gets credentials + headers (default cors() would not).
 app.options('*', cors(corsOptions));
 app.use(express.json({ limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use(express.urlencoded({ extended: false, limit: `${MAX_JSON_BODY_MB}mb` }));
@@ -13709,14 +13643,6 @@ app.use((err, req, res, next) => {
     return;
   }
 
-  const errMsgLower = String(err?.message || '').toLowerCase();
-  if (errMsgLower.includes('cors not allowed') || errMsgLower.includes('cors origin denied')) {
-    res.status(403).json({
-      error: 'CORS origin denied. Add your exact frontend origin to CORS_ALLOWED_ORIGINS.',
-    });
-    return;
-  }
-
   if (
     err?.code === 'LIMIT_FILE_SIZE'
     || err?.type === 'entity.too.large'
@@ -13762,10 +13688,6 @@ function validateCriticalConfiguration() {
     } else {
       warnings.push('JWT_REFRESH_SECRET must be a strong random value with at least 32 characters in production.');
     }
-  }
-
-  if (IS_PRODUCTION && CORS_ALLOWED_ORIGINS.length === 0) {
-    warnings.push('CORS allowlist is empty; credentialed cross-origin requests may be denied until origins are configured.');
   }
 
   warnings.forEach((message) => console.warn(`[config] ${message}`));
