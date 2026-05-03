@@ -513,7 +513,7 @@ app.use(
   '/api/auth/login',
   rateLimit({
     windowMs: 60 * 1000,
-    max: 5,
+    max: 30,
     standardHeaders: true,
     legacyHeaders: false,
     message: { error: 'Too many login attempts. Please wait a minute and try again.' },
@@ -6445,14 +6445,10 @@ app.post('/api/auth/login', async (req, res) => {
     const user = escapedEmail
       ? await UserModel.findOne({
           email: { $regex: `^${escapedEmail}$`, $options: 'i' },
-        })
+        }).select('+password')
       : null;
 
-    const authDebug = String(process.env.DEBUG_AUTH || '').toLowerCase() === 'true' || !IS_PRODUCTION;
-    if (authDebug) {
-      console.log('LOGIN EMAIL:', email);
-      console.log('USER FOUND:', user ? { id: String(user._id), email: user.email } : null);
-    }
+    console.log('USER FOUND:', user ? { id: String(user._id), email: user.email } : null);
 
     if (!user) {
       await logSecurityEvent(req, {
@@ -6464,7 +6460,7 @@ app.post('/api/auth/login', async (req, res) => {
       return;
     }
 
-    const storedHash = String(user.passwordHash || '').trim();
+    const storedHash = String(user.passwordHash || user.password || '').trim();
     if (!storedHash) {
       await logSecurityEvent(req, {
         eventType: 'auth.login_missing_password_hash',
@@ -6477,9 +6473,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const isValid = await bcrypt.compare(String(password), storedHash);
-    if (authDebug) {
-      console.log('PASSWORD MATCH:', isValid);
-    }
+    console.log('PASSWORD MATCH:', isValid);
     if (!isValid) {
       await logSecurityEvent(req, {
         eventType: 'auth.login_invalid_password',
@@ -6526,8 +6520,9 @@ app.post('/api/auth/login', async (req, res) => {
       actorEmail: user.email,
     });
     console.log('[auth/login] success', { email: user.email, role });
-    res.json(buildAuthJsonBody(payload));
+    res.status(200).json(buildAuthJsonBody(payload));
   } catch (error) {
+    console.error('LOGIN ERROR:', error?.message || error);
     console.error('[auth/login] server error:', error?.message || error);
     await logSecurityEvent(req, {
       eventType: 'auth.login_error',

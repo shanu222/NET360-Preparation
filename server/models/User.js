@@ -65,6 +65,8 @@ const userSchema = new mongoose.Schema(
   {
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     passwordHash: { type: String, required: true },
+    /** Legacy bcrypt hash (same format as passwordHash). Prefer passwordHash; use .select('+password') on login. */
+    password: { type: String, select: false },
     firstName: { type: String, default: '' },
     lastName: { type: String, default: '' },
     phone: { type: String, default: '' },
