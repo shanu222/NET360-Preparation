@@ -6,6 +6,7 @@ import { useAuth } from '../context/AuthContext';
 import { apiRequest, probeAuthenticatedSession } from '../lib/api';
 import { COOKIE_SESSION_API_MARKER, readPersistedStudentAccessToken, shouldPersistAuthTokens } from '../lib/authSession';
 import { McqMathText, normalizeMcqImageSrc } from './McqRender';
+import { getMediaUrl } from '../lib/publicMedia';
 import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
 
 type Difficulty = 'Easy' | 'Medium' | 'Hard';
@@ -200,7 +201,7 @@ export function TestInterfacePage() {
   const { user } = useAuth();
   const candidatePhoto = useMemo(() => {
     try {
-      return localStorage.getItem(PROFILE_PHOTO_STORAGE_KEY) || '';
+      return getMediaUrl(localStorage.getItem(PROFILE_PHOTO_STORAGE_KEY) || '');
     } catch {
       return '';
     }
@@ -963,7 +964,7 @@ export function TestInterfacePage() {
   const questionImageSrc = normalizeMcqImageSrc(
     question.questionImage?.dataUrl || String(question.questionImageUrl || ''),
   );
-  const questionVideoSrc = String(question.videoUrl || '').trim();
+  const questionVideoSrc = getMediaUrl(String(question.videoUrl || '').trim());
 
   return (
     <div className="min-h-screen bg-[#f2f6fb] p-1.5 text-[#0d2c5a] sm:p-2.5">

@@ -16,7 +16,7 @@ import { apiRequest } from '../lib/api';
 import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK, PAYMENT_METHODS } from '../lib/paymentMethods';
 import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
-import { loginBannerImageUrl, appPromoImageUrl } from '../lib/publicMedia';
+import { loginBannerImageUrl, appPromoImageUrl, getMediaUrl } from '../lib/publicMedia';
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
 
@@ -1204,7 +1204,7 @@ export function Profile({ onNavigate }: ProfileProps) {
           <CardContent className="space-y-4">
             <div className="flex flex-col items-center text-center">
               <Avatar className="w-24 h-24 mb-4">
-                <AvatarImage src={avatarPreview} />
+                <AvatarImage src={getMediaUrl(avatarPreview)} />
                 <AvatarFallback className="text-2xl">{avatarText}</AvatarFallback>
               </Avatar>
               <h3>{`${localProfile.firstName || 'Student'} ${localProfile.lastName || ''}`.trim()}</h3>

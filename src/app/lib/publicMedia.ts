@@ -1,56 +1,75 @@
 /**
- * Public marketing/media assets are served from S3 (or CloudFront), not bundled in the web/APK build.
+ * S3/CDN media URLs — MongoDB stores object keys; the client builds absolute URLs.
  *
- * Set `VITE_PUBLIC_MEDIA_BASE_URL` to your bucket or CDN prefix (no trailing slash), e.g.
- * `https://net360-media.s3.ap-south-1.amazonaws.com/static`
+ * Set `VITE_S3_BASE_URL` (no trailing slash), e.g.
+ * `https://net360-media.s3.ap-south-1.amazonaws.com`
  *
- * Optional overrides (full URLs): `VITE_BRAND_LOGO_URL`, `VITE_USER_GUIDE_VIDEO_URL`
+ * Falls back to `VITE_PUBLIC_MEDIA_BASE_URL`, then the production bucket host below.
+ * Optional full-URL overrides per asset: `VITE_BRAND_LOGO_URL`, `VITE_USER_GUIDE_VIDEO_URL`, …
  *
- * Server exposes the same defaults via GET /api/public/media-config (PUBLIC_* env vars).
+ * Server: `GET /api/public/media-config` includes `mediaBaseUrl` and `s3BaseUrl` (env `S3_BASE_URL`).
  */
+
+const DEFAULT_S3_BASE_URL = 'https://net360-media.s3.ap-south-1.amazonaws.com';
 
 function trimSlash(input: string): string {
   return input.replace(/\/+$/, '');
 }
 
-/** Base URL for objects under the static prefix in S3 (no trailing slash). */
-export function getPublicMediaBaseUrl(): string {
-  return trimSlash(String(import.meta.env.VITE_PUBLIC_MEDIA_BASE_URL || '').trim());
+/** Public S3 (or CloudFront) origin for keys — no trailing slash. */
+export function getS3BaseUrl(): string {
+  const fromEnv = String(
+    import.meta.env.VITE_S3_BASE_URL || import.meta.env.VITE_PUBLIC_MEDIA_BASE_URL || '',
+  ).trim();
+  return trimSlash(fromEnv || DEFAULT_S3_BASE_URL);
 }
 
 /**
- * Resolve a path relative to the media base, e.g. `schools/smme.png`.
- * When no base is configured, returns a root-relative URL for local dev (still expects assets elsewhere).
+ * Resolve stored media for `<img>` / `<video>` `src`.
+ * `http(s)`, `data:`, `blob:` → unchanged; otherwise treated as S3 key (leading slashes stripped).
  */
+export function getMediaUrl(path: string | null | undefined): string {
+  if (path == null) return '';
+  const raw = String(path).trim();
+  if (!raw) return '';
+  if (/^(data:|blob:)/i.test(raw)) return raw;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const key = raw.replace(/^\/+/, '');
+  const base = getS3BaseUrl();
+  if (!base) return `/${key}`;
+  return `${base}/${key}`;
+}
+
+/** @deprecated Prefer getMediaUrl — same behavior for bucket-relative paths. */
 export function publicMediaUrl(relativePath: string): string {
-  const path = relativePath.replace(/^\/+/, '');
-  const base = getPublicMediaBaseUrl();
-  if (!base) {
-    return `/${path}`;
-  }
-  return `${base}/${path}`;
+  return getMediaUrl(relativePath);
+}
+
+/** Same origin list as getS3BaseUrl (legacy name). */
+export function getPublicMediaBaseUrl(): string {
+  return getS3BaseUrl();
 }
 
 export function brandLogoUrl(): string {
   const override = String(import.meta.env.VITE_BRAND_LOGO_URL || '').trim();
   if (override) return override;
-  return publicMediaUrl('brand/net360-logo.png');
+  return getMediaUrl('brand/net360-logo.png');
 }
 
 export function userGuideVideoUrl(): string {
   const override = String(import.meta.env.VITE_USER_GUIDE_VIDEO_URL || '').trim();
   if (override) return override;
-  return publicMediaUrl('videos/net360-guide.mp4');
+  return getMediaUrl('videos/net360-guide.mp4');
 }
 
 export function loginBannerImageUrl(): string {
   const override = String(import.meta.env.VITE_LOGIN_BANNER_URL || '').trim();
   if (override) return override;
-  return publicMediaUrl('images/login-banner.png');
+  return getMediaUrl('images/login-banner.png');
 }
 
 export function appPromoImageUrl(): string {
   const override = String(import.meta.env.VITE_APP_PROMO_IMAGE_URL || '').trim();
   if (override) return override;
-  return publicMediaUrl('images/app-promo.png');
+  return getMediaUrl('images/app-promo.png');
 }

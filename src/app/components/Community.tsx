@@ -10,6 +10,7 @@ import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { apiRequest, buildSseStreamUrl } from '../lib/api';
+import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl } from '../lib/authSession';
 import { useAuth } from '../context/AuthContext';
 import { toast } from 'sonner';
@@ -284,7 +285,7 @@ const CommunityAvatar = memo(function CommunityAvatar({
   if (image) {
     return (
       <img
-        src={image}
+        src={getMediaUrl(image)}
         alt={fallback}
         className={`${sizeClass} rounded-full border object-cover`}
         loading="lazy"
@@ -1529,7 +1530,7 @@ function CommunityInner() {
                   {profilePictureDataUrl ? (
                     <div className="flex items-center gap-3 rounded-md border p-2">
                       <img
-                        src={profilePictureDataUrl}
+                        src={getMediaUrl(profilePictureDataUrl)}
                         alt="Profile preview"
                         className="h-12 w-12 rounded-full border object-cover"
                         loading="lazy"

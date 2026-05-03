@@ -478,8 +478,9 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => res.send('API is running'));
 
 app.get('/api/public/media-config', (_req, res) => {
+  const DEFAULT_S3_BASE = 'https://net360-media.s3.ap-south-1.amazonaws.com';
   const mediaBaseUrl = String(
-    process.env.PUBLIC_MEDIA_BASE_URL || process.env.AWS_PUBLIC_BASE_URL || '',
+    process.env.S3_BASE_URL || process.env.PUBLIC_MEDIA_BASE_URL || process.env.AWS_PUBLIC_BASE_URL || DEFAULT_S3_BASE,
   )
     .trim()
     .replace(/\/+$/, '');
@@ -490,6 +491,7 @@ app.get('/api/public/media-config', (_req, res) => {
   };
   res.json({
     mediaBaseUrl,
+    s3BaseUrl: mediaBaseUrl,
     brandLogoUrl: String(process.env.PUBLIC_BRAND_LOGO_URL || '').trim() || withBase('brand/net360-logo.png'),
     userGuideVideoUrl: String(process.env.PUBLIC_USER_GUIDE_VIDEO_URL || '').trim() || withBase('videos/net360-guide.mp4'),
     loginBannerUrl: String(process.env.PUBLIC_LOGIN_BANNER_URL || '').trim() || withBase('images/login-banner.png'),

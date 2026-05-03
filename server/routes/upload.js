@@ -44,7 +44,9 @@ export function createUploadRouter({ authMiddleware, requireAdmin }) {
       try {
         const { bucket, region } = getS3Config();
         const key = req.file.key;
-        const publicBase = String(process.env.AWS_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+        const publicBase = String(
+          process.env.S3_BASE_URL || process.env.AWS_PUBLIC_BASE_URL || '',
+        ).trim().replace(/\/+$/, '');
         const url = publicBase
           ? `${publicBase}/${key}`
           : req.file.location || buildVirtualHostedS3Url(bucket, region, key);
@@ -52,6 +54,7 @@ export function createUploadRouter({ authMiddleware, requireAdmin }) {
         res.json({
           url,
           key,
+          baseUrl: publicBase || undefined,
         });
       } catch (error) {
         console.error('[api/upload]', error?.message || error);

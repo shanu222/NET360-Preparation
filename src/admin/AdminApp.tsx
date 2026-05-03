@@ -31,7 +31,7 @@ import {
 } from 'lucide-react';
 import { apiRequest, API_BASE, buildApiUrl, buildSseStreamUrl, buildUrl } from '../app/lib/api';
 import { uploadMediaToS3 } from '../app/lib/uploadMedia';
-import { brandLogoUrl } from '../app/lib/publicMedia';
+import { brandLogoUrl, getMediaUrl } from '../app/lib/publicMedia';
 import { COOKIE_SESSION_API_MARKER } from '../app/lib/authSession';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../app/lib/hierarchyDedup';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
@@ -8457,7 +8457,7 @@ export default function AdminApp() {
                                         </div>
                                         {item.explanationImageDataUrl ? (
                                           <img
-                                            src={item.explanationImageDataUrl}
+                                            src={normalizeMcqImageSrc(item.explanationImageDataUrl)}
                                             alt={`Parsed explanation image ${mcqIndex + 1}`}
                                             className="max-h-32 w-auto rounded border border-indigo-300/60 bg-white/70 object-contain p-1"
                                           />
@@ -8704,7 +8704,7 @@ export default function AdminApp() {
                             )
                           ) : null}
                           {form.videoUrl ? (
-                            <video src={form.videoUrl} controls className="mt-2 max-h-48 w-full rounded border bg-black" />
+                            <video src={getMediaUrl(String(form.videoUrl).trim())} controls className="mt-2 max-h-48 w-full rounded border bg-black" />
                           ) : null}
                         </div>
 
@@ -9455,7 +9455,7 @@ export default function AdminApp() {
                               </a>
                             ) : null}
                             {draft.videoUrl ? (
-                              <video src={draft.videoUrl} controls className="mt-2 max-h-40 w-full rounded border bg-black" />
+                              <video src={getMediaUrl(String(draft.videoUrl).trim())} controls className="mt-2 max-h-40 w-full rounded border bg-black" />
                             ) : null}
                           </div>
 

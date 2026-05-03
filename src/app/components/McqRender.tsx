@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
+import { getMediaUrl } from '../lib/publicMedia';
 
 declare global {
   interface Window {
@@ -85,9 +86,9 @@ function normalizeMathSegment(value: string) {
 export function normalizeMcqImageSrc(src: string | null | undefined) {
   const value = String(src || '').trim();
   if (!value) return '';
-  if (/^(data:|blob:|https?:\/\/)/i.test(value)) return value;
-  if (value.startsWith('/')) return value;
-  return `/${value.replace(/^\.\//, '')}`;
+  if (/^(data:|blob:)/i.test(value)) return value;
+  if (/^https?:\/\//i.test(value)) return value;
+  return getMediaUrl(value);
 }
 
 export function McqMathText({
