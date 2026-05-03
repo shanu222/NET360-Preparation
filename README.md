@@ -68,8 +68,7 @@ Create environment variables for backend service:
 
 Frontend environment variable:
 
-- `VITE_API_URL` = required full backend URL for web and native builds (for example `https://api.net360preparation.com`; local dev often `http://localhost:5000`)
-- `VITE_DISABLE_LOCAL_API_FALLBACK` = set `true` for production mobile builds to require live backend
+- `VITE_API_URL` = required full backend URL for web and native builds (for example `https://api.net360preparation.com`; local dev often `http://localhost:5000`). All requests use this variable only.
 
 For Android packaging, create `.env.android` from `.env.android.example`.
 
@@ -93,7 +92,6 @@ If admin/client requests fail with network errors in production:
 
 1. Verify frontend base URL variables
 - `VITE_API_URL` must point to the API service (for example `https://api.net360preparation.com`)
-- Set `VITE_DISABLE_LOCAL_API_FALLBACK=true` in production to avoid silent local fallback
 
 2. Verify backend CORS variables
 - Set `CORS_ALLOWED_ORIGINS` to comma-separated frontend origins (for example `https://net360-preparation.onrender.com,https://net360-admin.onrender.com`)

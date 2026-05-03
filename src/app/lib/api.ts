@@ -1,4 +1,3 @@
-import { localApiRequest, localDownloadReport } from './localApi';
 import {
   COOKIE_SESSION_API_MARKER,
   hasStoredAuthCredentials,
@@ -8,8 +7,6 @@ import {
 } from './authSession';
 
 type RuntimeEnv = {
-  VITE_FORCE_LOCAL_API?: string;
-  VITE_DISABLE_LOCAL_API_FALLBACK?: string;
   VITE_ADMIN_ONLY?: string;
   DEV?: boolean;
 };
@@ -23,7 +20,9 @@ type ApiRequestOptions = RequestInit & {
 
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
 
-console.log("API BASE:", import.meta.env.VITE_API_URL);
+if (import.meta.env.DEV) {
+  console.log('[api] VITE_API_URL', import.meta.env.VITE_API_URL);
+}
 
 if (!import.meta.env.VITE_API_URL) {
   throw new Error('Missing VITE_API_URL in production');
@@ -64,7 +63,6 @@ function logApiConfigurationIssue(level: 'warn' | 'error', message: string, deta
   const payload = {
     ...details,
     apiBaseUrl: API_BASE || '(empty)',
-    effectiveApiBaseUrl: getEffectiveApiBaseUrl() || '(empty)',
     isNative: isNativeCapacitorRuntime(),
   };
 
@@ -83,29 +81,13 @@ function isSecureNativeApiBaseUrl(apiBaseUrl: string) {
   return /^http:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2|10\.0\.3\.2)(:\d+)?/i.test(apiBaseUrl);
 }
 
-function getEffectiveApiBaseUrl() {
-  return API_BASE;
-}
-
 export function buildUrl(path: string): string {
   const p = String(path || '');
   if (/^https?:\/\//i.test(p)) {
     return p;
   }
-  const base = getEffectiveApiBaseUrl().replace(/\/$/, '');
+  const base = API_BASE.replace(/\/$/, '');
   return `${base}${p.startsWith('/') ? p : `/${p}`}`;
-}
-
-function canFallbackToLocalMode() {
-  if (env.VITE_FORCE_LOCAL_API === 'true') {
-    return true;
-  }
-  // Keep native builds aligned with backend data by default.
-  // Developers can still opt in via VITE_FORCE_LOCAL_API=true.
-  if (isNativeCapacitorRuntime()) {
-    return false;
-  }
-  return env.VITE_DISABLE_LOCAL_API_FALLBACK !== 'true';
 }
 
 function resolveApiPath(path: string) {
@@ -251,10 +233,6 @@ export function buildSseStreamUrl(authToken?: string | null): string {
   return base;
 }
 
-function shouldUseForcedLocalMode() {
-  return env.VITE_FORCE_LOCAL_API === 'true' && canFallbackToLocalMode();
-}
-
 function readStoredAccessToken() {
   const adminToken = localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY);
   if (adminToken) return adminToken;
@@ -341,40 +319,6 @@ function clearStoredTokenPair(refreshKey: string) {
   localStorage.removeItem(TOKEN_STORAGE_KEY);
 }
 
-function isPremiumSensitivePath(path: string) {
-  return path.startsWith('/api/subscriptions/') || path.startsWith('/api/ai/');
-}
-
-function isAdminSensitivePath(path: string) {
-  return path.startsWith('/api/admin/') || path.startsWith('/api/stream');
-}
-
-function shouldFallbackFromHttpError(path: string, status: number, hasAuthToken: boolean) {
-  if (!canFallbackToLocalMode()) {
-    return false;
-  }
-
-  // Do not switch premium/subscription endpoints to local mode when authenticated.
-  // Mixing remote auth with local subscription state can incorrectly re-lock premium features.
-  if (hasAuthToken && (isPremiumSensitivePath(path) || isAdminSensitivePath(path))) {
-    return false;
-  }
-
-  const effectiveBaseUrl = getEffectiveApiBaseUrl();
-
-  // 5xx usually means upstream/proxy/backend is unavailable.
-  if (status >= 500) {
-    return true;
-  }
-
-  // If no explicit backend URL is configured, /api 404 indicates frontend-only hosting.
-  if (!effectiveBaseUrl && status === 404 && path.startsWith('/api/')) {
-    return true;
-  }
-
-  return false;
-}
-
 function parseRetryAfterSeconds(headerValue: string | null): number | undefined {
   if (!headerValue) return undefined;
   const asNumber = Number(headerValue);
@@ -414,7 +358,7 @@ function buildMissingNativeApiBaseUrlError(path: string) {
 }
 
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}, token?: string | null): Promise<T> {
-  const effectiveBaseUrl = getEffectiveApiBaseUrl();
+  const effectiveBaseUrl = API_BASE;
   const timeoutMs = resolveRequestTimeoutMs(path, options.timeoutMs);
   const retryCount = resolveRetryCount(options.retryCount);
   const retryDelayMs = resolveRetryDelayMs(options.retryDelayMs);
@@ -433,25 +377,12 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     throw new Error(message);
   }
 
-  if (
-    isNativeCapacitorRuntime()
-    && !effectiveBaseUrl
-    && path.startsWith('/api/')
-    && env.VITE_FORCE_LOCAL_API !== 'true'
-  ) {
+  if (isNativeCapacitorRuntime() && !effectiveBaseUrl && path.startsWith('/api/')) {
     logApiConfigurationIssue('error', 'Native API request attempted without configured backend URL.', {
       path,
       phase: 'missing-native-base-url',
     });
     throw buildMissingNativeApiBaseUrlError(path);
-  }
-
-  if (shouldUseForcedLocalMode() && isPremiumSensitivePath(path)) {
-    throw new Error('AI mentor features require live backend mode. Disable VITE_FORCE_LOCAL_API and configure VITE_API_URL.');
-  }
-
-  if (shouldUseForcedLocalMode()) {
-    return localApiRequest<T>(path, options, token);
   }
 
   const buildHeaders = (authToken?: string | null) => {
@@ -618,7 +549,6 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 
   const explicitToken = token && String(token).trim() ? token : null;
   const initialToken = explicitToken || readStoredAccessToken();
-  const hasAuthToken = Boolean(initialToken);
 
   let response: Response;
   let attempt = 0;
@@ -638,16 +568,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
         continue;
       }
 
-      // If backend is unreachable, transparently fall back to browser-local mode.
-      if (canFallbackToLocalMode() && !(hasAuthToken && (isPremiumSensitivePath(path) || isAdminSensitivePath(path)))) {
-        logApiConfigurationIssue('warn', 'Remote API request failed; switching to local fallback mode.', {
-          path,
-          error: mappedError.message,
-          phase: 'network-fallback',
-        });
-        return localApiRequest<T>(path, options, token);
-      }
-      logApiConfigurationIssue('error', 'Remote API request failed with no local fallback available.', {
+      logApiConfigurationIssue('error', 'API request failed.', {
         path,
         error: mappedError.message,
         phase: 'network-failure',
@@ -684,9 +605,6 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
           } catch {
             const bodyText = await retryResponse.text().catch(() => '');
             if (isLikelyHtmlResponse(retryResponse, bodyText)) {
-              if (canFallbackToLocalMode() && !(hasAuthToken && (isPremiumSensitivePath(path) || isAdminSensitivePath(path)))) {
-                return localApiRequest<T>(path, options, token);
-              }
               throw buildHtmlInsteadOfJsonError(path);
             }
             throw new Error(`Unexpected API response format for ${path}. Expected JSON.`);
@@ -695,10 +613,6 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 
         response = retryResponse;
       }
-    }
-
-    if (shouldFallbackFromHttpError(path, response.status, hasAuthToken)) {
-      return localApiRequest<T>(path, options, token);
     }
 
     let errorMessage = `Request failed (${response.status})`;
@@ -720,7 +634,6 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     if (
       response.status === 404
       && path.startsWith('/api/')
-      && !getEffectiveApiBaseUrl()
       && env.VITE_ADMIN_ONLY === 'true'
       && errorMessage === `Request failed (${response.status})`
     ) {
@@ -758,10 +671,6 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     const bodyText = await response.text().catch(() => '');
     const looksHtml = isLikelyHtmlResponse(response, bodyText);
 
-    if (looksHtml && canFallbackToLocalMode() && !(hasAuthToken && (isPremiumSensitivePath(path) || isAdminSensitivePath(path)))) {
-      return localApiRequest<T>(path, options, token);
-    }
-
     if (looksHtml) {
       throw buildHtmlInsteadOfJsonError(path);
     }
@@ -774,17 +683,10 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 }
 
 export async function downloadReport(path: string, token?: string | null): Promise<{ blob: Blob; filename: string }> {
-  if (shouldUseForcedLocalMode()) {
-    const url = new URL(path, window.location.origin);
-    const format = (url.searchParams.get('format') || 'pdf') as 'pdf';
-    return localDownloadReport(format, token);
-  }
-
   const headers = new Headers();
   if (token && !isCookieSessionApiMarker(token)) {
     headers.set('Authorization', `Bearer ${token}`);
   }
-  const hasAuthToken = Boolean((token && !isCookieSessionApiMarker(token)) || readStoredAccessToken());
 
   let response: Response;
   try {
@@ -794,18 +696,7 @@ export async function downloadReport(path: string, token?: string | null): Promi
       credentials: 'include',
     });
   } catch {
-    if (!canFallbackToLocalMode()) {
-      throw new Error('Unable to reach report service. Check mobile network and API base URL configuration.');
-    }
-    const url = new URL(path, window.location.origin);
-    const format = (url.searchParams.get('format') || 'pdf') as 'pdf';
-    return localDownloadReport(format, token);
-  }
-
-  if (!response.ok && shouldFallbackFromHttpError(path, response.status, hasAuthToken)) {
-    const url = new URL(path, window.location.origin);
-    const format = (url.searchParams.get('format') || 'pdf') as 'pdf';
-    return localDownloadReport(format, token);
+    throw new Error('Unable to reach report service. Check network and VITE_API_URL.');
   }
 
   if (!response.ok) {
@@ -823,14 +714,6 @@ export async function downloadReport(path: string, token?: string | null): Promi
 }
 
 export async function downloadBinary(path: string, options: RequestInit = {}, token?: string | null): Promise<{ blob: Blob; filename: string }> {
-  if (shouldUseForcedLocalMode() && isPremiumSensitivePath(path)) {
-    throw new Error('AI mentor export requires live backend mode. Disable VITE_FORCE_LOCAL_API and configure VITE_API_URL.');
-  }
-
-  if (shouldUseForcedLocalMode()) {
-    throw new Error('Export is unavailable in forced local mode. Connect to the API backend and try again.');
-  }
-
   const headers = new Headers(options.headers || {});
   const hasBody = options.body != null;
   const isFormDataBody = typeof FormData !== 'undefined' && options.body instanceof FormData;

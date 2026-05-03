@@ -44,7 +44,3 @@ services:
       - key: VITE_API_URL
         # Replace with your live backend URL after the API service is created.
         value: https://api.net360preparation.com
-      - key: VITE_FORCE_LOCAL_API
-        value: "false"
-      - key: VITE_DISABLE_LOCAL_API_FALLBACK
-        value: "true"

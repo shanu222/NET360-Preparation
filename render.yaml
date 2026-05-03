@@ -10,8 +10,6 @@ services:
       - key: VITE_API_URL
         # Replace with your live backend API URL.
         value: https://api.net360preparation.com
-      - key: VITE_DISABLE_LOCAL_API_FALLBACK
-        value: "true"
 
   - type: web
     name: net360-admin
@@ -26,5 +24,3 @@ services:
       - key: VITE_API_URL
         # Replace with your live backend API URL.
         value: https://api.net360preparation.com
-      - key: VITE_DISABLE_LOCAL_API_FALLBACK
-        value: "true"
