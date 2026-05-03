@@ -426,24 +426,33 @@ function sanitizePayload(value) {
   return sanitizePrimitive(value);
 }
 
-const allowedOrigins = ['https://net360preparation.com', 'https://www.net360preparation.com'];
+function isNet360PreparationOrigin(origin) {
+  try {
+    const { protocol, hostname } = new URL(origin);
+    if (protocol !== 'https:') return false;
+    const host = String(hostname || '').toLowerCase();
+    return host === 'net360preparation.com' || host.endsWith('.net360preparation.com');
+  } catch {
+    return false;
+  }
+}
 
 const corsMiddleware = cors({
   origin(origin, callback) {
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.includes(origin)) {
+    if (isNet360PreparationOrigin(origin)) {
       return callback(null, true);
     }
 
     console.log('Blocked origin:', origin);
-
     return callback(null, false);
   },
   credentials: true,
 });
 
 app.use(corsMiddleware);
+// Same policy as app.use — default `cors()` omits `credentials`, which breaks credentialed preflight.
 app.options('*', corsMiddleware);
 
 app.use((req, res, next) => {
