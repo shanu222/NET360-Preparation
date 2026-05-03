@@ -426,23 +426,30 @@ function sanitizePayload(value) {
   return sanitizePrimitive(value);
 }
 
-/**
- * CORS: reflect the request `Origin` (`origin: true`) so apex vs www, previews, and CDN
- * hosts always match — avoids brittle string lists. Requires `credentials: true` clients.
- * Same-origin / curl / mobile often omit `Origin` → allowed.
- */
+const allowedOrigins = ['https://net360preparation.com', 'https://www.net360preparation.com'];
+
 const corsMiddleware = cors({
-  origin: true,
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.log('Blocked origin:', origin);
+
+    return callback(null, false);
+  },
   credentials: true,
 });
+
+app.use(corsMiddleware);
+app.options('*', corsMiddleware);
 
 app.use((req, res, next) => {
   console.log('[request]', req.method, req.originalUrl || req.url);
   next();
 });
-
-app.use(corsMiddleware);
-app.options('*', corsMiddleware);
 app.use(express.json({ limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use(express.urlencoded({ extended: false, limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use((req, res, next) => {
@@ -6413,6 +6420,7 @@ app.post('/api/auth/login', async (req, res) => {
     const password = String(parsed.data.password || '');
     const forceLogoutOtherDevice = Boolean(parsed.data.forceLogoutOtherDevice);
     const deviceId = sanitizeDeviceId(parsed.data.deviceId || req.headers['user-agent'] || '');
+    console.log('Login attempt:', email);
     if (!email || !password) {
       await logSecurityEvent(req, {
         eventType: 'auth.login_missing_credentials',
