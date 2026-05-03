@@ -15,14 +15,14 @@ export const PasswordInput = React.forwardRef<
       <Input
         ref={ref}
         type={visible ? 'text' : 'password'}
-        className={cn('pr-10', className)}
+        className={cn('pr-12', className)}
         {...props}
       />
       <button
         type="button"
         onClick={() => setVisible((v) => !v)}
         className={cn(
-          'absolute right-1 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-md',
+          'touch-manipulation absolute right-1 top-1/2 flex size-11 min-h-11 min-w-11 -translate-y-1/2 items-center justify-center rounded-md',
           'text-muted-foreground outline-none transition-colors hover:text-foreground',
           'focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50',
         )}

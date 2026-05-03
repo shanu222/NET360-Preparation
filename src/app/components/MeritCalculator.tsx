@@ -149,7 +149,7 @@ export function MeritCalculator() {
   const rightMerits = programMerits.filter((_, index) => index % 2 === 1);
 
   const selectClass =
-    'flex h-9 w-full max-w-[220px] rounded-md border border-indigo-100 bg-white px-3 py-1 text-sm text-slate-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400';
+    'flex min-h-11 w-full max-w-full rounded-md border border-indigo-100 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 sm:max-w-xs md:max-w-sm';
 
   return (
     <div className="space-y-5">

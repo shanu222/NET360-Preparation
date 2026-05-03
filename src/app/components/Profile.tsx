@@ -675,7 +675,7 @@ export function Profile({ onNavigate }: ProfileProps) {
       <div className="space-y-5">
         <h1>Account Access</h1>
 
-        <div className="grid gap-4 lg:grid-cols-[1fr_1.5fr] xl:grid-cols-[1fr_1.65fr]">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1.5fr] xl:grid-cols-[1fr_1.65fr]">
           <Card className="rounded-2xl border-indigo-100 bg-white/92 shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
             <CardHeader className="pb-3">
               <CardTitle className="text-slate-800">
@@ -1197,7 +1197,7 @@ export function Profile({ onNavigate }: ProfileProps) {
         </div>
       </div>
 
-      <div className="grid lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-1">
           <CardHeader>
             <CardTitle>Profile</CardTitle>

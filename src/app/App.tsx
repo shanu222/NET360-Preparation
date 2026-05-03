@@ -1,4 +1,15 @@
-import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from 'react';
+import {
+  Component,
+  lazy,
+  Suspense,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ErrorInfo,
+  type ReactNode,
+} from 'react';
 import { SupportChatWidget } from './components/SupportChatWidget';
 import { PageRouteFallback } from './components/PageRouteFallback';
 
@@ -46,6 +57,18 @@ import { Toaster, toast } from 'sonner';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
+
+function useMinWidthSm(): boolean {
+  return useSyncExternalStore(
+    (onStoreChange) => {
+      const mq = window.matchMedia('(min-width: 640px)');
+      mq.addEventListener('change', onStoreChange);
+      return () => mq.removeEventListener('change', onStoreChange);
+    },
+    () => window.matchMedia('(min-width: 640px)').matches,
+    () => false,
+  );
+}
 
 function SessionReady({ children }: { children: ReactNode }) {
   const { loading } = useAuth();
@@ -267,9 +290,9 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
       <button
         type="button"
         onClick={onOpenProfile}
-        className="ml-1 inline-flex items-center gap-2 rounded-xl px-2 py-1.5 text-slate-700 transition hover:bg-indigo-50"
+        className="touch-manipulation ml-1 inline-flex min-h-11 items-center gap-2 rounded-xl px-2 py-2 text-slate-700 transition hover:bg-indigo-50 sm:min-h-9 sm:py-1.5"
       >
-        <div className="h-8 w-8 rounded-full bg-gradient-to-br from-amber-300 to-orange-500" />
+        <div className="h-8 w-8 shrink-0 rounded-full bg-gradient-to-br from-amber-300 to-orange-500" />
         <span className="hidden text-sm sm:inline">Login / Sign Up</span>
         <ChevronDown className="hidden w-4 h-4 sm:inline" />
       </button>
@@ -281,7 +304,7 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
       <button
         type="button"
         onClick={() => setMenuOpen((current) => !current)}
-        className="inline-flex items-center gap-2 rounded-xl px-2 py-1.5 text-slate-700 transition hover:bg-indigo-50 dark:text-slate-100 dark:hover:bg-white/10"
+        className="touch-manipulation inline-flex min-h-11 items-center gap-2 rounded-xl px-2 py-2 text-slate-700 transition hover:bg-indigo-50 dark:text-slate-100 dark:hover:bg-white/10 sm:min-h-9 sm:py-1.5"
         aria-haspopup="menu"
         aria-expanded={menuOpen}
       >
@@ -296,7 +319,7 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
       >
         <button
           type="button"
-          className="w-full rounded-lg px-3 py-2 text-left text-sm text-rose-600 transition hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-500/15"
+          className="min-h-11 w-full rounded-lg px-3 py-2.5 text-left text-sm text-rose-600 transition hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-500/15"
           role="menuitem"
           onClick={() => {
             logout();
@@ -311,6 +334,7 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
 }
 
 export default function App() {
+  const toastPosition = useMinWidthSm() ? 'top-right' : 'top-center';
   const smartMentorTabId = 'smart-mentor';
   const [sidebarMenuOpen, setSidebarMenuOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(resolveInitialThemeMode);
@@ -518,15 +542,15 @@ export default function App() {
         <meta property="og:description" content="Prepare for NUST entry test with MCQs and tests" />
         <meta property="og:type" content="website" />
       </Helmet>
-      <div className="net360-viewport min-h-dvh p-1 sm:p-3 md:p-5 xl:p-6">
-        <div className="net360-shell mx-auto flex w-full max-w-[1600px] flex-col gap-2 rounded-[20px] border border-white/70 bg-white/65 p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl sm:gap-3 sm:rounded-[24px] sm:p-2 xl:rounded-[28px]">
+      <div className="net360-viewport flex min-h-dvh min-h-screen flex-col p-1 sm:p-3 md:p-5 xl:p-6">
+        <div className="net360-shell mx-auto flex w-full max-w-[min(100%,1600px)] flex-col gap-2 rounded-[20px] border border-white/70 bg-white/65 p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl sm:gap-3 sm:rounded-[24px] sm:p-2 xl:rounded-[28px]">
           <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white/85 to-[#f2f4ff]/80 backdrop-blur sm:rounded-3xl">
             {/* Header */}
             <header className="net360-header sticky top-0 z-40 flex min-h-14 flex-wrap items-center justify-between gap-2 rounded-t-2xl border-b border-indigo-100/70 bg-white/65 px-2 py-1.5 backdrop-blur-xl sm:min-h-16 sm:flex-nowrap sm:px-5 sm:py-0 sm:rounded-t-3xl">
               <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
                 <Sheet open={sidebarMenuOpen} onOpenChange={setSidebarMenuOpen}>
                   <SheetTrigger asChild>
-                    <Button variant="ghost" size="icon" className="rounded-xl">
+                    <Button variant="ghost" size="icon" className="touch-manipulation rounded-xl min-h-11 min-w-11" aria-label="Open navigation menu">
                       <Menu className="w-5 h-5" />
                     </Button>
                   </SheetTrigger>
@@ -572,7 +596,7 @@ export default function App() {
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="rounded-xl px-1.5 text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 sm:px-2"
+                  className="touch-manipulation min-h-11 rounded-xl px-2.5 text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 sm:min-h-9 sm:px-2"
                   onClick={() => setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'))}
                   aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
                   title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -583,7 +607,7 @@ export default function App() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="rounded-xl text-slate-600 hover:bg-indigo-50"
+                  className="touch-manipulation min-h-11 min-w-11 rounded-xl text-slate-600 hover:bg-indigo-50"
                   onClick={() => toast.success('You will receive updates here.')}
                   aria-label="Notifications"
                 >
@@ -592,7 +616,7 @@ export default function App() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="rounded-xl text-slate-600 hover:bg-indigo-50"
+                  className="touch-manipulation min-h-11 min-w-11 rounded-xl text-slate-600 hover:bg-indigo-50"
                   onClick={() => {
                     window.dispatchEvent(new CustomEvent('net360:open-support-chat'));
                   }}
@@ -654,7 +678,7 @@ export default function App() {
         </div>
       </div>
 
-      <Toaster richColors position="top-right" />
+      <Toaster richColors position={toastPosition} />
       <SupportChatWidget />
     </AppDataProvider>
       </SessionReady>
