@@ -197,7 +197,6 @@ const CORS_ALLOWED_ORIGINS = Array.from(new Set([
   ...parseOriginList(process.env.FRONTEND_URL || ''),
   ...parseOriginList(process.env.FRONTEND_ORIGIN || ''),
   ...parseOriginList(process.env.WEB_ORIGIN || ''),
-  ...parseOriginList(process.env.RAILWAY_DEFAULT_ORIGINS || ''),
 ]))
   .filter(Boolean);
 
