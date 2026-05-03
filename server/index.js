@@ -121,7 +121,7 @@ const loginBodySchema = z.object({
 
 const NODE_ENV = String(process.env.NODE_ENV || 'development').toLowerCase();
 const IS_PRODUCTION = NODE_ENV === 'production';
-const PORT = Number(process.env.PORT || 5000);
+const PORT = Number(process.env.PORT || process.env.API_PORT || 5000);
 const MONGODB_URI = String(process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO_URI || '').trim();
 const JWT_SECRET_RAW = String(process.env.JWT_SECRET || '').trim();
 const JWT_REFRESH_SECRET_RAW = String(process.env.JWT_REFRESH_SECRET || '').trim();
@@ -168,11 +168,6 @@ const MAX_JSON_BODY_MB = clamp(Number(process.env.MAX_JSON_BODY_MB || 10), 1, 20
 const REQUEST_TIMEOUT_MS = clamp(Number(process.env.REQUEST_TIMEOUT_MS || 30_000), 5_000, 120_000);
 const AI_PARSE_MAX_FILE_MB = clamp(Number(process.env.AI_PARSE_MAX_FILE_MB || 20), 1, 50);
 const AI_PARSE_MAX_FILE_BYTES = AI_PARSE_MAX_FILE_MB * 1024 * 1024;
-const ADMIN_EMAILS = `${process.env.ADMIN_EMAILS || ''},shahnawaz9974balouch@gmail.com`
-  .split(',')
-  .map((item) => item.trim().toLowerCase())
-  .filter(Boolean);
-
 const rawIssueAuthBodyTokens = process.env.ISSUE_AUTH_BODY_TOKENS;
 const ISSUE_AUTH_BODY_TOKENS =
   rawIssueAuthBodyTokens != null && String(rawIssueAuthBodyTokens).trim() !== ''
@@ -432,25 +427,24 @@ function sanitizePayload(value) {
 }
 
 /**
- * Browsers require `Access-Control-Allow-Origin` to match the page origin exactly.
- * Apex (`net360preparation.com`) and `www` are different origins — both must be listed.
- * Optional `CORS_ALLOWED_ORIGINS` (comma-separated) merges in previews / extra hosts.
+ * Production SPA origins (apex vs www differ — both required). Dev servers + optional env extras.
+ * Unknown origins receive 403 JSON (STEP 6) before Express completes CORS negotiation.
  */
-const defaultAllowedOrigins = [
+const baseAllowedOrigins = [
   'https://net360preparation.com',
   'https://www.net360preparation.com',
   'http://localhost:5173',
   'http://localhost:3000',
 ];
 
-const extraOrigins = String(process.env.CORS_ALLOWED_ORIGINS || '')
+const mergedExtraOrigins = String(process.env.CORS_ALLOWED_ORIGINS || '')
   .split(',')
   .map((s) => s.trim().replace(/\/+$/, ''))
   .filter(Boolean);
 
-const allowedOrigins = [...new Set([...defaultAllowedOrigins, ...extraOrigins])];
+const allowedOrigins = [...new Set([...baseAllowedOrigins, ...mergedExtraOrigins])];
 
-const corsOptions = {
+const corsMiddleware = cors({
   origin(origin, callback) {
     if (!origin) {
       return callback(null, true);
@@ -458,16 +452,25 @@ const corsOptions = {
     if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
-    console.log('CORS BLOCKED:', origin);
-    return callback(null, false);
+    console.warn('[cors] not allowed:', origin);
+    return callback(new Error('CORS not allowed'));
   },
   credentials: true,
-};
-
-const corsMiddleware = cors(corsOptions);
+});
 
 app.use((req, res, next) => {
   console.log('[request]', req.method, req.originalUrl || req.url);
+  next();
+});
+
+/** Reject browser/tab origins not on allowlist (explicit 403 for debugging non-browser clients too). */
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin && !allowedOrigins.includes(origin)) {
+    console.warn('[cors] origin denied:', origin);
+    res.status(403).json({ error: 'CORS origin denied' });
+    return;
+  }
   next();
 });
 
@@ -4117,59 +4120,6 @@ function buildMentorExportPayload({ tool, payload, user }) {
   };
 }
 
-async function bootstrapAdminAccounts() {
-  if (!ADMIN_EMAILS.length) {
-    console.log('Admin bootstrap skipped: ADMIN_EMAILS is empty.');
-    return;
-  }
-
-  const now = new Date();
-  const bootstrapPassword = String(process.env.ADMIN_BOOTSTRAP_PASSWORD || '').trim();
-
-  // Always promote listed emails to admin if they already exist.
-  const promoteResult = await UserModel.updateMany(
-    { email: { $in: ADMIN_EMAILS } },
-    { $set: { role: 'admin', updatedAt: now } },
-  );
-
-  let createdCount = 0;
-  if (bootstrapPassword) {
-    // If enabled, create missing admin accounts so first login can happen immediately.
-    const passwordHash = await bcrypt.hash(bootstrapPassword, 12);
-    for (const email of ADMIN_EMAILS) {
-      const existing = await UserModel.findOne({ email }).lean();
-      if (existing) continue;
-
-      try {
-        await UserModel.create({
-          email,
-          passwordHash,
-          firstName: 'Admin',
-          lastName: '',
-          role: 'admin',
-          preferences: defaultPreferences(),
-          progress: defaultProgress(),
-        });
-        createdCount += 1;
-      } catch (err) {
-        if (err && err.code === 11000) {
-          console.warn('[admin-bootstrap] duplicate email skipped:', email);
-          continue;
-        }
-        throw err;
-      }
-    }
-  }
-
-  console.log(
-    `Admin bootstrap complete: promoted ${promoteResult.modifiedCount || 0}, created ${createdCount}.`,
-  );
-
-  if (!bootstrapPassword) {
-    console.log('Note: ADMIN_BOOTSTRAP_PASSWORD not set, so missing admin emails were not auto-created.');
-  }
-}
-
 function userPublic(user) {
   const progress = { ...defaultProgress(), ...(user.progress || {}) };
   const subscription = normalizeSubscription(user);
@@ -6396,7 +6346,7 @@ app.post('/api/auth/register-with-token', async (req, res) => {
       firstName,
       lastName,
       phone: mobileNumber,
-      role: ADMIN_EMAILS.includes(email) ? 'admin' : 'student',
+      role: 'student',
       securityQuestion,
       securityAnswerHash,
       securityAnswerEncrypted: securityAnswerEncrypted || '',
@@ -6436,8 +6386,6 @@ app.post('/api/auth/register-fallback', async (req, res) => {
   try {
     const email = normalizeEmail(req.body?.email || '');
     const password = String(req.body?.password || '');
-    const roleRaw = String(req.body?.role || 'student').toLowerCase();
-    const role = roleRaw === 'admin' ? 'admin' : 'student';
     if (!email || !password) {
       res.status(400).json({ error: 'Email and password are required.' });
       return;
@@ -6460,7 +6408,7 @@ app.post('/api/auth/register-fallback', async (req, res) => {
       passwordHash,
       firstName: sanitizeHumanName(req.body?.firstName || ''),
       lastName: sanitizeHumanName(req.body?.lastName || ''),
-      role,
+      role: 'student',
       preferences: defaultPreferences(),
       progress: defaultProgress(),
     });
@@ -6569,13 +6517,6 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     let role = user.role || 'student';
-    // Keep admin access resilient when ADMIN_EMAILS is configured after initial account creation.
-    if (role !== 'admin' && ADMIN_EMAILS.includes(email)) {
-      user.role = 'admin';
-      user.updatedAt = new Date();
-      await user.save();
-      role = 'admin';
-    }
 
     if (role === 'student') {
       const activeSession = user.activeSession || null;
@@ -13653,6 +13594,11 @@ app.use((err, req, res, next) => {
     return;
   }
 
+  if (String(err?.message || '').includes('CORS not allowed')) {
+    res.status(403).json({ error: 'CORS origin denied' });
+    return;
+  }
+
   if (
     err?.code === 'LIMIT_FILE_SIZE'
     || err?.type === 'entity.too.large'
@@ -13777,16 +13723,6 @@ async function bootstrap() {
       } else {
         const rs = mongoConnection?.readyState ?? '(no connection)';
         console.warn(`[startup] MongoDB not ready (readyState=${rs}). Background reconnect may be active; see [mongo] logs.`);
-      }
-
-      if (mongoConnection?.readyState === 1) {
-        try {
-          await bootstrapAdminAccounts();
-        } catch (error) {
-          console.error('[startup] Admin bootstrap deferred:', error?.message || error);
-        }
-      } else {
-        console.warn('[startup] Admin bootstrap skipped until MongoDB is connected.');
       }
 
       try {

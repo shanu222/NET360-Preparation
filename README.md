@@ -60,9 +60,9 @@ Create environment variables for backend service:
 - `MODEL_PROVIDER_API_KEY` = required for live Smart Study Mentor
 - `MODEL_PROVIDER_MODEL` = optional, default `gpt-4o-mini`
 - `SMART_DAILY_LIMIT` = optional, default `50`
-- `ADMIN_EMAILS` = comma-separated admin emails, for example `admin@net360.pk,ops@net360.pk`
-- `API_PORT` = optional, default `4000`
-- `CORS_ALLOWED_ORIGINS` = comma-separated allowed frontend origins in production (for example `https://net360-preparation.onrender.com,https://net360-admin.onrender.com`)
+- Admin access: set `role: "admin"` on the user document in MongoDB (no env email list)
+- `API_PORT` = optional when `PORT` is unset; server default is `5000`
+- `CORS_ALLOWED_ORIGINS` = optional comma-separated **extra** origins (production apex + `www` + local dev are built in)
 - `MAX_JSON_BODY_MB` = optional request body limit, default `10`
 - `REQUEST_TIMEOUT_MS` = optional API request timeout in milliseconds, default `30000`
 
