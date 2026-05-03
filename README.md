@@ -62,7 +62,7 @@ Create environment variables for backend service:
 - `SMART_DAILY_LIMIT` = optional, default `50`
 - Admin access: set `role: "admin"` on the user document in MongoDB (no env email list)
 - `API_PORT` = optional when `PORT` is unset; server default is `5000`
-- CORS allowlist is **fixed in code** (`server/index.js`): production apex + `www` + local dev ports — **no env-based origin list**
+- CORS is handled in `server/index.js` with **`cors({ origin: true, credentials: true })`** so the API echoes the browser `Origin` (works for apex + `www` without env lists). Ensure **Nginx does not add conflicting `Access-Control-*` headers** for `/api`.
 - `MAX_JSON_BODY_MB` = optional request body limit, default `10`
 - `REQUEST_TIMEOUT_MS` = optional API request timeout in milliseconds, default `30000`
 
@@ -94,7 +94,7 @@ If admin/client requests fail with network errors in production:
 - `VITE_API_URL` must point to the API service (for example `https://api.net360preparation.com`)
 
 2. Verify backend CORS
-- Allowed origins are defined only in `server/index.js` (not via env). Ensure your frontend hostname matches (`https://net360preparation.com` or `https://www.net360preparation.com`).
+- Express uses **dynamic `Origin` reflection** — no `CORS_ALLOWED_ORIGINS` env. If you still see CORS errors, check **Nginx** is not returning an old 403 body or static `Access-Control-Allow-Origin` for `/api` (remove duplicate CORS headers; proxy to Node only).
 
 3. Verify API routes and health
 - Admin AI generation route: `POST /api/admin/ai-generate-mcq`

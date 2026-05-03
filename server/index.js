@@ -427,27 +427,12 @@ function sanitizePayload(value) {
 }
 
 /**
- * CORS: fixed allowlist only (no env-based filtering, no 403 pre-middleware).
- * `callback(null, false)` for disallowed origins — do not throw.
+ * CORS: reflect the request `Origin` (`origin: true`) so apex vs www, previews, and CDN
+ * hosts always match — avoids brittle string lists. Requires `credentials: true` clients.
+ * Same-origin / curl / mobile often omit `Origin` → allowed.
  */
-const allowedOrigins = [
-  'https://net360preparation.com',
-  'https://www.net360preparation.com',
-  'http://localhost:5173',
-  'http://localhost:3000',
-];
-
 const corsMiddleware = cors({
-  origin(origin, callback) {
-    if (!origin) {
-      return callback(null, true);
-    }
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    console.log('Blocked by CORS:', origin);
-    return callback(null, false);
-  },
+  origin: true,
   credentials: true,
 });
 
