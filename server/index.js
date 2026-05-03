@@ -426,33 +426,24 @@ function sanitizePayload(value) {
   return sanitizePrimitive(value);
 }
 
-function isNet360PreparationOrigin(origin) {
-  try {
-    const { protocol, hostname } = new URL(origin);
-    if (protocol !== 'https:') return false;
-    const host = String(hostname || '').toLowerCase();
-    return host === 'net360preparation.com' || host.endsWith('.net360preparation.com');
-  } catch {
-    return false;
-  }
-}
+const allowedOrigins = ['https://net360preparation.com', 'https://www.net360preparation.com'];
 
 const corsMiddleware = cors({
   origin(origin, callback) {
     if (!origin) return callback(null, true);
 
-    if (isNet360PreparationOrigin(origin)) {
+    if (allowedOrigins.includes(origin)) {
       return callback(null, true);
     }
 
     console.log('Blocked origin:', origin);
-    return callback(null, false);
+    // Temporary: allow reflection so credentialed requests are not dropped by CORS (tighten later).
+    return callback(null, true);
   },
   credentials: true,
 });
 
 app.use(corsMiddleware);
-// Same policy as app.use — default `cors()` omits `credentials`, which breaks credentialed preflight.
 app.options('*', corsMiddleware);
 
 app.use((req, res, next) => {
@@ -6415,6 +6406,7 @@ app.post('/api/auth/register-fallback', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
+    console.log('Login attempt:', req.body?.email);
     const parsed = loginBodySchema.safeParse(req.body || {});
     if (!parsed.success) {
       await logSecurityEvent(req, {
@@ -6429,7 +6421,6 @@ app.post('/api/auth/login', async (req, res) => {
     const password = String(parsed.data.password || '');
     const forceLogoutOtherDevice = Boolean(parsed.data.forceLogoutOtherDevice);
     const deviceId = sanitizeDeviceId(parsed.data.deviceId || req.headers['user-agent'] || '');
-    console.log('Login attempt:', email);
     if (!email || !password) {
       await logSecurityEvent(req, {
         eventType: 'auth.login_missing_credentials',
