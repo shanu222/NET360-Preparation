@@ -431,40 +431,24 @@ function sanitizePayload(value) {
   return sanitizePrimitive(value);
 }
 
-/** Explicit browser origins; unknown origins are still allowed temporarily (debug). */
-const allowedOrigins = [
-  'https://net360preparation.com',
-  'https://www.net360preparation.com',
-  'http://localhost:5173',
-  'http://localhost:3000',
-];
-
-const corsOptions = {
-  origin(origin, callback) {
-    if (!origin) {
-      return callback(null, true);
-    }
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    console.log('CORS not in allowlist (temp allow all):', origin);
-    return callback(null, true);
-  },
+/**
+ * Credentialed browser requests (cookies): reflect `Origin` in `Access-Control-Allow-Origin`.
+ * Avoids production mismatches when the SPA runs on Vercel previews, www vs apex, or new domains.
+ * Optional: set `CORS_ORIGIN` to a single origin string to restrict (otherwise allow any requesting origin).
+ */
+const corsStaticOrigin = String(process.env.CORS_ORIGIN || '').trim();
+const corsMiddleware = cors({
+  origin: corsStaticOrigin || true,
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie', 'X-Requested-With'],
-  optionsSuccessStatus: 204,
-  maxAge: 86_400,
-};
+});
 
 app.use((req, res, next) => {
   console.log('[request]', req.method, req.originalUrl || req.url);
   next();
 });
 
-app.use(cors(corsOptions));
-// Same options as app.use(cors) so preflight gets credentials + headers (default cors() would not).
-app.options('*', cors(corsOptions));
+app.use(corsMiddleware);
+app.options('*', corsMiddleware);
 app.use(express.json({ limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use(express.urlencoded({ extended: false, limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use((req, res, next) => {

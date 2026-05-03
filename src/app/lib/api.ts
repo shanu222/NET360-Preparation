@@ -20,10 +20,6 @@ type ApiRequestOptions = RequestInit & {
 
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
 
-if (import.meta.env.DEV) {
-  console.log('[api] VITE_API_URL', import.meta.env.VITE_API_URL);
-}
-
 if (!import.meta.env.VITE_API_URL) {
   throw new Error('Missing VITE_API_URL in production');
 }
@@ -33,6 +29,8 @@ export const API_BASE = String(import.meta.env.VITE_API_URL).replace(/\/$/, '').
 if (!API_BASE) {
   throw new Error('Missing VITE_API_URL in production');
 }
+
+console.log('[net360] API BASE:', API_BASE);
 
 if (!API_BASE.startsWith('https') && import.meta.env.PROD) {
   console.warn('API is not using HTTPS in production');
