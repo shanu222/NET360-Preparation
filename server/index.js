@@ -62,6 +62,10 @@ function parseOriginList(rawValue) {
     .filter(Boolean);
 }
 
+function normalizeCorsOrigin(origin) {
+  return String(origin || '').trim().replace(/\/+$/, '').toLowerCase();
+}
+
 function parseCookies(headerValue) {
   const source = String(headerValue || '').trim();
   if (!source) return {};
@@ -180,28 +184,39 @@ const ADMIN_EMAILS = `${process.env.ADMIN_EMAILS || ''},shahnawaz9974balouch@gma
   .split(',')
   .map((item) => item.trim().toLowerCase())
   .filter(Boolean);
-const DEFAULT_CORS_ORIGINS = [
-  'https://net-360-preparation.vercel.app',
-  'http://localhost:3000',
-  'http://localhost:5173',
-  'http://127.0.0.1:3000',
-  'http://127.0.0.1:5173',
-  'https://net360preparation.com',
-  'https://www.net360preparation.com',
-];
+/** Primary production web origins (Vercel custom domain). Always included when building the allowlist. */
+const PRIMARY_WEB_ORIGINS = ['https://net360preparation.com', 'https://www.net360preparation.com'];
 
-const CORS_ALLOWED_ORIGINS = Array.from(new Set([
-  ...DEFAULT_CORS_ORIGINS.flatMap((origin) => parseOriginList(origin)),
-  ...parseOriginList(process.env.CORS_ALLOWED_ORIGINS || ''),
-  ...parseOriginList(process.env.CORS_EXTRA_ORIGINS || ''),
-  ...parseOriginList(process.env.FRONTEND_URL || ''),
-  ...parseOriginList(process.env.FRONTEND_ORIGIN || ''),
-  ...parseOriginList(process.env.WEB_ORIGIN || ''),
-]))
-  .filter(Boolean);
+function buildCorsAllowedOrigins() {
+  const set = new Set(PRIMARY_WEB_ORIGINS.map((origin) => normalizeCorsOrigin(origin)));
+  [
+    ...parseOriginList(process.env.CORS_ALLOWED_ORIGINS || ''),
+    ...parseOriginList(process.env.CORS_EXTRA_ORIGINS || ''),
+    ...parseOriginList(process.env.FRONTEND_URL || ''),
+    ...parseOriginList(process.env.FRONTEND_ORIGIN || ''),
+    ...parseOriginList(process.env.WEB_ORIGIN || ''),
+  ].forEach((origin) => set.add(origin));
+
+  if (!IS_PRODUCTION) {
+    [
+      'http://localhost:3000',
+      'http://localhost:5173',
+      'http://127.0.0.1:3000',
+      'http://127.0.0.1:5173',
+      'https://net-360-preparation.vercel.app',
+    ].forEach((origin) => set.add(normalizeCorsOrigin(origin)));
+  }
+
+  return Array.from(set).filter(Boolean);
+}
+
+const CORS_ALLOWED_ORIGINS = buildCorsAllowedOrigins();
+const corsAllowedOriginSet = new Set(CORS_ALLOWED_ORIGINS);
 
 if (!IS_PRODUCTION) {
-  console.log('[env] CORS allowlist size:', CORS_ALLOWED_ORIGINS.length);
+  console.log('[env] CORS allowlist size:', CORS_ALLOWED_ORIGINS.length, '| primary:', PRIMARY_WEB_ORIGINS.join(', '));
+} else {
+  console.log('[cors] production allowlist — primary:', PRIMARY_WEB_ORIGINS.join(', '), '| entries:', corsAllowedOriginSet.size);
 }
 
 const rawIssueAuthBodyTokens = process.env.ISSUE_AUTH_BODY_TOKENS;
@@ -480,10 +495,6 @@ function isVercelPreviewOrigin(origin) {
   }
 }
 
-function normalizeCorsOrigin(origin) {
-  return String(origin || '').trim().replace(/\/+$/, '').toLowerCase();
-}
-
 const corsOptions = {
   origin(origin, callback) {
     if (!origin) {
@@ -499,13 +510,11 @@ const corsOptions = {
       callback(null, true);
       return;
     }
-    if (CORS_ALLOWED_ORIGINS.includes(normalized)) {
+    if (corsAllowedOriginSet.has(normalized)) {
       callback(null, true);
       return;
     }
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn('[cors] blocked origin:', origin, '| allowlist entries:', CORS_ALLOWED_ORIGINS.length);
-    }
+    console.warn('[cors] blocked origin:', origin, '| normalized:', normalized);
     callback(new Error('CORS not allowed'));
   },
   credentials: true,
@@ -514,6 +523,11 @@ const corsOptions = {
   optionsSuccessStatus: 204,
   maxAge: 24 * 60 * 60,
 };
+
+app.use((req, res, next) => {
+  console.log('[request]', req.method, req.originalUrl || req.url);
+  next();
+});
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
@@ -524,13 +538,6 @@ app.use((req, res, next) => {
   req.query = sanitizePayload(req.query);
   req.params = sanitizePayload(req.params);
   res.setTimeout(REQUEST_TIMEOUT_MS);
-  next();
-});
-
-app.use((req, _res, next) => {
-  if (process.env.NODE_ENV !== 'production') {
-    console.log(`[request] ${String(req.method || '').toUpperCase()} ${String(req.originalUrl || req.url || '').trim()}`);
-  }
   next();
 });
 
