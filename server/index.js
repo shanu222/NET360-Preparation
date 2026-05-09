@@ -3140,6 +3140,16 @@ function duplicateAccountErrorMessage(matchedBy, hasActiveSubscription) {
   return `An account already exists with this ${fieldLabel}. Please log in using your existing account, or use a different email address or mobile number.`;
 }
 
+/** Token-based / bcrypt users without a Firebase UID — safe to link when they complete Firebase signup. */
+function isLegacyStudentForFirebaseMigration(userLike) {
+  if (!userLike) return false;
+  if (String(userLike.role || 'student') === 'admin') return false;
+  const hasUid = Boolean(String(userLike.firebaseUid || '').trim());
+  const provider = String(userLike.authProvider || 'local');
+  if (provider === 'firebase' && hasUid) return false;
+  return true;
+}
+
 async function findUserByMobileNumber(mobileNumber) {
   const targetCompact = compactMobile(mobileNumber);
   if (!targetCompact) return null;
@@ -6297,16 +6307,60 @@ async function createDirectStudentAccount(req, res) {
     return;
   }
 
+  const escaped = escapeRegexLiteral(email, 254);
+  const emailFilter = escaped
+    ? { email: { $regex: `^${escaped}$`, $options: 'i' } }
+    : { email };
+
   const [existingByEmail, existingByFirebaseUid] = await Promise.all([
-    UserModel.findOne({ email }).select('email phone subscription').lean(),
+    UserModel.findOne(emailFilter)
+      .select('email phone subscription authProvider firebaseUid role _id')
+      .lean(),
     UserModel.findOne({ firebaseUid: firebaseIdentity.uid }).lean(),
   ]);
 
-  if (existingByEmail || existingByFirebaseUid) {
-    const matchedUser = existingByEmail || existingByFirebaseUid;
+  if (existingByFirebaseUid) {
     res.status(409).json({
-      error: duplicateAccountErrorMessage('email', hasActiveSubscription(matchedUser)),
+      error: duplicateAccountErrorMessage('email', hasActiveSubscription(existingByFirebaseUid)),
     });
+    return;
+  }
+
+  if (existingByEmail) {
+    if (!isLegacyStudentForFirebaseMigration(existingByEmail)) {
+      res.status(409).json({
+        error: duplicateAccountErrorMessage('email', hasActiveSubscription(existingByEmail)),
+      });
+      return;
+    }
+
+    const user = await UserModel.findById(existingByEmail._id);
+    if (!user) {
+      res.status(500).json({ error: 'Registration failed.' });
+      return;
+    }
+
+    const passwordHash = await bcrypt.hash(`firebase:${firebaseIdentity.uid}:${crypto.randomUUID()}`, 12);
+    user.email = normalizeEmail(user.email || email);
+    user.passwordHash = passwordHash;
+    if (firstName) user.firstName = firstName;
+    if (lastName) user.lastName = lastName;
+    user.authProvider = 'firebase';
+    user.firebaseUid = firebaseIdentity.uid;
+    user.securityQuestion = '';
+    user.securityAnswerHash = '';
+    user.securityAnswerEncrypted = '';
+    user.activeSession = {
+      sessionId: crypto.randomUUID(),
+      deviceId,
+      startedAt: new Date(),
+      lastSeenAt: new Date(),
+    };
+    await user.save();
+
+    const payload = await issueAuthPayload(user, req);
+    setAuthCookies(res, payload.token, payload.refreshToken);
+    res.status(201).json(buildAuthJsonBody(payload));
     return;
   }
 
