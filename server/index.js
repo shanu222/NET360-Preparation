@@ -256,6 +256,14 @@ const firebaseAdminAuth = (() => {
   return getFirebaseAdminAuth();
 })();
 
+function getMissingFirebaseAdminEnvVars() {
+  const missing = [];
+  if (!FIREBASE_PROJECT_ID) missing.push('FIREBASE_PROJECT_ID');
+  if (!FIREBASE_CLIENT_EMAIL) missing.push('FIREBASE_CLIENT_EMAIL');
+  if (!FIREBASE_PRIVATE_KEY) missing.push('FIREBASE_PRIVATE_KEY');
+  return missing;
+}
+
 const SUBSCRIPTION_PLANS = {
   basic_monthly: {
     id: 'basic_monthly',
@@ -2917,7 +2925,9 @@ async function verifyFirebaseUserToken(idToken) {
     throw new Error('Firebase ID token is required.');
   }
   if (!firebaseAdminAuth) {
-    throw new Error('Firebase Admin SDK is not configured on server.');
+    const missing = getMissingFirebaseAdminEnvVars();
+    const missingText = missing.length ? ` Missing: ${missing.join(', ')}.` : '';
+    throw new Error(`Firebase Admin SDK is not configured on server.${missingText}`);
   }
   const decoded = await firebaseAdminAuth.verifyIdToken(token);
   const email = normalizeEmail(decoded.email || '');
@@ -6095,6 +6105,8 @@ app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
     message: 'Backend is live',
+    firebaseAdminConfigured: Boolean(firebaseAdminAuth),
+    firebaseAdminMissingEnv: getMissingFirebaseAdminEnvVars(),
   });
 });
 
