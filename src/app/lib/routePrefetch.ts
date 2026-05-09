@@ -29,3 +29,47 @@ export function prefetchStudentSection(section: string): void {
     void load().catch(() => undefined);
   }
 }
+
+/** Sidebar order (student app) — used to prefetch previous/next likely routes. */
+const NEIGHBOR_PREFETCH_ORDER: string[] = [
+  'home',
+  'guide',
+  'programs',
+  'schools-campuses',
+  'net-types',
+  'practice-board',
+  'question-contribution',
+  'smart-mentor',
+  'preparation',
+  'tests',
+  'analytics',
+  'merit-calculator',
+  'community',
+  'subscription',
+  'profile',
+];
+
+/** Prefetch adjacent sections after navigation (mobile: next tap is often a neighbor). */
+export function prefetchNeighborStudentSections(activeSection: string): void {
+  const idx = NEIGHBOR_PREFETCH_ORDER.indexOf(activeSection);
+  if (idx === -1) return;
+  if (idx > 0) prefetchStudentSection(NEIGHBOR_PREFETCH_ORDER[idx - 1]!);
+  if (idx < NEIGHBOR_PREFETCH_ORDER.length - 1) {
+    prefetchStudentSection(NEIGHBOR_PREFETCH_ORDER[idx + 1]!);
+  }
+}
+
+/** Warm dashboard + neighbors on idle — improves perceived “home” speed without blocking paint. */
+export function scheduleIdleStudentPrefetch(activeSection: string): void {
+  const run = () => {
+    prefetchStudentSection('home');
+    prefetchNeighborStudentSections(activeSection);
+  };
+  if (typeof window === 'undefined') return;
+  const ric = window.requestIdleCallback;
+  if (typeof ric === 'function') {
+    ric(run, { timeout: 2500 });
+    return;
+  }
+  window.setTimeout(run, 400);
+}

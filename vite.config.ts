@@ -85,6 +85,19 @@ export default defineConfig(({ mode }) => {
 
     build: {
       modulePreload: { polyfill: true },
+      minify: 'terser',
+      terserOptions: {
+        compress: {
+          passes: 2,
+          drop_debugger: true,
+          pure_funcs: ['console.log', 'console.debug', 'console.info'],
+        },
+        format: {
+          comments: false,
+        },
+      },
+      sourcemap: 'hidden',
+      cssCodeSplit: true,
       rollupOptions: {
         output: {
           manualChunks(id) {
@@ -94,6 +107,7 @@ export default defineConfig(({ mode }) => {
             if (id.includes('recharts')) return 'vendor-charts'
             if (id.includes('katex') || id.includes('mathlive')) return 'vendor-math'
             if (id.includes('socket.io-client')) return 'vendor-socket'
+            if (id.includes('lucide-react')) return 'vendor-icons'
             return
           },
         },

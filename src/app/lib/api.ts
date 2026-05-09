@@ -59,7 +59,9 @@ function resolveApiBase() {
 
 export const API_BASE = resolveApiBase();
 
-console.log('[net360] API BASE:', API_BASE);
+if (import.meta.env.DEV) {
+  console.log('[net360] API BASE:', API_BASE);
+}
 
 if (!API_BASE.startsWith('https') && import.meta.env.PROD) {
   console.warn('API is not using HTTPS in production');

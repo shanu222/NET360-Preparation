@@ -10,9 +10,17 @@
       <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
       <!-- Google Fonts CSS is not pinned with SRI: the stylesheet response can vary (UA/capabilities), so a fixed hash would break. -->
       <link
-        rel="stylesheet"
+        rel="preload"
+        as="style"
         href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Sora:wght@500;600;700&display=swap"
+        onload="this.onload=null;this.rel='stylesheet'"
       />
+      <noscript>
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Sora:wght@500;600;700&display=swap"
+        />
+      </noscript>
       <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
       <link rel="icon" href="/favicon-192.png" type="image/png" sizes="192x192" />
       <link rel="apple-touch-icon" href="/apple-touch-icon.png" sizes="180x180" />

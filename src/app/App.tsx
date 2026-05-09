@@ -57,7 +57,7 @@ import { Sheet, SheetContent, SheetTrigger } from './components/ui/sheet';
 import { AppDataProvider } from './context/AppDataContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { preloadCommunityCache } from './lib/communityPreload';
-import { prefetchStudentSection } from './lib/routePrefetch';
+import { prefetchStudentSection, scheduleIdleStudentPrefetch } from './lib/routePrefetch';
 import { showNeutralToast, showSuccessToast } from './lib/userToast';
 import { Toaster } from 'sonner';
 import { App as CapacitorApp } from '@capacitor/app';
@@ -379,6 +379,10 @@ export default function App() {
     if (!tab || !(tab in PATH_BY_SECTION)) return;
     navigate(PATH_BY_SECTION[tab], { replace: true });
   }, [navigate]);
+
+  useEffect(() => {
+    scheduleIdleStudentPrefetch(activeTab);
+  }, [activeTab]);
 
   useEffect(() => {
     const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
@@ -704,7 +708,11 @@ export default function App() {
                       <Menu className="w-5 h-5" />
                     </Button>
                   </SheetTrigger>
-                  <SheetContent side="left" className="h-dvh w-[290px] max-w-[88vw] overflow-hidden border-white/20 bg-gradient-to-b from-[#5f4ee6] via-[#5b40d7] to-[#5e3ae0] p-0 dark:border-slate-700/70 dark:bg-gradient-to-b dark:from-[#111827] dark:via-[#1e1b4b] dark:to-[#0f172a]">
+                  <SheetContent
+                    side="left"
+                    aria-label="Main navigation"
+                    className="h-dvh w-[290px] max-w-[88vw] overflow-hidden border-white/20 bg-gradient-to-b from-[#5f4ee6] via-[#5b40d7] to-[#5e3ae0] p-0 dark:border-slate-700/70 dark:bg-gradient-to-b dark:from-[#111827] dark:via-[#1e1b4b] dark:to-[#0f172a]"
+                  >
                     <div className="flex h-full min-h-0 flex-col">
                     <div className="shrink-0 border-b border-white/20 p-5 dark:border-slate-600/50">
                       <div className="flex items-center gap-2">
