@@ -529,6 +529,11 @@ export default function App() {
     toast.message('Coming Soon');
   };
 
+  const shareImageUrl = useMemo(() => {
+    if (typeof window === 'undefined') return 'https://net360preparation.com/net360-logo.png';
+    return `${window.location.origin}/net360-logo.png`;
+  }, []);
+
   return (
     <AuthProvider>
       <SessionReady>
@@ -541,6 +546,10 @@ export default function App() {
         <meta property="og:title" content={`${activeTitle} | NUST Entry Test Preparation`} />
         <meta property="og:description" content="Prepare for NUST entry test with MCQs and tests" />
         <meta property="og:type" content="website" />
+        <meta property="og:image" content={shareImageUrl} />
+        <meta property="og:image:alt" content="NET360 Preparation" />
+        <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:image" content={shareImageUrl} />
       </Helmet>
       <div className="net360-viewport flex min-h-dvh min-h-screen flex-col p-1 sm:p-3 md:p-5 xl:p-6">
         <div className="net360-shell mx-auto flex w-full max-w-[min(100%,1600px)] flex-col gap-2 rounded-[20px] border border-white/70 bg-white/65 p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl sm:gap-3 sm:rounded-[24px] sm:p-2 xl:rounded-[28px]">

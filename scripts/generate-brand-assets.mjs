@@ -1,7 +1,8 @@
 import sharp from 'sharp';
 import fs from 'node:fs';
 
-const srcCandidates = ['New NET360 logo.png', 'NET360 logo.png'];
+/** Prefer committed `public/net360-logo.png`, then repo-root sources for `npm run brand:assets`. */
+const srcCandidates = ['public/net360-logo.png', 'New NET360 logo.png', 'NET360 logo.png', 'NET logo.png'];
 const src = srcCandidates.find((candidate) => fs.existsSync(candidate));
 
 if (!src) {
@@ -9,7 +10,6 @@ if (!src) {
 }
 
 const webTargets = [
-  ['public/net360-logo.png', 256, 'cover'],
   ['public/favicon-32.png', 32, 'cover'],
   ['public/favicon-192.png', 192, 'cover'],
   ['public/apple-touch-icon.png', 180, 'cover'],

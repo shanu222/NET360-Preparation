@@ -517,12 +517,13 @@ app.get('/api/public/media-config', (_req, res) => {
   res.json({
     mediaBaseUrl,
     s3BaseUrl: mediaBaseUrl,
-    brandLogoUrl: String(process.env.PUBLIC_BRAND_LOGO_URL || '').trim() || withBase('brand/net360-logo.png'),
+    /** Same-origin app asset when unset; not served from S3. */
+    brandLogoUrl: String(process.env.PUBLIC_BRAND_LOGO_URL || '').trim() || '/net360-logo.png',
     userGuideVideoUrl: String(process.env.PUBLIC_USER_GUIDE_VIDEO_URL || '').trim() || withBase('videos/net360-guide.mp4'),
     loginBannerUrl: String(process.env.PUBLIC_LOGIN_BANNER_URL || '').trim() || withBase('images/login-banner.png'),
     appPromoImageUrl: String(process.env.PUBLIC_APP_PROMO_IMAGE_URL || '').trim() || withBase('images/app-promo.png'),
     /** Browser resolves against the web app origin; use PUBLIC_FAVICON_URL for absolute CDN favicon. */
-    faviconUrl: String(process.env.PUBLIC_FAVICON_URL || '').trim() || '/logo.svg',
+    faviconUrl: String(process.env.PUBLIC_FAVICON_URL || '').trim() || '/favicon-32.png',
     schoolsPathPrefix: withBase('schools'),
   });
 });
@@ -5565,6 +5566,14 @@ async function buildAnalyticsPdfBuffer({ attempts, user, questionBankTotal = 0 }
       }
     } catch {
       // Proceed without logo if remote asset is unavailable.
+    }
+  }
+  if (!logoBuffer) {
+    try {
+      const localLogoPath = path.join(process.cwd(), 'public', 'net360-logo.png');
+      logoBuffer = Buffer.from(await fs.readFile(localLogoPath));
+    } catch {
+      // Committed app logo optional for PDF export.
     }
   }
 

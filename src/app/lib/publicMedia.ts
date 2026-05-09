@@ -5,7 +5,7 @@
  * `https://net360-media.s3.ap-south-1.amazonaws.com`
  *
  * Falls back to `VITE_PUBLIC_MEDIA_BASE_URL`, then the production bucket host below.
- * Optional full-URL overrides per asset: `VITE_BRAND_LOGO_URL`, `VITE_USER_GUIDE_VIDEO_URL`, …
+ * Optional full-URL overrides per asset: `VITE_BRAND_LOGO_URL` (defaults to same-origin `/net360-logo.png`), `VITE_USER_GUIDE_VIDEO_URL`, …
  *
  * Server: `GET /api/public/media-config` includes `mediaBaseUrl` and `s3BaseUrl` (env `S3_BASE_URL`).
  */
@@ -50,10 +50,11 @@ export function getPublicMediaBaseUrl(): string {
   return getS3BaseUrl();
 }
 
+/** Bundled in `public/` (same origin) — not loaded from S3. Override with `VITE_BRAND_LOGO_URL` if needed. */
 export function brandLogoUrl(): string {
   const override = String(import.meta.env.VITE_BRAND_LOGO_URL || '').trim();
   if (override) return override;
-  return getMediaUrl('brand/net360-logo.png');
+  return '/net360-logo.png';
 }
 
 export function userGuideVideoUrl(): string {
