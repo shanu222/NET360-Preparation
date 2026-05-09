@@ -139,7 +139,7 @@ export function loginBannerImageUrl(): string {
 }
 
 /** Bumped when replacing `images/app-promo.png` on S3 (same key) so browsers skip stale cache. */
-const APP_PROMO_ASSET_VERSION_DEFAULT = '20260509';
+const APP_PROMO_ASSET_VERSION_DEFAULT = '20260510';
 
 export function appPromoImageUrl(): string {
   const fromApi = getRuntimeMediaOverrides().appPromoImageUrl;

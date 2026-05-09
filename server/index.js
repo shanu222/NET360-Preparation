@@ -736,7 +736,7 @@ app.get('/api/public/media-config', (_req, res) => {
     const s = suffix.startsWith('/') ? suffix : `/${suffix}`;
     return `${mediaBaseUrl}${s}`;
   };
-  const appPromoAssetVersion = String(process.env.PUBLIC_APP_PROMO_ASSET_VERSION || '20260509').trim();
+  const appPromoAssetVersion = String(process.env.PUBLIC_APP_PROMO_ASSET_VERSION || '20260510').trim();
   const mediaAssetVersion = String(process.env.PUBLIC_MEDIA_ASSET_VERSION || '').trim();
   const appPromoDefaultBase = withBase('images/app-promo.png');
   const appPromoDefault = appPromoDefaultBase && appPromoAssetVersion
