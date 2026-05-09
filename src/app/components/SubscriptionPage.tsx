@@ -7,6 +7,7 @@ import {
   isCookieSessionApiMarker,
   shouldPersistAuthTokens,
 } from '../lib/authSession';
+import { NET360_ADMIN_WHATSAPP } from '../lib/paymentMethods';
 import { audienceFriendlyError, showErrorToast, showInfoToast, showSuccessToast } from '../lib/userToast';
 import { formatCountdown, useSubscription } from '../context/SubscriptionContext';
 import { Button } from './ui/button';
@@ -73,7 +74,8 @@ export const SubscriptionPage = memo(function SubscriptionPage() {
 
   const whatsappRaw = (
     me?.manualSubscriptionWhatsapp ||
-    `${import.meta.env.VITE_MANUAL_SUBSCRIPTION_WHATSAPP || ''}`
+    `${import.meta.env.VITE_MANUAL_SUBSCRIPTION_WHATSAPP || ''}` ||
+    NET360_ADMIN_WHATSAPP
   ).trim();
   const whatsappDigits = whatsappRaw.replace(/\D/g, '');
 
@@ -81,7 +83,7 @@ export const SubscriptionPage = memo(function SubscriptionPage() {
     const contact =
       whatsappRaw && whatsappDigits
         ? ` Contact us on WhatsApp for manual activation: ${whatsappRaw}.`
-        : ' Your team can set MANUAL_SUBSCRIPTION_WHATSAPP on the API to show the support number here.';
+        : ` Contact us on WhatsApp: ${NET360_ADMIN_WHATSAPP}.`;
     showInfoToast(`JazzCash and Easypaisa automatic payments are coming soon.${contact}`);
   };
 

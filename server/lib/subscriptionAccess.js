@@ -3,6 +3,9 @@
  * AI Smart Mentor continues to use {@link isPaidPlanActive} — trial does not unlock mentor quotas.
  */
 
+/** Digits-only WhatsApp for manual premium contact; matches `NET360_ADMIN_WHATSAPP` / `wa.me` in the web app. */
+export const DEFAULT_MANUAL_SUBSCRIPTION_WHATSAPP_DIGITS = '923403318127';
+
 const TRIAL_MS = Number(process.env.SUBSCRIPTION_TRIAL_DAYS || 7) * 24 * 60 * 60 * 1000;
 const PAID_PLAN_MONTHS = Number(process.env.PREMIUM_PLAN_DURATION_MONTHS || 6);
 const ORANGE_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000;
@@ -12,9 +15,11 @@ export function premiumSurfaceBypassEnabled() {
   return String(process.env.SUBSCRIPTION_PREMIUM_SURFACE_BYPASS || '').toLowerCase() === 'true';
 }
 
-/** When true, PayFast order/pay routes reject — integration stays in codebase for later enablement. */
+/** When true (default if env unset), PayFast order/pay routes reject — set PAYFAST_CHECKOUT_DISABLED=false to enable. */
 export function payfastCheckoutDisabled() {
-  return String(process.env.PAYFAST_CHECKOUT_DISABLED || '').toLowerCase() === 'true';
+  const v = String(process.env.PAYFAST_CHECKOUT_DISABLED ?? 'true').trim().toLowerCase();
+  if (v === 'false' || v === '0' || v === 'no' || v === 'off') return false;
+  return true;
 }
 
 function toPlain(value) {

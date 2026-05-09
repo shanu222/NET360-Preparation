@@ -46,6 +46,7 @@ import {
   addMonths,
   payfastCheckoutDisabled,
   premiumSurfaceBypassEnabled,
+  DEFAULT_MANUAL_SUBSCRIPTION_WHATSAPP_DIGITS,
 } from './lib/subscriptionAccess.js';
 import { grantTrialIfFirstTime, grantPaidPlanAfterPayment } from './lib/subscriptionPayments.js';
 import {
@@ -11016,7 +11017,9 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
     serverTime: new Date(serverNow).toISOString(),
     payfastCheckoutDisabled: payfastCheckoutDisabled(),
     premiumSurfaceBypass: premiumSurfaceBypassEnabled(),
-    manualSubscriptionWhatsapp: String(process.env.MANUAL_SUBSCRIPTION_WHATSAPP || '').trim(),
+    manualSubscriptionWhatsapp: String(
+      process.env.MANUAL_SUBSCRIPTION_WHATSAPP || DEFAULT_MANUAL_SUBSCRIPTION_WHATSAPP_DIGITS,
+    ).trim(),
     subscription: {
       ...subscription,
       isActive: isSubscriptionActive(subscription),
