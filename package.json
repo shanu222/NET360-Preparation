@@ -14,6 +14,7 @@
     "mcq:backfill-ids": "node scripts/backfill-mcq-unique-ids.mjs",
     "mcq:normalize-parts": "node scripts/normalize-mcq-parts.mjs",
     "brand:assets": "node scripts/generate-brand-assets.mjs",
+    "media:upload-s3": "node scripts/upload-public-media-to-s3.mjs",
     "purge:students": "node scripts/purge-student-accounts.mjs",
     "purge:legacy-local-users": "node scripts/purge-legacy-local-users.mjs",
     "mobile:build": "node scripts/validate-mobile-env.mjs && vite build --mode android && npx cap sync android",

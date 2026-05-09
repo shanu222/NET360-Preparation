@@ -1,5 +1,5 @@
 import { MapPin } from 'lucide-react';
-import { publicMediaUrl } from '../lib/publicMedia';
+import { getMediaUrl } from '../lib/publicMedia';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 
@@ -182,9 +182,13 @@ const SCHOOL_CARDS: SchoolCard[] = [
   },
 ];
 
-function resolveImagePath(card: SchoolCard) {
+function resolveImagePath(card: SchoolCard): { src: string; fallbackSrc: string } {
   const raw = card.imageCandidates.length ? card.imageCandidates[0] : 'schools/missing-image.png';
-  return publicMediaUrl(raw.replace(/^\/+/, ''));
+  const key = raw.replace(/^\/+/, '');
+  return {
+    src: getMediaUrl(key),
+    fallbackSrc: `/${key}`,
+  };
 }
 
 export function NUSTSchoolsCampuses() {
@@ -199,7 +203,7 @@ export function NUSTSchoolsCampuses() {
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {SCHOOL_CARDS.map((school) => {
-          const imagePath = resolveImagePath(school);
+          const { src, fallbackSrc } = resolveImagePath(school);
           return (
             <Card
               key={school.id}
@@ -207,7 +211,8 @@ export function NUSTSchoolsCampuses() {
             >
               <div className="h-44 w-full overflow-hidden border-b border-indigo-100 bg-slate-100">
                 <ImageWithFallback
-                  src={imagePath}
+                  src={src}
+                  fallbackSrc={fallbackSrc}
                   alt={`${school.shortName} campus`}
                   className="h-full w-full object-cover"
                 />
