@@ -70,11 +70,11 @@ export function getPublicMediaBaseUrl(): string {
   return getS3BaseUrl();
 }
 
-/** Bundled in `public/` (same origin) — not loaded from S3. Override with `VITE_BRAND_LOGO_URL` if needed. */
+/** Student app + admin: same-origin `public/logo.svg`. Override with `VITE_BRAND_LOGO_URL` if needed. */
 export function brandLogoUrl(): string {
   const override = String(import.meta.env.VITE_BRAND_LOGO_URL || '').trim();
   if (override) return override;
-  return '/net360-logo.png';
+  return '/logo.svg';
 }
 
 export function userGuideVideoUrl(): string {

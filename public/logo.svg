@@ -1,1 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><image href="/net360-logo.png" width="512" height="512"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="NET360">
+  <defs>
+    <linearGradient id="net360-bg" x1="10%" y1="0%" x2="90%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="55%" stop-color="#5f4ee6"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#net360-bg)"/>
+  <path fill="#ffffff" d="M120 352V160h52l76 118c9 14 18 29 27 44h2c-2-18-3-37-3-55V160h52v192h-48l-77-121c-10-15-20-31-29-46h-3c2 17 3 35 3 52v115h-52z"/>
+</svg>

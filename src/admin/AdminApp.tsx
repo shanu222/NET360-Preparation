@@ -3040,7 +3040,10 @@ export default function AdminApp() {
     ] = await Promise.all([
       apiRequest<AdminOverview>('/api/admin/overview', {}, activeToken),
       apiRequest<{ users: AdminUser[] }>('/api/admin/users', {}, activeToken),
-      apiRequest<{ requests: SignupRequest[] }>('/api/admin/signup-requests?status=all', {}, activeToken),
+      // Legacy signup-request workflow is retired server-side (410); keep panel usable for Firebase-era admins.
+      apiRequest<{ requests: SignupRequest[] }>('/api/admin/signup-requests?status=all', {}, activeToken).catch(() => ({
+        requests: [],
+      })),
       apiRequest<{ mcqs: AdminMCQ[] }>('/api/admin/mcqs', {}, activeToken),
       apiRequest<{ questions: AdminPracticeBoardQuestion[] }>('/api/admin/practice-board/questions', {}, activeToken).catch(() => ({ questions: [] })),
       apiRequest<{ submissions: AdminQuestionSubmission[] }>('/api/admin/question-submissions?status=all', {}, activeToken).catch(() => ({ submissions: [] })),
@@ -3299,14 +3302,14 @@ export default function AdminApp() {
       } catch (error) {
         if (!cancelled) {
           const status = Number((error as { status?: number } | null)?.status || 0);
-          const message = error instanceof Error ? error.message : 'Could not load admin data.';
           console.error('Admin data load failed:', error);
 
           if (status === 401 || status === 403) {
             clearAdminSession();
           } else {
-            setAdminLoadError(message);
-            showErrorToast('Could not load admin data. Please try refreshing again.');
+            const friendly = audienceFriendlyError(error, 'Could not load admin data. Try Refresh or sign in again.');
+            setAdminLoadError(friendly);
+            showErrorToast(friendly);
           }
         }
       } finally {
@@ -3360,9 +3363,8 @@ export default function AdminApp() {
         void loadAdminData(authToken)
           .then(() => setAdminLoadError(''))
           .catch((error) => {
-            const message = error instanceof Error ? error.message : 'Could not refresh admin data.';
             console.error('Admin data refresh failed:', error);
-            setAdminLoadError(message);
+            setAdminLoadError(audienceFriendlyError(error, 'Could not refresh admin data.'));
           });
       });
 
@@ -6828,14 +6830,15 @@ export default function AdminApp() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-3">
                 <div
-                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 transition hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20"
+                  className="inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-indigo-100 bg-transparent shadow-[0_6px_12px_rgba(76,93,172,0.14)] dark:border-slate-600/50 dark:bg-slate-900/35"
                   aria-hidden="true"
                 >
                   <img
                     src={brandLogoUrl()}
-                    alt=""
-                    className="h-6 w-6 rounded-full object-cover"
+                    alt="NET360 logo"
+                    className="h-full w-full scale-[1.3] object-contain"
                     loading="lazy"
+                    decoding="async"
                   />
                 </div>
                 <div>
@@ -6860,9 +6863,9 @@ export default function AdminApp() {
           </header>
 
           {adminLoadError ? (
-            <Card className="border-rose-300 bg-rose-50/90 dark:border-rose-400/40 dark:bg-rose-500/10">
-              <CardContent className="py-3 text-sm text-rose-800 dark:text-rose-200">
-                Admin data failed to load from backend: {adminLoadError}
+            <Card className="border-amber-200 bg-amber-50/90 dark:border-amber-400/35 dark:bg-amber-500/10">
+              <CardContent className="py-3 text-sm text-amber-950 dark:text-amber-100">
+                {adminLoadError}
               </CardContent>
             </Card>
           ) : null}

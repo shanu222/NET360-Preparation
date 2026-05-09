@@ -75,12 +75,7 @@ async function build() {
       .toFile(out);
   }
 
-  fs.writeFileSync(
-    'public/logo.svg',
-    '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><image href="/net360-logo.png" width="512" height="512"/></svg>',
-    'utf8',
-  );
-
+  // `public/logo.svg` is the committed brand mark for web (student + admin). Do not overwrite here.
   console.log('Brand assets generated successfully (web + Android launcher + Android splash).');
 }
 

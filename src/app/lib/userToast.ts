@@ -106,6 +106,7 @@ function httpStatusUserMessage(status: number): string | null {
   if (status === 403) return 'You do not have permission to do that.';
   if (status === 404) return 'We could not find what you requested.';
   if (status === 409) return 'Account already exists. Please log in.';
+  if (status === 410) return 'That option is no longer available.';
   if (status === 413) return 'That file is too large. Try a smaller file.';
   if (status === 422) return 'Some information could not be processed. Check your input.';
   if (status === 429) return 'Too many requests. Please wait a moment and try again.';
