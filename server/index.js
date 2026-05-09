@@ -9658,19 +9658,21 @@ app.get('/api/support-chat/messages', authMiddleware, async (req, res) => {
     .limit(400)
     .lean();
 
-  await SupportChatMessageModel.updateMany(
-    {
-      userId,
-      senderRole: 'admin',
-      readByUser: false,
-    },
-    { $set: { readByUser: true } },
-  );
-
   const unreadFromAdmin = messages.reduce((count, item) => {
     if (item.senderRole === 'admin' && !item.readByUser) return count + 1;
     return count;
   }, 0);
+
+  if (unreadFromAdmin > 0) {
+    await SupportChatMessageModel.updateMany(
+      {
+        userId,
+        senderRole: 'admin',
+        readByUser: false,
+      },
+      { $set: { readByUser: true } },
+    );
+  }
 
   res.json({
     unreadFromAdmin,

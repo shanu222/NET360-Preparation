@@ -4160,17 +4160,19 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         pool = applyHierarchyFilters(basePool);
       }
 
-      console.log('TEST FILTER', {
-        subject,
-        part,
-        chapter,
-        section,
-        difficulty,
-        topic,
-        mode,
-        testType,
-      });
-      console.log('MCQ COUNT', pool.length);
+      if (import.meta.env.DEV) {
+        console.log('TEST FILTER', {
+          subject,
+          part,
+          chapter,
+          section,
+          difficulty,
+          topic,
+          mode,
+          testType,
+        });
+        console.log('MCQ COUNT', pool.length);
+      }
 
       selected = shuffle(pool).slice(0, Math.min(questionCount, pool.length));
     }

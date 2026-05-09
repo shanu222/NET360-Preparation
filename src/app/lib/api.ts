@@ -91,6 +91,7 @@ function isNativeCapacitorRuntime() {
 }
 
 function logApiConfigurationIssue(level: 'warn' | 'error', message: string, details: Record<string, unknown> = {}) {
+  if (!import.meta.env.DEV) return;
   const payload = {
     ...details,
     apiBaseUrl: API_BASE || '(empty)',
@@ -129,8 +130,13 @@ function resolveRequestTimeoutMs(path: string, explicitTimeoutMs?: number) {
   if (Number.isFinite(explicitTimeoutMs) && Number(explicitTimeoutMs) > 0) {
     return Math.min(MAX_API_TIMEOUT_MS, Math.max(1_000, Math.floor(Number(explicitTimeoutMs))));
   }
-  if (String(path || '').includes('/api/ai/parse-mcqs')) {
+  const p = String(path || '');
+  if (p.includes('/api/ai/parse-mcqs')) {
     return AI_PARSE_API_TIMEOUT_MS;
+  }
+  // Support inbox can be slower on cold DB / busy hosts; avoid noisy timeout retries in normal conditions.
+  if (p.includes('/api/support-chat/')) {
+    return Math.min(MAX_API_TIMEOUT_MS, 55_000);
   }
   return DEFAULT_API_TIMEOUT_MS;
 }

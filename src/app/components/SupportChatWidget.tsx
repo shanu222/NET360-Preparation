@@ -225,7 +225,11 @@ export function SupportChatWidget() {
     if (!canUseChat || !token) return;
     try {
       setLoading(true);
-      const payload = await apiRequest<SupportInboxPayload>('/api/support-chat/messages', {}, token);
+      const payload = await apiRequest<SupportInboxPayload>(
+        '/api/support-chat/messages',
+        { retryCount: 2, retryDelayMs: 1_500 },
+        token,
+      );
       const nextMessages = payload.messages || [];
       setMessages(nextMessages);
       setUnreadCount(Number(payload.unreadFromAdmin || 0));
@@ -259,6 +263,7 @@ export function SupportChatWidget() {
 
     void loadMessages();
     const timer = window.setInterval(() => {
+      if (document.hidden) return;
       void loadMessages();
     }, 5000);
 
