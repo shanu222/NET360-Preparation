@@ -654,8 +654,39 @@ function sanitizePayload(value) {
 
 const expressCorsDisabled = String(process.env.DISABLE_EXPRESS_CORS || '').toLowerCase() === 'true';
 
+/**
+ * Optional production hardening: comma-separated exact browser origins
+ * (e.g. https://net360preparation.com,https://www.net360preparation.com).
+ * When unset, behavior matches historical cors({ origin: true }) (reflect request Origin).
+ */
+function parseCorsAllowedOriginsList() {
+  const raw = String(process.env.CORS_ALLOWED_ORIGINS || process.env.NET360_CORS_ORIGINS || '').trim();
+  if (!raw) return null;
+  const list = raw.split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean);
+  return list.length ? list : null;
+}
+
+const corsAllowedOriginsList = parseCorsAllowedOriginsList();
+
+const corsOriginResolver = corsAllowedOriginsList
+  ? (origin, callback) => {
+      if (!origin) {
+        callback(null, true);
+        return;
+      }
+      if (corsAllowedOriginsList.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+      if (!IS_PRODUCTION) {
+        console.warn('[cors] Blocked origin (dev):', origin);
+      }
+      callback(null, false);
+    }
+  : true;
+
 const corsMiddleware = cors({
-  origin: true,
+  origin: corsOriginResolver,
   credentials: true,
 });
 
@@ -14334,6 +14365,7 @@ async function bootstrap() {
       jwtSecret: JWT_SECRET,
       UserModel,
       accessTokenCookieName: ACCESS_TOKEN_COOKIE_NAME,
+      corsOrigins: corsAllowedOriginsList || true,
       isSocketSessionValid: (user, payload) => {
         if ((user.role || 'student') !== 'student') return true;
         const tokenSessionId = String(payload.sessionId || '');

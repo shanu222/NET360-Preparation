@@ -56,6 +56,7 @@ function adminRoom(userId) {
  * @param {import('mongoose').Model} opts.UserModel
  * @param {(user: import('mongoose').Document, payload: object) => boolean} opts.isSocketSessionValid
  * @param {string} [opts.accessTokenCookieName]
+ * @param {boolean | string[]} [opts.corsOrigins] Same as Express CORS: true = any, or allowlist of origins
  * @param {(userId: string, clientId: string) => void} [opts.onStudentPresenceRegister]
  * @param {(userId: string, clientId: string) => void} [opts.onStudentPresenceUnregister]
  */
@@ -65,6 +66,7 @@ export async function initSocketIo(httpServer, opts) {
     UserModel,
     isSocketSessionValid,
     accessTokenCookieName = '',
+    corsOrigins = true,
     onStudentPresenceRegister,
     onStudentPresenceUnregister,
   } = opts;
@@ -72,7 +74,7 @@ export async function initSocketIo(httpServer, opts) {
   const io = new Server(httpServer, {
     path: '/socket.io',
     cors: {
-      origin: true,
+      origin: corsOrigins,
       credentials: true,
       methods: ['GET', 'POST'],
     },
