@@ -20,6 +20,21 @@ type ApiRequestOptions = RequestInit & {
 
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
 
+/** When the SPA is on these hosts, call the API host directly (Vercel /api rewrites + WS upgrades are unreliable on www). */
+const DEFAULT_PROD_API_BY_HOST: Record<string, string> = {
+  'www.net360preparation.com': 'https://api.net360preparation.com',
+  'net360preparation.com': 'https://api.net360preparation.com',
+};
+
+function hostnameStartsWithApiSubdomain(url: string) {
+  try {
+    const h = new URL(url).hostname;
+    return h.startsWith('api.') || /^api\./i.test(h);
+  } catch {
+    return false;
+  }
+}
+
 function resolveApiBase() {
   const configured = String(import.meta.env.VITE_API_URL || '').replace(/\/$/, '').trim();
   const browserOrigin = typeof window !== 'undefined'
@@ -34,10 +49,29 @@ function resolveApiBase() {
     return configured;
   }
 
-  // Web builds can safely default to same-origin.
+  // Web builds: optional same-domain default for production NET360 hosts.
+  if (!configured && browserOrigin) {
+    if (import.meta.env.PROD) {
+      try {
+        const { hostname } = new URL(browserOrigin);
+        const fallback = DEFAULT_PROD_API_BY_HOST[hostname];
+        if (fallback) {
+          return fallback;
+        }
+      } catch {
+        /* keep browserOrigin */
+      }
+    }
+    return browserOrigin;
+  }
+
   if (!configured) {
-    if (browserOrigin) return browserOrigin;
     throw new Error('Missing VITE_API_URL in production');
+  }
+
+  // Explicit api.* backend: always use it (Socket.IO + POST must hit Node, not static rewrites).
+  if (hostnameStartsWithApiSubdomain(configured)) {
+    return configured;
   }
 
   // If the configured host differs from current web origin, prefer same-origin

@@ -1196,6 +1196,29 @@
   }
 }
 
+/* Premium lock card: force readable contrast (shell + page rules sometimes leave a light card with dark-theme text). */
+[data-premium-lock-screen] {
+  --plock-bg: rgba(255, 255, 255, 0.97);
+  --plock-heading: #0f172a;
+  --plock-body: #334155;
+  background-color: var(--plock-bg) !important;
+  color: var(--plock-heading) !important;
+}
+
+[data-premium-lock-screen] h2 {
+  color: var(--plock-heading) !important;
+}
+
+[data-premium-lock-screen] p {
+  color: var(--plock-body) !important;
+}
+
+.dark [data-premium-lock-screen] {
+  --plock-bg: rgba(15, 23, 42, 0.98);
+  --plock-heading: #f8fafc;
+  --plock-body: #cbd5e1;
+}
+
 /* Admin approval token — shimmer placeholder while waiting for inbox code */
 @keyframes net360-token-shimmer {
   0% {

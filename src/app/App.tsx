@@ -54,7 +54,7 @@ import {
   Crown,
 } from 'lucide-react';
 import { Button } from './components/ui/button';
-import { Sheet, SheetContent, SheetTrigger } from './components/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from './components/ui/sheet';
 import { AppDataProvider } from './context/AppDataContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { preloadCommunityCache } from './lib/communityPreload';
@@ -750,6 +750,10 @@ export default function App() {
                     aria-label="Main navigation"
                     className="h-dvh w-[290px] max-w-[88vw] overflow-hidden border-white/20 bg-gradient-to-b from-[#5f4ee6] via-[#5b40d7] to-[#5e3ae0] p-0 dark:border-slate-700/70 dark:bg-gradient-to-b dark:from-[#111827] dark:via-[#1e1b4b] dark:to-[#0f172a]"
                   >
+                    <SheetTitle className="sr-only">Main navigation</SheetTitle>
+                    <SheetDescription className="sr-only">
+                      Browse NET360 sections and open pages from the menu.
+                    </SheetDescription>
                     <div className="flex h-full min-h-0 flex-col">
                     <div className="shrink-0 border-b border-white/20 p-5 dark:border-slate-600/50">
                       <div className="flex items-center gap-2">
