@@ -19,6 +19,8 @@ interface ImportMetaEnv {
   readonly VITE_USER_GUIDE_VIDEO_URL?: string;
   readonly VITE_LOGIN_BANNER_URL?: string;
   readonly VITE_APP_PROMO_IMAGE_URL?: string;
+  /** Query `v=` for `images/app-promo.png` when replacing S3 object at same key (cache bust). */
+  readonly VITE_APP_PROMO_ASSET_VERSION?: string;
 }
 
 interface ImportMeta {

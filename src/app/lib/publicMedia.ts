@@ -89,8 +89,15 @@ export function loginBannerImageUrl(): string {
   return getMediaUrl('images/login-banner.png');
 }
 
+/** Bumped when replacing `images/app-promo.png` on S3 (same key) so browsers skip stale cache. Override via `VITE_APP_PROMO_ASSET_VERSION`. */
+const APP_PROMO_ASSET_VERSION_DEFAULT = '20260509';
+
 export function appPromoImageUrl(): string {
   const override = String(import.meta.env.VITE_APP_PROMO_IMAGE_URL || '').trim();
   if (override) return override;
-  return getMediaUrl('images/app-promo.png');
+  const base = getMediaUrl('images/app-promo.png');
+  const rev = String(import.meta.env.VITE_APP_PROMO_ASSET_VERSION || APP_PROMO_ASSET_VERSION_DEFAULT).trim();
+  if (!base || !rev) return base;
+  const sep = base.includes('?') ? '&' : '?';
+  return `${base}${sep}v=${encodeURIComponent(rev)}`;
 }

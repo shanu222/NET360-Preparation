@@ -736,6 +736,11 @@ app.get('/api/public/media-config', (_req, res) => {
     const s = suffix.startsWith('/') ? suffix : `/${suffix}`;
     return `${mediaBaseUrl}${s}`;
   };
+  const appPromoAssetVersion = String(process.env.PUBLIC_APP_PROMO_ASSET_VERSION || '20260509').trim();
+  const appPromoDefaultBase = withBase('images/app-promo.png');
+  const appPromoDefault = appPromoDefaultBase && appPromoAssetVersion
+    ? `${appPromoDefaultBase}${appPromoDefaultBase.includes('?') ? '&' : '?'}v=${encodeURIComponent(appPromoAssetVersion)}`
+    : appPromoDefaultBase;
   res.json({
     mediaBaseUrl,
     s3BaseUrl: mediaBaseUrl,
@@ -743,7 +748,7 @@ app.get('/api/public/media-config', (_req, res) => {
     brandLogoUrl: String(process.env.PUBLIC_BRAND_LOGO_URL || '').trim() || '/net360-logo.png',
     userGuideVideoUrl: String(process.env.PUBLIC_USER_GUIDE_VIDEO_URL || '').trim() || withBase('videos/net360-guide.mp4'),
     loginBannerUrl: String(process.env.PUBLIC_LOGIN_BANNER_URL || '').trim() || withBase('images/login-banner.png'),
-    appPromoImageUrl: String(process.env.PUBLIC_APP_PROMO_IMAGE_URL || '').trim() || withBase('images/app-promo.png'),
+    appPromoImageUrl: String(process.env.PUBLIC_APP_PROMO_IMAGE_URL || '').trim() || appPromoDefault,
     /** Browser resolves against the web app origin; use PUBLIC_FAVICON_URL for absolute CDN favicon. */
     faviconUrl: String(process.env.PUBLIC_FAVICON_URL || '').trim() || '/favicon-32.png',
     schoolsPathPrefix: withBase('schools'),
