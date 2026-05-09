@@ -11707,11 +11707,8 @@ app.get('/api/admin/users', authMiddleware, requireAdmin, async (req, res) => {
     email: 1,
     firstName: 1,
     lastName: 1,
-    phone: 1,
-    role: 1,
-    createdAt: 1,
   })
-    .sort({ createdAt: -1 })
+    .sort({ firstName: 1, lastName: 1, email: 1 })
     .lean();
 
   res.json({
@@ -11720,14 +11717,16 @@ app.get('/api/admin/users', authMiddleware, requireAdmin, async (req, res) => {
       email: item.email,
       firstName: item.firstName || '',
       lastName: item.lastName || '',
-      mobileNumber: item.phone || '',
-      role: item.role || 'student',
-      createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
     })),
   });
 });
 
 app.post('/api/admin/users/create', authMiddleware, requireAdmin, async (req, res) => {
+  res.status(410).json({
+    error: 'Admin-created local accounts are disabled. Use Firebase signup/login from the profile page.',
+  });
+  return;
+
   const email = normalizeEmail(req.body?.email);
   const firstName = sanitizeHumanName(req.body?.firstName || '');
   const lastName = sanitizeHumanName(req.body?.lastName || '');

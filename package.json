@@ -15,6 +15,7 @@
     "mcq:normalize-parts": "node scripts/normalize-mcq-parts.mjs",
     "brand:assets": "node scripts/generate-brand-assets.mjs",
     "purge:students": "node scripts/purge-student-accounts.mjs",
+    "purge:legacy-local-users": "node scripts/purge-legacy-local-users.mjs",
     "mobile:build": "node scripts/validate-mobile-env.mjs && vite build --mode android && npx cap sync android",
     "android:sync": "npx cap sync android",
     "android:open": "npx cap open android",

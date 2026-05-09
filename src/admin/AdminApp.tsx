@@ -710,10 +710,6 @@ const ADMIN_SECTION_META: Array<{ section: AdminSection; label: string; icon: Lu
   { section: 'community-moderation', label: 'Community', icon: ShieldAlert },
   { section: 'subscriptions', label: 'Subscriptions', icon: CreditCard },
   { section: 'support-chat', label: 'Support Chat', icon: MessageSquare },
-  { section: 'requests', label: 'Signup Requests', icon: ClipboardList },
-  { section: 'premium-requests', label: 'Premium Requests', icon: Sparkles },
-  { section: 'password-recovery', label: 'Recovery', icon: Activity },
-  { section: 'security-info', label: 'Security Info', icon: KeyRound },
   { section: 'system-config', label: 'Settings', icon: Settings },
 ];
 
@@ -3567,10 +3563,6 @@ export default function AdminApp() {
 
   const removeUser = async (user: AdminUser) => {
     if (!authToken) return;
-    if (user.role === 'admin') {
-      toast.error('For safety, admin accounts cannot be removed from this panel.');
-      return;
-    }
     if (!window.confirm(`Remove ${user.email}? They will have to login/register again.`)) return;
 
     try {
@@ -7250,118 +7242,28 @@ export default function AdminApp() {
         <TabsContent value="users" className="space-y-3">
           <Card>
             <CardHeader>
-              <CardTitle>Create Account (Admin)</CardTitle>
-              <CardDescription>Create student accounts directly without signup token flow.</CardDescription>
+              <CardTitle>Account System</CardTitle>
+              <CardDescription>Accounts are created only through Firebase signup/login (Google or Email).</CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid gap-2 md:grid-cols-2">
-                <div className="space-y-1">
-                  <Label htmlFor="admin-create-first-name">First Name</Label>
-                  <Input
-                    id="admin-create-first-name"
-                    value={createUserForm.firstName}
-                    onChange={(e) => setCreateUserForm((prev) => ({ ...prev, firstName: e.target.value }))}
-                    placeholder="First name"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="admin-create-last-name">Last Name</Label>
-                  <Input
-                    id="admin-create-last-name"
-                    value={createUserForm.lastName}
-                    onChange={(e) => setCreateUserForm((prev) => ({ ...prev, lastName: e.target.value }))}
-                    placeholder="Last name"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="admin-create-email">Email</Label>
-                  <Input
-                    id="admin-create-email"
-                    type="email"
-                    value={createUserForm.email}
-                    onChange={(e) => setCreateUserForm((prev) => ({ ...prev, email: e.target.value }))}
-                    placeholder="student@example.com"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="admin-create-mobile">Mobile Number</Label>
-                  <Input
-                    id="admin-create-mobile"
-                    value={createUserForm.mobileNumber}
-                    onChange={(e) => setCreateUserForm((prev) => ({ ...prev, mobileNumber: e.target.value }))}
-                    placeholder="+923001234567"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="admin-create-password">Temporary Password</Label>
-                  <PasswordInput
-                    id="admin-create-password"
-                    value={createUserForm.password}
-                    onChange={(e) => setCreateUserForm((prev) => ({ ...prev, password: e.target.value }))}
-                    placeholder="At least 8 characters"
-                  />
-                  <div className="flex flex-wrap gap-2">
-                    <Button type="button" variant="outline" size="sm" onClick={() => void fillGeneratedTemporaryPassword()}>
-                      Generate Temporary Password
-                    </Button>
-                    <Button type="button" variant="outline" size="sm" onClick={() => void copyTemporaryPassword()}>
-                      Copy Password
-                    </Button>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="admin-create-plan">Initial Plan (Optional)</Label>
-                  <Select
-                    value={createUserForm.planId}
-                    onValueChange={(value) => setCreateUserForm((prev) => ({ ...prev, planId: value }))}
-                  >
-                    <SelectTrigger id="admin-create-plan">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {(subscriptionOverview?.plans || []).map((plan) => (
-                        <SelectItem key={plan.id} value={plan.id}>{plan.name}</SelectItem>
-                      ))}
-                      {!(subscriptionOverview?.plans || []).length ? <SelectItem value="basic_monthly">Basic Plan</SelectItem> : null}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={createUserForm.activatePlan}
-                  onChange={(e) => setCreateUserForm((prev) => ({ ...prev, activatePlan: e.target.checked }))}
-                />
-                Activate selected plan immediately after account creation
-              </label>
-
-              <div>
-                <Button onClick={() => void createUserAccount()} disabled={isCreatingUser}>
-                  {isCreatingUser ? 'Creating Account...' : 'Create Account'}
-                </Button>
-              </div>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                Legacy manual account creation, signup request approval, and old recovery/token flows are retired.
+                Students should register directly from the profile page using Firebase.
+              </p>
             </CardContent>
           </Card>
 
           <Card>
             <CardHeader>
               <CardTitle>Registered Users</CardTitle>
-              <CardDescription>Remove users when needed</CardDescription>
+              <CardDescription>Shows Firebase-registered non-admin users only.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2 max-h-[520px] overflow-auto">
               {users.map((user) => (
                 <div key={user.id} className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3">
                   <div>
-                    <p className="text-sm">{user.email}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {[user.firstName, user.lastName].filter(Boolean).join(' ') || 'No name'}
-                      {' • '}
-                      {user.createdAt ? new Date(user.createdAt).toLocaleString() : 'Unknown date'}
-                    </p>
-                    <p className="text-xs text-muted-foreground">Mobile: {user.mobileNumber || 'N/A'}</p>
-                    <Badge variant="outline" className="mt-1">{user.role}</Badge>
+                    <p className="text-sm font-medium">{[user.firstName, user.lastName].filter(Boolean).join(' ') || 'No name'}</p>
+                    <p className="text-xs text-muted-foreground">{user.email}</p>
                   </div>
                   <Button variant="destructive" size="sm" onClick={() => void removeUser(user)}>
                     Remove
