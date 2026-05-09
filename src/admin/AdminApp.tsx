@@ -6370,17 +6370,18 @@ export default function AdminApp() {
 
   if (!ready) {
     return (
-      <div className="admin-shell min-h-screen bg-gradient-to-br from-slate-100 via-cyan-50 to-indigo-100 text-slate-900 dark:from-[#060b1b] dark:via-[#1b1642] dark:to-[#062a33] dark:text-slate-100">
-        <div className="flex min-h-screen items-center justify-center p-5">
-          <button
-            type="button"
-            onClick={() => setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))}
-            className="fixed right-4 top-4 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 shadow-md transition hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20"
-            aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-          >
-            {themeMode === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </button>
-          <Card>
+      <div className="admin-shell min-h-dvh overflow-x-hidden bg-gradient-to-br from-slate-100 via-cyan-50 to-indigo-100 text-slate-900 dark:from-[#060b1b] dark:via-[#1b1642] dark:to-[#062a33] dark:text-slate-100">
+        <button
+          type="button"
+          onClick={() => setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+          className="fixed right-4 top-4 z-50 inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-300/70 bg-white/80 text-slate-700 shadow-md transition hover:bg-white dark:border-white/15 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20"
+          aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {themeMode === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+        </button>
+        {/* Mobile: avoid vertically-centering in 100vh — iOS keyboard pushes centered content off-screen. */}
+        <div className="flex min-h-dvh w-full items-start justify-center overflow-y-auto overscroll-y-contain px-5 pb-[max(1.75rem,env(safe-area-inset-bottom,0px)+1rem)] pt-[max(5.5rem,env(safe-area-inset-top,0px)+1.25rem)] sm:items-center sm:py-5 sm:pt-5">
+          <Card className="w-full max-w-md shrink-0 sm:my-auto">
             <CardContent className="py-8">Loading admin panel...</CardContent>
           </Card>
         </div>
@@ -6390,7 +6391,7 @@ export default function AdminApp() {
 
   if (!authToken) {
     return (
-      <div className="admin-shell min-h-screen bg-gradient-to-br from-slate-100 via-cyan-50 to-indigo-100 text-slate-900 dark:from-[#060b1b] dark:via-[#1b1642] dark:to-[#062a33] dark:text-slate-100">
+      <div className="admin-shell min-h-dvh overflow-x-hidden bg-gradient-to-br from-slate-100 via-cyan-50 to-indigo-100 text-slate-900 dark:from-[#060b1b] dark:via-[#1b1642] dark:to-[#062a33] dark:text-slate-100">
         <button
           type="button"
           onClick={() => setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))}
@@ -6399,35 +6400,39 @@ export default function AdminApp() {
         >
           {themeMode === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
         </button>
-        <div className="flex min-h-screen items-center justify-center p-5">
-        <Card className="w-full max-w-md">
-          <CardHeader>
-            <CardTitle>NET360 Admin Panel</CardTitle>
-            <CardDescription>Separate management panel (outside student app)</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="admin-email">Admin Email</Label>
-              <Input
-                id="admin-email"
-                type="email"
-                value={authForm.email}
-                onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="admin-password">Password</Label>
-              <PasswordInput
-                id="admin-password"
-                value={authForm.password}
-                onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
-              />
-            </div>
-            <Button className="w-full" onClick={login} disabled={loading}>
-              {loading ? 'Signing in...' : 'Login'}
-            </Button>
-          </CardContent>
-        </Card>
+        <div className="flex min-h-dvh w-full items-start justify-center overflow-y-auto overscroll-y-contain px-5 pb-[max(1.75rem,env(safe-area-inset-bottom,0px)+1rem)] pt-[max(5.5rem,env(safe-area-inset-top,0px)+1.25rem)] sm:items-center sm:py-5 sm:pt-5">
+          <Card className="w-full max-w-md shrink-0 sm:my-auto">
+            <CardHeader>
+              <CardTitle>NET360 Admin Panel</CardTitle>
+              <CardDescription>Separate management panel (outside student app)</CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="admin-email">Admin Email</Label>
+                <Input
+                  id="admin-email"
+                  type="email"
+                  autoComplete="email"
+                  enterKeyHint="next"
+                  value={authForm.email}
+                  onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="admin-password">Password</Label>
+                <PasswordInput
+                  id="admin-password"
+                  autoComplete="current-password"
+                  enterKeyHint="go"
+                  value={authForm.password}
+                  onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
+                />
+              </div>
+              <Button className="w-full" onClick={login} disabled={loading}>
+                {loading ? 'Signing in...' : 'Login'}
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </div>
     );
