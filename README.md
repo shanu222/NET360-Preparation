@@ -60,10 +60,8 @@ Create environment variables for backend service:
 - `MODEL_PROVIDER_API_KEY` = required for live Smart Study Mentor
 - `MODEL_PROVIDER_MODEL` = optional, default `gpt-4o-mini`
 - `SMART_DAILY_LIMIT` = optional, default `50`
-- Firebase Auth (required for user auth):
-  - `FIREBASE_PROJECT_ID`
-  - `FIREBASE_CLIENT_EMAIL`
-  - `FIREBASE_PRIVATE_KEY` (single-line value with escaped `\n`)
+- Firebase Admin on the API (required to verify Firebase ID tokens for login/register):
+  - `GOOGLE_APPLICATION_CREDENTIALS` = absolute path to the **service account JSON** (same project as your `VITE_FIREBASE_*` client config). Keep the file out of git (see `secrets/` in `.gitignore`).
 - Admin access:
   - Env login (recommended): set `ADMIN_LOGIN_EMAIL` + `ADMIN_LOGIN_PASSWORD` on API service
   - When env credentials are used, backend auto-creates/promotes admin user and syncs password on successful login

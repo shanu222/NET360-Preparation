@@ -6,12 +6,13 @@ import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import crypto from 'node:crypto';
 import path from 'node:path';
+import { existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
-import { cert, getApps as getFirebaseAdminApps, initializeApp as initializeFirebaseAdminApp } from 'firebase-admin/app';
+import { applicationDefault, getApps as getFirebaseAdminApps, initializeApp as initializeFirebaseAdminApp } from 'firebase-admin/app';
 import { getAuth as getFirebaseAdminAuth } from 'firebase-admin/auth';
 import OpenAI from 'openai';
 import nodemailer from 'nodemailer';
@@ -192,9 +193,6 @@ const REFRESH_TOKEN_COOKIE_NAME = String(process.env.REFRESH_TOKEN_COOKIE_NAME |
 const AUTH_COOKIE_DOMAIN = String(process.env.AUTH_COOKIE_DOMAIN || '').trim();
 /** Production uses HTTPS + cross-site cookies; development uses lax + non-secure. */
 const AUTH_COOKIE_SECURE = IS_PRODUCTION;
-const FIREBASE_PROJECT_ID = String(process.env.FIREBASE_PROJECT_ID || '').trim();
-const FIREBASE_CLIENT_EMAIL = String(process.env.FIREBASE_CLIENT_EMAIL || '').trim();
-const FIREBASE_PRIVATE_KEY = String(process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n').trim();
 const ENV_ADMIN_LOGIN_EMAIL_RAW = String(
   process.env.ADMIN_LOGIN_EMAIL
   || process.env.ADMIN_EMAIL
@@ -278,35 +276,37 @@ const twilioClient = TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN
   ? Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
   : null;
 
+function getMissingFirebaseAdminEnvVars() {
+  const missing = [];
+  const adcPath = String(process.env.GOOGLE_APPLICATION_CREDENTIALS || '').trim();
+  if (!adcPath) {
+    missing.push('GOOGLE_APPLICATION_CREDENTIALS');
+    return missing;
+  }
+  if (!existsSync(adcPath)) {
+    missing.push('GOOGLE_APPLICATION_CREDENTIALS (file not found)');
+    return missing;
+  }
+  return missing;
+}
+
 const firebaseAdminAuth = (() => {
-  if (!FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
+  if (getMissingFirebaseAdminEnvVars().length) {
     return null;
   }
   try {
     if (!getFirebaseAdminApps().length) {
       initializeFirebaseAdminApp({
-        credential: cert({
-          projectId: FIREBASE_PROJECT_ID,
-          clientEmail: FIREBASE_CLIENT_EMAIL,
-          privateKey: FIREBASE_PRIVATE_KEY,
-        }),
+        credential: applicationDefault(),
       });
     }
+    console.log('[firebase-admin] initialized successfully');
     return getFirebaseAdminAuth();
   } catch (err) {
-    console.error('[firebase-admin] Init failed (Firebase features disabled):', err?.message || err);
-    console.error('[firebase-admin] Check FIREBASE_PRIVATE_KEY: real service-account PEM, or use \\n for newlines in .env (not literal line breaks inside quotes).');
+    console.error('[firebase-admin] initialization failed', err?.message || err);
     return null;
   }
 })();
-
-function getMissingFirebaseAdminEnvVars() {
-  const missing = [];
-  if (!FIREBASE_PROJECT_ID) missing.push('FIREBASE_PROJECT_ID');
-  if (!FIREBASE_CLIENT_EMAIL) missing.push('FIREBASE_CLIENT_EMAIL');
-  if (!FIREBASE_PRIVATE_KEY) missing.push('FIREBASE_PRIVATE_KEY');
-  return missing;
-}
 
 const SUBSCRIPTION_PLANS = {
   premium_6m: {
@@ -3847,7 +3847,7 @@ function buildAdminInfraHealthSnapshot() {
   const firebaseMissing = getMissingFirebaseAdminEnvVars();
   const firebaseStatus = firebaseAdminAuth ? 'ok' : 'error';
   const firebaseDetail = firebaseAdminAuth
-    ? 'Admin SDK initialized'
+    ? 'Admin SDK initialized (Application Default Credentials)'
     : firebaseMissing.length
       ? `Missing: ${firebaseMissing.join(', ')}`
       : 'Admin SDK not initialized';
@@ -3884,7 +3884,7 @@ function buildAdminInfraHealthSnapshot() {
   return {
     items: [
       { id: 'mongodb', label: 'MongoDB', status: mongoStatus, detail: mongoDetail, sourceLabel: mongoUriConfigured ? 'Environment' : 'None' },
-      { id: 'firebase-admin', label: 'Firebase Admin', status: firebaseStatus, detail: firebaseDetail, sourceLabel: firebaseAdminAuth ? 'Environment' : 'None' },
+      { id: 'firebase-admin', label: 'Firebase Admin', status: firebaseStatus, detail: firebaseDetail, sourceLabel: firebaseAdminAuth ? 'GOOGLE_APPLICATION_CREDENTIALS' : 'None' },
       { id: 'jwt', label: 'JWT (access + refresh)', status: jwtStatus, detail: jwtDetail, sourceLabel: JWT_SECRET_RAW && JWT_REFRESH_SECRET_RAW ? 'Environment' : 'Partial / fallback' },
       { id: 'runtime-config', label: 'Secure config crypto', status: cryptoStatus, detail: cryptoDetail, sourceLabel: CONFIG_CRYPTO_KEY ? 'Environment' : 'None' },
     ],
@@ -14255,7 +14255,7 @@ function validateCriticalConfiguration() {
     warnings.push('JWT_REFRESH_SECRET is not set; refresh tokens cannot be verified.');
   }
   if (IS_PRODUCTION && !firebaseAdminAuth) {
-    warnings.push('Firebase Admin SDK env vars are missing; Firebase login/register will fail.');
+    warnings.push('Firebase Admin SDK is not initialized; set GOOGLE_APPLICATION_CREDENTIALS to your service account JSON path (or fix the file path).');
   }
   if (IS_PRODUCTION && isEnvAdminLoginConfigured()) {
     warnings.push('ADMIN_LOGIN_EMAIL/ADMIN_LOGIN_PASSWORD are configured; env admin login is enabled.');

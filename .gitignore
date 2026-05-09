@@ -23,3 +23,6 @@ public/assets/videos/net360-guide.source-*-backup.mp4
 android/keystore.properties
 android/app/*.keystore
 android/app/*.jks
+
+# API service account JSON path — keep files under this directory out of git (GOOGLE_APPLICATION_CREDENTIALS)
+secrets/
