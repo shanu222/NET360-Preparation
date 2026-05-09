@@ -14360,13 +14360,6 @@ async function bootstrap() {
         }).catch(() => undefined);
       }
 
-      try {
-        const openAiProbe = await runOpenAiConnectionProbe('startup');
-        logOpenAiProbeStatus(openAiProbe);
-      } catch (error) {
-        console.error('[openai] Startup probe failed unexpectedly:', error?.message || error);
-      }
-
       let mongoConnection;
       try {
         mongoConnection = await connectMongo(MONGODB_URI);
@@ -14382,9 +14375,16 @@ async function bootstrap() {
         } catch (error) {
           console.error('[startup] Bootstrap admin setup failed (non-fatal):', error?.message || error);
         }
+        try {
+          const openAiProbe = await runOpenAiConnectionProbe('startup');
+          logOpenAiProbeStatus(openAiProbe);
+        } catch (error) {
+          console.error('[openai] Startup probe failed unexpectedly:', error?.message || error);
+        }
       } else {
         const rs = mongoConnection?.readyState ?? '(no connection)';
         console.warn(`[startup] MongoDB not ready (readyState=${rs}). Background reconnect may be active; see [mongo] logs.`);
+        console.warn('[openai] Skipping startup probe (MongoDB not connected).');
       }
 
       try {
