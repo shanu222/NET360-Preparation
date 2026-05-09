@@ -114,6 +114,7 @@ export async function initSocketIo(httpServer, opts) {
       }
       socket.data.userId = String(user._id);
       socket.data.role = user.role || 'student';
+      socket.data.sessionId = String(payload.sessionId || '');
       next();
     } catch {
       next(new Error('unauthorized'));
@@ -159,6 +160,27 @@ export async function initSocketIo(httpServer, opts) {
 
 export function getIo() {
   return ioRef;
+}
+
+/**
+ * Disconnect student sockets still using a replaced session (e.g. another device / tab took over).
+ * @param {string} userId
+ * @param {string} staleSessionId
+ */
+export async function disconnectStudentSocketsWithStaleSession(userId, staleSessionId) {
+  const uid = String(userId || '').trim();
+  const stale = String(staleSessionId || '').trim();
+  if (!ioRef || !uid || !stale) return;
+  try {
+    const sockets = await ioRef.in(studentRoom(uid)).fetchSockets();
+    for (const s of sockets) {
+      if (String(s.data?.sessionId || '') === stale) {
+        s.disconnect(true);
+      }
+    }
+  } catch {
+    // non-fatal
+  }
 }
 
 /** @param {string} userId */

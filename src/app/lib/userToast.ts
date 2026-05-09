@@ -147,8 +147,11 @@ export function audienceFriendlyError(error: unknown, fallback = 'Something went
   if (code === 'PAYMENT_CHECKOUT_DISABLED') {
     return 'JazzCash and Easypaisa automatic payments are coming soon. Use WhatsApp on the Subscription page for manual activation.';
   }
-  if (code === 'USER_NOT_FOUND' || code === 'SUBSCRIPTION_SERVICE_UNAVAILABLE') {
-    return 'Your account is still syncing. Wait a few seconds and try again, or sign out and sign back in.';
+  if (code === 'ACTIVE_SESSION_ELSEWHERE') {
+    return 'Your account is already active on another device.';
+  }
+  if (code === 'SESSION_NO_LONGER_ACTIVE') {
+    return 'You were signed out. Please log in again.';
   }
 
   const status = Number(err?.status);

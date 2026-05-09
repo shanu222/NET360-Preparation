@@ -1074,8 +1074,14 @@ function CommunityInner() {
 
     socket.on('sync', (data: unknown) => {
       const parsed = (data && typeof data === 'object')
-        ? (data as { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string })
+        ? (data as { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string; previousSessionId?: string })
         : {};
+      if (parsed.type === 'auth.session_revoked' && parsed.previousSessionId) {
+        window.dispatchEvent(
+          new CustomEvent('net360:session-revoked', { detail: { previousSessionId: parsed.previousSessionId, userId: parsed.userId } }),
+        );
+        return;
+      }
       applyCommunityPayload(parsed);
     });
 

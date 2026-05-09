@@ -29,6 +29,22 @@ export function readPersistedStudentAccessToken(): string | null {
   return localStorage.getItem(STUDENT_ACCESS_KEY);
 }
 
+/** Read `sessionId` claim from stored JWT (no verification; server validates). */
+export function readSessionIdFromAccessToken(): string | null {
+  const raw = readPersistedStudentAccessToken();
+  if (!raw || raw === COOKIE_SESSION_API_MARKER) return null;
+  try {
+    const part = raw.split('.')[1];
+    if (!part) return null;
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
+    const json = JSON.parse(atob(b64 + pad));
+    return typeof json?.sessionId === 'string' ? json.sessionId : null;
+  } catch {
+    return null;
+  }
+}
+
 /** True if localStorage has any student auth material (JWT, cookie-session marker, or refresh token). */
 export function hasStoredAuthCredentials(): boolean {
   if (!shouldPersistAuthTokens() || typeof localStorage === 'undefined') return false;

@@ -10,6 +10,16 @@ import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Award, Bot, ChevronDown, ChevronUp, FlaskConical, GraduationCap, Loader2, LogOut, MessageCircle, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
 import { showSuccessToast, showErrorToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './ui/alert-dialog';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
@@ -24,6 +34,7 @@ import {
 } from '../lib/publicMedia';
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 import { ImageWithFallback } from './figma/ImageWithFallback';
+import { apiRequest } from '../lib/api';
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
 
 function GoogleLogo(props: { className?: string }) {
@@ -52,6 +63,11 @@ interface ProfileProps {
 type AuthPanelMode = 'login' | 'register' | 'recovery';
 type AuthActionState = 'idle' | 'loggingIn' | 'creatingAccount';
 
+function isActiveSessionElsewhere(error: unknown): boolean {
+  const e = error as { code?: string; status?: number };
+  return Number(e?.status) === 409 && (e?.code === 'ACTIVE_SESSION_ELSEWHERE' || e?.code === 'active_session_exists');
+}
+
 export function Profile({ onNavigate }: ProfileProps) {
   const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, logout } = useAuth();
   const { surface } = useSubscription();
@@ -76,6 +92,8 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [forgotCooldownSeconds, setForgotCooldownSeconds] = useState(0);
   const [registerConflictBanner, setRegisterConflictBanner] = useState('');
   const [authActionState, setAuthActionState] = useState<AuthActionState>('idle');
+  const [otherDeviceDialogOpen, setOtherDeviceDialogOpen] = useState(false);
+  const [pendingAuthMethod, setPendingAuthMethod] = useState<'password' | 'google' | null>(null);
   const [showDeleteAccountPanel, setShowDeleteAccountPanel] = useState(false);
   const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
   const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState('');
@@ -186,19 +204,13 @@ export function Profile({ onNavigate }: ProfileProps) {
         try {
           await login(authForm.email, authForm.password);
         } catch (error) {
-          const conflict = error as Error & { code?: string };
-          if (conflict?.code === 'active_session_exists') {
-            const shouldSwitch = window.confirm(
-              'This account is active on another device. Do you want to log out the previous device and continue here?',
-            );
-            if (!shouldSwitch) {
-              setAuthActionState('idle');
-              return;
-            }
-            await login(authForm.email, authForm.password, { forceLogoutOtherDevice: true });
-          } else {
-            throw error;
+          if (isActiveSessionElsewhere(error)) {
+            setPendingAuthMethod('password');
+            setOtherDeviceDialogOpen(true);
+            setAuthActionState('idle');
+            return;
           }
+          throw error;
         }
         setAuthActionState('idle');
         showSuccessToast('Logged in successfully.');
@@ -239,6 +251,35 @@ export function Profile({ onNavigate }: ProfileProps) {
     }
   };
 
+  const confirmContinueOnOtherDevice = async () => {
+    setOtherDeviceDialogOpen(false);
+    const method = pendingAuthMethod;
+    setPendingAuthMethod(null);
+    if (method === 'password') {
+      setAuthActionState('loggingIn');
+      try {
+        await login(authForm.email, authForm.password, { forceLogoutOtherDevice: true });
+        showSuccessToast('Logged in successfully.');
+      } catch (error) {
+        showErrorToast(audienceFriendlyError(error, 'Unable to sign you in. Please check your email and password.'));
+      } finally {
+        setAuthActionState('idle');
+      }
+      return;
+    }
+    if (method === 'google') {
+      setAuthActionState('loggingIn');
+      try {
+        await loginWithGoogle({ forceLogoutOtherDevice: true });
+        showSuccessToast('Signed in with Google.');
+      } catch (error) {
+        handleApiError(error, 'Google sign-in did not finish. Please try again.');
+      } finally {
+        setAuthActionState('idle');
+      }
+    }
+  };
+
   const handleSocialAuth = async () => {
     if (isAuthBusy) return;
     try {
@@ -248,6 +289,11 @@ export function Profile({ onNavigate }: ProfileProps) {
       showSuccessToast('Signed in with Google.');
     } catch (error) {
       setAuthActionState('idle');
+      if (isActiveSessionElsewhere(error)) {
+        setPendingAuthMethod('google');
+        setOtherDeviceDialogOpen(true);
+        return;
+      }
       handleApiError(error, 'Google sign-in did not finish. Please try again.');
     }
   };
@@ -405,7 +451,8 @@ export function Profile({ onNavigate }: ProfileProps) {
 
   if (!user) {
     return (
-      <div className="space-y-5">
+      <>
+        <div className="space-y-5">
         <h1>Account Access</h1>
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1.5fr] xl:grid-cols-[1fr_1.65fr]">
@@ -675,7 +722,28 @@ export function Profile({ onNavigate }: ProfileProps) {
             </Card>
           </div>
         </div>
-      </div>
+        </div>
+        <AlertDialog open={otherDeviceDialogOpen} onOpenChange={setOtherDeviceDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Account active elsewhere</AlertDialogTitle>
+              <AlertDialogDescription>
+                Your account is already active on another device. Continue here and sign out the other session, or cancel to stay on this screen.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel
+                onClick={() => {
+                  setPendingAuthMethod(null);
+                }}
+              >
+                Cancel
+              </AlertDialogCancel>
+              <AlertDialogAction onClick={() => void confirmContinueOnOtherDevice()}>Continue &amp; sign out other device</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      </>
     );
   }
 

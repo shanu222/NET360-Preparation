@@ -27,7 +27,14 @@ import http from 'node:http';
 import { connectMongo } from './lib/mongo.js';
 import { getRedisMain, REDIS_CONFIGURED } from './services/redis.js';
 import { cacheGetJson, cacheSetJson, cacheKey, cacheDel, invalidateCommunityLeaderboardCache, invalidateQuizLeaderboardCache, invalidateUserSubscriptionCache } from './utils/cache.js';
-import { initSocketIo, emitSocketSyncToStudentUser, mirrorBroadcastSyncEvent, getIo, emitSubscriptionRefresh } from './services/socket.js';
+import {
+  initSocketIo,
+  emitSocketSyncToStudentUser,
+  mirrorBroadcastSyncEvent,
+  getIo,
+  emitSubscriptionRefresh,
+  disconnectStudentSocketsWithStaleSession,
+} from './services/socket.js';
 import { subscriptionExpiryRefresh, requireTrialOrPremiumContent } from './middleware/subscriptionGate.js';
 import {
   mergedSubscription,
@@ -489,6 +496,29 @@ function broadcastCommunityEventsToUserIds(targetUserIds, data) {
       emitSocketSyncToStudentUser(uid, data);
     }
   }
+}
+
+/** SSE + Socket.IO + disconnect stale sockets when sessionId rotates (new login / takeover). */
+function notifyRevokedStudentSession(userId, previousSessionId) {
+  const uid = String(userId || '').trim();
+  const prev = String(previousSessionId || '').trim();
+  if (!uid || !prev) return;
+  const payload = { type: 'auth.session_revoked', previousSessionId: prev, userId: uid };
+  broadcastCommunityEventsToUserIds([uid], payload);
+  void disconnectStudentSocketsWithStaleSession(uid, prev);
+}
+
+/** Optional Redis mirror for observability / future auth workers (Mongo remains source of truth). */
+function mirrorStudentSessionRedis(userId, sessionId, deviceId) {
+  if (!REDIS_CONFIGURED) return;
+  const uid = String(userId || '').trim();
+  const sid = String(sessionId || '').trim();
+  if (!uid || !sid) return;
+  void cacheSetJson(
+    cacheKey(`studentSession:${uid}`),
+    { sessionId: sid, deviceId: String(deviceId || '').slice(0, 200), at: Date.now() },
+    Math.min(86400, Math.max(120, REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60)),
+  ).catch(() => {});
 }
 
 function addSseClient(role, userId, res) {
@@ -6107,12 +6137,24 @@ async function authMiddleware(req, res, next) {
           actorUserId: user._id,
           actorEmail: user.email,
         });
-        res.status(401).json({ error: 'Session is no longer active. Please log in again.' });
+        res.status(401).json({
+          error: 'Session is no longer active. Please log in again.',
+          code: 'SESSION_NO_LONGER_ACTIVE',
+        });
         return;
       }
 
-      user.activeSession.lastSeenAt = new Date();
-      await user.save();
+      const nowMs = Date.now();
+      const lastSeenMs = user.activeSession?.lastSeenAt
+        ? new Date(user.activeSession.lastSeenAt).getTime()
+        : 0;
+      if (nowMs - lastSeenMs > 75_000) {
+        await UserModel.updateOne(
+          { _id: user._id },
+          { $set: { 'activeSession.lastSeenAt': new Date() } },
+        );
+        user.activeSession.lastSeenAt = new Date();
+      }
     }
 
     req.user = user;
@@ -6678,6 +6720,8 @@ async function createDirectStudentAccount(req, res) {
   const firstName = sanitizeHumanName(req.body?.firstName || '');
   const lastName = sanitizeHumanName(req.body?.lastName || '');
   const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
+  const ua = String(req.headers['user-agent'] || '').slice(0, 250);
+  const lastIp = String(req.ip || req.headers['x-forwarded-for'] || '').split(',')[0].trim().slice(0, 45);
 
   if (!email) {
     res.status(400).json({ error: 'Email is required.' });
@@ -6737,11 +6781,14 @@ async function createDirectStudentAccount(req, res) {
       deviceId,
       startedAt: new Date(),
       lastSeenAt: new Date(),
+      userAgent: ua,
+      lastIp,
     };
     await user.save();
 
     const payload = await issueAuthPayload(user, req);
     setAuthCookies(res, payload.token, payload.refreshToken);
+    mirrorStudentSessionRedis(user._id, user.activeSession.sessionId, deviceId);
     res.status(201).json(buildAuthJsonBody(payload));
     return;
   }
@@ -6752,6 +6799,8 @@ async function createDirectStudentAccount(req, res) {
     deviceId,
     startedAt: new Date(),
     lastSeenAt: new Date(),
+    userAgent: ua,
+    lastIp,
   };
 
   const user = await UserModel.create({
@@ -6773,6 +6822,7 @@ async function createDirectStudentAccount(req, res) {
 
   const payload = await issueAuthPayload(user, req);
   setAuthCookies(res, payload.token, payload.refreshToken);
+  mirrorStudentSessionRedis(user._id, user.activeSession.sessionId, deviceId);
   res.status(201).json(buildAuthJsonBody(payload));
 }
 
@@ -6847,8 +6897,9 @@ app.post('/api/auth/register-fallback', async (req, res) => {
 
 app.post('/api/auth/login', async (req, res) => {
   try {
-    console.log('LOGIN HIT', req.body);
-    console.log('Login attempt:', req.body?.email);
+    if (!IS_PRODUCTION || String(process.env.NET360_AUTH_DEBUG || '').trim() === '1') {
+      console.log('[auth/login] attempt', { email: req.body?.email });
+    }
     const parsed = loginBodySchema.safeParse(req.body || {});
     if (!parsed.success) {
       await logSecurityEvent(req, {
@@ -6911,8 +6962,6 @@ app.post('/api/auth/login', async (req, res) => {
       }).select('+password');
     }
 
-    console.log('USER FOUND:', user ? { id: String(user._id), email: user.email } : null);
-
     if (!user) {
       await logSecurityEvent(req, {
         eventType: 'auth.login_user_not_found',
@@ -6921,6 +6970,10 @@ app.post('/api/auth/login', async (req, res) => {
       });
       res.status(401).json({ error: 'Invalid credentials.' });
       return;
+    }
+
+    if (!IS_PRODUCTION || String(process.env.NET360_AUTH_DEBUG || '').trim() === '1') {
+      console.log('[auth/login] user:', { id: String(user._id), email: user.email });
     }
 
     if (!envAdminAttempt) {
@@ -6936,7 +6989,9 @@ app.post('/api/auth/login', async (req, res) => {
         user.passwordHash = await hashPassword(`firebase:${verifiedFirebase.uid}:${crypto.randomUUID()}`);
       }
     } else {
-      console.log('[auth/login] env admin credentials accepted');
+      if (!IS_PRODUCTION || String(process.env.NET360_AUTH_DEBUG || '').trim() === '1') {
+        console.log('[auth/login] env admin credentials accepted');
+      }
     }
 
     let role = user.role || 'student';
@@ -6952,17 +7007,46 @@ app.post('/api/auth/login', async (req, res) => {
           metadata: {
             existingDeviceId: activeSession.deviceId,
             attemptedDeviceId: deviceId,
-            note: 'Rotating session (same success as login) instead of 409',
           },
         });
+        res.status(409).json({
+          error: 'Your account is already active on another device.',
+          code: 'ACTIVE_SESSION_ELSEWHERE',
+        });
+        return;
       }
+
+      const previousSessionId = activeSession?.sessionId ? String(activeSession.sessionId) : null;
+      const ua = String(req.headers['user-agent'] || '').slice(0, 250);
+      const lastIp = String(req.ip || req.headers['x-forwarded-for'] || '').split(',')[0].trim().slice(0, 45);
 
       user.activeSession = {
         sessionId: crypto.randomUUID(),
         deviceId,
         startedAt: new Date(),
         lastSeenAt: new Date(),
+        userAgent: ua,
+        lastIp,
       };
+      const newSessionId = user.activeSession.sessionId;
+
+      const payload = await issueAuthPayload(user, req);
+      setAuthCookies(res, payload.token, payload.refreshToken);
+      await logSecurityEvent(req, {
+        eventType: 'auth.login_success',
+        severity: 'info',
+        actorUserId: user._id,
+        actorEmail: user.email,
+      });
+      mirrorStudentSessionRedis(user._id, newSessionId, deviceId);
+      if (previousSessionId && previousSessionId !== newSessionId) {
+        notifyRevokedStudentSession(String(user._id), previousSessionId);
+      }
+      if (!IS_PRODUCTION || String(process.env.NET360_AUTH_DEBUG || '').trim() === '1') {
+        console.log('[auth/login] success', { email: user.email, role });
+      }
+      res.status(200).json(buildAuthJsonBody(payload));
+      return;
     }
 
     const payload = await issueAuthPayload(user, req);
@@ -6973,7 +7057,9 @@ app.post('/api/auth/login', async (req, res) => {
       actorUserId: user._id,
       actorEmail: user.email,
     });
-    console.log('[auth/login] success', { email: user.email, role });
+    if (!IS_PRODUCTION || String(process.env.NET360_AUTH_DEBUG || '').trim() === '1') {
+      console.log('[auth/login] success', { email: user.email, role });
+    }
     res.status(200).json(buildAuthJsonBody(payload));
   } catch (error) {
     console.error('LOGIN ERROR:', error?.message || error);
@@ -7048,7 +7134,7 @@ app.post('/api/auth/refresh', async (req, res) => {
           actorEmail: user.email,
         });
         clearAuthCookies(res);
-        res.status(401).json({ error: 'Session ended. Please log in again.' });
+        res.status(401).json({ error: 'Session ended. Please log in again.', code: 'SESSION_NO_LONGER_ACTIVE' });
         return;
       }
     }
@@ -7058,6 +7144,9 @@ app.post('/api/auth/refresh', async (req, res) => {
 
     const newPayload = await issueAuthPayload(user, req);
     setAuthCookies(res, newPayload.token, newPayload.refreshToken);
+    if ((user.role || 'student') === 'student' && user.activeSession?.sessionId) {
+      mirrorStudentSessionRedis(user._id, user.activeSession.sessionId, user.activeSession.deviceId || '');
+    }
     await logSecurityEvent(req, {
       eventType: 'auth.refresh_success',
       severity: 'info',
@@ -7099,6 +7188,9 @@ app.post('/api/auth/logout', async (req, res) => {
       }
 
       await user.save();
+      if (REDIS_CONFIGURED && (user.role || 'student') === 'student') {
+        void cacheDel(cacheKey(`studentSession:${user._id}`));
+      }
       await logSecurityEvent(req, {
         eventType: 'auth.logout_success',
         severity: 'info',
@@ -7373,7 +7465,11 @@ app.post('/api/auth/reset-password', async (req, res) => {
 });
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
-  res.json({ user: userPublic(req.user) });
+  const u = userPublic(req.user);
+  if ((req.user.role || 'student') === 'student' && req.user.activeSession?.sessionId) {
+    u.activeSessionId = String(req.user.activeSession.sessionId);
+  }
+  res.json({ user: u });
 });
 
 app.get('/api/stream', async (req, res) => {

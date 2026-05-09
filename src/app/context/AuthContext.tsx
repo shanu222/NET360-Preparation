@@ -16,9 +16,11 @@ import {
   isCookieSessionApiMarker,
   persistCookieSessionMode,
   persistStudentTokens,
+  readSessionIdFromAccessToken,
   shouldPersistAuthTokens,
 } from '../lib/authSession';
 import { firebaseAuth, isFirebaseConfigured } from '../lib/firebase';
+import { showWarningToast } from '../lib/userToast';
 
 interface AuthUser {
   id: string;
@@ -26,6 +28,8 @@ interface AuthUser {
   firstName: string;
   lastName: string;
   role?: 'student' | 'admin';
+  /** Present on `/api/auth/me` for students; used for session diagnostics only. */
+  activeSessionId?: string;
 }
 
 interface AuthContextValue {
@@ -33,7 +37,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   login: (email: string, password: string, opts?: { forceLogoutOtherDevice?: boolean }) => Promise<void>;
-  loginWithGoogle: () => Promise<void>;
+  loginWithGoogle: (opts?: { forceLogoutOtherDevice?: boolean }) => Promise<void>;
   registerWithToken: (params: {
     email: string;
     password: string;
@@ -127,7 +131,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           } else {
             setToken(storedToken);
           }
-          console.log('Auth state: authenticated as', me.user.email);
           return;
         } catch {
           /* /me failed — try refresh only when a refresh token exists, else cookie-only refresh if marked */
@@ -262,6 +265,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     firebaseIdToken: string;
     firstName?: string;
     lastName?: string;
+    forceLogoutOtherDevice?: boolean;
   }) => {
     try {
       const loginPayload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
@@ -272,6 +276,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             email: params.email,
             firebaseIdToken: params.firebaseIdToken,
             deviceId,
+            forceLogoutOtherDevice: Boolean(params.forceLogoutOtherDevice),
           }),
         },
       );
@@ -300,7 +305,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     applyAuthPayload(registerPayload);
   }, [applyAuthPayload, deviceId]);
 
-  const loginWithGoogle = useCallback<AuthContextValue['loginWithGoogle']>(async () => {
+  const loginWithGoogle = useCallback<AuthContextValue['loginWithGoogle']>(async (opts) => {
     if (!isFirebaseConfigured() || !firebaseAuth) {
       throw new Error('Firebase auth is not configured.');
     }
@@ -319,6 +324,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       firebaseIdToken,
       firstName,
       lastName,
+      forceLogoutOtherDevice: opts?.forceLogoutOtherDevice,
     });
   }, [upsertSocialAuthSession]);
 
@@ -377,6 +383,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       void signOut(firebaseAuth).catch(() => undefined);
     }
   }, [refreshToken]);
+
+  useEffect(() => {
+    const onRevoked = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ previousSessionId?: string }>).detail;
+      const prev = String(detail?.previousSessionId || '').trim();
+      if (!prev) return;
+      const mine = readSessionIdFromAccessToken();
+      if (mine && mine === prev) {
+        showWarningToast('You were signed out because your account was opened on another device.');
+        logout();
+      }
+    };
+    window.addEventListener('net360:session-revoked', onRevoked);
+    return () => window.removeEventListener('net360:session-revoked', onRevoked);
+  }, [logout]);
 
   const value = useMemo(
     () => ({

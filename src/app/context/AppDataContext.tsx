@@ -351,12 +351,20 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         reconnectDelay = 1500;
       };
 
-      const runSync = () => {
-        if (document.hidden) return;
-        scheduleDebouncedForegroundSync(authToken);
-      };
-
-      source.addEventListener('sync', runSync);
+      source.addEventListener('sync', (evt: MessageEvent) => {
+        try {
+          const data = JSON.parse(String(evt.data || '{}')) as { type?: string; previousSessionId?: string };
+          if (data?.type === 'auth.session_revoked' && data?.previousSessionId) {
+            window.dispatchEvent(new CustomEvent('net360:session-revoked', { detail: data }));
+            return;
+          }
+        } catch {
+          /* fall through */
+        }
+        if (!document.hidden) {
+          scheduleDebouncedForegroundSync(authToken);
+        }
+      });
 
       source.addEventListener('heartbeat', () => {
         // Keeps stream warm; no action required.

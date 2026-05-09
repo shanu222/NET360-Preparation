@@ -25,6 +25,8 @@ const activeSessionSchema = new mongoose.Schema(
     deviceId: { type: String, required: true },
     startedAt: { type: Date, required: true },
     lastSeenAt: { type: Date, required: true },
+    userAgent: { type: String, default: '' },
+    lastIp: { type: String, default: '' },
   },
   { _id: false },
 );
