@@ -2173,7 +2173,7 @@ function CommunityInner() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <Input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search by username" />
+                  <Input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search by name, username, email, city" />
                   <Button variant="outline" className="w-full sm:w-auto" onClick={() => void searchUsers(searchQuery, true)}>
                     {searchLoading ? 'Searching...' : 'Search'}
                   </Button>
@@ -2181,6 +2181,9 @@ function CommunityInner() {
                 <div className="space-y-2 max-h-[320px] overflow-auto">
                   {searchLoading && !searchResults.length ? (
                     <p className="py-3 text-center text-xs text-muted-foreground">Searching…</p>
+                  ) : null}
+                  {searchLoading && searchResults.length ? (
+                    <p className="py-1 text-center text-[11px] text-muted-foreground">Updating results…</p>
                   ) : null}
                   {searchResults.map((result) => (
                     <div key={result.id} className="rounded-lg border p-3">
@@ -2217,7 +2220,13 @@ function CommunityInner() {
                       </div>
                     </div>
                   ))}
-                  {!searchResults.length ? <p className="text-xs text-muted-foreground">Search to find study peers.</p> : null}
+                  {!searchLoading && !searchResults.length ? (
+                    <p className="text-xs text-muted-foreground">
+                      {searchQuery.trim()
+                        ? 'No students match that search. Try a different spelling or another name.'
+                        : 'Type a name or username to find study peers.'}
+                    </p>
+                  ) : null}
                 </div>
               </CardContent>
             </Card>

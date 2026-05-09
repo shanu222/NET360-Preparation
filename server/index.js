@@ -7760,9 +7760,12 @@ app.get('/api/community/users/search', ...studentPremiumSurface, async (req, res
       $or: [
         { firstName: queryRegex },
         { lastName: queryRegex },
+        { city: queryRegex },
+        { targetProgram: queryRegex },
+        { email: queryRegex },
       ],
     })
-      .select(COMMUNITY_USER_SELECT)
+      .select(`${COMMUNITY_USER_SELECT} email`)
       .limit(80)
       .lean()
     : [];
@@ -7778,14 +7781,14 @@ app.get('/api/community/users/search', ...studentPremiumSurface, async (req, res
       .select(COMMUNITY_PROFILE_SELECT)
       .lean(),
     UserModel.find({ _id: { $in: candidateSeedIds }, role: 'student' })
-      .select(COMMUNITY_USER_SELECT)
+      .select(`${COMMUNITY_USER_SELECT} email`)
       .lean(),
   ]);
 
   const usersById = new Map(users.map((item) => [String(item._id), item]));
-  const candidateIds = profiles
-    .map((item) => String(item.userId))
-    .filter((id) => usersById.has(id));
+  const profileByUserId = new Map(profiles.map((item) => [String(item.userId), item]));
+  /** Every candidate user id (not only those with a CommunityProfile row). Name matches without a profile were previously dropped. */
+  const candidateIds = candidateSeedIds.filter((id) => usersById.has(id));
 
   const participantKeys = candidateIds.map((userId) => connectionKey(req.user._id, userId));
   const [connections, pendingToRows, pendingFromRows] = await Promise.all([
@@ -7807,11 +7810,11 @@ app.get('/api/community/users/search', ...studentPremiumSurface, async (req, res
   const pendingFrom = new Set(pendingFromRows.map((item) => String(item.fromUserId)));
 
   const rows = [];
-  for (const profile of profiles) {
-    const userId = String(profile.userId);
+  for (const userId of candidateIds) {
     if (userId === me) continue;
     const user = usersById.get(userId);
     if (!user) continue;
+    const profile = profileByUserId.get(userId) || {};
 
     const status = connectedKeys.has(connectionKey(req.user._id, userId))
       ? 'connected'
@@ -7832,6 +7835,8 @@ app.get('/api/community/users/search', ...studentPremiumSurface, async (req, res
     .map((item) => {
       const username = String(item.username || '').toLowerCase();
       const fullName = `${String(item.firstName || '')} ${String(item.lastName || '')}`.trim().toLowerCase();
+      const city = String(item.city || '').toLowerCase();
+      const program = String(item.targetProgram || '').toLowerCase();
       let score = 0;
       if (!normalizedQuery) score += 1;
       if (username === normalizedQuery) score += 100;
@@ -7840,6 +7845,8 @@ app.get('/api/community/users/search', ...studentPremiumSurface, async (req, res
       if (fullName === normalizedQuery) score += 95;
       else if (fullName.startsWith(normalizedQuery)) score += 60;
       else if (fullName.includes(normalizedQuery)) score += 35;
+      else if (city.includes(normalizedQuery)) score += 28;
+      else if (program.includes(normalizedQuery)) score += 28;
       return { item, score };
     })
     .sort((a, b) => b.score - a.score)

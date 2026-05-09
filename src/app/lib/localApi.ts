@@ -2822,16 +2822,21 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
         const connection = db.communityConnections.find((entry) => entry.participantKey === localConnectionKey(me, candidate.id));
         const pendingTo = db.communityConnectionRequests.find((entry) => entry.fromUserId === me && entry.toUserId === candidate.id && entry.status === 'pending');
         const pendingFrom = db.communityConnectionRequests.find((entry) => entry.fromUserId === candidate.id && entry.toUserId === me && entry.status === 'pending');
-        return {
+        const row = {
           ...serializeLocalCommunityUser(candidate, profile),
           connectionStatus: connection ? 'connected' : pendingTo ? 'pending-sent' : pendingFrom ? 'pending-received' : 'none',
         };
+        return {
+          row,
+          email: String(candidate.email || '').toLowerCase(),
+        };
       })
-      .filter((entry) => {
+      .filter(({ row, email }) => {
         if (!q) return true;
-        const blob = [entry.username, entry.firstName, entry.lastName, entry.targetProgram, entry.city].join(' ').toLowerCase();
+        const blob = [row.username, row.firstName, row.lastName, row.targetProgram, row.city, email].join(' ').toLowerCase();
         return blob.includes(q);
       })
+      .map(({ row }) => row)
       .slice(0, 20);
 
     writeDb(db);
