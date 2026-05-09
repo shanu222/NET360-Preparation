@@ -65,16 +65,19 @@ export function PremiumLockScreen({
   }
 
   return (
-    <div className="relative min-h-[320px] overflow-hidden rounded-2xl border border-indigo-200/90 bg-white/95 p-6 text-center shadow-sm dark:border-white/10 dark:bg-slate-900/85">
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-slate-50/90 to-indigo-50/80 dark:from-slate-950/30 dark:to-indigo-950/40" />
+    <div
+      className="relative min-h-[320px] overflow-hidden rounded-2xl border border-indigo-200/90 bg-white/95 p-6 text-center shadow-sm dark:border-indigo-400/25 dark:!bg-slate-900/95 dark:!text-slate-100"
+      data-premium-lock-screen
+    >
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-slate-50/90 to-indigo-50/80 dark:from-slate-950/60 dark:to-indigo-950/50" />
       <div className="relative mx-auto flex max-w-lg flex-col items-center gap-4">
-        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600/15 text-indigo-800 dark:bg-indigo-400/20 dark:text-indigo-100">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-indigo-600/15 text-indigo-800 dark:bg-indigo-500/20 dark:text-indigo-100">
           <Lock className="h-7 w-7" />
         </div>
         <div>
-          <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-50">{title}</h2>
+          <h2 className="text-lg font-semibold text-slate-900 dark:!text-slate-50">{title}</h2>
           {description ? (
-            <p className="mt-2 text-sm font-medium text-slate-700 dark:text-slate-200">{description}</p>
+            <p className="mt-2 text-sm font-medium text-slate-700 dark:!text-slate-300">{description}</p>
           ) : null}
         </div>
         <div className="flex flex-wrap items-center justify-center gap-2">
@@ -97,7 +100,7 @@ export function PremiumLockScreen({
           </Button>
         </div>
         {!surface.allowed && me?.subscription?.hasUsedTrial ? (
-          <p className="text-xs text-slate-600 dark:text-slate-400">Your trial has ended. Upgrade to keep premium access.</p>
+          <p className="text-xs text-slate-600 dark:!text-slate-400">Your trial has ended. Upgrade to keep premium access.</p>
         ) : null}
       </div>
     </div>
