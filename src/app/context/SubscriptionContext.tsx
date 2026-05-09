@@ -1,0 +1,174 @@
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { apiRequest } from '../lib/api';
+import { useAuth } from './AuthContext';
+import {
+  COOKIE_SESSION_API_MARKER,
+  isCookieSessionApiMarker,
+  shouldPersistAuthTokens,
+} from '../lib/authSession';
+
+const TOKEN_STORAGE_KEY = 'net360-auth-token';
+
+export type PremiumBadgeVariant = 'green' | 'orange' | 'red' | 'neutral';
+
+export interface SubscriptionBadge {
+  variant: PremiumBadgeVariant;
+  label: string;
+  endsAt: string | null;
+  source: 'trial' | 'paid' | 'none';
+}
+
+export interface PremiumSurfaceState {
+  allowed: boolean;
+  source: 'trial' | 'paid' | 'none';
+  endsAt: string | null;
+  msRemaining: number;
+  serverNow: string;
+  badge?: SubscriptionBadge;
+  hasSurfaceAccess?: boolean;
+}
+
+export interface SubscriptionMePayload {
+  serverTime?: string;
+  subscription: {
+    status: string;
+    planId: string;
+    isActive: boolean;
+    trialActive?: boolean;
+    planName?: string;
+    dailyAiLimit?: number;
+    expiresAt?: string | null;
+    trialEndsAt?: string | null;
+    hasUsedTrial?: boolean;
+  };
+  premiumSurface?: PremiumSurfaceState;
+  subscriptionBadge?: SubscriptionBadge;
+}
+
+const emptySurface: PremiumSurfaceState = {
+  allowed: false,
+  source: 'none',
+  endsAt: null,
+  msRemaining: 0,
+  serverNow: new Date().toISOString(),
+  hasSurfaceAccess: false,
+};
+
+const SubscriptionContext = createContext<{
+  loading: boolean;
+  refresh: () => Promise<void>;
+  me: SubscriptionMePayload | null;
+  surface: PremiumSurfaceState;
+  badge: SubscriptionBadge | null;
+  serverOffsetMs: number;
+} | null>(null);
+
+function resolveBearer(token: string | null): string | undefined {
+  if (!token || isCookieSessionApiMarker(token)) return undefined;
+  return token;
+}
+
+export function SubscriptionProvider({ children }: { children: ReactNode }) {
+  const { token: authToken, user } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [me, setMe] = useState<SubscriptionMePayload | null>(null);
+  const serverOffsetRef = useRef(0);
+  const [tick, setTick] = useState(0);
+
+  const refresh = useCallback(async () => {
+    if (!user) {
+      setMe(null);
+      return;
+    }
+
+    const bearer = resolveBearer(authToken);
+
+    setLoading(true);
+    try {
+      const stored = shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+      const t = bearer ?? (stored && !isCookieSessionApiMarker(stored) ? stored : undefined);
+      const payload = await apiRequest<SubscriptionMePayload>('/api/subscriptions/me', {}, t || COOKIE_SESSION_API_MARKER);
+      if (payload?.serverTime) {
+        serverOffsetRef.current = new Date(payload.serverTime).getTime() - Date.now();
+      }
+      setMe(payload);
+    } catch {
+      setMe(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [authToken, user]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setTick((n) => n + 1);
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const onVis = () => {
+      if (document.visibilityState === 'visible') void refresh();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, [refresh]);
+
+  const surface = useMemo(() => {
+    const base = me?.premiumSurface || emptySurface;
+    const off = serverOffsetRef.current;
+    const now = Date.now() + off;
+    if (!me?.premiumSurface || !base.endsAt) {
+      return { ...base, msRemaining: 0 };
+    }
+    const end = new Date(base.endsAt).getTime();
+    const msRemaining = Math.max(0, end - now);
+    return { ...base, msRemaining };
+  }, [me, tick]);
+
+  const badge = me?.subscriptionBadge ?? me?.premiumSurface?.badge ?? null;
+
+  const value = useMemo(
+    () => ({
+      loading,
+      refresh,
+      me,
+      surface,
+      badge,
+      serverOffsetMs: serverOffsetRef.current,
+    }),
+    [loading, refresh, me, surface, badge],
+  );
+
+  return <SubscriptionContext.Provider value={value}>{children}</SubscriptionContext.Provider>;
+}
+
+export function useSubscription() {
+  const ctx = useContext(SubscriptionContext);
+  if (!ctx) {
+    throw new Error('useSubscription must be used within SubscriptionProvider');
+  }
+  return ctx;
+}
+
+export function formatCountdown(ms: number): { days: number; hours: number; minutes: number; seconds: number } {
+  const s = Math.floor(ms / 1000);
+  const days = Math.floor(s / 86400);
+  const hours = Math.floor((s % 86400) / 3600);
+  const minutes = Math.floor((s % 3600) / 60);
+  const seconds = s % 60;
+  return { days, hours, minutes, seconds };
+}

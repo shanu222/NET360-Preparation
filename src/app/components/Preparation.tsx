@@ -18,6 +18,9 @@ import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../lib/hierarc
 import { formatTestStartFailureToast } from '../lib/testStartToast';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../context/SubscriptionContext';
+import { PremiumLockScreen } from './subscription/PremiumLockScreen';
+import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 
 type AcademicPart = 'part1' | 'part2';
 type TabKey = SubjectKey;
@@ -565,6 +568,7 @@ interface PreparationProps {
 export function Preparation({ showStartTestButton = true, onSelectSection, onSelectFlatTopic }: PreparationProps = {}) {
   const { attempts, startTestSession } = useAppData();
   const { token: authContextToken, user, loading: authLoading } = useAuth();
+  const { surface, loading: subLoading } = useSubscription();
   const authLoadingRef = useRef(authLoading);
   authLoadingRef.current = authLoading;
   const tokenRef = useRef(authContextToken);
@@ -891,6 +895,42 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       launchingRef.current = false;
     }
   };
+
+  if (!user) {
+    return (
+      <div className="space-y-4">
+        <h1>Preparation Materials</h1>
+        <p className="text-muted-foreground">Sign in to browse syllabus and topic tests.</p>
+      </div>
+    );
+  }
+
+  if (subLoading) {
+    return (
+      <div className="space-y-4">
+        <h1>Preparation Materials</h1>
+        <p className="text-muted-foreground">Loading subscription…</p>
+      </div>
+    );
+  }
+
+  if (!surface.allowed) {
+    return (
+      <div className="space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h1>Preparation Materials</h1>
+            <p className="text-muted-foreground">Syllabus browser by subject, part, chapter, and section</p>
+          </div>
+          <PremiumCountdownBadge />
+        </div>
+        <PremiumLockScreen
+          title="Unlock preparation tools"
+          description="Your free plan includes MCQs on the practice board. Preparation materials and topic tests require an active trial or premium subscription."
+        />
+      </div>
+    );
+  }
 
   const showMobilePreparingOverlay = isMobileBrowserRuntime() && Boolean(launchingSectionKey);
 

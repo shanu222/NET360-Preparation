@@ -19,6 +19,9 @@ import {
 import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../context/SubscriptionContext';
+import { PremiumLockScreen } from './subscription/PremiumLockScreen';
+import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { apiRequest, resolveLaunchAuthToken } from '../lib/api';
 import {
   bearerForLaunchUrl,
@@ -193,6 +196,7 @@ const TEST_TYPE_CARDS: Array<{
 export function Tests({ onNavigate }: TestsProps) {
   const { attempts, startTestSession } = useAppData();
   const { token, user, loading: authLoading } = useAuth();
+  const { surface, loading: subLoading } = useSubscription();
 
   const authLoadingRef = useRef(authLoading);
   authLoadingRef.current = authLoading;
@@ -473,6 +477,39 @@ export function Tests({ onNavigate }: TestsProps) {
       .sort((a, b) => b.count - a.count)
       .slice(0, 4);
   }, [adaptiveRecommendation]);
+
+  if (!user) {
+    return (
+      <div className="min-w-0 space-y-4">
+        <h1>Practice &amp; Mock Tests</h1>
+        <p className="text-muted-foreground">Sign in to access tests.</p>
+      </div>
+    );
+  }
+
+  if (subLoading) {
+    return (
+      <div className="min-w-0 space-y-4">
+        <h1>Practice &amp; Mock Tests</h1>
+        <p className="text-muted-foreground">Loading subscription…</p>
+      </div>
+    );
+  }
+
+  if (!surface.allowed) {
+    return (
+      <div className="min-w-0 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h1>Practice &amp; Mock Tests</h1>
+          <PremiumCountdownBadge />
+        </div>
+        <PremiumLockScreen
+          title="Unlock tests"
+          description="Start your one-time 7-day trial or subscribe with Easypaisa / JazzCash to access full mock and subject tests."
+        />
+      </div>
+    );
+  }
 
   return (
     <div className="min-w-0 space-y-5">

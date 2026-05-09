@@ -25,12 +25,31 @@ import mongoose from 'mongoose';
 import http from 'node:http';
 import { connectMongo } from './lib/mongo.js';
 import { getRedisMain, REDIS_CONFIGURED } from './services/redis.js';
-import { cacheGetJson, cacheSetJson, cacheKey, invalidateCommunityLeaderboardCache, invalidateQuizLeaderboardCache } from './utils/cache.js';
-import { initSocketIo, emitSocketSyncToStudentUser, mirrorBroadcastSyncEvent, getIo } from './services/socket.js';
+import { cacheGetJson, cacheSetJson, cacheKey, invalidateCommunityLeaderboardCache, invalidateQuizLeaderboardCache, invalidateUserSubscriptionCache } from './utils/cache.js';
+import { initSocketIo, emitSocketSyncToStudentUser, mirrorBroadcastSyncEvent, getIo, emitSubscriptionRefresh } from './services/socket.js';
+import { subscriptionExpiryRefresh, requireTrialOrPremiumContent } from './middleware/subscriptionGate.js';
+import {
+  mergedSubscription,
+  trialIsActive,
+  hasPremiumSurfaceAccess,
+  buildPremiumBadgeState,
+  surfaceAccessDetail,
+  finalizeStaleSubscription,
+  addMonths,
+} from './lib/subscriptionAccess.js';
+import { grantTrialIfFirstTime, grantPaidPlanAfterPayment } from './lib/subscriptionPayments.js';
+import {
+  payfastConfigured,
+  payfastGetBearer,
+  payfastPostTransaction,
+  payfastGetTransactionByBasket,
+  isPayfastSuccessPayload,
+} from './services/payfastClient.js';
 import { createUploadRouter } from './routes/upload.js';
 import { buildMcqContentFingerprint } from './lib/mcqIdentity.js';
 import { encryptSecurityAnswerPlaintext, decryptSecurityAnswerCiphertext } from './lib/securityAnswerCrypto.js';
 import { UserModel } from './models/User.js';
+import { PaymentTransactionModel } from './models/PaymentTransaction.js';
 import { MCQModel } from './models/MCQ.js';
 import { TestSessionModel } from './models/TestSession.js';
 import { AttemptModel } from './models/Attempt.js';
@@ -273,6 +292,22 @@ function getMissingFirebaseAdminEnvVars() {
 }
 
 const SUBSCRIPTION_PLANS = {
+  premium_6m: {
+    id: 'premium_6m',
+    name: 'NET360 Premium',
+    tier: 'premium',
+    billingCycle: 'six_month',
+    pricePkr: 1000,
+    dailyAiLimit: 200,
+    features: [
+      'Full tests & mock papers',
+      'Preparation materials & study plans',
+      'Community, chat & quiz PK battles',
+      'Smart Study Mentor daily guidance',
+    ],
+    expiresInMonths: 6,
+    expiresInDays: 183,
+  },
   basic_monthly: {
     id: 'basic_monthly',
     name: 'Basic Plan',
@@ -314,6 +349,10 @@ const SUBSCRIPTION_PLANS = {
     expiresInDays: 365,
   },
 };
+
+/** Default checkout plan for automated PKR wallet payments */
+const PREMIUM_CHECKOUT_PLAN_ID = 'premium_6m';
+const PAYFAST_WALLET_ACCOUNT_TYPE_ID = String(process.env.PAYFAST_WALLET_ACCOUNT_TYPE_ID || '4').trim();
 
 const app = express();
 const aiParseUpload = multer({
@@ -3209,6 +3248,12 @@ function normalizePaymentMethod(value) {
   return method;
 }
 
+function payfastWalletBankCode(method) {
+  if (method === 'easypaisa') return String(process.env.PAYFAST_BANK_CODE_EASYPAISA || '').trim();
+  if (method === 'jazzcash') return String(process.env.PAYFAST_BANK_CODE_JAZZCASH || '').trim();
+  return '';
+}
+
 function normalizeContactMethod(value) {
   const method = String(value || '').trim().toLowerCase();
   if (method === 'phone' || method === 'sms' || method === 'email' || method === 'whatsapp') return 'whatsapp';
@@ -4070,6 +4115,11 @@ function defaultSubscription() {
     expiresAt: null,
     paymentReference: '',
     lastActivatedAt: null,
+    hasUsedTrial: false,
+    trialStartedAt: null,
+    trialEndsAt: null,
+    paymentGateway: '',
+    lastPaymentAt: null,
   };
 }
 
@@ -6084,6 +6134,13 @@ async function requireAdmin(req, res, next) {
   next();
 }
 
+/** Student routes that require active trial or paid plan (tests, community, study plans). */
+const studentPremiumSurface = [
+  authMiddleware,
+  subscriptionExpiryRefresh(UserModel),
+  requireTrialOrPremiumContent(UserModel),
+];
+
 /** Legacy token-based signup, admin premium proof queues, and recovery lists — fully retired (410). */
 function respondLegacyAdminWorkflowGone(_req, res) {
   res.status(410).json({
@@ -7411,13 +7468,13 @@ async function communityWriteGuard(req, res) {
   return true;
 }
 
-app.get('/api/community/profile', authMiddleware, async (req, res) => {
+app.get('/api/community/profile', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const profile = await getOrCreateCommunityProfile(req.user);
   res.json({ profile: serializeCommunityUser({ user: req.user, profile, includePrivatePicture: true }) });
 });
 
-app.put('/api/community/profile', authMiddleware, async (req, res) => {
+app.put('/api/community/profile', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const profile = await getOrCreateCommunityProfile(req.user);
 
@@ -7488,7 +7545,7 @@ app.put('/api/community/profile', authMiddleware, async (req, res) => {
   res.json({ profile: serializeCommunityUser({ user: req.user, profile, includePrivatePicture: true }) });
 });
 
-app.get('/api/community/presence', authMiddleware, async (req, res) => {
+app.get('/api/community/presence', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const viewerId = String(req.user._id);
   const now = Date.now();
@@ -7541,7 +7598,7 @@ app.get('/api/community/presence', authMiddleware, async (req, res) => {
   res.json({ online, serverTime: new Date().toISOString() });
 });
 
-app.post('/api/community/presence/ping', authMiddleware, async (req, res) => {
+app.post('/api/community/presence/ping', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const uid = String(req.user._id);
   touchStudentPresenceMeta(uid, {
@@ -7558,7 +7615,7 @@ app.post('/api/community/presence/ping', authMiddleware, async (req, res) => {
   res.json({ ok: true });
 });
 
-app.get('/api/community/users/search', authMiddleware, async (req, res) => {
+app.get('/api/community/users/search', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const q = String(req.query.q || '').trim().toLowerCase();
   const me = String(req.user._id);
@@ -7669,7 +7726,7 @@ app.get('/api/community/users/search', authMiddleware, async (req, res) => {
   res.json({ users: ranked });
 });
 
-app.post('/api/community/connections/request', authMiddleware, async (req, res) => {
+app.post('/api/community/connections/request', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
   const toUserId = String(req.body?.toUserId || '').trim();
@@ -7727,7 +7784,7 @@ app.post('/api/community/connections/request', authMiddleware, async (req, res) 
   res.status(201).json({ requestId: String(created._id) });
 });
 
-app.get('/api/community/connections/requests', authMiddleware, async (req, res) => {
+app.get('/api/community/connections/requests', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const { page, limit, skip } = readPagination(req.query, { defaultLimit: 50, maxLimit: 100 });
 
@@ -7780,7 +7837,7 @@ app.get('/api/community/connections/requests', authMiddleware, async (req, res) 
   });
 });
 
-app.post('/api/community/connections/requests/:requestId/respond', authMiddleware, async (req, res) => {
+app.post('/api/community/connections/requests/:requestId/respond', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
   const requestId = String(req.params.requestId || '').trim();
@@ -7837,7 +7894,7 @@ app.post('/api/community/connections/requests/:requestId/respond', authMiddlewar
   res.json({ ok: true, status: request.status });
 });
 
-app.get('/api/community/connections', authMiddleware, async (req, res) => {
+app.get('/api/community/connections', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const myId = String(req.user._id);
   const { page, limit, skip } = readPagination(req.query, { defaultLimit: 50, maxLimit: 120 });
@@ -7897,7 +7954,7 @@ app.get('/api/community/connections', authMiddleware, async (req, res) => {
   res.json({ page, limit, connections: rows });
 });
 
-app.post('/api/community/connections/:connectionId/unfriend', authMiddleware, async (req, res) => {
+app.post('/api/community/connections/:connectionId/unfriend', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
 
@@ -7938,7 +7995,7 @@ app.post('/api/community/connections/:connectionId/unfriend', authMiddleware, as
   res.json({ ok: true });
 });
 
-app.post('/api/community/connections/:connectionId/block', authMiddleware, async (req, res) => {
+app.post('/api/community/connections/:connectionId/block', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
 
@@ -7982,7 +8039,7 @@ app.post('/api/community/connections/:connectionId/block', authMiddleware, async
   res.json({ ok: true, blocked });
 });
 
-app.get('/api/community/messages/:connectionId', authMiddleware, async (req, res) => {
+app.get('/api/community/messages/:connectionId', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const { page, limit, skip } = readPagination(req.query, { defaultLimit: 120, maxLimit: 300 });
   const connectionId = String(req.params.connectionId || '').trim();
@@ -8034,7 +8091,7 @@ app.get('/api/community/messages/:connectionId', authMiddleware, async (req, res
   });
 });
 
-app.post('/api/community/messages/:connectionId', authMiddleware, async (req, res) => {
+app.post('/api/community/messages/:connectionId', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
   const connectionId = String(req.params.connectionId || '').trim();
@@ -8146,7 +8203,7 @@ app.post('/api/community/messages/:connectionId', authMiddleware, async (req, re
   });
 });
 
-app.post('/api/community/messages/:connectionId/typing', authMiddleware, async (req, res) => {
+app.post('/api/community/messages/:connectionId/typing', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const connectionId = String(req.params.connectionId || '').trim();
   if (!isValidObjectId(connectionId)) {
@@ -8181,7 +8238,7 @@ app.post('/api/community/messages/:connectionId/typing', authMiddleware, async (
   res.json({ ok: true });
 });
 
-app.post('/api/community/messages/:messageId/reactions', authMiddleware, async (req, res) => {
+app.post('/api/community/messages/:messageId/reactions', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
 
@@ -8247,7 +8304,7 @@ app.post('/api/community/messages/:messageId/reactions', authMiddleware, async (
   res.json({ message: serializeCommunityMessage(message) });
 });
 
-app.post('/api/community/report', authMiddleware, async (req, res) => {
+app.post('/api/community/report', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
   const connectionId = String(req.body?.connectionId || '').trim();
@@ -8327,7 +8384,7 @@ app.post('/api/community/report', authMiddleware, async (req, res) => {
   });
 });
 
-app.get('/api/community/leaderboard', authMiddleware, async (req, res) => {
+app.get('/api/community/leaderboard', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const period = String(req.query.period || 'weekly').toLowerCase() === 'monthly' ? 'monthly' : 'weekly';
   const lbCacheKey = cacheKey(`community:leaderboard:${period}`);
@@ -8405,7 +8462,7 @@ app.get('/api/community/leaderboard', authMiddleware, async (req, res) => {
   res.json(payloadOut);
 });
 
-app.post('/api/community/quiz-challenges', authMiddleware, async (req, res) => {
+app.post('/api/community/quiz-challenges', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
   try {
@@ -8538,7 +8595,7 @@ app.post('/api/community/quiz-challenges', authMiddleware, async (req, res) => {
   }
 });
 
-app.post('/api/community/quiz-challenges/:id/respond', authMiddleware, async (req, res) => {
+app.post('/api/community/quiz-challenges/:id/respond', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
   try {
@@ -8622,7 +8679,7 @@ app.post('/api/community/quiz-challenges/:id/respond', authMiddleware, async (re
   }
 });
 
-app.get('/api/community/quiz-challenges', authMiddleware, async (req, res) => {
+app.get('/api/community/quiz-challenges', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   try {
     const status = String(req.query.status || '').trim().toLowerCase();
@@ -8647,7 +8704,7 @@ app.get('/api/community/quiz-challenges', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/api/community/quiz-challenges/:id', authMiddleware, async (req, res) => {
+app.get('/api/community/quiz-challenges/:id', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   try {
     const challengeId = String(req.params.id || '').trim();
@@ -8675,7 +8732,7 @@ app.get('/api/community/quiz-challenges/:id', authMiddleware, async (req, res) =
   }
 });
 
-app.post('/api/community/quiz-challenges/:id/submit', authMiddleware, async (req, res) => {
+app.post('/api/community/quiz-challenges/:id/submit', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
   try {
@@ -8811,7 +8868,7 @@ app.post('/api/community/quiz-challenges/:id/submit', authMiddleware, async (req
   }
 });
 
-app.post('/api/community/quiz-challenges/:id/progress', authMiddleware, async (req, res) => {
+app.post('/api/community/quiz-challenges/:id/progress', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
 
@@ -8932,7 +8989,7 @@ app.post('/api/community/quiz-challenges/:id/progress', authMiddleware, async (r
   }
 });
 
-app.post('/api/community/quiz-challenges/:id/forfeit', authMiddleware, async (req, res) => {
+app.post('/api/community/quiz-challenges/:id/forfeit', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
 
@@ -9012,7 +9069,7 @@ app.post('/api/community/quiz-challenges/:id/forfeit', authMiddleware, async (re
   }
 });
 
-app.get('/api/community/quiz-leaderboard', authMiddleware, async (req, res) => {
+app.get('/api/community/quiz-leaderboard', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   try {
     const qLbKey = cacheKey('community:quiz-leaderboard');
@@ -9056,7 +9113,7 @@ app.get('/api/community/quiz-leaderboard', authMiddleware, async (req, res) => {
   }
 });
 
-app.get('/api/community/groups', authMiddleware, async (req, res) => {
+app.get('/api/community/groups', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const roomIds = COMMUNITY_ROOM_DEFINITIONS.map((room) => room.id);
   const counts = await CommunityRoomPostModel.aggregate([
@@ -9075,7 +9132,7 @@ app.get('/api/community/groups', authMiddleware, async (req, res) => {
   });
 });
 
-app.get('/api/community/discussion-rooms', authMiddleware, async (req, res) => {
+app.get('/api/community/discussion-rooms', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const roomIds = COMMUNITY_ROOM_DEFINITIONS.map((room) => room.id);
   const counts = await CommunityRoomPostModel.aggregate([
@@ -9092,7 +9149,7 @@ app.get('/api/community/discussion-rooms', authMiddleware, async (req, res) => {
   });
 });
 
-app.get('/api/community/discussion-rooms/:roomId/posts', authMiddleware, async (req, res) => {
+app.get('/api/community/discussion-rooms/:roomId/posts', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const { page, limit, skip } = readPagination(req.query, { defaultLimit: 80, maxLimit: 180 });
   const roomId = String(req.params.roomId || '').trim();
@@ -9149,7 +9206,7 @@ app.get('/api/community/discussion-rooms/:roomId/posts', authMiddleware, async (
   res.json({ room, page, limit, posts: payload });
 });
 
-app.post('/api/community/discussion-rooms/:roomId/posts', authMiddleware, async (req, res) => {
+app.post('/api/community/discussion-rooms/:roomId/posts', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
 
@@ -9205,7 +9262,7 @@ app.post('/api/community/discussion-rooms/:roomId/posts', authMiddleware, async 
   res.status(201).json({ postId: String(created._id) });
 });
 
-app.post('/api/community/discussion-posts/:postId/answers', authMiddleware, async (req, res) => {
+app.post('/api/community/discussion-posts/:postId/answers', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
 
@@ -9261,7 +9318,7 @@ app.post('/api/community/discussion-posts/:postId/answers', authMiddleware, asyn
   res.status(201).json({ answerId: String(answer._id) });
 });
 
-app.post('/api/community/discussion-posts/:postId/upvote', authMiddleware, async (req, res) => {
+app.post('/api/community/discussion-posts/:postId/upvote', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
 
@@ -9320,7 +9377,7 @@ app.post('/api/community/discussion-posts/:postId/upvote', authMiddleware, async
   res.json({ ok: true, targetType: 'post', upvotes: Number(post.upvotes || 0) });
 });
 
-app.get('/api/community/achievements', authMiddleware, async (req, res) => {
+app.get('/api/community/achievements', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
 
   const me = await UserModel.findById(req.user._id).lean();
@@ -9385,7 +9442,7 @@ app.get('/api/community/achievements', authMiddleware, async (req, res) => {
   });
 });
 
-app.get('/api/community/study-partners', authMiddleware, async (req, res) => {
+app.get('/api/community/study-partners', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const subject = String(req.query.subject || '').trim().toLowerCase();
   const me = await UserModel.findById(req.user._id).select(COMMUNITY_USER_SELECT).lean();
@@ -10506,9 +10563,303 @@ app.get('/api/subscriptions/plans', (_req, res) => {
   res.json({ plans: Object.values(SUBSCRIPTION_PLANS) });
 });
 
+app.post('/api/subscriptions/start-trial', authMiddleware, subscriptionExpiryRefresh(UserModel), async (req, res) => {
+  if (req.user.role === 'admin') {
+    res.status(400).json({ error: 'Not available for admin accounts.' });
+    return;
+  }
+  await finalizeStaleSubscription(UserModel, req.user._id);
+  const r = await grantTrialIfFirstTime(UserModel, req.user._id);
+  if (!r.ok) {
+    if (r.code === 'TRIAL_ALREADY_USED') {
+      res.status(409).json({ code: 'TRIAL_ALREADY_USED', error: 'Your free trial has already been used.' });
+      return;
+    }
+    res.status(400).json({ error: 'Could not start trial.' });
+    return;
+  }
+  await invalidateUserSubscriptionCache(req.user._id);
+  emitSubscriptionRefresh(String(req.user._id), { reason: 'trial_started' });
+  res.status(201).json({ ok: true, subscription: r.subscription });
+});
+
+app.post('/api/payments/order', authMiddleware, subscriptionExpiryRefresh(UserModel), async (req, res) => {
+  const planId = String(req.body?.planId || PREMIUM_CHECKOUT_PLAN_ID).trim();
+  const plan = resolveSubscriptionPlan(planId);
+  if (!plan || plan.id !== PREMIUM_CHECKOUT_PLAN_ID) {
+    res.status(400).json({ error: 'Invalid plan.' });
+    return;
+  }
+  const paymentMethod = normalizePaymentMethod(req.body?.paymentMethod);
+  if (!['easypaisa', 'jazzcash'].includes(paymentMethod)) {
+    res.status(400).json({ error: 'Choose Easypaisa or JazzCash.' });
+    return;
+  }
+
+  const basketId = `nf-${crypto.randomBytes(10).toString('hex')}`;
+  const tx = await PaymentTransactionModel.create({
+    userId: req.user._id,
+    amount: plan.pricePkr,
+    currency: 'PKR',
+    paymentMethod,
+    planId: plan.id,
+    basketId,
+    status: 'pending',
+    gateway: 'payfast',
+  });
+
+  res.status(201).json({
+    ok: true,
+    orderId: String(tx._id),
+    basketId,
+    amount: plan.pricePkr,
+    currency: 'PKR',
+    paymentMethod,
+    payfastConfigured: payfastConfigured(),
+  });
+});
+
+/** Optional dev-only: completes last pending order without PayFast (local QA). */
+app.post('/api/payments/mock/complete', authMiddleware, subscriptionExpiryRefresh(UserModel), async (req, res) => {
+  if (IS_PRODUCTION || String(process.env.PAYMENT_MOCK_ENABLE || '').toLowerCase() !== 'true') {
+    res.status(404).json({ error: 'Not found.' });
+    return;
+  }
+  const orderId = String(req.body?.orderId || '').trim();
+  if (!orderId) {
+    res.status(400).json({ error: 'orderId required.' });
+    return;
+  }
+  const tx = await PaymentTransactionModel.findOne({ _id: orderId, userId: req.user._id }).lean();
+  if (!tx || tx.status !== 'pending') {
+    res.status(404).json({ error: 'Pending order not found.' });
+    return;
+  }
+  const plan = resolveSubscriptionPlan(tx.planId);
+  if (!plan) {
+    res.status(400).json({ error: 'Invalid order plan.' });
+    return;
+  }
+  await PaymentTransactionModel.updateOne(
+    { _id: tx._id },
+    {
+      $set: {
+        status: 'completed',
+        transactionId: `mock-${tx.basketId}`,
+        gatewayResponse: { mock: true },
+      },
+    },
+  );
+  await grantPaidPlanAfterPayment(UserModel, {
+    userId: req.user._id,
+    planId: plan.id,
+    billingCycle: plan.billingCycle,
+    gatewayPaymentRef: `mock-${tx.basketId}`,
+    paymentGateway: 'mock',
+  });
+  await invalidateUserSubscriptionCache(req.user._id);
+  emitSubscriptionRefresh(String(req.user._id), { reason: 'mock_payment' });
+  const updated = await UserModel.findById(req.user._id).lean();
+  res.json({ ok: true, subscription: normalizeSubscription(updated) });
+});
+
+app.post('/api/payments/payfast/pay', authMiddleware, subscriptionExpiryRefresh(UserModel), async (req, res) => {
+  if (!payfastConfigured()) {
+    res.status(503).json({ error: 'Payments are not configured yet. Please try again later.' });
+    return;
+  }
+
+  const orderId = String(req.body?.orderId || '').trim();
+  const mobile = String(req.body?.mobile || req.user.phone || '').replace(/\s/g, '');
+  const cnic = String(req.body?.cnic || '').replace(/\D/g, '');
+  const walletAccountNumber = String(req.body?.walletAccountNumber || '').replace(/\s/g, '');
+  const otp = String(req.body?.otp || '').trim();
+
+  if (!orderId) {
+    res.status(400).json({ error: 'Missing order.' });
+    return;
+  }
+  if (!mobile || !/^\+?[0-9]{10,15}$/.test(mobile)) {
+    res.status(400).json({ error: 'Enter a valid mobile number.' });
+    return;
+  }
+  if (!cnic || cnic.length < 11) {
+    res.status(400).json({ error: 'Enter a valid CNIC (digits only).' });
+    return;
+  }
+  if (!walletAccountNumber || walletAccountNumber.length < 8) {
+    res.status(400).json({ error: 'Enter your wallet account number.' });
+    return;
+  }
+
+  const tx = await PaymentTransactionModel.findOne({
+    _id: orderId,
+    userId: req.user._id,
+    status: { $in: ['pending', 'processing'] },
+  });
+  if (!tx) {
+    res.status(404).json({ error: 'Order not found or already processed.' });
+    return;
+  }
+
+  const plan = resolveSubscriptionPlan(tx.planId);
+  if (!plan) {
+    res.status(400).json({ error: 'Invalid order.' });
+    return;
+  }
+
+  const bankCode = payfastWalletBankCode(tx.paymentMethod);
+  if (!bankCode) {
+    res.status(503).json({ error: 'Wallet routing is not configured. Please contact support.' });
+    return;
+  }
+
+  const customerIp = String(req.headers['x-forwarded-for'] || req.ip || '127.0.0.1').split(',')[0].trim() || '127.0.0.1';
+
+  try {
+    const bearer = await payfastGetBearer(customerIp);
+    const orderDate = new Date().toISOString().slice(0, 10);
+    const fields = {
+      basket_id: tx.basketId,
+      txnamt: String(tx.amount),
+      customer_email_address: req.user.email,
+      account_type_id: PAYFAST_WALLET_ACCOUNT_TYPE_ID,
+      customer_mobile_no: mobile,
+      account_number: walletAccountNumber,
+      cnic_number: cnic,
+      bank_code: bankCode,
+      order_date: orderDate,
+      otp_required: otp ? 'no' : 'yes',
+      recurring_txn: 'no',
+      transaction_id: '',
+    };
+    if (otp) fields.otp = otp;
+
+    const { ok, json } = await payfastPostTransaction(bearer, fields);
+    tx.gatewayResponse = json;
+    tx.status = 'processing';
+    await tx.save();
+
+    const txnId = String(json?.transaction_id || json?.transactionId || json?.txn_id || '').trim();
+    const otpHints = [/otp/i, /801/i, /802/i, /807/i];
+    const message = String(json?.status_msg || json?.message || '');
+    const needsOtp = !otp && (otpHints.some((r) => r.test(message)) || String(json?.code || '') === '801');
+
+    if (!ok || !isPayfastSuccessPayload(json)) {
+      if (needsOtp) {
+        res.json({ ok: true, needsOtp: true, message: 'otp_sent' });
+        return;
+      }
+      tx.status = 'failed';
+      await tx.save();
+      res.status(402).json({
+        ok: false,
+        code: 'PAYMENT_DECLINED',
+        error: 'Payment could not be completed. Check your details or try again.',
+      });
+      return;
+    }
+
+    if (txnId) {
+      const dup = await PaymentTransactionModel.findOne({
+        transactionId: txnId,
+        _id: { $ne: tx._id },
+        status: 'completed',
+      }).lean();
+      if (dup) {
+        res.status(409).json({ error: 'This payment was already recorded.' });
+        return;
+      }
+    }
+
+    tx.status = 'completed';
+    tx.transactionId = txnId || tx.basketId;
+    await tx.save();
+
+    await grantPaidPlanAfterPayment(UserModel, {
+      userId: req.user._id,
+      planId: plan.id,
+      billingCycle: plan.billingCycle,
+      gatewayPaymentRef: txnId || tx.basketId,
+      paymentGateway: 'payfast',
+    });
+    await invalidateUserSubscriptionCache(req.user._id);
+    emitSubscriptionRefresh(String(req.user._id), { reason: 'payment_completed' });
+
+    const updated = await UserModel.findById(req.user._id).lean();
+    res.json({
+      ok: true,
+      subscription: normalizeSubscription(updated),
+    });
+  } catch (e) {
+    console.error('[payfast]', e?.message || e);
+    res.status(503).json({ error: 'Payment service is temporarily unavailable. Try again shortly.' });
+  }
+});
+
+app.get('/api/payments/payfast/status', authMiddleware, async (req, res) => {
+  if (!payfastConfigured()) {
+    res.status(503).json({ error: 'Payments are not configured.' });
+    return;
+  }
+  const basketId = String(req.query?.basketId || '').trim();
+  const orderDate = String(req.query?.orderDate || new Date().toISOString().slice(0, 10)).trim();
+  if (!basketId) {
+    res.status(400).json({ error: 'basketId required.' });
+    return;
+  }
+  const customerIp = String(req.headers['x-forwarded-for'] || req.ip || '127.0.0.1').split(',')[0].trim() || '127.0.0.1';
+  try {
+    const bearer = await payfastGetBearer(customerIp);
+    const { ok, json } = await payfastGetTransactionByBasket(bearer, basketId, orderDate);
+    res.json({ ok, payfast: json });
+  } catch (e) {
+    res.status(503).json({ error: 'Unable to verify payment status.' });
+  }
+});
+
+app.get('/api/payments/history', authMiddleware, async (req, res) => {
+  const rows = await PaymentTransactionModel.find({ userId: req.user._id })
+    .sort({ createdAt: -1 })
+    .limit(25)
+    .select('amount currency paymentMethod planId status basketId transactionId createdAt')
+    .lean();
+  res.json({
+    items: rows.map((r) => ({
+      id: String(r._id),
+      amount: r.amount,
+      currency: r.currency,
+      paymentMethod: r.paymentMethod,
+      planId: r.planId,
+      status: r.status,
+      basketId: r.basketId,
+      transactionId: r.transactionId,
+      createdAt: r.createdAt,
+    })),
+  });
+});
+
 app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
-  const subscription = normalizeSubscription(req.user);
+  if (req.user.role !== 'admin') {
+    await finalizeStaleSubscription(UserModel, req.user._id);
+  }
+
+  const fresh = await UserModel.findById(req.user._id).lean();
+  const subPlain = mergedSubscription(fresh || req.user);
+  const subscription = normalizeSubscription(fresh || req.user);
   const plan = resolveSubscriptionPlan(subscription.planId);
+  const serverNow = Date.now();
+  const cachedKey = cacheKey(`substate:${req.user._id}`);
+  let premiumSurface = await cacheGetJson(cachedKey);
+  if (!premiumSurface) {
+    premiumSurface = {
+      ...surfaceAccessDetail(subPlain, serverNow),
+      badge: buildPremiumBadgeState(subPlain, serverNow),
+      hasSurfaceAccess: hasPremiumSurfaceAccess(subPlain),
+    };
+    await cacheSetJson(cachedKey, premiumSurface, 45);
+  }
+
   const day = new Date().toISOString().slice(0, 10);
   const usage = await AIUsageModel.findOne({ userId: req.user._id, day }).lean();
   const latestActivationRequest = await PremiumSubscriptionRequestModel
@@ -10518,12 +10869,16 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
   const requestPlan = resolveSubscriptionPlan(latestActivationRequest?.planId || '');
 
   res.json({
+    serverTime: new Date(serverNow).toISOString(),
     subscription: {
       ...subscription,
       isActive: isSubscriptionActive(subscription),
+      trialActive: trialIsActive(subPlain),
       planName: plan?.name || '',
       dailyAiLimit: plan?.dailyAiLimit || 0,
     },
+    premiumSurface,
+    subscriptionBadge: buildPremiumBadgeState(subPlain, serverNow),
     activationRequest: latestActivationRequest
       ? serializePremiumSubscriptionRequest(latestActivationRequest, requestPlan?.name || '')
       : null,
@@ -10537,9 +10892,11 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
   });
 });
 
-app.post('/api/subscriptions/purchase', authMiddleware, async (req, res) => {
+app.post('/api/subscriptions/purchase', authMiddleware, async (_req, res) => {
   res.status(410).json({
-    error: 'Direct activation is disabled. Submit payment proof and activate using admin-issued token.',
+    error: 'Use the Subscription page for automated checkout.',
+    code: 'USE_AUTOMATED_CHECKOUT',
+    checkoutPlanId: PREMIUM_CHECKOUT_PLAN_ID,
   });
 });
 
@@ -10696,8 +11053,15 @@ app.post('/api/subscriptions/activate-with-token', authMiddleware, async (req, r
   }
 
   const startedAt = new Date();
-  const expiresAt = new Date(startedAt.getTime() + plan.expiresInDays * 24 * 60 * 60 * 1000);
+  let expiresAt = new Date(startedAt.getTime() + plan.expiresInDays * 24 * 60 * 60 * 1000);
+  if (Number(plan.expiresInMonths) > 0) {
+    expiresAt = addMonths(startedAt, plan.expiresInMonths);
+  }
+  const existingSub = mergedSubscription(
+    await UserModel.findById(req.user._id).select('subscription').lean(),
+  );
   const nextSubscription = {
+    ...existingSub,
     status: 'active',
     planId: plan.id,
     billingCycle: plan.billingCycle,
@@ -10705,6 +11069,8 @@ app.post('/api/subscriptions/activate-with-token', authMiddleware, async (req, r
     expiresAt,
     paymentReference: request.paymentTransactionId,
     lastActivatedAt: startedAt,
+    paymentGateway: existingSub.paymentGateway || 'admin_token',
+    lastPaymentAt: startedAt,
   };
 
   await UserModel.findByIdAndUpdate(
@@ -10716,6 +11082,13 @@ app.post('/api/subscriptions/activate-with-token', authMiddleware, async (req, r
     },
     { runValidators: true },
   );
+
+  await invalidateUserSubscriptionCache(req.user._id);
+  try {
+    emitSubscriptionRefresh(String(req.user._id), { reason: 'admin_token_activation' });
+  } catch {
+    // ignore
+  }
 
   req.user.subscription = nextSubscription;
 
@@ -10874,7 +11247,7 @@ app.post('/api/ai/mentor/solve-image', authMiddleware, async (req, res) => {
   });
 });
 
-app.post('/api/study-plans/generate', authMiddleware, async (req, res) => {
+app.post('/api/study-plans/generate', ...studentPremiumSurface, async (req, res) => {
   const targetDate = String(req.body?.targetDate || '').trim();
   const preparationLevel = String(req.body?.preparationLevel || '').trim() || 'intermediate';
   const weakSubjects = Array.isArray(req.body?.weakSubjects)
@@ -10895,12 +11268,12 @@ app.post('/api/study-plans/generate', authMiddleware, async (req, res) => {
   res.status(201).json({ studyPlan: plan });
 });
 
-app.get('/api/study-plans/latest', authMiddleware, async (req, res) => {
+app.get('/api/study-plans/latest', ...studentPremiumSurface, async (req, res) => {
   const studyPlan = req.user.progress?.studyPlan || null;
   res.json({ studyPlan });
 });
 
-app.post('/api/tests/start', authMiddleware, async (req, res) => {
+app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
   const {
     subject,
     part,
@@ -11251,12 +11624,12 @@ app.post('/api/tests/start', authMiddleware, async (req, res) => {
   res.status(201).json({ session: serialized });
 });
 
-app.get('/api/tests/attempts', authMiddleware, async (req, res) => {
+app.get('/api/tests/attempts', ...studentPremiumSurface, async (req, res) => {
   const attempts = await AttemptModel.find({ userId: req.user._id }).sort({ attemptedAt: -1 }).lean();
   res.json({ attempts: attempts.map((item) => serializeAttempt(item)) });
 });
 
-app.get('/api/tests/:sessionId', authMiddleware, async (req, res) => {
+app.get('/api/tests/:sessionId', ...studentPremiumSurface, async (req, res) => {
   if (!isValidObjectId(req.params.sessionId)) {
     res.status(400).json({ error: 'Invalid session id.' });
     return;
@@ -11271,7 +11644,7 @@ app.get('/api/tests/:sessionId', authMiddleware, async (req, res) => {
   res.json({ session: serializeSession(session) });
 });
 
-app.post('/api/tests/:sessionId/cancel', authMiddleware, async (req, res) => {
+app.post('/api/tests/:sessionId/cancel', ...studentPremiumSurface, async (req, res) => {
   if (!isValidObjectId(req.params.sessionId)) {
     res.status(400).json({ error: 'Invalid session id.' });
     return;
@@ -11315,7 +11688,7 @@ app.post('/api/tests/:sessionId/cancel', authMiddleware, async (req, res) => {
   res.json({ session: serializeSession(session) });
 });
 
-app.post('/api/tests/:sessionId/finish', authMiddleware, async (req, res) => {
+app.post('/api/tests/:sessionId/finish', ...studentPremiumSurface, async (req, res) => {
   if (!isValidObjectId(req.params.sessionId)) {
     res.status(400).json({ error: 'Invalid session id.' });
     return;

@@ -12,6 +12,8 @@ import { Award, Bot, ChevronDown, ChevronUp, FlaskConical, GraduationCap, Loader
 import { showSuccessToast, showErrorToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../context/SubscriptionContext';
+import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK } from '../lib/paymentMethods';
 import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 import {
@@ -52,6 +54,7 @@ type AuthActionState = 'idle' | 'loggingIn' | 'creatingAccount';
 
 export function Profile({ onNavigate }: ProfileProps) {
   const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, logout } = useAuth();
+  const { surface } = useSubscription();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
   const [localProfile, setLocalProfile] = useState(profile);
   const [avatarPreview, setAvatarPreview] = useState(() => {
@@ -745,9 +748,19 @@ export function Profile({ onNavigate }: ProfileProps) {
                 <span className="text-sm text-muted-foreground">Member Since</span>
                 <span className="text-sm">Jan 2026</span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-muted-foreground">Plan</span>
-                <Badge className="bg-gradient-to-r from-amber-500 to-orange-500 text-white dark:from-amber-400 dark:to-orange-400 dark:text-slate-900">Premium</Badge>
+              <div className="flex flex-col gap-2 border-t pt-4">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-sm text-muted-foreground">Subscription</span>
+                  <PremiumCountdownBadge />
+                </div>
+                {surface.endsAt ? (
+                  <p className="text-xs text-muted-foreground">
+                    {surface.source === 'trial' ? 'Trial' : 'Premium'} ends {new Date(surface.endsAt).toLocaleString()}
+                  </p>
+                ) : null}
+                <Button type="button" variant="outline" size="sm" className="w-full rounded-lg" onClick={() => onNavigate?.('subscription')}>
+                  Manage subscription
+                </Button>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Tests Taken</span>

@@ -50,13 +50,19 @@ const progressSchema = new mongoose.Schema(
 
 const subscriptionSchema = new mongoose.Schema(
   {
-    status: { type: String, enum: ['inactive', 'active', 'expired', 'cancelled'], default: 'inactive', index: true },
+    status: { type: String, enum: ['inactive', 'trial', 'active', 'expired', 'cancelled'], default: 'inactive', index: true },
     planId: { type: String, default: '' },
-    billingCycle: { type: String, enum: ['monthly', 'yearly', ''], default: '' },
+    billingCycle: { type: String, enum: ['monthly', 'yearly', 'six_month', ''], default: '' },
     startedAt: { type: Date, default: null },
     expiresAt: { type: Date, default: null },
     paymentReference: { type: String, default: '' },
     lastActivatedAt: { type: Date, default: null },
+    /** One 7-day trial per account; enforced server-side */
+    hasUsedTrial: { type: Boolean, default: false },
+    trialStartedAt: { type: Date, default: null },
+    trialEndsAt: { type: Date, default: null },
+    paymentGateway: { type: String, default: '' },
+    lastPaymentAt: { type: Date, default: null },
   },
   { _id: false },
 );

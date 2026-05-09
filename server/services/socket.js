@@ -171,6 +171,16 @@ export function emitSocketSyncToStudentUser(userId, data) {
   }
 }
 
+/** Push subscription/trial updates for countdown sync */
+export function emitSubscriptionRefresh(userId, payload) {
+  if (!ioRef) return;
+  try {
+    ioRef.to(studentRoom(userId)).emit('subscription:refresh', { ...payload, ts: Date.now() });
+  } catch {
+    // ignore
+  }
+}
+
 /** @param {Record<string, unknown>} data */
 export function emitSocketSyncToStudents(data) {
   if (!ioRef) return;

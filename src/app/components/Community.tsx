@@ -15,6 +15,9 @@ import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl, shouldPersistAuthTokens } from '../lib/authSession';
 import { io, type Socket } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
+import { useSubscription } from '../context/SubscriptionContext';
+import { PremiumLockScreen } from './subscription/PremiumLockScreen';
+import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 
 interface CommunityUser {
@@ -326,6 +329,7 @@ function canSendConnectionRequest(status?: string) {
 
 function CommunityInner() {
   const { token, user } = useAuth();
+  const { surface, loading: subLoading } = useSubscription();
 
   const [searchLoading, setSearchLoading] = useState(false);
   const [activeTab, setActiveTab] = useState('discover-students');
@@ -1737,6 +1741,31 @@ function CommunityInner() {
           <CardDescription>Please sign in to access community features.</CardDescription>
         </CardHeader>
       </Card>
+    );
+  }
+
+  if (subLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Community</CardTitle>
+          <CardDescription>Loading subscription…</CardDescription>
+        </CardHeader>
+      </Card>
+    );
+  }
+
+  if (!surface.allowed) {
+    return (
+      <div className="space-y-4">
+        <div className="flex justify-end">
+          <PremiumCountdownBadge />
+        </div>
+        <PremiumLockScreen
+          title="Unlock community"
+          description="Connect with students, join quiz battles, and use discussion rooms with an active trial or premium subscription."
+        />
+      </div>
     );
   }
 

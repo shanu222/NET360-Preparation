@@ -63,3 +63,10 @@ export async function invalidateCommunityLeaderboardCache() {
 export async function invalidateQuizLeaderboardCache() {
   await cacheDel(cacheKey('community:quiz-leaderboard'));
 }
+
+/** Bust cached subscription snapshot for a student (Redis). */
+export async function invalidateUserSubscriptionCache(userId) {
+  const id = String(userId || '').trim();
+  if (!id) return;
+  await cacheDel(cacheKey(`substate:${id}`));
+}

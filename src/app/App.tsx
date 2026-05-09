@@ -11,8 +11,9 @@ import {
 } from 'react';
 import { SupportChatWidget } from './components/SupportChatWidget';
 import { PageRouteFallback } from './components/PageRouteFallback';
+import { SubscriptionProvider } from './context/SubscriptionContext';
 
-const Dashboard = lazy(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
+const SubscriptionPageLazy = lazy(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
 const NUSTGuide = lazy(() => import('./components/NUSTGuide').then((m) => ({ default: m.NUSTGuide })));
 const NUSTSchoolsCampuses = lazy(() => import('./components/NUSTSchoolsCampuses').then((m) => ({ default: m.NUSTSchoolsCampuses })));
 const PracticeBoard = lazy(() => import('./components/PracticeBoard').then((m) => ({ default: m.PracticeBoard })));
@@ -46,6 +47,7 @@ import {
   ChevronDown,
   Moon,
   Sun,
+  Crown,
 } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetTrigger } from './components/ui/sheet';
@@ -58,6 +60,7 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { brandLogoUrl } from './lib/publicMedia';
+import { PremiumCountdownBadge } from './components/subscription/PremiumCountdownBadge';
 
 function SessionReady({ children }: { children: ReactNode }) {
   const { loading } = useAuth();
@@ -97,6 +100,7 @@ type SectionId =
   | 'merit-calculator'
   | 'community'
   | 'profile'
+  | 'subscription'
   | 'physics-mcqs-net'
   | 'math-mcqs-net'
   | 'net-preparation-pakistan'
@@ -117,6 +121,7 @@ const PATH_BY_SECTION: Record<SectionId, string> = {
   'merit-calculator': '/merit-calculator',
   community: '/community',
   profile: '/profile',
+  subscription: '/subscription',
   'physics-mcqs-net': '/physics-mcqs-net',
   'math-mcqs-net': '/math-mcqs-net',
   'net-preparation-pakistan': '/net-preparation-pakistan',
@@ -499,6 +504,7 @@ export default function App() {
     { id: 'analytics', label: 'Analytics', icon: TrendingUp },
     { id: 'merit-calculator', label: 'Merit Calculator', icon: Calculator },
     { id: 'community', label: 'Community', icon: Users },
+    { id: 'subscription', label: 'Subscription', icon: Crown },
     { id: 'profile', label: 'Profile', icon: User }
   ];
 
@@ -524,6 +530,7 @@ export default function App() {
   return (
     <AuthProvider>
       <SessionReady>
+      <SubscriptionProvider>
       <AppDataProvider>
       <Helmet>
         <title>{activeTitle} | NUST Entry Test Preparation</title>
@@ -609,6 +616,9 @@ export default function App() {
                 >
                   <Bell className="w-4 h-4" />
                 </Button>
+                <div className="hidden sm:block">
+                  <PremiumCountdownBadge compact />
+                </div>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -667,6 +677,11 @@ export default function App() {
                 {activeTab === 'analytics' ? <div className="mt-0 net360-page net360-page-enter"><Analytics /></div> : null}
                 {activeTab === 'merit-calculator' ? <div className="mt-0 net360-page net360-page-enter"><MeritCalculator /></div> : null}
                 {activeTab === 'profile' ? <div className="mt-0 net360-page net360-page-enter"><Profile onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} /></div> : null}
+                {activeTab === 'subscription' ? (
+                  <div className="mt-0 net360-page net360-page-enter">
+                    <SubscriptionPageLazy />
+                  </div>
+                ) : null}
                 {activeTab === 'community' ? <div className="mt-0 net360-page net360-page-enter"><Community /></div> : null}
               </Suspense>
             </main>
@@ -677,6 +692,7 @@ export default function App() {
       <Toaster richColors position="top-right" closeButton visibleToasts={4} expand={false} offset={16} />
       <SupportChatWidget />
     </AppDataProvider>
+      </SubscriptionProvider>
       </SessionReady>
     </AuthProvider>
   );

@@ -16,6 +16,8 @@ import { Progress } from './ui/progress';
 import { useAppData } from '../context/AppDataContext';
 import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
 import { getProgramCategoryKey, getRequiredSubjectsForTargetProgram } from '../lib/netPrograms';
+import { useSubscription, formatCountdown } from '../context/SubscriptionContext';
+import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 
 interface DashboardProps {
   onNavigate: (section: string) => void;
@@ -88,6 +90,7 @@ const SUBJECT_STYLE_OVERRIDES: Partial<Record<DashboardSubjectKey, { badge: stri
 
 export function Dashboard({ onNavigate }: DashboardProps) {
   const { mcqsBySubject, mcqTotalsBySubject, attempts, profile } = useAppData();
+  const { surface } = useSubscription();
   const dashboardSubjects = useMemo(() => buildDashboardSubjects(profile.targetProgram), [profile.targetProgram]);
 
   const daysUntilNET = useMemo(() => {
@@ -231,10 +234,26 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   return (
     <div className="space-y-4 sm:space-y-5">
       <div className="px-1">
-        <h1 className="text-2xl text-indigo-950 sm:text-[30px]">NET360 - NUST Entry Test Preparation Platform</h1>
-        <p className="mt-2 text-sm text-slate-600">
-          NET360 is a complete platform for NET preparation in Pakistan. Practice MCQs, attempt mock tests, and improve your performance with AI-powered learning.
-        </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-2xl text-indigo-950 sm:text-[30px]">NET360 - NUST Entry Test Preparation Platform</h1>
+            <p className="mt-2 text-sm text-slate-600">
+              NET360 is a complete platform for NET preparation in Pakistan. Practice MCQs, attempt mock tests, and improve your performance with AI-powered learning.
+            </p>
+          </div>
+          <div className="flex flex-col items-end gap-1">
+            <PremiumCountdownBadge />
+            {surface.allowed && surface.endsAt ? (
+              <span className="text-[11px] text-slate-500">
+                Expires {new Date(surface.endsAt).toLocaleDateString()} ·{' '}
+                {(() => {
+                  const { days, hours } = formatCountdown(surface.msRemaining);
+                  return `${days}d ${hours}h left`;
+                })()}
+              </span>
+            ) : null}
+          </div>
+        </div>
         <h2 className="mt-4 text-xl text-indigo-950 sm:text-2xl">Welcome back, {firstName}!</h2>
         <p className="text-sm text-slate-500">Stay consistent, your NUST dream is getting closer every day.</p>
       </div>
