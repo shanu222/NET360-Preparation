@@ -46,7 +46,9 @@ function resolveApiBase() {
     try {
       const configuredOrigin = new URL(configured).origin.replace(/\/$/, '');
       if (configuredOrigin !== browserOrigin) {
-        console.warn(`[net360] API base host mismatch (${configuredOrigin} != ${browserOrigin}); using same-origin.`);
+        if (import.meta.env.DEV) {
+          console.warn(`[net360] API base host mismatch (${configuredOrigin} != ${browserOrigin}); using same-origin.`);
+        }
         return browserOrigin;
       }
     } catch {

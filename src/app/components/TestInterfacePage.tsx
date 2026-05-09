@@ -449,7 +449,9 @@ export function TestInterfacePage() {
       }
 
       if (!resolvedAuth) {
-        console.error('[exam-interface] No authentication context for this test.');
+        if (import.meta.env.DEV) {
+          console.error('[exam-interface] No authentication context for this test.');
+        }
         setError('Please sign in to take this test.');
         setLoading(false);
         window.setTimeout(() => {
@@ -459,7 +461,9 @@ export function TestInterfacePage() {
       }
 
       if (challengeLaunch && !challengeId) {
-        console.error('[exam-interface] Challenge launch without challenge id.');
+        if (import.meta.env.DEV) {
+          console.error('[exam-interface] Challenge launch without challenge id.');
+        }
         setError('This challenge could not be opened.');
         setLoading(false);
         window.setTimeout(() => {
@@ -469,7 +473,9 @@ export function TestInterfacePage() {
       }
 
       if (!challengeLaunch && !sessionId) {
-        console.error('[exam-interface] Test launch without session id.');
+        if (import.meta.env.DEV) {
+          console.error('[exam-interface] Test launch without session id.');
+        }
         setError('This test could not be opened. Please start again from Tests.');
         setLoading(false);
         window.setTimeout(() => {
@@ -664,7 +670,9 @@ export function TestInterfacePage() {
         }
 
         if (!resolvedSessionId) {
-          console.error('[exam-interface] Session id missing after launch resolve.');
+          if (import.meta.env.DEV) {
+            console.error('[exam-interface] Session id missing after launch resolve.');
+          }
           setError('We could not load this test. Please start again from Tests.');
           setLoading(false);
           return;
@@ -682,12 +690,16 @@ export function TestInterfacePage() {
         if (payload.cancelledAt) {
           throw new Error('This test session has already been cancelled.');
         }
-        console.log('Session ID:', resolvedSessionId);
-        console.log('API response:', response);
+        if (import.meta.env.DEV) {
+          console.log('Session ID:', resolvedSessionId);
+          console.log('API response:', response);
+        }
         setSession(payload as unknown as TestSession);
         setRemainingSeconds(Math.max(1, payload.durationMinutes * 60));
       } catch (err) {
-        console.error('Test loading error:', err);
+        if (import.meta.env.DEV) {
+          console.error('Test loading error:', err);
+        }
         if (controller.signal.aborted) {
           setError('Failed to load test. Request timed out. Please try again.');
           return;

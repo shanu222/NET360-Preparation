@@ -295,7 +295,9 @@ export function Tests({ onNavigate }: TestsProps) {
     }
 
     if (!authReady) {
-      console.warn('Auth not ready yet');
+      if (import.meta.env.DEV) {
+        console.warn('Auth not ready yet');
+      }
       launchingRef.current = false;
       return;
     }
@@ -311,7 +313,9 @@ export function Tests({ onNavigate }: TestsProps) {
     }
     await waitUntilClientAuthToken(() => resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current));
     if (!resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current)) {
-      console.warn('Auth not ready yet');
+      if (import.meta.env.DEV) {
+        console.warn('Auth not ready yet');
+      }
       showErrorToast('Please login first to start a test. Redirecting to login...');
       onNavigate?.('profile');
       launchingRef.current = false;
@@ -330,7 +334,7 @@ export function Tests({ onNavigate }: TestsProps) {
     const isMobileLikeRuntime =
       isNativeRuntime || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
 
-    if (import.meta.env.DEV || isMobileLikeRuntime) {
+    if (import.meta.env.DEV) {
       console.log('[Tests] Token before startTestSession:', formatStudentTokenDebugPreview());
     }
 
@@ -381,7 +385,9 @@ export function Tests({ onNavigate }: TestsProps) {
       showSuccessToast(isNativeRuntime ? 'Test launched.' : 'Test launched in a new window.');
     } catch (error) {
       examWindow?.close();
-      console.error('Test start error:', error);
+      if (import.meta.env.DEV) {
+        console.error('Test start error:', error);
+      }
       const msg = error instanceof Error ? error.message : '';
       if (
         isMobileLikeRuntime

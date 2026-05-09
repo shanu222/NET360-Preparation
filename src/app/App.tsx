@@ -711,7 +711,6 @@ export default function App() {
       <SubscriptionProvider>
       <AppDataProvider>
       <Helmet>
-        <html lang="en" />
         <link rel="canonical" href={canonicalUrl} />
         <title>{pageTitleFull}</title>
         <meta name="description" content={pageDescription} />

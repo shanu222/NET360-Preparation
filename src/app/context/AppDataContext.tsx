@@ -450,11 +450,6 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const subjectBuckets = grouped[question.subject];
       const difficultyKey = String(question.difficulty || '').trim() as Difficulty;
       const targetBucket = subjectBuckets?.[difficultyKey];
-      console.log('[MCQ Difficulty Bucket Check]', {
-        subject: question.subject,
-        difficulty: question.difficulty,
-        hasBucket: Array.isArray(targetBucket),
-      });
       if (!Array.isArray(targetBucket)) return;
       targetBucket.push(question);
     });
@@ -519,7 +514,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       authToken = bearerAfterPrime;
     }
 
-    console.log('Token before request:', formatStudentTokenDebugPreview());
+    if (import.meta.env.DEV) {
+      console.log('Token before request:', formatStudentTokenDebugPreview());
+    }
 
     const normalizedPayload = {
       subject: String(subject || '').toLowerCase().trim(),
@@ -534,7 +531,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       testType,
       selectedSubject: String(selectedSubject || '').toLowerCase().trim(),
     };
-    console.log('[MCQ Test Request] Sending:', normalizedPayload);
+    if (import.meta.env.DEV) {
+      console.log('[MCQ Test Request] Sending:', normalizedPayload);
+    }
 
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
@@ -549,13 +548,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           },
           authToken,
         );
-        console.log('[MCQ Test Response]', {
-          subject: normalizedPayload.subject,
-          chapter: normalizedPayload.chapter,
-          topic: normalizedPayload.topic,
-          section: normalizedPayload.section,
-          returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
-        });
+        if (import.meta.env.DEV) {
+          console.log('[MCQ Test Response]', {
+            subject: normalizedPayload.subject,
+            chapter: normalizedPayload.chapter,
+            topic: normalizedPayload.topic,
+            section: normalizedPayload.section,
+            returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
+          });
+        }
         return startPayload.session;
       } catch (error) {
         if (attempt === 1) {

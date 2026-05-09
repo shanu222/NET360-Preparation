@@ -4,6 +4,7 @@ import path from 'path'
 import fs from 'fs'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
+import viteCompression from 'vite-plugin-compression'
 
 function writeDistVersionJsonPlugin(): Plugin {
   return {
@@ -49,6 +50,16 @@ export default defineConfig(({ mode }) => {
       tailwindcss(),
       injectS3PreconnectPlugin(mode),
       writeDistVersionJsonPlugin(),
+      viteCompression({
+        threshold: 1024,
+        algorithm: 'gzip',
+        ext: '.gz',
+      }),
+      viteCompression({
+        threshold: 1024,
+        algorithm: 'brotliCompress',
+        ext: '.br',
+      }),
     ],
     resolve: {
       alias: {
@@ -84,24 +95,38 @@ export default defineConfig(({ mode }) => {
     assetsInclude: ['**/*.svg', '**/*.csv'],
 
     build: {
+      target: 'es2020',
       modulePreload: { polyfill: true },
+      reportCompressedSize: false,
       minify: 'terser',
       terserOptions: {
         compress: {
           passes: 2,
+          ecma: 2020,
           drop_debugger: true,
           pure_funcs: ['console.log', 'console.debug', 'console.info'],
         },
         format: {
           comments: false,
+          ecma: 2020,
         },
       },
-      sourcemap: 'hidden',
+      // Linked maps satisfy Lighthouse "missing source maps"; maps ship as separate files (not inline).
+      sourcemap: true,
       cssCodeSplit: true,
+      cssMinify: true,
       rollupOptions: {
         output: {
+          experimentalMinChunkSize: 20_000,
           manualChunks(id) {
             if (!id.includes('node_modules')) return
+            if (
+              /node_modules[\\/]react-dom[\\/]/.test(id)
+              || /node_modules[\\/]scheduler[\\/]/.test(id)
+              || /node_modules[\\/]react[\\/]/.test(id)
+            ) {
+              return 'vendor-react'
+            }
             if (id.includes('firebase')) return 'vendor-firebase'
             if (id.includes('@mui') || id.includes('@emotion')) return 'vendor-mui'
             if (id.includes('recharts')) return 'vendor-charts'

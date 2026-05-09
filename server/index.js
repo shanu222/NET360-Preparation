@@ -593,7 +593,7 @@ const PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024;
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.set('query parser', 'simple');
-app.use(compression({ threshold: 1024 }));
+app.use(compression({ level: 6, threshold: 512 }));
 const hstsHttpsOnly = helmet.hsts({
   maxAge: 86400,
   includeSubDomains: false,

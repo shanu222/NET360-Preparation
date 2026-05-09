@@ -65,7 +65,9 @@ export function MeritCalculator() {
       fscPercent = parseFloat(fscPercentage) || 0;
       netPercent = parseFloat(netPercentage) || 0;
       if (matricPercent > 100 || fscPercent > 100 || netPercent > 100) {
-        console.warn('Invalid input range');
+        if (import.meta.env.DEV) {
+          console.warn('Invalid input range');
+        }
         return;
       }
     }
@@ -104,7 +106,9 @@ export function MeritCalculator() {
       matricP = parseFloat(matricEqPercentage) || 0;
       netP = parseFloat(alNetPercentage) || 0;
       if (matricP > 100 || netP > 100) {
-        console.warn('Invalid input range');
+        if (import.meta.env.DEV) {
+          console.warn('Invalid input range');
+        }
         return;
       }
     }

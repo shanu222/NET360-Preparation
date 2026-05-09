@@ -302,6 +302,8 @@
 
   .net360-header {
     top: env(safe-area-inset-top, 0px);
+    transform: translateZ(0);
+    backface-visibility: hidden;
   }
 
   .net360-main {

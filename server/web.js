@@ -69,7 +69,7 @@ app.use((req, res, next) => {
   }
   hstsHttpsOnly(req, res, next);
 });
-app.use(compression());
+app.use(compression({ level: 6, threshold: 512 }));
 
 if (!distHasIndex) {
   console.warn(
@@ -81,6 +81,49 @@ if (!distHasIndex) {
 app.get('/healthz', (_req, res) => {
   res.setHeader('Cache-Control', 'private, no-store');
   res.status(200).json({ ok: true });
+});
+
+// Prefer pre-compressed .br / .gz from Vite build when client advertises support (smaller wire size, less CPU).
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    next();
+    return;
+  }
+  const urlPath = req.path || '';
+  if (!urlPath.startsWith('/assets/')) {
+    next();
+    return;
+  }
+  const accept = String(req.headers['accept-encoding'] || '');
+  const relative = path.normalize(urlPath.replace(/^\//, ''));
+  if (relative.includes('..')) {
+    next();
+    return;
+  }
+  const baseFile = path.join(distDir, relative);
+  if (!baseFile.startsWith(distDir)) {
+    next();
+    return;
+  }
+
+  const tryEncoded = (ext, encoding) => {
+    const encodedPath = `${baseFile}${ext}`;
+    if (!encodedPath.startsWith(distDir)) return false;
+    if (!fs.existsSync(encodedPath)) return false;
+    if (/\.js$/i.test(urlPath)) res.type('application/javascript');
+    else if (/\.css$/i.test(urlPath)) res.type('text/css');
+    else if (/\.svg$/i.test(urlPath)) res.type('image/svg+xml');
+    res.setHeader('Content-Encoding', encoding);
+    res.setHeader('Vary', 'Accept-Encoding');
+    res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+    res.sendFile(encodedPath);
+    return true;
+  };
+
+  if (accept.includes('br') && tryEncoded('.br', 'br')) return;
+  if (accept.includes('gzip') && tryEncoded('.gz', 'gzip')) return;
+
+  next();
 });
 
 app.use(
