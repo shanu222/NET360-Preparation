@@ -6188,295 +6188,120 @@ app.get('/api/public/nust-updates', async (_req, res) => {
   });
 });
 
-app.post('/api/auth/signup-request', async (req, res) => {
-  try {
-    const email = normalizeEmail(req.body?.email);
-    const firstName = sanitizeHumanName(req.body?.firstName || '');
-    const lastName = sanitizeHumanName(req.body?.lastName || '');
-    const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber);
-    const paymentMethod = normalizePaymentMethod(req.body?.paymentMethod);
-    const paymentTransactionId = sanitizePlainText(req.body?.paymentTransactionId || '', 120);
+app.post('/api/auth/signup-request', async (_req, res) => {
+  res.status(410).json({
+    error: 'Signup requests are disabled. Use direct account creation via /api/auth/register.',
+  });
+});
 
-    let paymentProof;
-    try {
-      paymentProof = normalizePaymentProof(req.body?.paymentProof);
-    } catch (error) {
-      res.status(400).json({ error: error instanceof Error ? error.message : 'Payment proof is invalid.' });
-      return;
-    }
+app.post('/api/auth/signup-token-inbox', (_req, res) => {
+  res.status(410).json({
+    error: 'Signup tokens are disabled. Use direct account creation via /api/auth/register.',
+  });
+});
 
-    if (!email || !mobileNumber || !paymentTransactionId || !paymentMethod) {
-      res.status(400).json({ error: 'Email, mobile number, payment method, transaction ID, and payment proof are required.' });
-      return;
-    }
+async function createDirectStudentAccount(req, res) {
+  const email = normalizeEmail(req.body?.email);
+  const password = String(req.body?.password || '');
+  const firstName = sanitizeHumanName(req.body?.firstName || '');
+  const lastName = sanitizeHumanName(req.body?.lastName || '');
+  const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber || req.body?.phone || '');
+  const securityQuestion = normalizeSecurityQuestion(req.body?.securityQuestion || '');
+  const securityAnswer = normalizeSecurityAnswer(req.body?.securityAnswer || '');
+  const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
 
-    if (!isValidEmail(email)) {
-      res.status(400).json({ error: 'Enter a valid email address.' });
-      return;
-    }
+  if (!email || !password || !mobileNumber) {
+    res.status(400).json({ error: 'Email, password, and mobile number are required.' });
+    return;
+  }
 
-    if (!isValidMobileNumber(mobileNumber)) {
-      res.status(400).json({ error: 'Enter a valid mobile number.' });
-      return;
-    }
+  if (!isValidEmail(email)) {
+    res.status(400).json({ error: 'Enter a valid email address.' });
+    return;
+  }
 
-    if (!['easypaisa', 'jazzcash', 'bank_transfer'].includes(paymentMethod)) {
-      res.status(400).json({ error: 'Payment method must be one of: easypaisa, jazzcash, bank_transfer.' });
-      return;
-    }
+  if (!isValidMobileNumber(mobileNumber)) {
+    res.status(400).json({ error: 'Enter a valid mobile number.' });
+    return;
+  }
 
-    if (!isValidWhatsAppNumber(mobileNumber)) {
-      res.status(400).json({ error: 'Enter a valid mobile number in international format (e.g. +923XXXXXXXXX).' });
-      return;
-    }
+  if (password.length < 8) {
+    res.status(400).json({ error: 'Password must be at least 8 characters.' });
+    return;
+  }
 
-    const [existingByEmail, existingByMobile] = await Promise.all([
-      UserModel.findOne({ email }).select('email phone subscription').lean(),
-      findUserByMobileNumber(mobileNumber),
-    ]);
+  if (!securityQuestion || securityQuestion.length < 10) {
+    res.status(400).json({ error: 'Security question is required and should be clear.' });
+    return;
+  }
 
-    if (existingByEmail || existingByMobile) {
-      const matchedBy = existingByEmail && existingByMobile
-        ? 'both'
-        : existingByEmail
-          ? 'email'
-          : 'mobile';
-      const matchedUser = existingByEmail || existingByMobile;
-      res.status(409).json({
-        error: duplicateAccountErrorMessage(matchedBy, hasActiveSubscription(matchedUser)),
-      });
-      return;
-    }
+  if (!securityAnswer || securityAnswer.length < 3) {
+    res.status(400).json({ error: 'Security answer is required.' });
+    return;
+  }
 
-    const existingPending = await SignupRequestModel.findOne({
-      status: 'pending',
-      $or: [{ email }, { mobileNumber }],
-    }).lean();
-    if (existingPending) {
-      const matchedBy = normalizeEmail(existingPending.email) === email
+  const [existingByEmail, existingByMobile] = await Promise.all([
+    UserModel.findOne({ email }).select('email phone subscription').lean(),
+    findUserByMobileNumber(mobileNumber),
+  ]);
+
+  if (existingByEmail || existingByMobile) {
+    const matchedBy = existingByEmail && existingByMobile
+      ? 'both'
+      : existingByEmail
         ? 'email'
-        : compactMobile(existingPending.mobileNumber) === compactMobile(mobileNumber)
-          ? 'mobile'
-          : 'both';
-      res.status(409).json({
-        error: `A pending signup request already exists for this ${getDuplicateAccountFieldLabel(matchedBy)}. Please wait for admin review or use different details.`,
-      });
-      return;
-    }
-
-    const request = await SignupRequestModel.create({
-      email,
-      firstName,
-      lastName,
-      mobileNumber,
-      paymentMethod,
-      paymentTransactionId,
-      paymentProof,
-      status: 'pending',
+        : 'mobile';
+    const matchedUser = existingByEmail || existingByMobile;
+    res.status(409).json({
+      error: duplicateAccountErrorMessage(matchedBy, hasActiveSubscription(matchedUser)),
     });
-
-    res.status(201).json({
-      request: serializeSignupRequest(request),
-      message: 'Signup request submitted. Wait for admin approval and token.',
-    });
-  } catch {
-    res.status(500).json({ error: 'Could not submit signup request.' });
+    return;
   }
-});
 
-app.post('/api/auth/signup-token-inbox', async (req, res) => {
-  try {
-    const email = normalizeEmail(req.body?.email);
-    const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber);
+  const passwordHash = await bcrypt.hash(password, 12);
+  const securityAnswerHash = await bcrypt.hash(securityAnswer, 12);
+  const securityAnswerEncrypted = encryptSecurityAnswerPlaintext(securityAnswer);
+  const activeSession = {
+    sessionId: crypto.randomUUID(),
+    deviceId,
+    startedAt: new Date(),
+    lastSeenAt: new Date(),
+  };
 
-    if (!email || !mobileNumber) {
-      res.status(400).json({ error: 'Email and mobile number are required.' });
-      return;
-    }
+  const user = await UserModel.create({
+    email,
+    passwordHash,
+    firstName,
+    lastName,
+    phone: mobileNumber,
+    role: 'student',
+    securityQuestion,
+    securityAnswerHash,
+    securityAnswerEncrypted: securityAnswerEncrypted || '',
+    activeSession,
+    preferences: defaultPreferences(),
+    progress: defaultProgress(),
+  });
 
-    const signupRequest = await SignupRequestModel.findOne({
-      email,
-      mobileNumber,
-      status: 'approved',
-      signupTokenId: { $ne: null },
-    }).sort({ updatedAt: -1 });
-
-    if (!signupRequest?.signupTokenId) {
-      res.json({ tokenCode: '', requestStatus: 'pending' });
-      return;
-    }
-
-    const signupToken = await SignupTokenModel.findById(signupRequest.signupTokenId);
-    if (!signupToken) {
-      res.json({ tokenCode: '', requestStatus: 'pending' });
-      return;
-    }
-
-    if (signupToken.status !== 'active') {
-      res.json({ tokenCode: '', requestStatus: signupToken.status });
-      return;
-    }
-
-    if (!signupToken.inAppSentAt) {
-      res.json({ tokenCode: '', requestStatus: 'approved' });
-      return;
-    }
-
-    if (new Date(signupToken.expiresAt).getTime() <= Date.now()) {
-      signupToken.status = 'expired';
-      await signupToken.save();
-      res.json({ tokenCode: '', requestStatus: 'expired' });
-      return;
-    }
-
-    res.json({
-      tokenCode: signupToken.code,
-      requestStatus: 'sent',
-      sentAt: signupToken.inAppSentAt ? new Date(signupToken.inAppSentAt).toISOString() : null,
-      expiresAt: signupToken.expiresAt ? new Date(signupToken.expiresAt).toISOString() : null,
-    });
-  } catch {
-    res.status(500).json({ error: 'Could not load signup token inbox.' });
-  }
-});
+  const payload = await issueAuthPayload(user, req);
+  setAuthCookies(res, payload.token, payload.refreshToken);
+  res.status(201).json(buildAuthJsonBody(payload));
+}
 
 app.post('/api/auth/register-with-token', async (req, res) => {
   try {
-    const email = normalizeEmail(req.body?.email);
-    const password = String(req.body?.password || '');
-    const tokenCode = String(req.body?.tokenCode || '').trim().toUpperCase();
-    const firstName = sanitizeHumanName(req.body?.firstName || '');
-    const lastName = sanitizeHumanName(req.body?.lastName || '');
-    const securityQuestion = normalizeSecurityQuestion(req.body?.securityQuestion || '');
-    const securityAnswer = normalizeSecurityAnswer(req.body?.securityAnswer || '');
-    const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
-
-    if (!email || !password || !tokenCode) {
-      res.status(400).json({ error: 'Email, password, and token code are required.' });
-      return;
-    }
-
-    if (!isValidEmail(email)) {
-      res.status(400).json({ error: 'Enter a valid email address.' });
-      return;
-    }
-
-    if (password.length < 8) {
-      res.status(400).json({ error: 'Password must be at least 8 characters.' });
-      return;
-    }
-
-    if (!securityQuestion || securityQuestion.length < 10) {
-      res.status(400).json({ error: 'Security question is required and should be clear.' });
-      return;
-    }
-
-    if (!securityAnswer || securityAnswer.length < 3) {
-      res.status(400).json({ error: 'Security answer is required.' });
-      return;
-    }
-
-    const existingByEmail = await UserModel.findOne({ email }).select('email phone subscription').lean();
-    if (existingByEmail) {
-      res.status(409).json({
-        error: duplicateAccountErrorMessage('email', hasActiveSubscription(existingByEmail)),
-      });
-      return;
-    }
-
-    const signupToken = await SignupTokenModel.findOne({ code: tokenCode });
-    if (!signupToken) {
-      res.status(400).json({ error: 'Invalid token code.' });
-      return;
-    }
-
-    if (signupToken.status !== 'active') {
-      res.status(400).json({ error: 'This token is no longer active.' });
-      return;
-    }
-
-    if (new Date(signupToken.expiresAt).getTime() <= Date.now()) {
-      signupToken.status = 'expired';
-      await signupToken.save();
-      res.status(400).json({ error: 'Token expired. Ask admin for a new token.' });
-      return;
-    }
-
-    if (normalizeEmail(signupToken.email) !== email) {
-      res.status(400).json({ error: 'Token was issued for a different email.' });
-      return;
-    }
-
-    const signupRequest = await SignupRequestModel.findById(signupToken.signupRequestId);
-    if (!signupRequest) {
-      res.status(400).json({ error: 'Signup request not found for this token.' });
-      return;
-    }
-
-    if (normalizeEmail(signupRequest.email) !== email) {
-      res.status(400).json({ error: 'Signup request email mismatch for this token.' });
-      return;
-    }
-
-    const mobileNumber = normalizeMobileNumber(signupRequest.mobileNumber);
-    if (!mobileNumber) {
-      res.status(400).json({ error: 'Mobile number is missing on signup request. Contact admin.' });
-      return;
-    }
-
-    const existingByMobile = await findUserByMobileNumber(mobileNumber);
-    if (existingByMobile) {
-      res.status(409).json({
-        error: duplicateAccountErrorMessage('mobile', hasActiveSubscription(existingByMobile)),
-      });
-      return;
-    }
-
-    const passwordHash = await bcrypt.hash(password, 12);
-    const securityAnswerHash = await bcrypt.hash(securityAnswer, 12);
-    const securityAnswerEncrypted = encryptSecurityAnswerPlaintext(securityAnswer);
-    const activeSession = {
-      sessionId: crypto.randomUUID(),
-      deviceId,
-      startedAt: new Date(),
-      lastSeenAt: new Date(),
-    };
-
-    const user = await UserModel.create({
-      email,
-      passwordHash,
-      firstName,
-      lastName,
-      phone: mobileNumber,
-      role: 'student',
-      securityQuestion,
-      securityAnswerHash,
-      securityAnswerEncrypted: securityAnswerEncrypted || '',
-      activeSession,
-      preferences: defaultPreferences(),
-      progress: defaultProgress(),
-    });
-
-    signupToken.status = 'used';
-    signupToken.usedAt = new Date();
-    signupToken.usedByUserId = user._id;
-    await signupToken.save();
-
-    signupRequest.status = 'completed';
-    await signupRequest.save();
-
-    const payload = await issueAuthPayload(user, req);
-    setAuthCookies(res, payload.token, payload.refreshToken);
-    res.status(201).json(buildAuthJsonBody(payload));
+    await createDirectStudentAccount(req, res);
   } catch {
     res.status(500).json({ error: 'Registration failed.' });
   }
 });
 
 app.post('/api/auth/register', async (req, res) => {
-  res.status(410).json({
-    error: 'Direct signup is disabled. Submit payment proof, get approval, then register using your token.',
-  });
+  try {
+    await createDirectStudentAccount(req, res);
+  } catch {
+    res.status(500).json({ error: 'Registration failed.' });
+  }
 });
 
 /** Emergency / dev-only open registration. Set ALLOW_OPEN_REGISTER=true to enable. */

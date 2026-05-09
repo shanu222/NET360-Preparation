@@ -8,13 +8,12 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { Award, Bot, ChevronDown, ChevronUp, Copy, FlaskConical, GraduationCap, Loader2, LogOut, MessageCircle, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
+import { Award, Bot, ChevronDown, ChevronUp, FlaskConical, GraduationCap, Loader2, LogOut, MessageCircle, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
-import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
-import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK, PAYMENT_METHODS } from '../lib/paymentMethods';
+import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK } from '../lib/paymentMethods';
 import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 import { loginBannerImageUrl, appPromoImageUrl, getMediaUrl } from '../lib/publicMedia';
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
@@ -33,10 +32,10 @@ interface ProfileProps {
 }
 
 type AuthPanelMode = 'login' | 'register' | 'recovery';
-type AuthActionState = 'idle' | 'loggingIn' | 'creatingAccount' | 'activatingAccount';
+type AuthActionState = 'idle' | 'loggingIn' | 'creatingAccount';
 
 export function Profile({ onNavigate }: ProfileProps) {
-  const { user, login, submitSignupRequest, registerWithToken, logout } = useAuth();
+  const { user, login, registerWithToken, logout } = useAuth();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
   const [localProfile, setLocalProfile] = useState(profile);
   const [avatarPreview, setAvatarPreview] = useState(() => {
@@ -47,7 +46,6 @@ export function Profile({ onNavigate }: ProfileProps) {
     }
   });
   const photoInputRef = useRef<HTMLInputElement | null>(null);
-  const paymentProofInputRef = useRef<HTMLInputElement | null>(null);
   const [authMode, setAuthMode] = useState<AuthPanelMode>('login');
   const [authForm, setAuthForm] = useState({
     firstName: '',
@@ -55,17 +53,8 @@ export function Profile({ onNavigate }: ProfileProps) {
     email: '',
     password: '',
     mobileNumber: '',
-    paymentMethod: 'easypaisa' as 'easypaisa' | 'jazzcash' | 'bank_transfer',
-    paymentTransactionId: '',
-    paymentProof: null as null | {
-      name: string;
-      mimeType: string;
-      size: number;
-      dataUrl: string;
-    },
     securityQuestion: '',
     securityAnswer: '',
-    tokenCode: '',
   });
   const [forgotIdentifier, setForgotIdentifier] = useState('');
   const [forgotSecurityQuestion, setForgotSecurityQuestion] = useState('');
@@ -75,14 +64,8 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [newPassword, setNewPassword] = useState('');
   const [recoveryHelpMessage, setRecoveryHelpMessage] = useState('');
   const [forgotCooldownSeconds, setForgotCooldownSeconds] = useState(0);
-  const [paymentProofReadProgress, setPaymentProofReadProgress] = useState(0);
-  const [isReadingPaymentProof, setIsReadingPaymentProof] = useState(false);
-  const [showPaymentMethods, setShowPaymentMethods] = useState(false);
   const [registerConflictBanner, setRegisterConflictBanner] = useState('');
   const [authActionState, setAuthActionState] = useState<AuthActionState>('idle');
-  const [signupFlowActive, setSignupFlowActive] = useState(false);
-  const [showAuthGuidanceCard, setShowAuthGuidanceCard] = useState(false);
-  const [authGuidanceMessage, setAuthGuidanceMessage] = useState('');
   const [showDeleteAccountPanel, setShowDeleteAccountPanel] = useState(false);
   const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
   const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState('');
@@ -90,7 +73,6 @@ export function Profile({ onNavigate }: ProfileProps) {
   const [isPersonalInfoExpanded, setIsPersonalInfoExpanded] = useState(true);
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
   const [isSavingTargetProgram, setIsSavingTargetProgram] = useState(false);
-  const signupGuidanceTimeoutRef = useRef<number | null>(null);
 
   const targetProgramOptions = useMemo(() => NET_TARGET_PROGRAM_OPTIONS, []);
   const selectedTargetProgramLabel =
@@ -135,57 +117,6 @@ export function Profile({ onNavigate }: ProfileProps) {
     return () => window.clearInterval(timer);
   }, [forgotCooldownSeconds]);
 
-  useEffect(() => {
-    return () => {
-      if (signupGuidanceTimeoutRef.current) {
-        window.clearTimeout(signupGuidanceTimeoutRef.current);
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    if (authMode !== 'register') return;
-
-    const email = authForm.email.trim();
-    const mobileNumber = authForm.mobileNumber.trim();
-    if (!email || !mobileNumber) return;
-
-    let cancelled = false;
-    let timer: number | null = null;
-
-    const pullSignupToken = async () => {
-      try {
-        const payload = await apiRequest<{ tokenCode?: string; requestStatus?: string }>('/api/auth/signup-token-inbox', {
-          method: 'POST',
-          body: JSON.stringify({ email, mobileNumber }),
-        });
-
-        if (cancelled || !payload?.tokenCode) return;
-
-        setAuthForm((previous) => {
-          if (previous.tokenCode === payload.tokenCode) return previous;
-          return {
-            ...previous,
-            tokenCode: String(payload.tokenCode || '').toUpperCase(),
-          };
-        });
-      } catch {
-        // Ignore transient inbox polling errors.
-      }
-    };
-
-    void pullSignupToken();
-    timer = window.setInterval(() => {
-      void pullSignupToken();
-    }, 12000);
-
-    return () => {
-      cancelled = true;
-      if (timer) {
-        window.clearInterval(timer);
-      }
-    };
-  }, [authMode, authForm.email, authForm.mobileNumber]);
 
   const avatarText = useMemo(() => {
     const first = localProfile.firstName?.trim()[0] ?? 'S';
@@ -201,82 +132,9 @@ export function Profile({ onNavigate }: ProfileProps) {
   const isRecoveryMode = authMode === 'recovery';
   const isAuthBusy = authActionState !== 'idle';
 
-  const isAwaitingAdminToken = signupFlowActive && !authForm.tokenCode.trim();
-
-  const isValidInternationalWhatsApp = (value: string) => /^\+[1-9]\d{7,14}$/.test(value.trim());
-
-  const clearSignupGuidanceTimeout = () => {
-    if (signupGuidanceTimeoutRef.current) {
-      window.clearTimeout(signupGuidanceTimeoutRef.current);
-      signupGuidanceTimeoutRef.current = null;
-    }
-  };
-
-  const showTimedSignupGuidance = (message: string) => {
-    clearSignupGuidanceTimeout();
-    setAuthGuidanceMessage(message);
-    setShowAuthGuidanceCard(true);
-    signupGuidanceTimeoutRef.current = window.setTimeout(() => {
-      setShowAuthGuidanceCard(false);
-      signupGuidanceTimeoutRef.current = null;
-    }, 10000);
-  };
-
   const resetAuthActionState = () => {
     setAuthActionState('idle');
-    setSignupFlowActive(false);
-    setAuthGuidanceMessage('');
-    setShowAuthGuidanceCard(false);
-    clearSignupGuidanceTimeout();
   };
-
-  const activateSignupWithToken = async () => {
-    setAuthActionState('activatingAccount');
-    await registerWithToken({
-      email: authForm.email,
-      password: authForm.password,
-      tokenCode: authForm.tokenCode,
-      firstName: authForm.firstName,
-      lastName: authForm.lastName,
-      securityQuestion: authForm.securityQuestion,
-      securityAnswer: authForm.securityAnswer,
-    });
-    setSignupFlowActive(false);
-    setAuthActionState('idle');
-    setShowAuthGuidanceCard(false);
-    clearSignupGuidanceTimeout();
-    toast.success('Signup completed successfully.');
-  };
-
-  useEffect(() => {
-    if (!signupFlowActive || !authForm.tokenCode || !authForm.password) return;
-
-    let cancelled = false;
-    const autoActivate = async () => {
-      try {
-        await activateSignupWithToken();
-      } catch (error) {
-        if (cancelled) return;
-        setAuthActionState('creatingAccount');
-        const message = error instanceof Error ? error.message : 'Could not activate account yet.';
-        toast.error(message);
-      }
-    };
-
-    void autoActivate();
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    signupFlowActive,
-    authForm.tokenCode,
-    authForm.password,
-    authForm.email,
-    authForm.firstName,
-    authForm.lastName,
-    authForm.securityQuestion,
-    authForm.securityAnswer,
-  ]);
 
   const handleAuthSubmit = async () => {
     if (isAuthBusy) return;
@@ -302,53 +160,30 @@ export function Profile({ onNavigate }: ProfileProps) {
           return;
         }
 
-        if (authForm.tokenCode && authForm.password) {
-          await activateSignupWithToken();
-        } else {
-          setAuthActionState('creatingAccount');
-
-          if (!authForm.mobileNumber) {
-            setAuthActionState('idle');
-            toast.error('Mobile number is required to submit signup request.');
-            return;
-          }
-
-          if (!authForm.paymentTransactionId) {
-            setAuthActionState('idle');
-            toast.error('Payment transaction ID is required to submit signup request.');
-            return;
-          }
-
-          if (!authForm.paymentProof) {
-            setAuthActionState('idle');
-            toast.error('Upload payment proof (JPG, PNG, or PDF) before submitting.');
-            return;
-          }
-
-          if (!isValidInternationalWhatsApp(authForm.mobileNumber)) {
-            setAuthActionState('idle');
-            toast.error('Enter a valid WhatsApp number in international format (e.g. +923XXXXXXXXX).');
-            return;
-          }
-
-          await submitSignupRequest({
-            email: authForm.email,
-            firstName: authForm.firstName,
-            lastName: authForm.lastName,
-            mobileNumber: authForm.mobileNumber,
-            paymentMethod: authForm.paymentMethod,
-            paymentTransactionId: authForm.paymentTransactionId,
-            paymentProof: authForm.paymentProof,
-          });
-          setSignupFlowActive(true);
-          showTimedSignupGuidance(
-            'Your request has been submitted. Please wait while the admin verifies your payment and sends your token code here in the app shortly.',
-          );
-          toast.success('Signup request submitted. Waiting for token code and activation.');
+        if (!authForm.password) {
+          toast.error('Password is required.');
+          return;
         }
+
+        if (!authForm.mobileNumber.trim()) {
+          toast.error('Mobile number is required.');
+          return;
+        }
+
+        setAuthActionState('creatingAccount');
+        await registerWithToken({
+          email: authForm.email,
+          password: authForm.password,
+          mobileNumber: authForm.mobileNumber,
+          firstName: authForm.firstName,
+          lastName: authForm.lastName,
+          securityQuestion: authForm.securityQuestion,
+          securityAnswer: authForm.securityAnswer,
+        });
+        setAuthActionState('idle');
+        toast.success('Account created successfully.');
       } else {
         setAuthActionState('loggingIn');
-        setAuthGuidanceMessage('Logging in... please wait.');
 
         if (!authForm.password) {
           setAuthActionState('idle');
@@ -379,9 +214,7 @@ export function Profile({ onNavigate }: ProfileProps) {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Authentication failed.';
       const typed = error as Error & { status?: number };
-      if (!signupFlowActive) {
-        setAuthActionState('idle');
-      }
+      setAuthActionState('idle');
       if (isRegisterMode && typed.status === 409) {
         setRegisterConflictBanner(message);
       }
@@ -579,26 +412,6 @@ export function Profile({ onNavigate }: ProfileProps) {
     reader.readAsDataURL(file);
   };
 
-  const handlePaymentProofSelected = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      setIsReadingPaymentProof(true);
-      const payload = await buildPaymentProofPayload(file, (progress) => setPaymentProofReadProgress(progress));
-      setAuthForm((prev) => ({
-        ...prev,
-        paymentProof: payload,
-      }));
-      toast.success('Payment proof attached.');
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not read payment proof file.');
-    } finally {
-      setIsReadingPaymentProof(false);
-      event.target.value = '';
-    }
-  };
-
   const handleDeleteAccount = async () => {
     if (!deleteAccountPassword.trim()) {
       toast.error('Enter your registration password to confirm account deletion.');
@@ -633,27 +446,6 @@ export function Profile({ onNavigate }: ProfileProps) {
       toast.error(error instanceof Error ? error.message : 'Could not delete account.');
     } finally {
       setIsDeletingAccount(false);
-    }
-  };
-
-  const copyPaymentValue = async (value: string, label: string) => {
-    try {
-      if (navigator.clipboard?.writeText) {
-        await navigator.clipboard.writeText(value);
-      } else {
-        const temp = document.createElement('textarea');
-        temp.value = value;
-        temp.style.position = 'fixed';
-        temp.style.opacity = '0';
-        document.body.appendChild(temp);
-        temp.focus();
-        temp.select();
-        document.execCommand('copy');
-        document.body.removeChild(temp);
-      }
-      toast.success(`${label} copied.`);
-    } catch {
-      toast.error('Could not copy value.');
     }
   };
 
@@ -868,137 +660,16 @@ export function Profile({ onNavigate }: ProfileProps) {
 
               {isRegisterMode ? (
                 <>
-                  <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
-                    <button
-                      type="button"
-                      onClick={() => setShowPaymentMethods((prev) => !prev)}
-                      className="flex w-full items-center justify-between text-left"
-                    >
-                      <span className="text-sm font-medium text-emerald-900">Available Payment Methods</span>
-                      {showPaymentMethods ? <ChevronUp className="h-4 w-4 text-emerald-700" /> : <ChevronDown className="h-4 w-4 text-emerald-700" />}
-                    </button>
-                    {showPaymentMethods ? (
-                      <div className="mt-3 space-y-2">
-                        {(Object.entries(PAYMENT_METHODS) as Array<[keyof typeof PAYMENT_METHODS, (typeof PAYMENT_METHODS)[keyof typeof PAYMENT_METHODS]]>).map(([key, method]) => (
-                          <div key={key} className="rounded-lg border border-emerald-100 bg-white p-2.5 text-xs text-slate-700">
-                            <p className="font-semibold text-emerald-900">{method.label}</p>
-                            <p className="mt-1">{method.instructions}</p>
-                            {method.holderValue ? (
-                              <p className="mt-1.5 text-[11px] text-slate-700">
-                                <span className="text-slate-500">{method.holderLabel || 'Account Title'}:</span> {method.holderValue}
-                              </p>
-                            ) : null}
-                            <div className="mt-2 space-y-1.5">
-                              {[
-                                { label: method.accountLabel, value: method.accountValue, copyable: true },
-                                ...(method.extraDetails || []),
-                              ].map((detail) => (
-                                <div key={`${key}-${detail.label}`} className="flex items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1.5">
-                                  <p className="truncate"><span className="text-slate-500">{detail.label}:</span> {detail.value}</p>
-                                  {detail.copyable ? (
-                                    <Button type="button" size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => void copyPaymentValue(detail.value, detail.label)}>
-                                      <Copy className="mr-1 h-3 w-3" />
-                                      Copy
-                                    </Button>
-                                  ) : null}
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
-                  </div>
-
-                  <div className="grid gap-2 md:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label htmlFor="payment-method">Payment Method</Label>
-                      <Select
-                        value={authForm.paymentMethod}
-                        onValueChange={(value: 'easypaisa' | 'jazzcash' | 'bank_transfer') => setAuthForm((prev) => ({ ...prev, paymentMethod: value }))}
-                      >
-                        <SelectTrigger id="payment-method" className="h-11 border-indigo-100">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="easypaisa">Easypaisa</SelectItem>
-                          <SelectItem value="jazzcash">JazzCash</SelectItem>
-                          <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label htmlFor="payment-txid">Transaction ID</Label>
-                      <Input
-                        id="payment-txid"
-                        value={authForm.paymentTransactionId}
-                        onChange={(e) => setAuthForm((prev) => ({ ...prev, paymentTransactionId: e.target.value }))}
-                        placeholder="Payment reference"
-                        className="h-11 border-indigo-100"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm text-indigo-900">Payment Proof</p>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="h-9 border-indigo-200 bg-white !text-indigo-700 hover:bg-indigo-50 hover:!text-indigo-800"
-                        onClick={() => paymentProofInputRef.current?.click()}
-                      >
-                        Upload Proof
-                      </Button>
-                      <Input
-                        ref={paymentProofInputRef}
-                        type="file"
-                        accept={PAYMENT_PROOF_ACCEPT}
-                        className="hidden"
-                        onChange={(e) => void handlePaymentProofSelected(e)}
-                      />
-                    </div>
-                    {isReadingPaymentProof ? (
-                      <p className="text-xs text-indigo-700">Reading file... {paymentProofReadProgress}%</p>
-                    ) : null}
-                    {authForm.paymentProof ? (
-                      <p className="text-xs text-slate-600">
-                        Attached: {authForm.paymentProof.name} ({Math.max(1, Math.round(authForm.paymentProof.size / 1024))} KB)
-                      </p>
-                    ) : (
-                      <p className="text-xs text-slate-500">Upload screenshot/PDF receipt so admin can verify payment.</p>
-                    )}
-                  </div>
-
                   <div className="space-y-1.5">
-                    <Label htmlFor="signup-token">Admin Approval Token (for final signup)</Label>
-                    <div className="net360-token-field relative">
-                      <Input
-                        id="signup-token"
-                        type="text"
-                        readOnly={isAwaitingAdminToken}
-                        aria-busy={isAwaitingAdminToken}
-                        value={isAwaitingAdminToken ? '' : authForm.tokenCode}
-                        onChange={(e) =>
-                          setAuthForm((prev) => ({ ...prev, tokenCode: e.target.value.toUpperCase() }))
-                        }
-                        placeholder="NET-XXXX-XXXX-XXXX"
-                        className={cn(
-                          'h-11 min-h-[2.75rem] w-full border-indigo-100 transition-[color,background] duration-200',
-                          isAwaitingAdminToken && 'net360-token-input--loading pr-10',
-                          !isAwaitingAdminToken && 'pr-3',
-                        )}
-                      />
-                      {isAwaitingAdminToken ? (
-                        <div
-                          className="pointer-events-none absolute right-3 top-1/2 z-10 -translate-y-1/2"
-                          aria-hidden
-                        >
-                          <div className="h-4 w-4 rounded-full border-2 border-slate-300 border-t-sky-500 animate-spin dark:border-slate-500 dark:border-t-sky-400" />
-                        </div>
-                      ) : null}
-                    </div>
-                    <p className="text-xs text-slate-500">Wait please, token code will appear automatically.</p>
+                    <Label htmlFor="mobile-number">Mobile Number</Label>
+                    <Input
+                      id="mobile-number"
+                      value={authForm.mobileNumber}
+                      onChange={(e) => setAuthForm((prev) => ({ ...prev, mobileNumber: e.target.value }))}
+                      placeholder="+923001234567"
+                      className="h-11 border-indigo-100"
+                    />
+                    <p className="text-xs text-slate-500">No admin token or payment proof is required.</p>
                   </div>
                 </>
               ) : null}
@@ -1013,8 +684,6 @@ export function Profile({ onNavigate }: ProfileProps) {
                   ? 'Logging in...'
                   : authActionState === 'creatingAccount'
                   ? 'Creating account...'
-                  : authActionState === 'activatingAccount'
-                  ? 'Activating account...'
                   : isRegisterMode
                   ? 'Create Account'
                   : 'Sign In'}
@@ -1026,7 +695,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                 </div>
               ) : null}
 
-              {(authActionState === 'loggingIn' || showAuthGuidanceCard || signupFlowActive) && !isRecoveryMode ? (
+              {(authActionState === 'loggingIn' || authActionState === 'creatingAccount') && !isRecoveryMode ? (
                 <div
                   className="rounded-xl border border-indigo-200/80 bg-gradient-to-br from-white to-indigo-50 p-3 shadow-[0_10px_26px_rgba(79,70,229,0.14)]"
                   role="status"
@@ -1037,9 +706,7 @@ export function Profile({ onNavigate }: ProfileProps) {
                     <p className="text-sm leading-relaxed text-slate-700">
                       {authActionState === 'loggingIn'
                         ? 'Logging in... please wait.'
-                        : showAuthGuidanceCard
-                        ? authGuidanceMessage
-                        : 'Creating account... waiting for admin token so your account can be activated automatically.'}
+                        : 'Creating account... please wait.'}
                     </p>
                   </div>
                 </div>

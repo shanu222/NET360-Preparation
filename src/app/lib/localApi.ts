@@ -1936,133 +1936,31 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
   }
 
   if (url.pathname === '/api/auth/signup-request' && method === 'POST') {
+    throw new Error('Signup requests are disabled. Use direct account creation.');
+  }
+
+  if (url.pathname === '/api/auth/signup-token-inbox' && method === 'POST') {
+    throw new Error('Signup tokens are disabled. Use direct account creation.');
+  }
+
+  if ((url.pathname === '/api/auth/register-with-token' || url.pathname === '/api/auth/register') && method === 'POST') {
     const db = readDb();
     const email = normalizeEmail(body.email);
+    const password = String(body.password || '');
     const firstName = String(body.firstName || '').trim();
     const lastName = String(body.lastName || '').trim();
-    const mobileNumber = normalizeMobileNumber(body.mobileNumber);
-    const paymentMethod = normalizePaymentMethod(body.paymentMethod);
-    const paymentTransactionId = String(body.paymentTransactionId || '').trim();
+    const mobileNumber = normalizeMobileNumber(body.mobileNumber || body.phone);
+    const securityQuestion = String(body.securityQuestion || '').trim();
+    const securityAnswer = normalizeSecurityAnswer(body.securityAnswer || '');
 
-    let paymentProof: LocalPaymentProof;
-    try {
-      paymentProof = normalizePaymentProof(body.paymentProof);
-    } catch (error) {
-      throw new Error(error instanceof Error ? error.message : 'Payment proof is invalid.');
-    }
-
-    if (!email || !mobileNumber || !paymentMethod || !paymentTransactionId) {
-      throw new Error('Email, mobile number, payment method, transaction ID, and payment proof are required.');
+    if (!email || !password || !mobileNumber) {
+      throw new Error('Email, password, and mobile number are required.');
     }
     if (!isValidEmail(email)) {
       throw new Error('Enter a valid email address.');
     }
     if (!isValidMobileNumber(mobileNumber)) {
       throw new Error('Enter a valid mobile number.');
-    }
-    if (!['easypaisa', 'jazzcash', 'bank_transfer'].includes(paymentMethod)) {
-      throw new Error('Payment method must be one of: easypaisa, jazzcash, bank_transfer.');
-    }
-    if (!isValidWhatsAppNumber(mobileNumber)) {
-      throw new Error('Enter a valid mobile number in international format (e.g. +923XXXXXXXXX).');
-    }
-
-    if (db.users.some((item) => item.email === email)) {
-      throw new Error('Email is already registered.');
-    }
-    if (db.signupRequests.some((item) => item.email === email && item.status === 'pending')) {
-      throw new Error('A pending signup request already exists for this email.');
-    }
-
-    const now = new Date().toISOString();
-    const request: LocalSignupRequest = {
-      id: `signup-req-${Date.now()}-${Math.round(Math.random() * 10000)}`,
-      email,
-      firstName,
-      lastName,
-      mobileNumber,
-      paymentMethod,
-      paymentTransactionId,
-      paymentProof,
-      contactMethod: 'in_app',
-      contactValue: mobileNumber,
-      status: 'pending',
-      notes: '',
-      reviewedByEmail: '',
-      reviewedAt: null,
-      signupTokenId: null,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    db.signupRequests.unshift(request);
-    writeDb(db);
-    return {
-      request: serializeSignupRequest(request),
-      message: 'Signup request submitted. Wait for admin approval and token.',
-    } as T;
-  }
-
-  if (url.pathname === '/api/auth/signup-token-inbox' && method === 'POST') {
-    const db = readDb();
-    const email = normalizeEmail(body.email);
-    const mobileNumber = normalizeMobileNumber(body.mobileNumber);
-
-    if (!email || !mobileNumber) {
-      throw new Error('Email and mobile number are required.');
-    }
-
-    const request = db.signupRequests
-      .filter((item) => item.email === email && item.mobileNumber === mobileNumber && item.status === 'approved')
-      .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())[0];
-
-    if (!request || !request.signupTokenId) {
-      return { tokenCode: '', requestStatus: 'pending' } as T;
-    }
-
-    const tokenItem = db.signupTokens.find((item) => item.id === request.signupTokenId);
-    if (!tokenItem) {
-      return { tokenCode: '', requestStatus: 'pending' } as T;
-    }
-
-    if (tokenItem.status !== 'active') {
-      return { tokenCode: '', requestStatus: tokenItem.status } as T;
-    }
-
-    if (!tokenItem.inAppSentAt) {
-      return { tokenCode: '', requestStatus: 'approved' } as T;
-    }
-
-    if (new Date(tokenItem.expiresAt).getTime() <= Date.now()) {
-      tokenItem.status = 'expired';
-      tokenItem.updatedAt = new Date().toISOString();
-      writeDb(db);
-      return { tokenCode: '', requestStatus: 'expired' } as T;
-    }
-
-    return {
-      tokenCode: tokenItem.code,
-      requestStatus: 'sent',
-      sentAt: tokenItem.inAppSentAt,
-      expiresAt: tokenItem.expiresAt,
-    } as T;
-  }
-
-  if (url.pathname === '/api/auth/register-with-token' && method === 'POST') {
-    const db = readDb();
-    const email = normalizeEmail(body.email);
-    const password = String(body.password || '');
-    const tokenCode = String(body.tokenCode || '').trim().toUpperCase();
-    const firstName = String(body.firstName || '').trim();
-    const lastName = String(body.lastName || '').trim();
-    const securityQuestion = String(body.securityQuestion || '').trim();
-    const securityAnswer = normalizeSecurityAnswer(body.securityAnswer || '');
-
-    if (!email || !password || !tokenCode) {
-      throw new Error('Email, password, and token code are required.');
-    }
-    if (!isValidEmail(email)) {
-      throw new Error('Enter a valid email address.');
     }
     if (password.length < 8) {
       throw new Error('Password must be at least 8 characters.');
@@ -2076,27 +1974,8 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     if (db.users.some((item) => item.email === email)) {
       throw new Error('Email is already registered.');
     }
-
-    const signupToken = db.signupTokens.find((item) => item.code === tokenCode);
-    if (!signupToken) {
-      throw new Error('Invalid token code.');
-    }
-    if (signupToken.status !== 'active') {
-      throw new Error('This token is no longer active.');
-    }
-    if (new Date(signupToken.expiresAt).getTime() <= Date.now()) {
-      signupToken.status = 'expired';
-      signupToken.updatedAt = new Date().toISOString();
-      writeDb(db);
-      throw new Error('Token expired. Ask admin for a new token.');
-    }
-    if (signupToken.email !== email) {
-      throw new Error('Token was issued for a different email.');
-    }
-
-    const signupRequest = db.signupRequests.find((item) => item.id === signupToken.signupRequestId);
-    if (!signupRequest) {
-      throw new Error('Signup request not found for this token.');
+    if (db.users.some((item) => compactMobile(item.phone) === compactMobile(mobileNumber))) {
+      throw new Error('Mobile number is already registered.');
     }
 
     const role: 'student' | 'admin' = email.includes('admin') ? 'admin' : 'student';
@@ -2106,7 +1985,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       password,
       firstName,
       lastName,
-      phone: signupRequest.mobileNumber,
+      phone: mobileNumber,
       city: '',
       targetProgram: '',
       testSeries: '',
@@ -2127,15 +2006,6 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       securityChallengeExpiresAt: null,
     };
 
-    const now = new Date().toISOString();
-    signupToken.status = 'used';
-    signupToken.usedAt = now;
-    signupToken.usedByUserId = user.id;
-    signupToken.updatedAt = now;
-
-    signupRequest.status = 'completed';
-    signupRequest.updatedAt = now;
-
     const refreshToken = createRefreshToken(user.id);
     user.refreshTokens.push(refreshToken);
     db.users.push(user);
@@ -2146,10 +2016,6 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       refreshToken,
       user: toPublicUser(user),
     } as T;
-  }
-
-  if (url.pathname === '/api/auth/register' && method === 'POST') {
-    throw new Error('Direct signup is disabled. Submit payment proof, get approval, then register using your token.');
   }
 
   if (url.pathname === '/api/auth/login' && method === 'POST') {

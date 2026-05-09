@@ -23,24 +23,10 @@ interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   login: (email: string, password: string, opts?: { forceLogoutOtherDevice?: boolean }) => Promise<void>;
-  submitSignupRequest: (params: {
-    email: string;
-    firstName?: string;
-    lastName?: string;
-    mobileNumber: string;
-    paymentMethod: 'easypaisa' | 'jazzcash' | 'bank_transfer';
-    paymentTransactionId: string;
-    paymentProof: {
-      name: string;
-      mimeType: string;
-      size: number;
-      dataUrl: string;
-    };
-  }) => Promise<void>;
   registerWithToken: (params: {
     email: string;
     password: string;
-    tokenCode: string;
+    mobileNumber: string;
     firstName?: string;
     lastName?: string;
     securityQuestion: string;
@@ -255,43 +241,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [deviceId]);
 
-  const submitSignupRequest = useCallback<AuthContextValue['submitSignupRequest']>(async ({
-    email,
-    firstName = '',
-    lastName = '',
-    mobileNumber,
-    paymentMethod,
-    paymentTransactionId,
-    paymentProof,
-  }) => {
-    await apiRequest('/api/auth/signup-request', {
-      method: 'POST',
-      body: JSON.stringify({
-        email,
-        firstName,
-        lastName,
-        mobileNumber,
-        paymentMethod,
-        paymentTransactionId,
-        paymentProof,
-      }),
-    });
-  }, []);
-
   const registerWithToken = useCallback<AuthContextValue['registerWithToken']>(async ({
     email,
     password,
-    tokenCode,
+    mobileNumber,
     firstName = '',
     lastName = '',
     securityQuestion,
     securityAnswer,
   }) => {
     const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
-      '/api/auth/register-with-token',
+      '/api/auth/register',
       {
         method: 'POST',
-        body: JSON.stringify({ email, password, tokenCode, firstName, lastName, securityQuestion, securityAnswer, deviceId }),
+        body: JSON.stringify({ email, password, mobileNumber, firstName, lastName, securityQuestion, securityAnswer, deviceId }),
       },
     );
 
@@ -320,8 +283,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refreshToken]);
 
   const value = useMemo(
-    () => ({ token, user, loading, login, submitSignupRequest, registerWithToken, logout }),
-    [token, user, loading, login, submitSignupRequest, registerWithToken, logout],
+    () => ({ token, user, loading, login, registerWithToken, logout }),
+    [token, user, loading, login, registerWithToken, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
