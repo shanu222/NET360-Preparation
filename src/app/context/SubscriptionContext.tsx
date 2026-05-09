@@ -24,12 +24,12 @@ export interface SubscriptionBadge {
   variant: PremiumBadgeVariant;
   label: string;
   endsAt: string | null;
-  source: 'trial' | 'paid' | 'none';
+  source: 'trial' | 'paid' | 'none' | 'bypass';
 }
 
 export interface PremiumSurfaceState {
   allowed: boolean;
-  source: 'trial' | 'paid' | 'none';
+  source: 'trial' | 'paid' | 'none' | 'bypass';
   endsAt: string | null;
   msRemaining: number;
   serverNow: string;
@@ -39,6 +39,9 @@ export interface PremiumSurfaceState {
 
 export interface SubscriptionMePayload {
   serverTime?: string;
+  payfastCheckoutDisabled?: boolean;
+  premiumSurfaceBypass?: boolean;
+  manualSubscriptionWhatsapp?: string;
   subscription: {
     status: string;
     planId: string;

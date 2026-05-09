@@ -14,6 +14,7 @@ import { PageRouteFallback } from './components/PageRouteFallback';
 import { SubscriptionProvider } from './context/SubscriptionContext';
 
 const SubscriptionPageLazy = lazy(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
+const Dashboard = lazy(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
 const NUSTGuide = lazy(() => import('./components/NUSTGuide').then((m) => ({ default: m.NUSTGuide })));
 const NUSTSchoolsCampuses = lazy(() => import('./components/NUSTSchoolsCampuses').then((m) => ({ default: m.NUSTSchoolsCampuses })));
 const PracticeBoard = lazy(() => import('./components/PracticeBoard').then((m) => ({ default: m.PracticeBoard })));

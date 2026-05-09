@@ -12,6 +12,10 @@ export function PremiumCountdownBadge({
   const { surface, badge, loading } = useSubscription();
 
   const text = useMemo(() => {
+    if (loading && !surface?.allowed) return '…';
+    if (surface?.allowed && surface?.source === 'bypass') {
+      return compact ? 'Open' : badge?.label || 'Full access';
+    }
     if (loading && !surface?.endsAt) return '…';
     if (!surface?.allowed) {
       return badge?.label || 'Free';
@@ -26,7 +30,7 @@ export function PremiumCountdownBadge({
     if (hours > 0) return `${hours}h ${minutes}m left`;
     const { seconds } = formatCountdown(surface.msRemaining);
     return `${minutes}m ${seconds}s`;
-  }, [surface, badge, loading, compact]);
+  }, [surface, surface?.source, surface?.endsAt, surface?.allowed, badge, loading, compact]);
 
   const variant = badge?.variant || 'neutral';
 

@@ -7,7 +7,7 @@ import {
   isCookieSessionApiMarker,
   shouldPersistAuthTokens,
 } from '../lib/authSession';
-import { audienceFriendlyError, showErrorToast, showSuccessToast } from '../lib/userToast';
+import { audienceFriendlyError, showErrorToast, showInfoToast, showSuccessToast } from '../lib/userToast';
 import { formatCountdown, useSubscription } from '../context/SubscriptionContext';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -60,8 +60,35 @@ export function SubscriptionPage() {
 
   const premiumPlan = plans.find((p) => p.id === 'premium_6m');
 
+  const checkoutDisabled = me?.payfastCheckoutDisabled === true;
+  const whatsappRaw = (
+    me?.manualSubscriptionWhatsapp ||
+    `${import.meta.env.VITE_MANUAL_SUBSCRIPTION_WHATSAPP || ''}`
+  ).trim();
+  const whatsappDigits = whatsappRaw.replace(/\D/g, '');
+
+  const notifyCheckoutPaused = () => {
+    const contact =
+      whatsappRaw && whatsappDigits
+        ? ` Contact us on WhatsApp for manual activation: ${whatsappRaw}.`
+        : ' Your team can set MANUAL_SUBSCRIPTION_WHATSAPP on the API to show the support number here.';
+    showInfoToast(`JazzCash and Easypaisa automatic payments are coming soon.${contact}`);
+  };
+
+  const openWhatsappManual = () => {
+    if (!whatsappDigits) {
+      notifyCheckoutPaused();
+      return;
+    }
+    window.open(`https://wa.me/${whatsappDigits}`, '_blank', 'noopener,noreferrer');
+  };
+
   const countdownLabel = (() => {
-    if (!surface?.allowed || !surface.endsAt) return '';
+    if (!surface?.allowed) return '';
+    if (surface.source === 'bypass') {
+      return me?.subscriptionBadge?.label || 'Enjoy full tests, preparation, and community during the free period.';
+    }
+    if (!surface.endsAt) return '';
     const { days, hours, minutes } = formatCountdown(surface.msRemaining);
     if (days > 0) return `${days}d ${hours}h remaining`;
     if (hours > 0) return `${hours}h ${minutes}m remaining`;
@@ -81,6 +108,10 @@ export function SubscriptionPage() {
   }
 
   async function createOrder() {
+    if (checkoutDisabled) {
+      notifyCheckoutPaused();
+      return;
+    }
     setPayBusy(true);
     try {
       const res = await apiRequest<{
@@ -108,6 +139,10 @@ export function SubscriptionPage() {
   }
 
   async function submitPay() {
+    if (checkoutDisabled) {
+      notifyCheckoutPaused();
+      return;
+    }
     if (!orderId) {
       showErrorToast('Create an order first.');
       return;
@@ -171,7 +206,11 @@ export function SubscriptionPage() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Subscription</h1>
-          <p className="text-sm text-slate-600 dark:text-slate-300">Automated checkout — no admin approval required.</p>
+          <p className="text-sm text-slate-600 dark:text-slate-300">
+            {checkoutDisabled
+              ? 'Wallet auto-pay is paused — premium areas stay open during this rollout.'
+              : 'Automated checkout — no admin approval required.'}
+          </p>
         </div>
         <PremiumCountdownBadge />
       </div>
@@ -191,71 +230,111 @@ export function SubscriptionPage() {
         <CardHeader>
           <CardTitle>{premiumPlan?.name || 'NET360 Premium'}</CardTitle>
           <CardDescription>
-            PKR {premiumPlan?.pricePkr ?? 1000} / 6 months — Easypaisa &amp; JazzCash via PayFast.
+            PKR {premiumPlan?.pricePkr ?? 1000} / 6 months — Easypaisa &amp; JazzCash
+            {checkoutDisabled ? ' (PayFast checkout on standby).' : ' via PayFast.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="flex gap-2">
-            <Button
-              type="button"
-              variant={payMethod === 'easypaisa' ? 'default' : 'outline'}
-              className="rounded-xl"
-              onClick={() => setPayMethod('easypaisa')}
-            >
-              Easypaisa
-            </Button>
-            <Button
-              type="button"
-              variant={payMethod === 'jazzcash' ? 'default' : 'outline'}
-              className="rounded-xl"
-              onClick={() => setPayMethod('jazzcash')}
-            >
-              JazzCash
-            </Button>
-          </div>
-
-          {!orderId ? (
-            <Button type="button" className="rounded-xl" disabled={payBusy || loading} onClick={() => void createOrder()}>
-              {payBusy ? 'Please wait…' : 'Continue to payment'}
-            </Button>
+          {checkoutDisabled ? (
+            <>
+              <div className="rounded-xl border border-amber-200/90 bg-amber-50/85 p-4 text-sm text-amber-950 dark:border-amber-500/35 dark:bg-amber-950/45 dark:text-amber-50">
+                <p className="font-semibold">Automatic wallet checkout is paused</p>
+                <p className="mt-2 text-amber-900/95 dark:text-amber-100/90">
+                  JazzCash and Easypaisa self-service payments are coming soon. For manual premium activation, message us on WhatsApp.
+                </p>
+                {whatsappRaw ? (
+                  <p className="mt-3 font-medium">
+                    WhatsApp:{' '}
+                    <a
+                      href={`https://wa.me/${whatsappDigits}`}
+                      className="underline underline-offset-2"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {whatsappRaw}
+                    </a>
+                  </p>
+                ) : null}
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                <Button type="button" className="rounded-xl" variant="default" disabled={payBusy || loading} onClick={notifyCheckoutPaused}>
+                  Continue to payment
+                </Button>
+                <Button type="button" className="rounded-xl" variant="outline" onClick={openWhatsappManual}>
+                  Chat on WhatsApp
+                </Button>
+              </div>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                PayFast integration remains in the codebase. Re-enable by setting{' '}
+                <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">PAYFAST_CHECKOUT_DISABLED=false</code> on the API
+                server when you are ready to go live.
+              </p>
+            </>
           ) : (
-            <p className="text-xs text-slate-500">OrderRef: {basketId}</p>
+            <>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant={payMethod === 'easypaisa' ? 'default' : 'outline'}
+                  className="rounded-xl"
+                  onClick={() => setPayMethod('easypaisa')}
+                >
+                  Easypaisa
+                </Button>
+                <Button
+                  type="button"
+                  variant={payMethod === 'jazzcash' ? 'default' : 'outline'}
+                  className="rounded-xl"
+                  onClick={() => setPayMethod('jazzcash')}
+                >
+                  JazzCash
+                </Button>
+              </div>
+
+              {!orderId ? (
+                <Button type="button" className="rounded-xl" disabled={payBusy || loading} onClick={() => void createOrder()}>
+                  {payBusy ? 'Please wait…' : 'Continue to payment'}
+                </Button>
+              ) : (
+                <p className="text-xs text-slate-500">OrderRef: {basketId}</p>
+              )}
+
+              {orderId ? (
+                <div className="space-y-3 rounded-xl border border-slate-200 p-4 dark:border-slate-600">
+                  <div>
+                    <Label htmlFor="pmobile">Mobile</Label>
+                    <Input id="pmobile" value={mobile} onChange={(e) => setMobile(e.target.value)} placeholder="+923001234567" className="mt-1" />
+                  </div>
+                  <div>
+                    <Label htmlFor="pcnic">CNIC (digits only)</Label>
+                    <Input id="pcnic" value={cnic} onChange={(e) => setCnic(e.target.value)} placeholder="3520112345671" className="mt-1" />
+                  </div>
+                  <div>
+                    <Label htmlFor="pwallet">Wallet account number</Label>
+                    <Input
+                      id="pwallet"
+                      value={walletAccountNumber}
+                      onChange={(e) => setWalletAccountNumber(e.target.value)}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="potp">OTP (if prompted)</Label>
+                    <Input id="potp" value={otp} onChange={(e) => setOtp(e.target.value)} className="mt-1" />
+                  </div>
+                  <Button type="button" className="w-full rounded-xl" disabled={payBusy} onClick={() => void submitPay()}>
+                    Submit payment
+                  </Button>
+                </div>
+              ) : null}
+
+              {import.meta.env.DEV ? (
+                <Button type="button" variant="ghost" size="sm" className="text-xs" disabled={!orderId || payBusy} onClick={() => void mockComplete()}>
+                  Dev: mock complete (requires PAYMENT_MOCK_ENABLE on API)
+                </Button>
+              ) : null}
+            </>
           )}
-
-          {orderId ? (
-            <div className="space-y-3 rounded-xl border border-slate-200 p-4 dark:border-slate-600">
-              <div>
-                <Label htmlFor="pmobile">Mobile</Label>
-                <Input id="pmobile" value={mobile} onChange={(e) => setMobile(e.target.value)} placeholder="+923001234567" className="mt-1" />
-              </div>
-              <div>
-                <Label htmlFor="pcnic">CNIC (digits only)</Label>
-                <Input id="pcnic" value={cnic} onChange={(e) => setCnic(e.target.value)} placeholder="3520112345671" className="mt-1" />
-              </div>
-              <div>
-                <Label htmlFor="pwallet">Wallet account number</Label>
-                <Input
-                  id="pwallet"
-                  value={walletAccountNumber}
-                  onChange={(e) => setWalletAccountNumber(e.target.value)}
-                  className="mt-1"
-                />
-              </div>
-              <div>
-                <Label htmlFor="potp">OTP (if prompted)</Label>
-                <Input id="potp" value={otp} onChange={(e) => setOtp(e.target.value)} className="mt-1" />
-              </div>
-              <Button type="button" className="w-full rounded-xl" disabled={payBusy} onClick={() => void submitPay()}>
-                Submit payment
-              </Button>
-            </div>
-          ) : null}
-
-          {import.meta.env.DEV ? (
-            <Button type="button" variant="ghost" size="sm" className="text-xs" disabled={!orderId || payBusy} onClick={() => void mockComplete()}>
-              Dev: mock complete (requires PAYMENT_MOCK_ENABLE on API)
-            </Button>
-          ) : null}
         </CardContent>
       </Card>
     </div>

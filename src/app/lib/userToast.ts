@@ -144,6 +144,9 @@ export function audienceFriendlyError(error: unknown, fallback = 'Something went
   if (code === 'PREMIUM_CONTENT_LOCKED' || code === 'TRIAL_ALREADY_USED') {
     return 'This area needs an active trial or premium plan. Open Subscription to continue.';
   }
+  if (code === 'PAYMENT_CHECKOUT_DISABLED') {
+    return 'JazzCash and Easypaisa automatic payments are coming soon. Use WhatsApp on the Subscription page for manual activation.';
+  }
 
   const status = Number(err?.status);
   if (Number.isFinite(status) && status > 0) {

@@ -7,6 +7,16 @@ const TRIAL_MS = Number(process.env.SUBSCRIPTION_TRIAL_DAYS || 7) * 24 * 60 * 60
 const PAID_PLAN_MONTHS = Number(process.env.PREMIUM_PLAN_DURATION_MONTHS || 6);
 const ORANGE_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000;
 
+/** Temporary: allow all signed-in students into premium surfaces (tests, prep, community) without trial/payment. */
+export function premiumSurfaceBypassEnabled() {
+  return String(process.env.SUBSCRIPTION_PREMIUM_SURFACE_BYPASS || '').toLowerCase() === 'true';
+}
+
+/** When true, PayFast order/pay routes reject — integration stays in codebase for later enablement. */
+export function payfastCheckoutDisabled() {
+  return String(process.env.PAYFAST_CHECKOUT_DISABLED || '').toLowerCase() === 'true';
+}
+
 function toPlain(value) {
   if (!value || typeof value !== 'object') return {};
   if (typeof value.toObject === 'function') return value.toObject();
@@ -52,6 +62,7 @@ export function isPaidPlanActive(sub) {
 
 /** Tests / community / preparation — trial or paid. */
 export function hasPremiumSurfaceAccess(sub) {
+  if (premiumSurfaceBypassEnabled()) return true;
   if (trialIsActive(sub)) return true;
   return isPaidPlanActive(sub);
 }
@@ -87,6 +98,14 @@ export async function finalizeStaleSubscription(UserModel, userId) {
 
 export function buildPremiumBadgeState(sub, serverNow = Date.now()) {
   const now = typeof serverNow === 'number' ? serverNow : new Date(serverNow).getTime();
+  if (premiumSurfaceBypassEnabled()) {
+    return {
+      variant: 'green',
+      label: 'Full access — free period',
+      endsAt: null,
+      source: 'bypass',
+    };
+  }
   const trialActive = trialIsActive(sub);
   const paidActive = isPaidPlanActive(sub);
 
@@ -127,6 +146,15 @@ export function buildPremiumBadgeState(sub, serverNow = Date.now()) {
 
 export function surfaceAccessDetail(sub, serverNow = Date.now()) {
   const now = typeof serverNow === 'number' ? serverNow : new Date(serverNow).getTime();
+  if (premiumSurfaceBypassEnabled()) {
+    return {
+      allowed: true,
+      source: 'bypass',
+      endsAt: null,
+      msRemaining: 0,
+      serverNow: new Date(now).toISOString(),
+    };
+  }
   const trialActive = trialIsActive(sub);
   const paidActive = isPaidPlanActive(sub);
 

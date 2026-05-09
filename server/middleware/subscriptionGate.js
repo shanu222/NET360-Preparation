@@ -2,6 +2,7 @@ import {
   finalizeStaleSubscription,
   hasPremiumSurfaceAccess,
   mergedSubscription,
+  premiumSurfaceBypassEnabled,
 } from '../lib/subscriptionAccess.js';
 
 /**
@@ -31,6 +32,10 @@ export function requireTrialOrPremiumContent(UserModel) {
   return async (req, res, next) => {
     try {
       if (req.user?.role === 'admin') {
+        next();
+        return;
+      }
+      if (premiumSurfaceBypassEnabled()) {
         next();
         return;
       }

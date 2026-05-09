@@ -36,6 +36,8 @@ import {
   surfaceAccessDetail,
   finalizeStaleSubscription,
   addMonths,
+  payfastCheckoutDisabled,
+  premiumSurfaceBypassEnabled,
 } from './lib/subscriptionAccess.js';
 import { grantTrialIfFirstTime, grantPaidPlanAfterPayment } from './lib/subscriptionPayments.js';
 import {
@@ -10584,6 +10586,14 @@ app.post('/api/subscriptions/start-trial', authMiddleware, subscriptionExpiryRef
 });
 
 app.post('/api/payments/order', authMiddleware, subscriptionExpiryRefresh(UserModel), async (req, res) => {
+  if (payfastCheckoutDisabled()) {
+    res.status(403).json({
+      code: 'PAYMENT_CHECKOUT_DISABLED',
+      error:
+        'Automated JazzCash and Easypaisa checkout is not available yet. Please use WhatsApp for manual activation.',
+    });
+    return;
+  }
   const planId = String(req.body?.planId || PREMIUM_CHECKOUT_PLAN_ID).trim();
   const plan = resolveSubscriptionPlan(planId);
   if (!plan || plan.id !== PREMIUM_CHECKOUT_PLAN_ID) {
@@ -10664,6 +10674,14 @@ app.post('/api/payments/mock/complete', authMiddleware, subscriptionExpiryRefres
 });
 
 app.post('/api/payments/payfast/pay', authMiddleware, subscriptionExpiryRefresh(UserModel), async (req, res) => {
+  if (payfastCheckoutDisabled()) {
+    res.status(403).json({
+      code: 'PAYMENT_CHECKOUT_DISABLED',
+      error:
+        'Automated JazzCash and Easypaisa checkout is not available yet. Please use WhatsApp for manual activation.',
+    });
+    return;
+  }
   if (!payfastConfigured()) {
     res.status(503).json({ error: 'Payments are not configured yet. Please try again later.' });
     return;
@@ -10798,6 +10816,13 @@ app.post('/api/payments/payfast/pay', authMiddleware, subscriptionExpiryRefresh(
 });
 
 app.get('/api/payments/payfast/status', authMiddleware, async (req, res) => {
+  if (payfastCheckoutDisabled()) {
+    res.status(403).json({
+      code: 'PAYMENT_CHECKOUT_DISABLED',
+      error: 'Payment status checks are disabled while automated checkout is turned off.',
+    });
+    return;
+  }
   if (!payfastConfigured()) {
     res.status(503).json({ error: 'Payments are not configured.' });
     return;
@@ -10870,6 +10895,9 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
 
   res.json({
     serverTime: new Date(serverNow).toISOString(),
+    payfastCheckoutDisabled: payfastCheckoutDisabled(),
+    premiumSurfaceBypass: premiumSurfaceBypassEnabled(),
+    manualSubscriptionWhatsapp: String(process.env.MANUAL_SUBSCRIPTION_WHATSAPP || '').trim(),
     subscription: {
       ...subscription,
       isActive: isSubscriptionActive(subscription),
