@@ -1,12 +1,12 @@
 import { createRoot } from "react-dom/client";
-import { lazy, Suspense } from "react";
+import { Suspense } from "react";
 import App from "./app/App.tsx";
 import { AuthProvider } from "./app/context/AuthContext.tsx";
 import { AppDataProvider } from "./app/context/AppDataContext.tsx";
 import { Toaster } from "sonner";
 import { ErrorBoundary } from "./app/components/ErrorBoundary.tsx";
 import { FullViewportRouteFallback } from "./app/components/PageRouteFallback.tsx";
-import { checkAppVersionFromServer, installChunkLoadRecovery } from "./app/lib/chunkLoadRecovery.ts";
+import { checkAppVersionFromServer, installChunkLoadRecovery, lazyWithRetry } from "./app/lib/chunkLoadRecovery.ts";
 import { initializeNativeExperience } from "./app/lib/nativeMobile.ts";
 import { BrowserRouter } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
@@ -16,8 +16,8 @@ import "./styles/theme.css";
 installChunkLoadRecovery();
 checkAppVersionFromServer();
 
-const AdminApp = lazy(() => import("./admin/AdminApp.tsx"));
-const TestInterfacePage = lazy(() =>
+const AdminApp = lazyWithRetry(() => import("./admin/AdminApp.tsx"));
+const TestInterfacePage = lazyWithRetry(() =>
   import("./app/components/TestInterfacePage.tsx").then((m) => ({ default: m.TestInterfacePage })),
 );
   const isAdminOnlyBuild = String((import.meta as any).env?.VITE_ADMIN_ONLY || '').toLowerCase() === 'true';

@@ -1,6 +1,5 @@
 import {
   Component,
-  lazy,
   Suspense,
   useEffect,
   useMemo,
@@ -12,22 +11,23 @@ import {
 import { SupportChatWidget } from './components/SupportChatWidget';
 import { PageRouteFallback } from './components/PageRouteFallback';
 import { SubscriptionProvider } from './context/SubscriptionContext';
+import { isChunkLoadFailure, lazyWithRetry, scheduleStaleChunkReload } from './lib/chunkLoadRecovery';
 
-const SubscriptionPageLazy = lazy(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
-const Dashboard = lazy(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
-const NUSTGuide = lazy(() => import('./components/NUSTGuide').then((m) => ({ default: m.NUSTGuide })));
-const NUSTSchoolsCampuses = lazy(() => import('./components/NUSTSchoolsCampuses').then((m) => ({ default: m.NUSTSchoolsCampuses })));
-const PracticeBoard = lazy(() => import('./components/PracticeBoard').then((m) => ({ default: m.PracticeBoard })));
-const QuestionContribution = lazy(() => import('./components/QuestionContribution').then((m) => ({ default: m.QuestionContribution })));
-const Preparation = lazy(() => import('./components/Preparation').then((m) => ({ default: m.Preparation })));
-const Tests = lazy(() => import('./components/Tests').then((m) => ({ default: m.Tests })));
-const Analytics = lazy(() => import('./components/Analytics').then((m) => ({ default: m.Analytics })));
-const MeritCalculator = lazy(() => import('./components/MeritCalculator').then((m) => ({ default: m.MeritCalculator })));
-const Profile = lazy(() => import('./components/Profile').then((m) => ({ default: m.Profile })));
-const Community = lazy(() => import('./components/Community').then((m) => ({ default: m.Community })));
-const ProgramExplorer = lazy(() => import('./components/ProgramExplorer').then((m) => ({ default: m.ProgramExplorer })));
-const NETTypes = lazy(() => import('./components/NETTypes').then((m) => ({ default: m.NETTypes })));
-const SeoLandingPage = lazy(() => import('./components/SeoLandingPage').then((m) => ({ default: m.SeoLandingPage })));
+const SubscriptionPageLazy = lazyWithRetry(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
+const Dashboard = lazyWithRetry(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
+const NUSTGuide = lazyWithRetry(() => import('./components/NUSTGuide').then((m) => ({ default: m.NUSTGuide })));
+const NUSTSchoolsCampuses = lazyWithRetry(() => import('./components/NUSTSchoolsCampuses').then((m) => ({ default: m.NUSTSchoolsCampuses })));
+const PracticeBoard = lazyWithRetry(() => import('./components/PracticeBoard').then((m) => ({ default: m.PracticeBoard })));
+const QuestionContribution = lazyWithRetry(() => import('./components/QuestionContribution').then((m) => ({ default: m.QuestionContribution })));
+const Preparation = lazyWithRetry(() => import('./components/Preparation').then((m) => ({ default: m.Preparation })));
+const Tests = lazyWithRetry(() => import('./components/Tests').then((m) => ({ default: m.Tests })));
+const Analytics = lazyWithRetry(() => import('./components/Analytics').then((m) => ({ default: m.Analytics })));
+const MeritCalculator = lazyWithRetry(() => import('./components/MeritCalculator').then((m) => ({ default: m.MeritCalculator })));
+const Profile = lazyWithRetry(() => import('./components/Profile').then((m) => ({ default: m.Profile })));
+const Community = lazyWithRetry(() => import('./components/Community').then((m) => ({ default: m.Community })));
+const ProgramExplorer = lazyWithRetry(() => import('./components/ProgramExplorer').then((m) => ({ default: m.ProgramExplorer })));
+const NETTypes = lazyWithRetry(() => import('./components/NETTypes').then((m) => ({ default: m.NETTypes })));
+const SeoLandingPage = lazyWithRetry(() => import('./components/SeoLandingPage').then((m) => ({ default: m.SeoLandingPage })));
 import { 
   Home, 
   BookOpen, 
@@ -230,6 +230,9 @@ class SectionErrorBoundary extends Component<{ children: ReactNode; sectionName:
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.error(`Section render failed (${this.props.sectionName}):`, error, errorInfo);
+    if (isChunkLoadFailure(error)) {
+      scheduleStaleChunkReload(`SectionErrorBoundary:${this.props.sectionName}`);
+    }
   }
 
   render() {

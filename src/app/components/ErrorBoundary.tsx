@@ -1,4 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { isChunkLoadFailure, scheduleStaleChunkReload } from '../lib/chunkLoadRecovery';
 
 type ErrorBoundaryProps = {
   children: ReactNode;
@@ -7,24 +8,32 @@ type ErrorBoundaryProps = {
 type ErrorBoundaryState = {
   hasError: boolean;
   message: string;
+  isChunkError: boolean;
 };
 
 export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
   constructor(props: ErrorBoundaryProps) {
     super(props);
-    this.state = { hasError: false, message: '' };
+    this.state = { hasError: false, message: '', isChunkError: false };
   }
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    const chunk = isChunkLoadFailure(error);
     return {
       hasError: true,
-      message: error?.message || 'Unexpected application error.',
+      isChunkError: chunk,
+      message: chunk
+        ? 'This page is refreshing to load the latest version (normal right after an update).'
+        : (error?.message || 'Unexpected application error.'),
     };
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     // Keep console telemetry for debugging in web and Android logcat.
     console.error('NET360 UI runtime error:', error, errorInfo);
+    if (isChunkLoadFailure(error)) {
+      scheduleStaleChunkReload('ErrorBoundary');
+    }
   }
 
   handleReload = () => {
@@ -33,14 +42,19 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   render() {
     if (this.state.hasError) {
+      const { isChunkError, message } = this.state;
       return (
         <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
           <div className="w-full max-w-md rounded-2xl border border-rose-200 bg-white p-6 shadow-sm">
-            <h1 className="mb-2 text-xl text-rose-700">Something went wrong</h1>
+            <h1 className="mb-2 text-xl text-rose-700">
+              {isChunkError ? 'Updating NET360' : 'Something went wrong'}
+            </h1>
             <p className="mb-4 text-sm text-slate-600">
-              The app hit an unexpected issue. Please retry. If this keeps happening, contact support.
+              {isChunkError
+                ? 'We are loading a fresh copy of the app for you. If nothing changes in a few seconds, tap Reload.'
+                : 'The app hit an unexpected issue. Please retry. If this keeps happening, contact support.'}
             </p>
-            <p className="mb-5 rounded-lg bg-slate-50 p-3 text-xs text-slate-500">{this.state.message}</p>
+            <p className="mb-5 rounded-lg bg-slate-50 p-3 text-xs text-slate-500">{message}</p>
             <button
               type="button"
               onClick={this.handleReload}

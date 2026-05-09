@@ -1,8 +1,23 @@
 import { defineConfig, type Plugin } from 'vite'
 import { loadEnv } from 'vite'
 import path from 'path'
+import fs from 'fs'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
+
+function writeDistVersionJsonPlugin(): Plugin {
+  return {
+    name: 'net360-dist-version-json',
+    closeBundle() {
+      const dir = path.resolve(__dirname, 'dist')
+      if (!fs.existsSync(dir)) return
+      const version =
+        String(process.env.VERCEL_GIT_COMMIT_SHA || process.env.GITHUB_SHA || '').trim().slice(0, 12)
+        || String(Math.floor(Date.now() / 1000))
+      fs.writeFileSync(path.join(dir, 'version.json'), `${JSON.stringify({ version }, null, 2)}\n`)
+    },
+  }
+}
 
 function injectS3PreconnectPlugin(mode: string): Plugin {
   const env = loadEnv(mode, process.cwd(), '')
@@ -33,6 +48,7 @@ export default defineConfig(({ mode }) => {
       react(),
       tailwindcss(),
       injectS3PreconnectPlugin(mode),
+      writeDistVersionJsonPlugin(),
     ],
     resolve: {
       alias: {
