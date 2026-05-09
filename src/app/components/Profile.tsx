@@ -1,4 +1,4 @@
-import { type ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { type ChangeEvent, memo, useEffect, useMemo, useRef, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { cn } from './ui/utils';
 import { Button } from './ui/button';
@@ -68,7 +68,7 @@ function isActiveSessionElsewhere(error: unknown): boolean {
   return Number(e?.status) === 409 && (e?.code === 'ACTIVE_SESSION_ELSEWHERE' || e?.code === 'active_session_exists');
 }
 
-export function Profile({ onNavigate }: ProfileProps) {
+export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, logout } = useAuth();
   const { surface } = useSubscription();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
@@ -687,6 +687,8 @@ export function Profile({ onNavigate }: ProfileProps) {
                       src={loginBannerImageUrl()}
                       {...(shouldUseLocalMediaFallback() ? { fallbackSrc: '/images/login-banner.png' } : {})}
                       alt="NET360"
+                      width={500}
+                      height={300}
                       className="h-auto w-full max-w-[min(90vw,500px)] rounded-xl shadow-[0_8px_24px_rgba(0,0,0,0.2)] transition-transform duration-300 ease-out hover:scale-[1.02] sm:max-w-[500px]"
                       loading="lazy"
                       decoding="async"
@@ -713,6 +715,8 @@ export function Profile({ onNavigate }: ProfileProps) {
                     src={appPromoImageUrl()}
                     {...(shouldUseLocalMediaFallback() ? { fallbackSrc: '/images/app-promo.png' } : {})}
                     alt="NET360 advertisement"
+                    width={680}
+                    height={383}
                     className="mx-auto h-auto w-full max-w-full object-contain rounded-xl"
                     loading="lazy"
                     decoding="async"
@@ -789,7 +793,7 @@ export function Profile({ onNavigate }: ProfileProps) {
           <CardContent className="space-y-4">
             <div className="flex flex-col items-center text-center">
               <Avatar className="w-24 h-24 mb-4">
-                <AvatarImage src={getMediaUrl(avatarPreview)} />
+                <AvatarImage src={getMediaUrl(avatarPreview)} width={96} height={96} />
                 <AvatarFallback className="text-2xl">{avatarText}</AvatarFallback>
               </Avatar>
               <h3>{`${localProfile.firstName || 'Student'} ${localProfile.lastName || ''}`.trim()}</h3>
@@ -1146,4 +1150,4 @@ export function Profile({ onNavigate }: ProfileProps) {
       </Card>
     </div>
   );
-}
+});

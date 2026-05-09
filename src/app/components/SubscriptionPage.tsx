@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, memo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { apiRequest } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
@@ -25,7 +25,7 @@ function bearerForApi(): string | undefined {
   return undefined;
 }
 
-export function SubscriptionPage() {
+export const SubscriptionPage = memo(function SubscriptionPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { surface, me, refresh, loading } = useSubscription();
@@ -368,4 +368,4 @@ export function SubscriptionPage() {
       </Card>
     </div>
   );
-}
+});

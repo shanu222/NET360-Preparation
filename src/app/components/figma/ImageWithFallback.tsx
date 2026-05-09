@@ -1,14 +1,14 @@
-import React, { useEffect, useState } from 'react'
+import { useEffect, useState, memo, type ImgHTMLAttributes, type ReactEventHandler } from 'react';
 
 const ERROR_IMG_SRC =
   'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODgiIGhlaWdodD0iODgiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgc3Ryb2tlPSIjMDAwIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBvcGFjaXR5PSIuMyIgZmlsbD0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIzLjciPjxyZWN0IHg9IjE2IiB5PSIxNiIgd2lkdGg9IjU2IiBoZWlnaHQ9IjU2IiByeD0iNiIvPjxwYXRoIGQ9Im0xNiA1OCAxNi0xOCAzMiAzMiIvPjxjaXJjbGUgY3g9IjUzIiBjeT0iMzUiIHI9IjciLz48L3N2Zz4KCg=='
 
-export type ImageWithFallbackProps = React.ImgHTMLAttributes<HTMLImageElement> & {
+export type ImageWithFallbackProps = ImgHTMLAttributes<HTMLImageElement> & {
   /** Tried after `src` fails (e.g. same-origin file when S3 object is missing or blocked). */
   fallbackSrc?: string;
 };
 
-export function ImageWithFallback(props: ImageWithFallbackProps) {
+export const ImageWithFallback = memo(function ImageWithFallback(props: ImageWithFallbackProps) {
   const { fallbackSrc, src, alt, style, className, loading, decoding, onError, ...rest } = props
   const [phase, setPhase] = useState<'primary' | 'fallback' | 'error'>('primary')
 
@@ -16,7 +16,7 @@ export function ImageWithFallback(props: ImageWithFallbackProps) {
     setPhase('primary')
   }, [src, fallbackSrc])
 
-  const handleError: React.ReactEventHandler<HTMLImageElement> = (e) => {
+  const handleError: ReactEventHandler<HTMLImageElement> = (e) => {
     onError?.(e)
     if (phase === 'primary' && fallbackSrc) {
       setPhase('fallback')
@@ -37,6 +37,8 @@ export function ImageWithFallback(props: ImageWithFallbackProps) {
         <img
           src={ERROR_IMG_SRC}
           alt="Error loading image"
+          width={88}
+          height={88}
           loading={loading ?? 'lazy'}
           decoding={decoding ?? 'async'}
           {...rest}
@@ -56,4 +58,4 @@ export function ImageWithFallback(props: ImageWithFallbackProps) {
       onError={handleError}
     />
   )
-}
+})

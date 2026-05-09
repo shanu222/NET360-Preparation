@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -278,6 +278,20 @@ function createCallRoomUrl(connectionId: string) {
   };
 }
 
+/** Map Tailwind spacing scale (e.g. h-8, w-12) to pixels for stable <img> dimensions (w-1 = 4px). */
+function dimensionsFromSizeClass(sizeClass: string): { width: number; height: number } {
+  const toPx = (token: string) => {
+    const n = Number(token);
+    return Number.isFinite(n) ? Math.round(n * 4) : 32;
+  };
+  const hMatch = sizeClass.match(/\bh-(\d+(?:\.\d+)?)\b/);
+  const wMatch = sizeClass.match(/\bw-(\d+(?:\.\d+)?)\b/);
+  const h = hMatch ? toPx(hMatch[1]!) : null;
+  const w = wMatch ? toPx(wMatch[1]!) : null;
+  const side = h ?? w ?? 32;
+  return { width: w ?? side, height: h ?? side };
+}
+
 function getAvatarFallback(userLike: { firstName?: string; lastName?: string; username?: string }) {
   const first = String(userLike.firstName || '').trim();
   const last = String(userLike.lastName || '').trim();
@@ -299,12 +313,15 @@ const CommunityAvatar = memo(function CommunityAvatar({
 }) {
   const image = String(userLike.profilePictureUrl || '').trim();
   const fallback = getAvatarFallback(userLike);
+  const { width, height } = useMemo(() => dimensionsFromSizeClass(sizeClass), [sizeClass]);
 
   if (image) {
     return (
       <img
         src={getMediaUrl(image)}
         alt={fallback}
+        width={width}
+        height={height}
         className={`${sizeClass} rounded-full border object-cover`}
         loading="lazy"
         decoding="async"
@@ -881,8 +898,14 @@ function CommunityInner() {
     };
   }, [token, activeConnectionId, requestCached]);
 
-  useLayoutEffect(() => {
-    messageThreadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  useEffect(() => {
+    if (activeTab !== 'messages' || !activeConnectionId) return;
+    const el = messageThreadEndRef.current;
+    if (!el) return;
+    const id = window.requestAnimationFrame(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    });
+    return () => window.cancelAnimationFrame(id);
   }, [messages, remoteTyping, activeConnectionId, activeTab]);
 
   useEffect(() => {
@@ -909,6 +932,7 @@ function CommunityInner() {
     let running = false;
 
     const poll = async () => {
+      if (document.hidden) return;
       if (running || cancelled) return;
       running = true;
       try {
@@ -948,6 +972,7 @@ function CommunityInner() {
     };
 
     const intervalId = window.setInterval(() => {
+      if (document.hidden) return;
       void poll();
     }, 5000);
 
@@ -986,7 +1011,10 @@ function CommunityInner() {
     };
 
     ping();
-    const id = window.setInterval(ping, 45_000);
+    const id = window.setInterval(() => {
+      if (document.hidden) return;
+      ping();
+    }, 45_000);
     const onVis = () => ping();
     document.addEventListener('visibilitychange', onVis);
     return () => {
@@ -1028,14 +1056,18 @@ function CommunityInner() {
       const t = String(parsed.type || '');
       if (t === 'community.typing' && parsed.connectionId === activeConnectionIdRef.current) {
         if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
-        setRemoteTyping(Boolean(parsed.typing));
+        startTransition(() => {
+          setRemoteTyping(Boolean(parsed.typing));
+        });
         if (parsed.typing) {
-          typingStopTimerRef.current = window.setTimeout(() => setRemoteTyping(false), 3200);
+          typingStopTimerRef.current = window.setTimeout(() => {
+            startTransition(() => setRemoteTyping(false));
+          }, 3200);
         }
         return;
       }
       if (t === 'community.presence') {
-        void loadPresenceRef.current();
+        startTransition(() => void loadPresenceRef.current());
         return;
       }
       if (t === 'community.message.read') {
@@ -1045,7 +1077,7 @@ function CommunityInner() {
         return;
       }
       if (t === 'community.message.sent') {
-        void loadPresenceRef.current();
+        startTransition(() => void loadPresenceRef.current());
       }
       if (document.hidden) return;
       scheduleFullCommunityRefresh();
@@ -2005,6 +2037,8 @@ function CommunityInner() {
                       <img
                         src={getMediaUrl(profilePictureDataUrl)}
                         alt="Profile preview"
+                        width={48}
+                        height={48}
                         className="h-12 w-12 rounded-full border object-cover"
                         loading="lazy"
                         decoding="async"
