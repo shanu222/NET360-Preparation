@@ -21,6 +21,7 @@ import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import mammoth from 'mammoth';
 import multer from 'multer';
 import * as cheerio from 'cheerio';
+import mongoose from 'mongoose';
 import { connectMongo } from './lib/mongo.js';
 import { createUploadRouter } from './routes/upload.js';
 import { buildMcqContentFingerprint } from './lib/mcqIdentity.js';
@@ -3612,6 +3613,192 @@ async function runOpenAiConnectionProbe(reason = 'runtime-check') {
       reason,
     };
   }
+}
+
+function adminGetProcessEnvValue(key) {
+  const k = normalizeConfigKey(key);
+  if (k === 'MONGODB_URI') {
+    return String(process.env.MONGODB_URI || process.env.DATABASE_URL || process.env.MONGO_URI || '').trim();
+  }
+  return String(process.env[k] || '').trim();
+}
+
+function adminResolveEffectiveValueSource(key, runtimeMap) {
+  const k = normalizeConfigKey(key);
+  const fromRuntime = runtimeMap.get(k);
+  if (fromRuntime != null && String(fromRuntime).trim()) {
+    return { source: 'runtime', value: String(fromRuntime).trim() };
+  }
+  const fromEnv = adminGetProcessEnvValue(k);
+  if (fromEnv) return { source: 'environment', value: fromEnv };
+  return { source: 'none', value: '' };
+}
+
+function buildAdminInfraHealthSnapshot() {
+  const mongoUriConfigured = Boolean(MONGODB_URI);
+  const mongoConnected = mongoose.connection.readyState === 1;
+  let mongoStatus = 'ok';
+  let mongoDetail = 'Driver connected';
+  if (!mongoUriConfigured) {
+    mongoStatus = 'error';
+    mongoDetail = 'Set MONGODB_URI, DATABASE_URL, or MONGO_URI';
+  } else if (!mongoConnected) {
+    mongoStatus = 'warning';
+    mongoDetail = 'URI configured; driver not connected yet';
+  }
+
+  const firebaseMissing = getMissingFirebaseAdminEnvVars();
+  const firebaseStatus = firebaseAdminAuth ? 'ok' : 'error';
+  const firebaseDetail = firebaseAdminAuth
+    ? 'Admin SDK initialized'
+    : firebaseMissing.length
+      ? `Missing: ${firebaseMissing.join(', ')}`
+      : 'Admin SDK not initialized';
+
+  let jwtStatus = 'ok';
+  let jwtDetail = 'Access and refresh secrets look usable';
+  if (IS_PRODUCTION) {
+    if (!JWT_SECRET_RAW) {
+      jwtStatus = 'error';
+      jwtDetail = 'JWT_SECRET is required in production';
+    } else if (!JWT_REFRESH_SECRET_RAW) {
+      jwtStatus = 'error';
+      jwtDetail = 'JWT_REFRESH_SECRET is required in production';
+    } else if (JWT_SECRET_RAW.length < 32) {
+      jwtStatus = 'warning';
+      jwtDetail = 'Prefer JWT_SECRET with at least 32 random characters';
+    }
+  } else {
+    if (!JWT_SECRET_RAW) {
+      jwtStatus = 'warning';
+      jwtDetail = 'Using development access-token secret fallback';
+    }
+    if (!JWT_REFRESH_SECRET_RAW) {
+      jwtStatus = 'warning';
+      jwtDetail = !JWT_SECRET_RAW ? jwtDetail : 'Refresh tokens use development fallback';
+    }
+  }
+
+  const cryptoStatus = CONFIG_CRYPTO_KEY ? 'ok' : 'error';
+  const cryptoDetail = CONFIG_CRYPTO_KEY
+    ? 'Runtime secrets can be encrypted (CONFIG_ENCRYPTION_KEY / JWT fallback)'
+    : 'Set strong CONFIG_ENCRYPTION_KEY so admin secure config can persist';
+
+  return {
+    items: [
+      { id: 'mongodb', label: 'MongoDB', status: mongoStatus, detail: mongoDetail, sourceLabel: mongoUriConfigured ? 'Environment' : 'None' },
+      { id: 'firebase-admin', label: 'Firebase Admin', status: firebaseStatus, detail: firebaseDetail, sourceLabel: firebaseAdminAuth ? 'Environment' : 'None' },
+      { id: 'jwt', label: 'JWT (access + refresh)', status: jwtStatus, detail: jwtDetail, sourceLabel: JWT_SECRET_RAW && JWT_REFRESH_SECRET_RAW ? 'Environment' : 'Partial / fallback' },
+      { id: 'runtime-config', label: 'Secure config crypto', status: cryptoStatus, detail: cryptoDetail, sourceLabel: CONFIG_CRYPTO_KEY ? 'Environment' : 'None' },
+    ],
+  };
+}
+
+async function buildAdminConfigurationListPayload(rows, liveVerify) {
+  const runtimeMap = await readRuntimeConfigMap(false);
+  const aiSettings = await getOpenAiRuntimeSettings();
+  const openAiProbe = liveVerify ? await runOpenAiConnectionProbe('admin-config-list-verify') : null;
+  const infraSnapshot = buildAdminInfraHealthSnapshot();
+
+  const variables = rows.map((item) => {
+    const key = normalizeConfigKey(item.key || '');
+    let valuePreview = '';
+    let decryptionFailed = false;
+    try {
+      const plain = decryptConfigValue(item.encryptedValue || '');
+      valuePreview = item.isSecret ? maskConfigValue(plain) : String(plain || '').slice(0, 120);
+    } catch {
+      decryptionFailed = true;
+      valuePreview = '[decryption-error]';
+    }
+
+    const eff = adminResolveEffectiveValueSource(key, runtimeMap);
+
+    let status = 'neutral';
+    let statusLabel = 'Stored';
+    let statusDetail = eff.source === 'runtime'
+      ? 'Value resolved from encrypted runtime store.'
+      : eff.source === 'environment'
+        ? 'Fallback: environment variable (no runtime override or empty row).'
+        : 'No value found in runtime map or env for this key.';
+
+    if (decryptionFailed) {
+      status = 'error';
+      statusLabel = 'Decrypt error';
+      statusDetail = 'Stored ciphertext is unreadable. Re-save the value or align CONFIG_ENCRYPTION_KEY with the key that encrypted it.';
+    } else if (key === 'OPENAI_API_KEY' || key === 'MODEL_PROVIDER_API_KEY') {
+      const active = aiSettings.keySource === key;
+      const missing = aiSettings.keySource === 'missing';
+
+      if (missing) {
+        status = 'error';
+        statusLabel = 'No AI key';
+        statusDetail = 'Set OPENAI_API_KEY or MODEL_PROVIDER_API_KEY in secure config or environment.';
+      } else if (!active) {
+        status = 'warning';
+        statusLabel = 'Not active';
+        statusDetail = `Application resolves ${aiSettings.keySource} first.`;
+      } else if (liveVerify && openAiProbe) {
+        if (openAiProbe.ok) {
+          status = 'ok';
+          statusLabel = 'API reachable';
+          statusDetail = openAiProbe.detail || openAiProbe.message || 'Live probe succeeded.';
+        } else {
+          status = 'error';
+          statusLabel = openAiProbe.category === 'missing-key' ? 'Missing' : openAiProbe.category === 'auth' ? 'Auth failed' : 'Probe failed';
+          statusDetail = openAiProbe.detail || openAiProbe.message || 'OpenAI live check failed.';
+        }
+      } else {
+        status = 'neutral';
+        statusLabel = 'Active (unverified)';
+        statusDetail = 'Click “Refresh List” to run a live OpenAI probe.';
+      }
+    } else if (key === 'OPENAI_MODEL' || key === 'MODEL_PROVIDER_MODEL') {
+      if (eff.source === 'none') {
+        status = 'warning';
+        statusLabel = 'Empty';
+        statusDetail = 'Model not set for this key.';
+      } else {
+        status = 'ok';
+        statusLabel = 'Configured';
+        statusDetail = `Effective model: ${String(aiSettings.model || '').trim() || 'gpt-4o-mini (default)'}.`;
+      }
+    } else if (eff.source === 'none') {
+      status = 'warning';
+      statusLabel = 'Empty';
+      statusDetail = 'No runtime or environment value for this key.';
+    } else {
+      status = 'ok';
+      statusLabel = 'Stored';
+      statusDetail = eff.source === 'runtime'
+        ? 'Loaded from encrypted admin configuration.'
+        : 'Environment variable provides this value.';
+    }
+
+    return {
+      key,
+      isSecret: Boolean(item.isSecret),
+      description: String(item.description || ''),
+      updatedByEmail: String(item.updatedByEmail || ''),
+      updatedAt: item.updatedAt ? new Date(item.updatedAt).toISOString() : null,
+      valuePreview,
+      effectiveSource: eff.source,
+      status,
+      statusLabel,
+      statusDetail,
+    };
+  });
+
+  return {
+    variables,
+    infraSnapshot,
+    verification: {
+      live: Boolean(liveVerify),
+      checkedAt: liveVerify && openAiProbe ? openAiProbe.checkedAt : null,
+      openaiOk: liveVerify && openAiProbe ? openAiProbe.ok : null,
+      openaiKeySource: aiSettings.keySource,
+    },
+  };
 }
 
 function logOpenAiProbeStatus(probeResult) {
@@ -11061,33 +11248,16 @@ app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) =>
   });
 });
 
-app.get('/api/admin/configurations', authMiddleware, requireAdmin, async (_req, res) => {
+app.get('/api/admin/configurations', authMiddleware, requireAdmin, async (req, res) => {
   if (!CONFIG_CRYPTO_KEY) {
     res.status(503).json({ error: 'Secure config service is unavailable because CONFIG_ENCRYPTION_KEY is missing.' });
     return;
   }
 
+  const liveVerify = String(req.query.verify || '').trim() === '1';
   const rows = await RuntimeConfigModel.find({}).sort({ key: 1 }).lean();
-  const variables = rows.map((item) => {
-    let valuePreview = '';
-    try {
-      const plain = decryptConfigValue(item.encryptedValue || '');
-      valuePreview = item.isSecret ? maskConfigValue(plain) : String(plain || '').slice(0, 120);
-    } catch {
-      valuePreview = '[decryption-error]';
-    }
-
-    return {
-      key: String(item.key || ''),
-      isSecret: Boolean(item.isSecret),
-      description: String(item.description || ''),
-      updatedByEmail: String(item.updatedByEmail || ''),
-      updatedAt: item.updatedAt ? new Date(item.updatedAt).toISOString() : null,
-      valuePreview,
-    };
-  });
-
-  res.json({ variables });
+  const payload = await buildAdminConfigurationListPayload(rows, liveVerify);
+  res.json(payload);
 });
 
 app.put('/api/admin/configurations/:key', authMiddleware, requireAdmin, async (req, res) => {
@@ -11133,16 +11303,21 @@ app.put('/api/admin/configurations/:key', authMiddleware, requireAdmin, async (r
 
   clearRuntimeConfigCache();
 
-  res.json({
-    variable: {
-      key: String(saved?.key || key),
-      isSecret: Boolean(saved?.isSecret),
-      description: String(saved?.description || ''),
-      updatedByEmail: String(saved?.updatedByEmail || ''),
-      updatedAt: saved?.updatedAt ? new Date(saved.updatedAt).toISOString() : null,
-      valuePreview: isSecret ? maskConfigValue(value) : value.slice(0, 120),
-    },
-  });
+  const listPayload = await buildAdminConfigurationListPayload(saved ? [saved] : [], false);
+  const variable = listPayload.variables[0] || {
+    key: String(saved?.key || key),
+    isSecret: Boolean(saved?.isSecret),
+    description: String(saved?.description || ''),
+    updatedByEmail: String(saved?.updatedByEmail || ''),
+    updatedAt: saved?.updatedAt ? new Date(saved.updatedAt).toISOString() : null,
+    valuePreview: isSecret ? maskConfigValue(value) : value.slice(0, 120),
+    effectiveSource: 'runtime',
+    status: 'neutral',
+    statusLabel: 'Stored',
+    statusDetail: '',
+  };
+
+  res.json({ variable });
 });
 
 app.delete('/api/admin/configurations/:key', authMiddleware, requireAdmin, async (req, res) => {

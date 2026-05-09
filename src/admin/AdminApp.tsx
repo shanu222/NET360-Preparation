@@ -778,6 +778,31 @@ interface AdminConfigVariable {
   updatedByEmail: string;
   updatedAt: string | null;
   valuePreview: string;
+  effectiveSource?: 'runtime' | 'environment' | 'none';
+  status?: 'ok' | 'warning' | 'error' | 'neutral';
+  statusLabel?: string;
+  statusDetail?: string;
+}
+
+interface AdminInfraHealthItem {
+  id: string;
+  label: string;
+  status: 'ok' | 'warning' | 'error';
+  detail: string;
+  sourceLabel: string;
+}
+
+interface AdminConfigVerification {
+  live: boolean;
+  checkedAt: string | null;
+  openaiOk: boolean | null;
+  openaiKeySource: string;
+}
+
+interface AdminConfigurationListPayload {
+  variables: AdminConfigVariable[];
+  infraSnapshot?: { items: AdminInfraHealthItem[] };
+  verification?: AdminConfigVerification;
 }
 
 interface PasswordRecoveryRequest {
@@ -2054,6 +2079,19 @@ function generateTemporaryPassword(length = 12) {
   return result.join('');
 }
 
+function adminEnvStatusBadgeClasses(status?: string) {
+  switch (status) {
+    case 'ok':
+      return 'bg-emerald-600 text-white hover:bg-emerald-600';
+    case 'warning':
+      return 'bg-amber-500 text-white hover:bg-amber-500';
+    case 'error':
+      return 'bg-rose-600 text-white hover:bg-rose-600';
+    default:
+      return 'border border-slate-200 bg-slate-100 text-slate-800 hover:bg-slate-100';
+  }
+}
+
 export default function AdminApp() {
   const activeView = new URLSearchParams(window.location.search).get('view');
   const isQuestionBankView = activeView === 'question-bank';
@@ -2079,6 +2117,8 @@ export default function AdminApp() {
   const [systemStatus, setSystemStatus] = useState<AdminSystemStatus | null>(null);
   const [isRefreshingSystemStatus, setIsRefreshingSystemStatus] = useState(false);
   const [configVariables, setConfigVariables] = useState<AdminConfigVariable[]>([]);
+  const [configInfraSnapshot, setConfigInfraSnapshot] = useState<AdminInfraHealthItem[]>([]);
+  const [configVerification, setConfigVerification] = useState<AdminConfigVerification | null>(null);
   const [isRefreshingConfigVariables, setIsRefreshingConfigVariables] = useState(false);
   const [isSavingConfigVariable, setIsSavingConfigVariable] = useState(false);
   const [isDeletingConfigVariable, setIsDeletingConfigVariable] = useState<string | null>(null);
@@ -3084,7 +3124,10 @@ export default function AdminApp() {
         },
         serverTime: new Date().toISOString(),
       })),
-      apiRequest<{ variables: AdminConfigVariable[] }>('/api/admin/configurations', {}, activeToken).catch(() => ({ variables: [] })),
+      apiRequest<AdminConfigurationListPayload>('/api/admin/configurations', {}, activeToken).catch(() => ({
+        variables: [],
+        infraSnapshot: { items: [] },
+      })),
     ]);
 
     setOverview(overviewPayload);
@@ -3108,6 +3151,8 @@ export default function AdminApp() {
     setMcqStructure(structurePayload.structure || []);
     setSystemStatus(systemStatusPayload);
     setConfigVariables(configVariablesPayload.variables || []);
+    setConfigInfraSnapshot(configVariablesPayload.infraSnapshot?.items || []);
+    setConfigVerification(configVariablesPayload.verification ?? null);
   };
 
   const loadSecurityInfoPage = useCallback(async () => {
@@ -3185,9 +3230,11 @@ export default function AdminApp() {
 
     setIsRefreshingConfigVariables(true);
     try {
-      const payload = await apiRequest<{ variables: AdminConfigVariable[] }>('/api/admin/configurations', {}, authToken);
+      const payload = await apiRequest<AdminConfigurationListPayload>('/api/admin/configurations?verify=1', {}, authToken);
       setConfigVariables(payload.variables || []);
-      showSuccessToast('Configuration list refreshed.');
+      setConfigInfraSnapshot(payload.infraSnapshot?.items || []);
+      setConfigVerification(payload.verification ?? null);
+      showSuccessToast('Configuration list refreshed with live checks.');
     } catch (error) {
       handleApiError(error, 'Could not refresh configurations.');
     } finally {
@@ -7039,23 +7086,53 @@ export default function AdminApp() {
                 </Button>
               </div>
 
+              <p className="text-xs text-muted-foreground">
+                {configVerification?.live
+                  ? `Live OpenAI check${configVerification.checkedAt ? ` at ${new Date(configVerification.checkedAt).toLocaleString()}` : ''}: ${
+                      configVerification.openaiOk ? 'reachable' : 'failed'
+                    } (active key: ${configVerification.openaiKeySource}).`
+                  : 'Status shows how each key resolves for the running server. Use Refresh List to run a live OpenAI API probe.'}
+              </p>
+
               <div className="rounded-lg border">
-                <div className="grid grid-cols-1 gap-3 p-3 text-sm md:grid-cols-[1.2fr_1fr_0.8fr_0.8fr] md:items-center">
-                  <p className="font-medium">Key</p>
-                  <p className="font-medium">Value Preview</p>
-                  <p className="font-medium">Updated By</p>
-                  <p className="font-medium text-right">Actions</p>
+                <div className="hidden gap-3 p-3 text-sm font-medium md:grid md:grid-cols-[minmax(0,1.05fr)_minmax(0,0.9fr)_minmax(0,0.95fr)_minmax(0,0.6fr)_auto] md:items-center">
+                  <p>Key</p>
+                  <p>Value Preview</p>
+                  <p>Status</p>
+                  <p>Updated By</p>
+                  <p className="text-right">Actions</p>
                 </div>
 
                 {(configVariables || []).map((item) => (
-                  <div key={item.key} className="grid grid-cols-1 gap-3 border-t p-3 text-sm md:grid-cols-[1.2fr_1fr_0.8fr_0.8fr] md:items-center">
+                  <div
+                    key={item.key}
+                    className="grid grid-cols-1 gap-3 border-t p-3 text-sm md:grid-cols-[minmax(0,1.05fr)_minmax(0,0.9fr)_minmax(0,0.95fr)_minmax(0,0.6fr)_auto] md:items-center"
+                  >
                     <div>
                       <p className="font-medium text-slate-900">{item.key}</p>
                       {item.description ? <p className="text-xs text-muted-foreground">{item.description}</p> : null}
-                      <p className="text-xs text-muted-foreground">{item.isSecret ? 'Secret' : 'Plain'}{item.updatedAt ? ` • ${new Date(item.updatedAt).toLocaleString()}` : ''}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {item.isSecret ? 'Secret' : 'Plain'}
+                        {item.updatedAt ? ` • ${new Date(item.updatedAt).toLocaleString()}` : ''}
+                      </p>
                     </div>
                     <p className="font-mono text-xs break-all text-slate-700">{item.valuePreview || '-'}</p>
-                    <p className="text-xs text-muted-foreground">{item.updatedByEmail || '-'}</p>
+                    <div className="flex flex-col gap-1">
+                      <span className="text-xs font-medium text-muted-foreground md:hidden">Status</span>
+                      <Badge
+                        className={`w-fit max-w-full truncate text-xs ${adminEnvStatusBadgeClasses(item.status)}`}
+                        title={item.statusDetail || undefined}
+                      >
+                        {item.statusLabel || '—'}
+                      </Badge>
+                      {item.effectiveSource ? (
+                        <span className="text-[10px] capitalize text-muted-foreground">Source: {item.effectiveSource}</span>
+                      ) : null}
+                    </div>
+                    <div>
+                      <span className="text-xs font-medium text-muted-foreground md:hidden">Updated By</span>
+                      <p className="text-xs text-muted-foreground md:mt-0">{item.updatedByEmail || '-'}</p>
+                    </div>
                     <div className="flex justify-end">
                       <Button
                         type="button"
@@ -7078,6 +7155,27 @@ export default function AdminApp() {
                   </div>
                 ) : null}
               </div>
+
+              {configInfraSnapshot.length ? (
+                <div className="rounded-lg border border-dashed bg-muted/30 p-4">
+                  <p className="text-sm font-medium text-slate-900">Infrastructure and environment</p>
+                  <p className="text-xs text-muted-foreground mb-3">
+                    Host-level health (MongoDB, Firebase Admin, JWT secrets, encryption key). Set these in your deployment environment; they are not edited in the secure config table.
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {configInfraSnapshot.map((row) => (
+                      <div key={row.id} className="rounded-md border bg-background p-3 text-sm shadow-sm">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <span className="font-medium text-slate-900">{row.label}</span>
+                          <Badge className={`text-xs capitalize ${adminEnvStatusBadgeClasses(row.status)}`}>{row.status}</Badge>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1.5">{row.detail}</p>
+                        <p className="text-[10px] text-muted-foreground mt-1">Config source: {row.sourceLabel}</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </CardContent>
           </Card>
         </TabsContent>
