@@ -176,6 +176,8 @@ const SidebarNavigation = memo(function SidebarNavigation({
           <button
             key={item.id}
             type="button"
+            aria-label={item.id === smartMentorTabId ? `${item.label}, coming soon` : `Go to ${item.label}`}
+            aria-current={activeTab === item.id && item.id !== smartMentorTabId ? 'page' : undefined}
             onPointerEnter={() => {
               if (item.id !== smartMentorTabId) prefetchStudentSection(item.id);
             }}
@@ -258,7 +260,9 @@ class SectionErrorBoundary extends Component<{ children: ReactNode; sectionName:
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error(`Section render failed (${this.props.sectionName}):`, error, errorInfo);
+    if (import.meta.env.DEV) {
+      console.error(`Section render failed (${this.props.sectionName}):`, error, errorInfo);
+    }
     if (isChunkLoadFailure(error)) {
       scheduleStaleChunkReload(`SectionErrorBoundary:${this.props.sectionName}`);
     }

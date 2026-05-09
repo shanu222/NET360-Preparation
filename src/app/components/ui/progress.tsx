@@ -13,9 +13,13 @@ function Progress({
   ...props
 }: React.ComponentProps<typeof ProgressPrimitive.Root>) {
   const pct = Math.round(Number(value ?? 0));
+  const valueText = `${pct} percent`;
   const accessibilityProps = ariaLabelledby
-    ? ({ 'aria-labelledby': ariaLabelledby } as const)
-    : ({ 'aria-label': ariaLabel ?? `Progress, ${pct} percent complete` } as const);
+    ? ({ 'aria-labelledby': ariaLabelledby, 'aria-valuetext': valueText } as const)
+    : ({
+        'aria-label': ariaLabel ?? `Progress, ${pct} percent complete`,
+        'aria-valuetext': valueText,
+      } as const);
   return (
     <ProgressPrimitive.Root
       {...accessibilityProps}
@@ -29,8 +33,8 @@ function Progress({
     >
       <ProgressPrimitive.Indicator
         data-slot="progress-indicator"
-        className="bg-primary h-full w-full flex-1 transition-all"
-        style={{ transform: `translateX(-${100 - (value || 0)}%)` }}
+        className="bg-primary h-full w-full flex-1 transition-transform duration-150 ease-out will-change-transform"
+        style={{ transform: `translate3d(-${100 - (value || 0)}%, 0, 0)` }}
       />
     </ProgressPrimitive.Root>
   );

@@ -29,8 +29,9 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    // Keep console telemetry for debugging in web and Android logcat.
-    console.error('NET360 UI runtime error:', error, errorInfo);
+    if (import.meta.env.DEV) {
+      console.error('NET360 UI runtime error:', error, errorInfo);
+    }
     if (isChunkLoadFailure(error)) {
       scheduleStaleChunkReload('ErrorBoundary');
     }

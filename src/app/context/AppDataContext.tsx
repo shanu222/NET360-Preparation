@@ -185,6 +185,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const syncInFlightRef = useRef(false);
   const syncQueuedRef = useRef(false);
   const syncDebounceTimerRef = useRef<number | null>(null);
+  /** Coalesces overlapping /api/mcqs loads (login effect + foreground sync) onto one in-flight request. */
+  const mcqDataLoadPromiseRef = useRef<Promise<void> | null>(null);
 
   const applyUserPayload = useCallback((userData: ProfileState & { preferences: PreferencesState }) => {
     setProfile({
@@ -203,18 +205,27 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const loadMcqData = useCallback(async () => {
-    const refreshTag = Date.now();
-    const [payload, countPayload] = await Promise.all([
-      apiRequest<{ mcqs: MCQ[] }>(`/api/mcqs?t=${refreshTag}`, { cache: 'no-store' }),
-      apiRequest<{ counts: Partial<Record<SubjectKey, number>> }>(`/api/mcqs/counts?t=${refreshTag}`, { cache: 'no-store' }),
-    ]);
-    setMcqs(payload.mcqs || []);
-    setMcqTotalsBySubject(
-      SUBJECT_KEYS.reduce((acc, subject) => {
-        acc[subject] = Number(countPayload?.counts?.[subject] || 0);
-        return acc;
-      }, {} as Record<SubjectKey, number>),
-    );
+    if (mcqDataLoadPromiseRef.current) {
+      return mcqDataLoadPromiseRef.current;
+    }
+    const promise = (async () => {
+      const refreshTag = Date.now();
+      const [payload, countPayload] = await Promise.all([
+        apiRequest<{ mcqs: MCQ[] }>(`/api/mcqs?t=${refreshTag}`, { cache: 'no-store' }),
+        apiRequest<{ counts: Partial<Record<SubjectKey, number>> }>(`/api/mcqs/counts?t=${refreshTag}`, { cache: 'no-store' }),
+      ]);
+      setMcqs(payload.mcqs || []);
+      setMcqTotalsBySubject(
+        SUBJECT_KEYS.reduce((acc, subject) => {
+          acc[subject] = Number(countPayload?.counts?.[subject] || 0);
+          return acc;
+        }, {} as Record<SubjectKey, number>),
+      );
+    })().finally(() => {
+      mcqDataLoadPromiseRef.current = null;
+    });
+    mcqDataLoadPromiseRef.current = promise;
+    return promise;
   }, []);
 
   const loadUserData = useCallback(async (authToken: string, silent = false) => {

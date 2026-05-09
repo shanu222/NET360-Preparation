@@ -58,13 +58,17 @@ export function scheduleStaleChunkReload(reason: string): boolean {
   const n = Number(sessionStorage.getItem(RELOAD_COUNT_KEY) || '0');
   if (n >= MAX_AUTO_RELOADS) {
     sessionStorage.removeItem(RELOAD_COUNT_KEY);
-    console.error('[NET360]', reason, '— reload limit reached');
+    if (import.meta.env.DEV) {
+      console.error('[NET360]', reason, '— reload limit reached');
+    }
     return false;
   }
   sessionStorage.setItem(RELOAD_COUNT_KEY, String(n + 1));
   reloadScheduled = true;
   showReloadOverlay('An update is ready — refreshing this page…');
-  console.warn('[NET360] Stale chunk / asset:', reason);
+  if (import.meta.env.DEV) {
+    console.warn('[NET360] Stale chunk / asset:', reason);
+  }
   window.setTimeout(() => {
     try {
       const url = new URL(window.location.href);
