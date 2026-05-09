@@ -35,7 +35,9 @@ fi
 
 # Avoid duplicating block if host already present
 if grep -qE '^REDIS_HOST=' "${ENV_FILE}" 2>/dev/null; then
-  echo "WARN: ${ENV_FILE} already has REDIS_HOST. Edit the file by hand or remove old REDIS_* lines first."
+  echo "WARN: ${ENV_FILE} already has REDIS_HOST."
+  echo "  Edit by hand: set REDIS_HOST to your Redis Cloud endpoint (not your-redis-host), or delete all ^REDIS_ lines and run this script again."
+  echo "  Example cleanup: sed -i.bak '/^REDIS_/d' ${ENV_FILE}"
   exit 1
 fi
 

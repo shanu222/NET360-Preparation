@@ -5,13 +5,33 @@
  */
 import { createClient } from 'redis';
 
-const REDIS_URL = String(process.env.REDIS_URL || '').trim();
-const REDIS_HOST = String(process.env.REDIS_HOST || '').trim();
+const PLACEHOLDER_REDIS_HOST = 'your-redis-host';
+
+function normalizeRedisUrl(url) {
+  const u = String(url || '').trim();
+  if (!u || u.includes(PLACEHOLDER_REDIS_HOST)) return '';
+  return u;
+}
+
+function normalizeRedisHost(host) {
+  const h = String(host || '').trim();
+  if (!h || h === PLACEHOLDER_REDIS_HOST) return '';
+  return h;
+}
+
+const REDIS_URL = normalizeRedisUrl(process.env.REDIS_URL);
+const REDIS_HOST = normalizeRedisHost(process.env.REDIS_HOST);
 const REDIS_PORT = Number(process.env.REDIS_PORT || 6379);
 const REDIS_USERNAME = String(process.env.REDIS_USERNAME || '').trim() || undefined;
 const REDIS_PASSWORD = String(process.env.REDIS_PASSWORD || '').trim() || undefined;
 
 export const REDIS_CONFIGURED = Boolean(REDIS_URL || REDIS_HOST);
+
+const rawRedisHost = String(process.env.REDIS_HOST || '').trim();
+const rawRedisUrl = String(process.env.REDIS_URL || '').trim();
+if ((rawRedisHost === PLACEHOLDER_REDIS_HOST || rawRedisUrl.includes(PLACEHOLDER_REDIS_HOST)) && (rawRedisHost || rawRedisUrl)) {
+  console.warn('[redis] Ignoring placeholder host (your-redis-host) — set real REDIS_HOST/REDIS_URL or remove those lines.');
+}
 
 let mainClient = null;
 /** @type {Promise<import('redis').RedisClientType | null> | null} */

@@ -282,16 +282,22 @@ const firebaseAdminAuth = (() => {
   if (!FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
     return null;
   }
-  if (!getFirebaseAdminApps().length) {
-    initializeFirebaseAdminApp({
-      credential: cert({
-        projectId: FIREBASE_PROJECT_ID,
-        clientEmail: FIREBASE_CLIENT_EMAIL,
-        privateKey: FIREBASE_PRIVATE_KEY,
-      }),
-    });
+  try {
+    if (!getFirebaseAdminApps().length) {
+      initializeFirebaseAdminApp({
+        credential: cert({
+          projectId: FIREBASE_PROJECT_ID,
+          clientEmail: FIREBASE_CLIENT_EMAIL,
+          privateKey: FIREBASE_PRIVATE_KEY,
+        }),
+      });
+    }
+    return getFirebaseAdminAuth();
+  } catch (err) {
+    console.error('[firebase-admin] Init failed (Firebase features disabled):', err?.message || err);
+    console.error('[firebase-admin] Check FIREBASE_PRIVATE_KEY: real service-account PEM, or use \\n for newlines in .env (not literal line breaks inside quotes).');
+    return null;
   }
-  return getFirebaseAdminAuth();
 })();
 
 function getMissingFirebaseAdminEnvVars() {
