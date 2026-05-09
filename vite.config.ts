@@ -5,6 +5,7 @@ import fs from 'fs'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import viteCompression from 'vite-plugin-compression'
+import { visualizer } from 'rollup-plugin-visualizer'
 
 function writeDistVersionJsonPlugin(): Plugin {
   return {
@@ -41,6 +42,7 @@ function injectS3PreconnectPlugin(mode: string): Plugin {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const devApiOrigin = String(env.VITE_API_URL || env.VITE_API_BASE_URL || '').trim()
+  const analyzeBundle = mode === 'analyze'
 
   return {
     plugins: [
@@ -50,6 +52,17 @@ export default defineConfig(({ mode }) => {
       tailwindcss(),
       injectS3PreconnectPlugin(mode),
       writeDistVersionJsonPlugin(),
+      ...(analyzeBundle
+        ? [
+            visualizer({
+              filename: path.resolve(__dirname, 'dist/stats.html'),
+              gzipSize: true,
+              brotliSize: true,
+              open: false,
+              template: 'treemap',
+            }),
+          ]
+        : []),
       viteCompression({
         threshold: 1024,
         algorithm: 'gzip',
@@ -117,7 +130,8 @@ export default defineConfig(({ mode }) => {
       cssMinify: true,
       rollupOptions: {
         output: {
-          experimentalMinChunkSize: 20_000,
+          /** Smaller merges on HTTP/2+ CDNs — improves cache granularity for lazy routes */
+          experimentalMinChunkSize: 12_000,
           manualChunks(id) {
             if (!id.includes('node_modules')) return
             if (
@@ -127,12 +141,23 @@ export default defineConfig(({ mode }) => {
             ) {
               return 'vendor-react'
             }
-            if (id.includes('firebase')) return 'vendor-firebase'
+            if (/node_modules[\\/]react-router(-dom)?[\\/]/.test(id)) {
+              return 'vendor-router'
+            }
+            if (/node_modules[\\/]firebase[\\/]/.test(id)) {
+              if (/[/\\]auth[/\\]/.test(id)) return 'vendor-firebase-auth'
+              return 'vendor-firebase'
+            }
             if (id.includes('@mui') || id.includes('@emotion')) return 'vendor-mui'
             if (id.includes('recharts')) return 'vendor-charts'
-            if (id.includes('katex') || id.includes('mathlive')) return 'vendor-math'
+            if (id.includes('mathlive')) return 'vendor-mathlive'
+            if (id.includes('katex')) return 'vendor-katex'
             if (id.includes('socket.io-client')) return 'vendor-socket'
             if (id.includes('lucide-react')) return 'vendor-icons'
+            if (id.includes('@tanstack')) return 'vendor-tanstack'
+            if (id.includes('date-fns')) return 'vendor-dates'
+            if (id.includes('zod')) return 'vendor-zod'
+            if (id.includes('/motion') || id.includes('framer-motion')) return 'vendor-motion'
             return
           },
         },

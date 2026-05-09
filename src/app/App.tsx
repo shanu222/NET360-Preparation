@@ -11,26 +11,10 @@ import {
   type ErrorInfo,
   type ReactNode,
 } from 'react';
-import { SupportChatWidget } from './components/SupportChatWidget';
 import { PageRouteFallback } from './components/PageRouteFallback';
 import { SubscriptionProvider } from './context/SubscriptionContext';
 import { isChunkLoadFailure, lazyWithRetry, scheduleStaleChunkReload } from './lib/chunkLoadRecovery';
 
-const SubscriptionPageLazy = lazyWithRetry(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
-const Dashboard = lazyWithRetry(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
-const NUSTGuide = lazyWithRetry(() => import('./components/NUSTGuide').then((m) => ({ default: m.NUSTGuide })));
-const NUSTSchoolsCampuses = lazyWithRetry(() => import('./components/NUSTSchoolsCampuses').then((m) => ({ default: m.NUSTSchoolsCampuses })));
-const PracticeBoard = lazyWithRetry(() => import('./components/PracticeBoard').then((m) => ({ default: m.PracticeBoard })));
-const QuestionContribution = lazyWithRetry(() => import('./components/QuestionContribution').then((m) => ({ default: m.QuestionContribution })));
-const Preparation = lazyWithRetry(() => import('./components/Preparation').then((m) => ({ default: m.Preparation })));
-const Tests = lazyWithRetry(() => import('./components/Tests').then((m) => ({ default: m.Tests })));
-const Analytics = lazyWithRetry(() => import('./components/Analytics').then((m) => ({ default: m.Analytics })));
-const MeritCalculator = lazyWithRetry(() => import('./components/MeritCalculator').then((m) => ({ default: m.MeritCalculator })));
-const Profile = lazyWithRetry(() => import('./components/Profile').then((m) => ({ default: m.Profile })));
-const Community = lazyWithRetry(() => import('./components/Community').then((m) => ({ default: m.Community })));
-const ProgramExplorer = lazyWithRetry(() => import('./components/ProgramExplorer').then((m) => ({ default: m.ProgramExplorer })));
-const NETTypes = lazyWithRetry(() => import('./components/NETTypes').then((m) => ({ default: m.NETTypes })));
-const SeoLandingPage = lazyWithRetry(() => import('./components/SeoLandingPage').then((m) => ({ default: m.SeoLandingPage })));
 import { 
   Home, 
   BookOpen, 
@@ -67,12 +51,60 @@ import { Helmet } from 'react-helmet-async';
 import { brandLogoUrl } from './lib/publicMedia';
 import { PremiumCountdownBadge } from './components/subscription/PremiumCountdownBadge';
 
+const SubscriptionPageLazy = lazyWithRetry(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
+const Dashboard = lazyWithRetry(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
+const NUSTGuide = lazyWithRetry(() => import('./components/NUSTGuide').then((m) => ({ default: m.NUSTGuide })));
+const NUSTSchoolsCampuses = lazyWithRetry(() => import('./components/NUSTSchoolsCampuses').then((m) => ({ default: m.NUSTSchoolsCampuses })));
+const PracticeBoard = lazyWithRetry(() => import('./components/PracticeBoard').then((m) => ({ default: m.PracticeBoard })));
+const QuestionContribution = lazyWithRetry(() => import('./components/QuestionContribution').then((m) => ({ default: m.QuestionContribution })));
+const Preparation = lazyWithRetry(() => import('./components/Preparation').then((m) => ({ default: m.Preparation })));
+const Tests = lazyWithRetry(() => import('./components/Tests').then((m) => ({ default: m.Tests })));
+const Analytics = lazyWithRetry(() => import('./components/Analytics').then((m) => ({ default: m.Analytics })));
+const MeritCalculator = lazyWithRetry(() => import('./components/MeritCalculator').then((m) => ({ default: m.MeritCalculator })));
+const Profile = lazyWithRetry(() => import('./components/Profile').then((m) => ({ default: m.Profile })));
+const Community = lazyWithRetry(() => import('./components/Community').then((m) => ({ default: m.Community })));
+const ProgramExplorer = lazyWithRetry(() => import('./components/ProgramExplorer').then((m) => ({ default: m.ProgramExplorer })));
+const NETTypes = lazyWithRetry(() => import('./components/NETTypes').then((m) => ({ default: m.NETTypes })));
+const SeoLandingPage = lazyWithRetry(() => import('./components/SeoLandingPage').then((m) => ({ default: m.SeoLandingPage })));
+const SupportChatWidgetLazy = lazyWithRetry(() =>
+  import('./components/SupportChatWidget').then((m) => ({ default: m.SupportChatWidget })),
+);
+
 function SessionReady({ children }: { children: ReactNode }) {
   const { loading } = useAuth();
   if (loading) {
     return <PageRouteFallback />;
   }
   return <>{children}</>;
+}
+
+/** Defer support chat chunk until idle so initial route + vendors load first (mobile / slow networks). */
+function DeferredSupportChat() {
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    const start = () => {
+      if (!cancelled) setReady(true);
+    };
+    if (typeof requestIdleCallback === 'function') {
+      const idleId = requestIdleCallback(start, { timeout: 2000 });
+      return () => {
+        cancelled = true;
+        cancelIdleCallback(idleId);
+      };
+    }
+    const timeoutId = window.setTimeout(start, 900);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeoutId);
+    };
+  }, []);
+  if (!ready) return null;
+  return (
+    <Suspense fallback={null}>
+      <SupportChatWidgetLazy />
+    </Suspense>
+  );
 }
 
 const THEME_STORAGE_KEY = 'net360-theme-mode';
@@ -856,7 +888,7 @@ export default function App() {
       </div>
 
       <Toaster richColors position="top-right" closeButton visibleToasts={4} expand={false} offset={16} />
-      <SupportChatWidget />
+      <DeferredSupportChat />
     </AppDataProvider>
       </SubscriptionProvider>
       </SessionReady>
