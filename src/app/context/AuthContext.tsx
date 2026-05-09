@@ -310,6 +310,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error('Firebase auth is not configured.');
     }
     const provider = new GoogleAuthProvider();
+    provider.addScope('profile');
+    provider.addScope('email');
     provider.setCustomParameters({ prompt: 'select_account' });
     const credential = await signInWithPopup(firebaseAuth, provider);
     const firebaseIdToken = await credential.user.getIdToken();

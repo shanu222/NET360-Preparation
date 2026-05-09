@@ -84,6 +84,8 @@ const FIREBASE_AUTH_USER_MESSAGES: Record<string, string> = {
   'auth/too-many-requests': 'Too many attempts. Please wait a moment and try again.',
   'auth/network-request-failed': 'Unable to connect. Please check your internet.',
   'auth/popup-closed-by-user': 'Sign-in was cancelled.',
+  'auth/argument-error':
+    'Google sign-in could not start in this browser. Refresh the page, allow pop-ups, or use email sign-in.',
   'auth/popup-blocked': 'Pop-up was blocked. Please allow pop-ups for this site.',
   'auth/cancelled-popup-request': 'Sign-in was cancelled.',
   'auth/account-exists-with-different-credential': 'An account already exists with this email. Try logging in with email and password.',
