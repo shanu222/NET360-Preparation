@@ -18,6 +18,28 @@ import { loginBannerImageUrl, appPromoImageUrl, getMediaUrl } from '../lib/publi
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
 
+function GoogleLogo(props: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={props.className}>
+      <path fill="#EA4335" d="M12 10.2v3.96h5.5c-.24 1.28-.96 2.36-2.04 3.08l3.3 2.56c1.92-1.76 3.02-4.36 3.02-7.46 0-.72-.06-1.42-.2-2.1H12z" />
+      <path fill="#34A853" d="M12 22c2.7 0 4.96-.88 6.62-2.38l-3.3-2.56c-.92.62-2.1.98-3.32.98-2.56 0-4.74-1.72-5.52-4.02l-3.4 2.62A10 10 0 0 0 12 22z" />
+      <path fill="#4A90E2" d="M6.48 14.02A5.94 5.94 0 0 1 6.16 12c0-.7.12-1.38.32-2.02l-3.4-2.62A10 10 0 0 0 2 12c0 1.62.38 3.14 1.06 4.46l3.42-2.44z" />
+      <path fill="#FBBC05" d="M12 5.96c1.46 0 2.76.5 3.78 1.48l2.84-2.84C16.94 3.04 14.68 2 12 2A10 10 0 0 0 3.08 7.36l3.4 2.62C7.26 7.68 9.44 5.96 12 5.96z" />
+    </svg>
+  );
+}
+
+function AppleLogo(props: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className={props.className}>
+      <path
+        fill="currentColor"
+        d="M16.37 12.56c.02 2.22 1.95 2.96 1.97 2.97-.02.05-.3 1.05-.98 2.08-.59.89-1.2 1.78-2.16 1.8-.94.02-1.25-.56-2.33-.56-1.08 0-1.43.54-2.3.58-.93.03-1.63-.94-2.22-1.83-1.2-1.73-2.12-4.9-.88-7.05.61-1.06 1.7-1.74 2.89-1.75.9-.02 1.75.61 2.33.61.58 0 1.66-.76 2.8-.65.48.02 1.82.19 2.67 1.43-.07.04-1.6.94-1.58 2.37zM14.66 6.67c.49-.59.82-1.41.73-2.22-.7.03-1.55.47-2.05 1.06-.45.52-.84 1.36-.74 2.16.78.06 1.57-.39 2.06-1z"
+      />
+    </svg>
+  );
+}
+
 const LEGACY_TARGET_PROGRAM_LABELS: Record<string, string> = {
   cs: 'Computer Science',
   ee: 'Electrical Engineering',
@@ -34,7 +56,7 @@ type AuthPanelMode = 'login' | 'register' | 'recovery';
 type AuthActionState = 'idle' | 'loggingIn' | 'creatingAccount';
 
 export function Profile({ onNavigate }: ProfileProps) {
-  const { user, login, registerWithToken, sendRecoveryEmail, logout } = useAuth();
+  const { user, login, loginWithGoogle, loginWithApple, registerWithToken, sendRecoveryEmail, logout } = useAuth();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
   const [localProfile, setLocalProfile] = useState(profile);
   const [avatarPreview, setAvatarPreview] = useState(() => {
@@ -213,6 +235,23 @@ export function Profile({ onNavigate }: ProfileProps) {
       setForgotCooldownSeconds(30);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Could not send password reset email.');
+    }
+  };
+
+  const handleSocialAuth = async (provider: 'google' | 'apple') => {
+    if (isAuthBusy) return;
+    try {
+      setAuthActionState('loggingIn');
+      if (provider === 'google') {
+        await loginWithGoogle();
+      } else {
+        await loginWithApple();
+      }
+      setAuthActionState('idle');
+      toast.success(`Signed in with ${provider === 'google' ? 'Google' : 'Apple'} successfully.`);
+    } catch (error) {
+      setAuthActionState('idle');
+      toast.error(error instanceof Error ? error.message : 'Social login failed.');
     }
   };
 
@@ -567,13 +606,39 @@ export function Profile({ onNavigate }: ProfileProps) {
                 Password recovery uses Firebase reset email{forgotCooldownSeconds > 0 ? ` • cooldown ${forgotCooldownSeconds}s` : ''}
               </div>
 
-              {authMode === 'login' ? (
-                <>
+              {!isRecoveryMode ? (
+                <div className="space-y-2">
                   <div className="relative py-1 text-center text-sm text-slate-500">
                     <div className="absolute left-0 right-0 top-1/2 h-px bg-indigo-100" />
                     <span className="relative bg-white px-3 text-slate-500">or continue with</span>
                   </div>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 rounded-xl border-indigo-200 bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-800"
+                      disabled={isAuthBusy}
+                      onClick={() => void handleSocialAuth('google')}
+                    >
+                      <GoogleLogo className="mr-2 h-4 w-4" />
+                      Google
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-11 rounded-xl border-indigo-200 bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-800"
+                      disabled={isAuthBusy}
+                      onClick={() => void handleSocialAuth('apple')}
+                    >
+                      <AppleLogo className="mr-2 h-4 w-4" />
+                      Apple
+                    </Button>
+                  </div>
+                </div>
+              ) : null}
 
+              {authMode === 'login' ? (
+                <>
                   <div className="flex flex-wrap justify-center gap-3">
                     <Button asChild variant="outline" className="h-11 rounded-xl border-emerald-200 bg-white px-4 !text-emerald-700 shadow-sm hover:bg-emerald-50 hover:!text-emerald-800">
                       <a href={NET360_ADMIN_WHATSAPP_LINK} target="_blank" rel="noreferrer">

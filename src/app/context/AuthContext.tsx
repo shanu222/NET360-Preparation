@@ -3,8 +3,11 @@ import { apiRequest } from '../lib/api';
 import {
   createUserWithEmailAndPassword,
   deleteUser,
+  GoogleAuthProvider,
+  OAuthProvider,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
+  signInWithPopup,
   signOut,
 } from 'firebase/auth';
 import {
@@ -31,6 +34,8 @@ interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   login: (email: string, password: string, opts?: { forceLogoutOtherDevice?: boolean }) => Promise<void>;
+  loginWithGoogle: () => Promise<void>;
+  loginWithApple: () => Promise<void>;
   registerWithToken: (params: {
     email: string;
     password: string;
@@ -75,6 +80,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [deviceId] = useState<string>(() => getOrCreateDeviceId());
+
+  const applyAuthPayload = useCallback((payload: { token?: string; refreshToken?: string; user: AuthUser }) => {
+    setUser(payload.user);
+    if (payload.token && shouldPersistAuthTokens()) {
+      setToken(payload.token);
+      setRefreshToken(payload.refreshToken ?? null);
+      persistStudentTokens(payload.token, payload.refreshToken ?? null);
+    } else {
+      setToken(COOKIE_SESSION_API_MARKER);
+      setRefreshToken(null);
+      persistCookieSessionMode();
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -238,19 +256,96 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }),
       },
     );
+    applyAuthPayload(payload);
+  }, [applyAuthPayload, deviceId]);
 
-    setUser(payload.user);
-    if (payload.token && shouldPersistAuthTokens()) {
-      setToken(payload.token);
-      setRefreshToken(payload.refreshToken ?? null);
-      persistStudentTokens(payload.token, payload.refreshToken ?? null);
-      console.log("Token after login:", localStorage.getItem(TOKEN_STORAGE_KEY));
-    } else {
-      setToken(COOKIE_SESSION_API_MARKER);
-      setRefreshToken(null);
-      persistCookieSessionMode();
+  const upsertSocialAuthSession = useCallback(async (params: {
+    email: string;
+    firebaseIdToken: string;
+    firstName?: string;
+    lastName?: string;
+  }) => {
+    try {
+      const loginPayload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+        '/api/auth/login',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            email: params.email,
+            firebaseIdToken: params.firebaseIdToken,
+            deviceId,
+          }),
+        },
+      );
+      applyAuthPayload(loginPayload);
+      return;
+    } catch (error) {
+      const typed = error as Error & { status?: number };
+      if (typed?.status !== 401) {
+        throw error;
+      }
     }
-  }, [deviceId]);
+
+    const registerPayload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+      '/api/auth/register',
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          email: params.email,
+          firstName: params.firstName || '',
+          lastName: params.lastName || '',
+          firebaseIdToken: params.firebaseIdToken,
+          deviceId,
+        }),
+      },
+    );
+    applyAuthPayload(registerPayload);
+  }, [applyAuthPayload, deviceId]);
+
+  const loginWithGoogle = useCallback<AuthContextValue['loginWithGoogle']>(async () => {
+    if (!isFirebaseConfigured() || !firebaseAuth) {
+      throw new Error('Firebase auth is not configured.');
+    }
+    const provider = new GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    const credential = await signInWithPopup(firebaseAuth, provider);
+    const firebaseIdToken = await credential.user.getIdToken();
+    const [firstName = '', ...rest] = String(credential.user.displayName || '').trim().split(/\s+/);
+    const lastName = rest.join(' ').trim();
+    const email = String(credential.user.email || '').trim().toLowerCase();
+    if (!email) {
+      throw new Error('Google login did not return an email address.');
+    }
+    await upsertSocialAuthSession({
+      email,
+      firebaseIdToken,
+      firstName,
+      lastName,
+    });
+  }, [upsertSocialAuthSession]);
+
+  const loginWithApple = useCallback<AuthContextValue['loginWithApple']>(async () => {
+    if (!isFirebaseConfigured() || !firebaseAuth) {
+      throw new Error('Firebase auth is not configured.');
+    }
+    const provider = new OAuthProvider('apple.com');
+    provider.addScope('email');
+    provider.addScope('name');
+    const credential = await signInWithPopup(firebaseAuth, provider);
+    const firebaseIdToken = await credential.user.getIdToken();
+    const [firstName = '', ...rest] = String(credential.user.displayName || '').trim().split(/\s+/);
+    const lastName = rest.join(' ').trim();
+    const email = String(credential.user.email || '').trim().toLowerCase();
+    if (!email) {
+      throw new Error('Apple login did not return an email. Enable Apple email scope in Firebase and try again.');
+    }
+    await upsertSocialAuthSession({
+      email,
+      firebaseIdToken,
+      firstName,
+      lastName,
+    });
+  }, [upsertSocialAuthSession]);
 
   const registerWithToken = useCallback<AuthContextValue['registerWithToken']>(async ({
     email,
@@ -283,17 +378,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw error;
     }
 
-    setUser(payload.user);
-    if (payload.token && shouldPersistAuthTokens()) {
-      setToken(payload.token);
-      setRefreshToken(payload.refreshToken ?? null);
-      persistStudentTokens(payload.token, payload.refreshToken ?? null);
-    } else {
-      setToken(COOKIE_SESSION_API_MARKER);
-      setRefreshToken(null);
-      persistCookieSessionMode();
-    }
-  }, [deviceId]);
+    applyAuthPayload(payload);
+  }, [applyAuthPayload, deviceId]);
 
   const sendRecoveryEmail = useCallback<AuthContextValue['sendRecoveryEmail']>(async (email) => {
     if (!isFirebaseConfigured() || !firebaseAuth) {
@@ -318,8 +404,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [refreshToken]);
 
   const value = useMemo(
-    () => ({ token, user, loading, login, registerWithToken, sendRecoveryEmail, logout }),
-    [token, user, loading, login, registerWithToken, sendRecoveryEmail, logout],
+    () => ({
+      token,
+      user,
+      loading,
+      login,
+      loginWithGoogle,
+      loginWithApple,
+      registerWithToken,
+      sendRecoveryEmail,
+      logout,
+    }),
+    [token, user, loading, login, loginWithGoogle, loginWithApple, registerWithToken, sendRecoveryEmail, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
