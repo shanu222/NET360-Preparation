@@ -1,20 +1,42 @@
 import sharp from 'sharp';
 import fs from 'node:fs';
+import path from 'node:path';
 
-/** Prefer committed `public/net360-logo.png`, then repo-root sources for `npm run brand:assets`. */
-const srcCandidates = ['public/net360-logo.png', 'New NET360 logo.png', 'NET360 logo.png', 'NET logo.png'];
-const src = srcCandidates.find((candidate) => fs.existsSync(candidate));
+/**
+ * PWA / manifest theme_color (#5f4ee6) — maskable icons use this as padding so the mark
+ * sits inside the safe zone (fit: contain).
+ */
+const MASKABLE_BG = { r: 95, g: 78, b: 230, alpha: 1 };
+const STANDARD_ICON_BG = { r: 255, g: 255, b: 255, alpha: 1 };
 
-if (!src) {
-  throw new Error(`Logo source not found. Expected one of: ${srcCandidates.join(', ')}`);
+const svgCandidates = ['public/logo.svg'];
+const rasterCandidates = ['public/net360-logo.png', 'New NET360 logo.png', 'NET360 logo.png', 'NET logo.png'];
+
+function resolveSourcePath() {
+  const svg = svgCandidates.find((c) => fs.existsSync(c));
+  if (svg) return svg;
+  const raster = rasterCandidates.find((c) => fs.existsSync(c));
+  if (raster) return raster;
+  throw new Error(
+    `Logo source not found. Expected SVG one of: ${svgCandidates.join(', ')} or raster: ${rasterCandidates.join(', ')}`,
+  );
 }
 
+const src = resolveSourcePath();
+
+/**
+ * [outPath, edgePx, fit, background|null]
+ * - cover: fills square (favicon / launcher)
+ * - contain + MASKABLE_BG: PWA maskable safe zone (padding around mark)
+ */
 const webTargets = [
-  ['public/favicon-32.png', 32, 'cover'],
-  ['public/favicon-192.png', 192, 'cover'],
-  ['public/apple-touch-icon.png', 180, 'cover'],
-  ['public/android-chrome-512x512.png', 512, 'cover'],
-  ['public/splash-icon.png', 512, 'cover'],
+  ['public/favicon-32.png', 32, 'cover', STANDARD_ICON_BG],
+  ['public/favicon-192.png', 192, 'cover', STANDARD_ICON_BG],
+  ['public/favicon-192-maskable.png', 192, 'contain', MASKABLE_BG],
+  ['public/apple-touch-icon.png', 180, 'cover', STANDARD_ICON_BG],
+  ['public/android-chrome-512x512.png', 512, 'cover', STANDARD_ICON_BG],
+  ['public/android-chrome-512-maskable.png', 512, 'contain', MASKABLE_BG],
+  ['public/splash-icon.png', 512, 'cover', STANDARD_ICON_BG],
 ];
 
 const androidTargets = [
@@ -48,19 +70,24 @@ const androidSplashTargets = [
   'android/app/src/main/res/drawable-land-xxxhdpi/splash.png',
 ];
 
+async function writeSquarePng(out, size, fit, background) {
+  await fs.promises.mkdir(path.dirname(out), { recursive: true }).catch(() => {});
+  await sharp(src)
+    .resize(size, size, { fit, background: background || STANDARD_ICON_BG })
+    .png({ compressionLevel: 9, effort: 10 })
+    .toFile(out);
+}
+
 async function build() {
-  for (const [out, size, fit] of webTargets) {
-    await sharp(src)
-      .resize(size, size, { fit, background: { r: 255, g: 255, b: 255, alpha: 1 } })
-      .png({ compressionLevel: 9 })
-      .toFile(out);
+  console.log('[brand:assets] source:', src);
+
+  for (const [out, size, fit, background] of webTargets) {
+    await writeSquarePng(out, size, fit, background);
   }
 
   for (const [out, size, fit] of androidTargets) {
-    await sharp(src)
-      .resize(size, size, { fit, background: { r: 255, g: 255, b: 255, alpha: 1 } })
-      .png({ compressionLevel: 9 })
-      .toFile(out);
+    const bg = fit === 'contain' ? STANDARD_ICON_BG : STANDARD_ICON_BG;
+    await writeSquarePng(out, size, fit, bg);
   }
 
   for (const out of androidSplashTargets) {
@@ -70,12 +97,11 @@ async function build() {
     }
 
     await sharp(src)
-      .resize(metadata.width, metadata.height, { fit: 'contain', background: { r: 255, g: 255, b: 255, alpha: 1 } })
-      .png({ compressionLevel: 9 })
+      .resize(metadata.width, metadata.height, { fit: 'contain', background: STANDARD_ICON_BG })
+      .png({ compressionLevel: 9, effort: 10 })
       .toFile(out);
   }
 
-  // `public/logo.svg` is the committed brand mark for web (student + admin). Do not overwrite here.
   console.log('Brand assets generated successfully (web + Android launcher + Android splash).');
 }
 
