@@ -25,7 +25,7 @@
   --admin-shadow-hover-dark: 0 28px 56px rgba(2, 6, 23, 0.58);
   --admin-text-strong: rgb(15 23 42);
   --admin-text-body: rgb(30 41 59);
-  --admin-text-muted: rgb(71 85 105);
+  --admin-text-muted: rgb(51 65 85);
   --admin-text-soft: rgb(100 116 139);
   --admin-surface-light: rgba(255, 255, 255, 0.9);
   --admin-surface-soft-light: rgba(241, 245, 249, 0.92);
@@ -211,19 +211,11 @@
   color: var(--admin-dark-text-muted);
 }
 
-.dark .admin-shell [class*='text-slate-'] {
-  color: var(--admin-dark-text-body);
-}
-
-.dark .admin-shell [class*='text-slate-1'] {
-  color: var(--admin-dark-text-strong);
-}
-
-.dark .admin-shell [class*='text-slate-3'],
-.dark .admin-shell [class*='text-slate-4'],
-.dark .admin-shell [class*='text-slate-5'] {
-  color: var(--admin-dark-text-muted);
-}
+/*
+ * Do not globally remap every `text-slate-*` utility in dark mode: many MCQ panels keep pale
+ * `bg-indigo-50/*` / `bg-white/*` surfaces — forcing light text there made labels & hints invisible.
+ * Scoped “light island” overrides below fix contrast only where pale panels remain in dark theme.
+ */
 
 .dark .admin-shell [data-slot='tabs-list'] {
   border-color: rgba(129, 140, 248, 0.32);
@@ -252,16 +244,29 @@
 .dark .admin-shell .bg-white\/80,
 .dark .admin-shell .bg-white\/70,
 .dark .admin-shell .bg-white\/65,
+.dark .admin-shell .bg-white\/50,
 .dark .admin-shell .bg-slate-50,
 .dark .admin-shell .bg-slate-50\/70,
 .dark .admin-shell .bg-slate-50\/60,
 .dark .admin-shell .bg-indigo-50,
+.dark .admin-shell .bg-indigo-50\/25,
+.dark .admin-shell .bg-indigo-50\/30,
+.dark .admin-shell .bg-indigo-50\/35,
+.dark .admin-shell .bg-indigo-50\/40,
+.dark .admin-shell .bg-indigo-50\/60,
+.dark .admin-shell .bg-indigo-100\/70,
+.dark .admin-shell .bg-cyan-100\/70,
+.dark .admin-shell .bg-rose-100\/70,
 .dark .admin-shell .bg-emerald-50,
 .dark .admin-shell .bg-emerald-50\/70,
 .dark .admin-shell .bg-emerald-50\/60,
 .dark .admin-shell .bg-amber-50,
 .dark .admin-shell .bg-rose-50,
-.dark .admin-shell .bg-muted {
+.dark .admin-shell .bg-muted,
+.dark .admin-shell .bg-muted\/20,
+.dark .admin-shell .bg-muted\/30,
+.dark .admin-shell .bg-muted\/50,
+.dark .admin-shell .bg-rose-50\/40 {
   background-color: var(--admin-dark-surface-3);
 }
 

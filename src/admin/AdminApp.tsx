@@ -7270,7 +7270,7 @@ export default function AdminApp() {
                         className={`admin-support-bubble max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                           item.senderRole === 'admin'
                             ? 'admin-support-bubble-admin ml-auto bg-indigo-600 text-white'
-                            : 'admin-support-bubble-user mr-auto border bg-white text-slate-700'
+                            : 'admin-support-bubble-user mr-auto border bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100'
                         }`}
                       >
                         {item.messageType === 'file' && item.attachment ? (
@@ -7938,21 +7938,21 @@ export default function AdminApp() {
                     <button
                       type="button"
                       onClick={() => setActiveMcqPanel((prev) => (prev === 'upload' ? null : 'upload'))}
-                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${activeMcqPanel === 'upload' ? 'border-indigo-400 bg-indigo-100/70 text-indigo-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
+                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${activeMcqPanel === 'upload' ? 'border-indigo-400 bg-indigo-100/70 text-indigo-900 dark:text-indigo-100' : 'border-slate-300 bg-white/70 text-slate-700 dark:border-slate-600 dark:text-slate-100'}`}
                     >
                       Upload MCQs
                     </button>
                     <button
                       type="button"
                       onClick={() => setActiveMcqPanel((prev) => (prev === 'deleter' ? null : 'deleter'))}
-                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${activeMcqPanel === 'deleter' ? 'border-rose-400 bg-rose-100/70 text-rose-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
+                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${activeMcqPanel === 'deleter' ? 'border-rose-400 bg-rose-100/70 text-rose-900 dark:text-rose-100' : 'border-slate-300 bg-white/70 text-slate-700 dark:border-slate-600 dark:text-slate-100'}`}
                     >
                       MCQs Deleter
                     </button>
                     <button
                       type="button"
                       onClick={() => setActiveMcqPanel((prev) => (prev === 'bank' ? null : 'bank'))}
-                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${activeMcqPanel === 'bank' ? 'border-cyan-400 bg-cyan-100/70 text-cyan-900' : 'border-slate-300 bg-white/70 text-slate-700'}`}
+                      className={`rounded-lg border px-3 py-2 text-sm font-medium transition ${activeMcqPanel === 'bank' ? 'border-cyan-400 bg-cyan-100/70 text-cyan-900 dark:text-cyan-100' : 'border-slate-300 bg-white/70 text-slate-700 dark:border-slate-600 dark:text-slate-100'}`}
                     >
                       Update / Edit MCQs
                     </button>
@@ -8614,14 +8614,14 @@ export default function AdminApp() {
                             <button
                               type="button"
                               onClick={() => setForm((prev) => ({ ...prev, questionType: 'text' }))}
-                              className={`px-3 py-1.5 text-xs ${form.questionType !== 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                              className={`px-3 py-1.5 text-xs ${form.questionType !== 'image' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100'}`}
                             >
                               Text
                             </button>
                             <button
                               type="button"
                               onClick={() => setForm((prev) => ({ ...prev, questionType: 'image' }))}
-                              className={`px-3 py-1.5 text-xs ${form.questionType === 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                              className={`px-3 py-1.5 text-xs ${form.questionType === 'image' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100'}`}
                             >
                               Image
                             </button>
@@ -8759,7 +8759,7 @@ export default function AdminApp() {
                                         optionTypes[optionIdx] = 'text';
                                         return { ...prev, optionTypes };
                                       })}
-                                      className={`px-3 py-1.5 text-xs ${(form.optionTypes[optionIdx] || 'text') !== 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                                      className={`px-3 py-1.5 text-xs ${(form.optionTypes[optionIdx] || 'text') !== 'image' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100'}`}
                                     >
                                       Text
                                     </button>
@@ -8770,7 +8770,7 @@ export default function AdminApp() {
                                         optionTypes[optionIdx] = 'image';
                                         return { ...prev, optionTypes };
                                       })}
-                                      className={`px-3 py-1.5 text-xs ${(form.optionTypes[optionIdx] || 'text') === 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                                      className={`px-3 py-1.5 text-xs ${(form.optionTypes[optionIdx] || 'text') === 'image' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100'}`}
                                     >
                                       Image
                                     </button>
@@ -9342,14 +9342,14 @@ export default function AdminApp() {
                               <button
                                 type="button"
                                 onClick={() => updateBankEditDraft(item.id, (current) => ({ ...current, questionType: 'text' }))}
-                                className={`px-3 py-1.5 text-xs ${draft.questionType !== 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                                className={`px-3 py-1.5 text-xs ${draft.questionType !== 'image' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100'}`}
                               >
                                 Text
                               </button>
                               <button
                                 type="button"
                                 onClick={() => updateBankEditDraft(item.id, (current) => ({ ...current, questionType: 'image' }))}
-                                className={`px-3 py-1.5 text-xs ${draft.questionType === 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                                className={`px-3 py-1.5 text-xs ${draft.questionType === 'image' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100'}`}
                               >
                                 Image
                               </button>
@@ -9512,7 +9512,7 @@ export default function AdminApp() {
                                           optionTypes[optionIdx] = 'text';
                                           return { ...current, optionTypes };
                                         })}
-                                        className={`px-3 py-1.5 text-xs ${(draft.optionTypes[optionIdx] || 'text') !== 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                                        className={`px-3 py-1.5 text-xs ${(draft.optionTypes[optionIdx] || 'text') !== 'image' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100'}`}
                                       >
                                         Text
                                       </button>
@@ -9523,7 +9523,7 @@ export default function AdminApp() {
                                           optionTypes[optionIdx] = 'image';
                                           return { ...current, optionTypes };
                                         })}
-                                        className={`px-3 py-1.5 text-xs ${(draft.optionTypes[optionIdx] || 'text') === 'image' ? 'bg-indigo-600 text-white' : 'bg-white text-slate-700'}`}
+                                        className={`px-3 py-1.5 text-xs ${(draft.optionTypes[optionIdx] || 'text') === 'image' ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100'}`}
                                       >
                                         Image
                                       </button>
