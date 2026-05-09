@@ -8,7 +8,9 @@
  *
  * Not uploaded: brand logo (`/net360-logo.png` same-origin). MCQ/community/avatar media uses DB keys → upload via app API.
  *
- * Env: AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_BUCKET_NAME
+ * Env: AWS_REGION, AWS_BUCKET_NAME, and either:
+ *   AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY
+ *   or legacy AWS_ACCESS_KEY + AWS_SECRET_KEY (same as server/config/s3.js)
  * Frontend: VITE_S3_BASE_URL=https://BUCKET.s3.REGION.amazonaws.com (or CloudFront).
  *
  * CORS on bucket: GET/HEAD, expose Content-Length / Accept-Ranges for video.
@@ -25,14 +27,34 @@ const root = path.resolve(__dirname, '..');
 
 dotenv.config({ path: path.join(root, '.env') });
 
-const region = String(process.env.AWS_REGION || 'ap-south-1').trim();
+const region = String(process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || 'ap-south-1').trim();
 const bucket = String(process.env.AWS_BUCKET_NAME || '').trim();
+const accessKeyId = String(
+  process.env.AWS_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY || '',
+).trim();
+const secretAccessKey = String(
+  process.env.AWS_SECRET_ACCESS_KEY || process.env.AWS_SECRET_KEY || '',
+).trim();
+
 if (!bucket) {
-  console.error('Set AWS_BUCKET_NAME (and AWS credentials) before uploading.');
+  console.error('Set AWS_BUCKET_NAME in .env before uploading.');
   process.exit(1);
 }
 
-const client = new S3Client({ region });
+if (!accessKeyId || !secretAccessKey) {
+  console.error(
+    'Missing S3 credentials. In .env use either:\n'
+      + '  AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY\n'
+      + '  or legacy: AWS_ACCESS_KEY + AWS_SECRET_KEY\n'
+      + '(same aliases as server/config/s3.js).',
+  );
+  process.exit(1);
+}
+
+const client = new S3Client({
+  region,
+  credentials: { accessKeyId, secretAccessKey },
+});
 
 const CACHE = 'public, max-age=31536000, immutable';
 
