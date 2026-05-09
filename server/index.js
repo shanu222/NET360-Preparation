@@ -479,8 +479,15 @@ const corsMiddleware = cors({
 app.use(corsMiddleware);
 app.options('*', corsMiddleware);
 
+function redactRequestUrl(rawUrl) {
+  const value = String(rawUrl || '').trim();
+  if (!value) return '/';
+  const [pathOnly] = value.split('?');
+  return pathOnly || '/';
+}
+
 app.use((req, res, next) => {
-  console.log('[request]', req.method, req.originalUrl || req.url);
+  console.log('[request]', req.method, redactRequestUrl(req.originalUrl || req.url));
   next();
 });
 app.use(express.json({ limit: `${MAX_JSON_BODY_MB}mb` }));
