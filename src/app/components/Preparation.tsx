@@ -3,7 +3,7 @@ import { ChevronRight } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
-import { toast } from 'sonner';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { resolveLaunchAuthToken } from '../lib/api';
 import {
   bearerForLaunchUrl,
@@ -659,7 +659,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     }
 
     if (!examWindow) {
-      toast.error('Popup blocked. Please allow popups and try again.');
+      showErrorToast('Popup blocked. Please allow popups and try again.');
       return;
     }
 
@@ -681,7 +681,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
 
     await waitUntilAuthHydrated(() => authLoadingRef.current);
     if (!readPersistedStudentAccessToken() && !tokenRef.current && !userRef.current) {
-      toast.error('Please login first to start a section test from Preparation Materials.');
+      showErrorToast('Please login first to start a section test from Preparation Materials.');
       launchingRef.current = false;
       return;
     }
@@ -691,14 +691,14 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     );
     if (!resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current)) {
       console.warn('Auth not ready yet');
-      toast.error('Please login first to start a section test from Preparation Materials.');
+      showErrorToast('Please login first to start a section test from Preparation Materials.');
       launchingRef.current = false;
       return;
     }
 
     const authToken = await resolveLaunchToken();
     if (!authToken) {
-      toast.error('Please login first to start a section test from Preparation Materials.');
+      showErrorToast('Please login first to start a section test from Preparation Materials.');
       launchingRef.current = false;
       return;
     }
@@ -720,7 +720,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     if (!isNativeRuntime && !mobileBrowser) {
       examWindow = window.open('about:blank', '_blank', 'width=1400,height=900');
       if (!examWindow) {
-        toast.error('Popup blocked. Please allow popups and try again.');
+        showErrorToast('Popup blocked. Please allow popups and try again.');
         launchingRef.current = false;
         return;
       }
@@ -749,7 +749,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       mobileSectionStartRetryRef.current = 0;
       const launchToken = (await resolveLaunchToken()) || authToken;
       openExamWindow({ sessionId: session.id, token: launchToken, examWindow, sameTab: mobileBrowser });
-      toast.success(isNativeRuntime ? 'Section test launched.' : 'Section test launched in a new window.');
+      showSuccessToast(isNativeRuntime ? 'Section test launched.' : 'Section test launched in a new window.');
     } catch (error) {
       if (examWindow) examWindow.close();
       console.error('Section test start error:', error);
@@ -762,14 +762,14 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
         mobileSectionStartRetryRef.current = 1;
         setLaunchingSectionKey(null);
         launchingRef.current = false;
-        toast.message('Retrying test start…');
+        showNeutralToast('Retrying test start…');
         window.setTimeout(() => {
           void handleStartSectionTest(payload);
         }, 500);
         return;
       }
       mobileSectionStartRetryRef.current = 0;
-      toast.error(formatTestStartFailureToast(error));
+      showErrorToast(formatTestStartFailureToast(error));
     } finally {
       setLaunchingSectionKey(null);
       launchingRef.current = false;
@@ -789,7 +789,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
 
     await waitUntilAuthHydrated(() => authLoadingRef.current);
     if (!readPersistedStudentAccessToken() && !tokenRef.current && !userRef.current) {
-      toast.error('Please login first to start a topic test from Preparation Materials.');
+      showErrorToast('Please login first to start a topic test from Preparation Materials.');
       launchingRef.current = false;
       return;
     }
@@ -799,14 +799,14 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     );
     if (!resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current)) {
       console.warn('Auth not ready yet');
-      toast.error('Please login first to start a topic test from Preparation Materials.');
+      showErrorToast('Please login first to start a topic test from Preparation Materials.');
       launchingRef.current = false;
       return;
     }
 
     const authToken = await resolveLaunchToken();
     if (!authToken) {
-      toast.error('Please login first to start a topic test from Preparation Materials.');
+      showErrorToast('Please login first to start a topic test from Preparation Materials.');
       launchingRef.current = false;
       return;
     }
@@ -827,7 +827,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     if (!isNativeRuntime && !mobileBrowser) {
       examWindow = window.open('about:blank', '_blank', 'width=1400,height=900');
       if (!examWindow) {
-        toast.error('Popup blocked. Please allow popups and try again.');
+        showErrorToast('Popup blocked. Please allow popups and try again.');
         launchingRef.current = false;
         return;
       }
@@ -858,7 +858,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
           mobileFlatStartRetryRef.current = 0;
           const launchToken = (await resolveLaunchToken()) || authToken;
           openExamWindow({ sessionId: session.id, token: launchToken, examWindow, sameTab: mobileBrowser });
-          toast.success(isNativeRuntime ? 'Topic test launched.' : 'Topic test launched in a new window.');
+          showSuccessToast(isNativeRuntime ? 'Topic test launched.' : 'Topic test launched in a new window.');
           return;
         } catch (error) {
           lastError = error;
@@ -878,14 +878,14 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
         mobileFlatStartRetryRef.current = 1;
         setLaunchingSectionKey(null);
         launchingRef.current = false;
-        toast.message('Retrying test start…');
+        showNeutralToast('Retrying test start…');
         window.setTimeout(() => {
           void handleStartFlatTopicTest(tabKey, topicTitle, difficulty);
         }, 500);
         return;
       }
       mobileFlatStartRetryRef.current = 0;
-      toast.error(formatTestStartFailureToast(error));
+      showErrorToast(formatTestStartFailureToast(error));
     } finally {
       setLaunchingSectionKey(null);
       launchingRef.current = false;

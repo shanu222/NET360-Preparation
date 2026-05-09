@@ -22,7 +22,7 @@ import { useAuth } from '../context/AuthContext';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { Button } from './ui/button';
 import { downloadReport } from '../lib/api';
-import { toast } from 'sonner';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 
 const subjects: SubjectKey[] = ['mathematics', 'physics', 'english'];
 
@@ -32,7 +32,7 @@ export function Analytics() {
 
   const exportReportPdf = async () => {
     if (!user) {
-      toast.error('Please login to export reports.');
+      showErrorToast('Please login to export reports.');
       return;
     }
 
@@ -44,9 +44,9 @@ export function Analytics() {
       anchor.download = filename;
       anchor.click();
       URL.revokeObjectURL(url);
-      toast.success(`PDF exported: ${filename}`);
+      showSuccessToast(`PDF exported: ${filename}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Export failed.');
+      handleApiError(error, 'Export failed.');
     }
   };
 

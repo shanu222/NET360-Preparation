@@ -16,7 +16,7 @@ import {
   Target,
   TrendingUp,
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest, resolveLaunchAuthToken } from '../lib/api';
@@ -271,7 +271,7 @@ export function Tests({ onNavigate }: TestsProps) {
     }
 
     if (!examWindow) {
-      toast.error('Popup blocked. Please allow popups and try again.');
+      showErrorToast('Popup blocked. Please allow popups and try again.');
       return;
     }
 
@@ -285,7 +285,7 @@ export function Tests({ onNavigate }: TestsProps) {
     topicOverride?: string,
   ) => {
     if (!selectedNetType) {
-      toast.error('Select a NET type first.');
+      showErrorToast('Select a NET type first.');
       launchingRef.current = false;
       return;
     }
@@ -300,7 +300,7 @@ export function Tests({ onNavigate }: TestsProps) {
 
     await waitUntilAuthHydrated(() => authLoadingRef.current);
     if (!readPersistedStudentAccessToken() && !tokenRef.current && !userRef.current) {
-      toast.error('Please login first to start a test. Redirecting to login...');
+      showErrorToast('Please login first to start a test. Redirecting to login...');
       onNavigate?.('profile');
       launchingRef.current = false;
       return;
@@ -308,7 +308,7 @@ export function Tests({ onNavigate }: TestsProps) {
     await waitUntilClientAuthToken(() => resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current));
     if (!resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current)) {
       console.warn('Auth not ready yet');
-      toast.error('Please login first to start a test. Redirecting to login...');
+      showErrorToast('Please login first to start a test. Redirecting to login...');
       onNavigate?.('profile');
       launchingRef.current = false;
       return;
@@ -316,7 +316,7 @@ export function Tests({ onNavigate }: TestsProps) {
 
     const authToken = await resolveLaunchToken();
     if (!authToken) {
-      toast.error('Please login first to start a test. Redirecting to login...');
+      showErrorToast('Please login first to start a test. Redirecting to login...');
       onNavigate?.('profile');
       launchingRef.current = false;
       return;
@@ -333,7 +333,7 @@ export function Tests({ onNavigate }: TestsProps) {
     // Open a blank window first so /exam-interface never loads without sessionId (avoids missing-ID flash).
     const examWindow = isNativeRuntime ? null : window.open('about:blank', '_blank', 'width=1400,height=900');
     if (!isNativeRuntime && !examWindow) {
-      toast.error('Popup blocked. Please allow popups and try again.');
+      showErrorToast('Popup blocked. Please allow popups and try again.');
       launchingRef.current = false;
       return;
     }
@@ -374,7 +374,7 @@ export function Tests({ onNavigate }: TestsProps) {
 
       mobileTestStartRetryRef.current = 0;
       openExamWindow({ sessionId: session.id, testType: kind, token: authToken, examWindow });
-      toast.success(isNativeRuntime ? 'Test launched.' : 'Test launched in a new window.');
+      showSuccessToast(isNativeRuntime ? 'Test launched.' : 'Test launched in a new window.');
     } catch (error) {
       examWindow?.close();
       console.error('Test start error:', error);
@@ -387,7 +387,7 @@ export function Tests({ onNavigate }: TestsProps) {
         mobileTestStartRetryRef.current = 1;
         setLaunchingKind(null);
         launchingRef.current = false;
-        toast.message('Retrying test start…');
+        showNeutralToast('Retrying test start…');
         window.setTimeout(() => {
           void beginTest(kind, subjectOverride, questionCountOverride, topicOverride);
         }, 500);
@@ -395,10 +395,10 @@ export function Tests({ onNavigate }: TestsProps) {
       }
       mobileTestStartRetryRef.current = 0;
       if (/login|authentication|Missing authentication|sign in/i.test(msg)) {
-        toast.error('Please sign in to start a test.');
+        showErrorToast('Please sign in to start a test.');
         onNavigate?.('profile');
       } else {
-        toast.error(formatTestStartFailureToast(error));
+        showErrorToast(formatTestStartFailureToast(error));
       }
     } finally {
       setLaunchingKind(null);

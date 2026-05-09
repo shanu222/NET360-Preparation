@@ -43,12 +43,17 @@ const TestInterfacePage = lazy(() =>
                 <AuthProvider>
                   <AppDataProvider>
                     <TestInterfacePage />
-                    <Toaster richColors position="top-right" />
+                    <Toaster richColors position="top-right" closeButton visibleToasts={4} expand={false} offset={16} />
                   </AppDataProvider>
                 </AuthProvider>
               )
               : shouldRenderAdminApp
-                ? <AdminApp />
+                ? (
+                    <>
+                      <AdminApp />
+                      <Toaster richColors position="top-right" closeButton visibleToasts={4} expand={false} offset={16} />
+                    </>
+                  )
                 : (
                   <BrowserRouter>
                     <App />

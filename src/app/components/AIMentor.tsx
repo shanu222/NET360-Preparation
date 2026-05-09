@@ -25,7 +25,7 @@ import {
   Upload,
   Zap,
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest, downloadBinary } from '../lib/api';
 import { buildPaymentProofPayload, PAYMENT_PROOF_ACCEPT } from '../lib/paymentProof';
@@ -430,7 +430,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     if (!question.trim()) return;
 
     if (!token || !user) {
-      toast.error('Login required to use Smart Study Mentor.');
+      showErrorToast('Login required to use Smart Study Mentor.');
       return;
     }
 
@@ -469,16 +469,16 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
         const refreshed = await reloadSubscription();
         if (!refreshed?.subscription?.isActive) {
           if (subscription.isActive && isSubscriptionActiveNow(subscription)) {
-            toast.error('Could not verify premium status right now. Please retry in a moment.');
+            showErrorToast('Could not verify premium status right now. Please retry in a moment.');
           } else {
             applySubscription(emptySubscription);
-            toast.error('Premium subscription required. Please activate a plan first.');
+            showErrorToast('Premium subscription required. Please activate a plan first.');
           }
         } else {
-          toast.error('Your premium status is active. Please retry your request.');
+          showErrorToast('Your premium status is active. Please retry your request.');
         }
       } else {
-        toast.error(error instanceof Error ? error.message : 'Could not reach the study mentor right now.');
+        handleApiError(error, 'Could not reach the study mentor right now.');
       }
       setChatMessages((previous) => [
         ...previous,
@@ -505,7 +505,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
   const exportDoubtSupport = async (format: 'pdf' | 'word') => {
     if (!token || !user) {
-      toast.error('Login required to export doubt support output.');
+      showErrorToast('Login required to export doubt support output.');
       return;
     }
 
@@ -513,7 +513,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     const lastUser = [...chatMessages].reverse().find((item) => item.role === 'user');
 
     if (!lastAi) {
-      toast.error('Ask at least one question before exporting.');
+      showErrorToast('Ask at least one question before exporting.');
       return;
     }
 
@@ -537,9 +537,9 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       );
 
       triggerDownload(blob, filename);
-      toast.success(`Doubt support exported as ${format.toUpperCase()}.`);
+      showSuccessToast(`Doubt support exported as ${format.toUpperCase()}.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not export doubt support response.');
+      handleApiError(error, 'Could not export doubt support response.');
     } finally {
       setIsExportingChat(false);
     }
@@ -547,11 +547,11 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
   const exportSolverOutput = async (format: 'pdf' | 'word') => {
     if (!token || !user) {
-      toast.error('Login required to export solver output.');
+      showErrorToast('Login required to export solver output.');
       return;
     }
     if (!solverResult) {
-      toast.error('Solve a question first, then export the result.');
+      showErrorToast('Solve a question first, then export the result.');
       return;
     }
 
@@ -576,9 +576,9 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       );
 
       triggerDownload(blob, filename);
-      toast.success(`Question solver output exported as ${format.toUpperCase()}.`);
+      showSuccessToast(`Question solver output exported as ${format.toUpperCase()}.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not export solver output.');
+      handleApiError(error, 'Could not export solver output.');
     } finally {
       setIsExportingSolver(false);
     }
@@ -586,11 +586,11 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
   const exportStudyPlanner = async (format: 'pdf' | 'word') => {
     if (!token || !user) {
-      toast.error('Login required to export study planner.');
+      showErrorToast('Login required to export study planner.');
       return;
     }
     if (!planData) {
-      toast.error('Generate a study plan first, then export it.');
+      showErrorToast('Generate a study plan first, then export it.');
       return;
     }
 
@@ -612,9 +612,9 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       );
 
       triggerDownload(blob, filename);
-      toast.success(`Study planner exported as ${format.toUpperCase()}.`);
+      showSuccessToast(`Study planner exported as ${format.toUpperCase()}.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not export study planner.');
+      handleApiError(error, 'Could not export study planner.');
     } finally {
       setIsExportingPlanner(false);
     }
@@ -633,12 +633,12 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
     if (!file) return;
 
     if (!['image/png', 'image/jpeg', 'image/jpg'].includes(file.type.toLowerCase())) {
-      toast.error('Only JPG and PNG are supported.');
+      showErrorToast('Only JPG and PNG are supported.');
       return;
     }
 
     if (file.size > 5 * 1024 * 1024) {
-      toast.error('Please upload an image under 5MB.');
+      showErrorToast('Please upload an image under 5MB.');
       return;
     }
 
@@ -647,9 +647,9 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       setSolverImageName(file.name);
       setSolverMimeType(file.type);
       setSolverImageDataUrl(dataUrl);
-      toast.success(`Selected image: ${file.name}`);
+      showSuccessToast(`Selected image: ${file.name}`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not read image file.');
+      handleApiError(error, 'Could not read image file.');
     }
   };
 
@@ -661,9 +661,9 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       setIsReadingPremiumProof(true);
       const payload = await buildPaymentProofPayload(file, (progress) => setPremiumProofReadProgress(progress));
       setPaymentProof(payload);
-      toast.success('Payment proof attached.');
+      showSuccessToast('Payment proof attached.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not read payment proof file.');
+      handleApiError(error, 'Could not read payment proof file.');
     } finally {
       setIsReadingPremiumProof(false);
       event.target.value = '';
@@ -672,12 +672,12 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
   const solveQuestion = async () => {
     if (!token || !user) {
-      toast.error('Login required to use premium solver.');
+      showErrorToast('Login required to use premium solver.');
       return;
     }
 
     if (!solverImageDataUrl && !solverQuestionText.trim()) {
-      toast.error('Upload an image or paste question text first.');
+      showErrorToast('Upload an image or paste question text first.');
       return;
     }
 
@@ -698,23 +698,23 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
       setSolverResult(payload);
       setAiUsage((previous) => ({ ...previous, ...payload.usage }));
-      toast.success('Question solved successfully.');
+      showSuccessToast('Question solved successfully.');
     } catch (error) {
       const appError = error as { message?: string; code?: string };
       if (appError?.code === 'SUBSCRIPTION_REQUIRED') {
         const refreshed = await reloadSubscription();
         if (!refreshed?.subscription?.isActive) {
           if (subscription.isActive && isSubscriptionActiveNow(subscription)) {
-            toast.error('Could not verify premium status right now. Please retry in a moment.');
+            showErrorToast('Could not verify premium status right now. Please retry in a moment.');
           } else {
             applySubscription(emptySubscription);
-            toast.error('Premium subscription required. Please activate a plan first.');
+            showErrorToast('Premium subscription required. Please activate a plan first.');
           }
         } else {
-          toast.error('Your premium status is active. Please retry your request.');
+          showErrorToast('Your premium status is active. Please retry your request.');
         }
       } else {
-        toast.error(error instanceof Error ? error.message : 'Could not solve this question right now.');
+        handleApiError(error, 'Could not solve this question right now.');
       }
     } finally {
       setIsSolving(false);
@@ -723,22 +723,22 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
   const submitActivationRequest = async () => {
     if (!token || !user) {
-      toast.error('Please login first.');
+      showErrorToast('Please login first.');
       return;
     }
 
     if (!selectedPlanId) {
-      toast.error('Please choose a subscription plan.');
+      showErrorToast('Please choose a subscription plan.');
       return;
     }
 
     if (!paymentTransactionId.trim()) {
-      toast.error('Enter payment transaction ID.');
+      showErrorToast('Enter payment transaction ID.');
       return;
     }
 
     if (!paymentProof) {
-      toast.error('Upload payment proof before submitting activation request.');
+      showErrorToast('Upload payment proof before submitting activation request.');
       return;
     }
 
@@ -761,9 +761,9 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       setPaymentTransactionId('');
       setPaymentProof(null);
       setActivationTokenCode('');
-      toast.success('Activation request submitted. Admin will verify and send your token.');
+      showSuccessToast('Activation request submitted. Admin will verify and send your token.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not submit activation request.');
+      handleApiError(error, 'Could not submit activation request.');
     } finally {
       setIsSubmittingActivationRequest(false);
     }
@@ -784,20 +784,20 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
         document.execCommand('copy');
         document.body.removeChild(temp);
       }
-      toast.success(`${label} copied.`);
+      showSuccessToast(`${label} copied.`);
     } catch {
-      toast.error('Could not copy value.');
+      showErrorToast('Could not copy value.');
     }
   };
 
   const activateWithToken = async () => {
     if (!token || !user) {
-      toast.error('Please login first.');
+      showErrorToast('Please login first.');
       return;
     }
 
     if (!activationTokenCode.trim()) {
-      toast.error('Enter admin-issued activation token.');
+      showErrorToast('Enter admin-issued activation token.');
       return;
     }
 
@@ -824,9 +824,9 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
       setActivationTokenCode('');
       await reloadSubscription();
-      toast.success('Subscription activated successfully. Smart Study Mentor unlocked.');
+      showSuccessToast('Subscription activated successfully. Smart Study Mentor unlocked.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not activate subscription with token.');
+      handleApiError(error, 'Could not activate subscription with token.');
     } finally {
       setIsActivatingWithToken(false);
     }
@@ -834,12 +834,12 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
 
   const generateStudyPlan = async () => {
     if (!token || !user) {
-      toast.error('Login required to save a study plan.');
+      showErrorToast('Login required to save a study plan.');
       return;
     }
 
     if (!targetDate || !currentLevel || !dailyHours) {
-      toast.error('Please set target date, level, and daily hours first.');
+      showErrorToast('Please set target date, level, and daily hours first.');
       return;
     }
 
@@ -865,9 +865,9 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
       );
 
       setPlanData(payload.studyPlan);
-      toast.success('Study plan generated and saved to your account.');
+      showSuccessToast('Study plan generated and saved to your account.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not generate study plan.');
+      handleApiError(error, 'Could not generate study plan.');
     } finally {
       setIsGeneratingPlan(false);
     }

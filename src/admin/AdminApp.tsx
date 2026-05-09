@@ -54,7 +54,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from '../app/components/ui/alert-dialog';
-import { toast } from 'sonner';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../app/lib/userToast';
 import { COMPUTER_SCIENCE_SYLLABUS, FLAT_TOPIC_TABS, INTELLIGENCE_SYLLABUS, SYLLABUS } from '../app/components/Preparation';
 import type { SubjectKey } from '../app/lib/mcq';
 import {
@@ -404,11 +404,11 @@ async function extractPastedImageDataUrl(event: ClipboardDataEvent): Promise<str
   const file = itemFile || fileFallback;
   if (!file) return null;
   if (!isSupportedMcqImage(file)) {
-    toast.error('Unsupported pasted image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+    showErrorToast('Unsupported pasted image format. Use JPG, PNG, WEBP, SVG, or GIF.');
     return null;
   }
   if (file.size > MCQ_IMAGE_MAX_BYTES) {
-    toast.error('Pasted image is too large. Maximum size is 5 MB.');
+    showErrorToast('Pasted image is too large. Maximum size is 5 MB.');
     return null;
   }
 
@@ -2890,27 +2890,27 @@ export default function AdminApp() {
 
   const enableAdminDesktopAlerts = async () => {
     if (!canUseDesktopNotifications) {
-      toast.error('Desktop notifications are not supported in this browser.');
+      showErrorToast('Desktop notifications are not supported in this browser.');
       return;
     }
 
     if (Notification.permission === 'granted') {
       setAdminDesktopAlertsPreference(true);
-      toast.success('Desktop alerts enabled for this tab.');
+      showSuccessToast('Desktop alerts enabled for this tab.');
       return;
     }
 
     if (Notification.permission === 'denied') {
-      toast.error('Desktop notifications are blocked in browser settings.');
+      showErrorToast('Desktop notifications are blocked in browser settings.');
       return;
     }
 
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
       setAdminDesktopAlertsPreference(true);
-      toast.success('Desktop alerts enabled for this tab.');
+      showSuccessToast('Desktop alerts enabled for this tab.');
     } else {
-      toast.error('Notification permission was not granted.');
+      showErrorToast('Notification permission was not granted.');
     }
   };
 
@@ -3005,7 +3005,7 @@ export default function AdminApp() {
     const dataUrl = String(file?.dataUrl || '').trim();
     if (!dataUrl) return;
     if (!openDataUrlPreview(dataUrl)) {
-      toast.error('Could not open file preview.');
+      showErrorToast('Could not open file preview.');
     }
   };
 
@@ -3015,7 +3015,7 @@ export default function AdminApp() {
     if (!dataUrl) return;
 
     if (!downloadDataUrlFile(dataUrl, name)) {
-      toast.error('Could not download file.');
+      showErrorToast('Could not download file.');
     }
   };
 
@@ -3128,7 +3128,7 @@ export default function AdminApp() {
       setSecurityInfoTotalPages(Math.max(1, Number(payload.totalPages) || 1));
       setSecurityInfoReveal({});
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not load security info.');
+      handleApiError(error, 'Could not load security info.');
     } finally {
       setSecurityInfoLoading(false);
     }
@@ -3158,7 +3158,7 @@ export default function AdminApp() {
 
   const refreshSystemStatus = async () => {
     if (!authToken) {
-      toast.error('Login required to refresh system status.');
+      showErrorToast('Login required to refresh system status.');
       return;
     }
 
@@ -3166,9 +3166,9 @@ export default function AdminApp() {
     try {
       const payload = await apiRequest<AdminSystemStatus>('/api/admin/system-status', {}, authToken);
       setSystemStatus(payload);
-      toast.success('System status refreshed.');
+      showSuccessToast('System status refreshed.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not refresh system status.');
+      handleApiError(error, 'Could not refresh system status.');
     } finally {
       setIsRefreshingSystemStatus(false);
     }
@@ -3176,7 +3176,7 @@ export default function AdminApp() {
 
   const refreshConfigVariables = async () => {
     if (!authToken) {
-      toast.error('Login required to refresh configuration list.');
+      showErrorToast('Login required to refresh configuration list.');
       return;
     }
 
@@ -3184,9 +3184,9 @@ export default function AdminApp() {
     try {
       const payload = await apiRequest<{ variables: AdminConfigVariable[] }>('/api/admin/configurations', {}, authToken);
       setConfigVariables(payload.variables || []);
-      toast.success('Configuration list refreshed.');
+      showSuccessToast('Configuration list refreshed.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not refresh configurations.');
+      handleApiError(error, 'Could not refresh configurations.');
     } finally {
       setIsRefreshingConfigVariables(false);
     }
@@ -3194,17 +3194,17 @@ export default function AdminApp() {
 
   const saveConfigVariable = async () => {
     if (!authToken) {
-      toast.error('Login required to save configuration.');
+      showErrorToast('Login required to save configuration.');
       return;
     }
 
     const key = configForm.key.trim().toUpperCase();
     if (!key) {
-      toast.error('Configuration key is required.');
+      showErrorToast('Configuration key is required.');
       return;
     }
     if (!configForm.value.trim()) {
-      toast.error('Configuration value is required.');
+      showErrorToast('Configuration value is required.');
       return;
     }
 
@@ -3229,9 +3229,9 @@ export default function AdminApp() {
       if (activeSection !== 'system-config') {
         await refreshSystemStatus();
       }
-      toast.success('Configuration saved securely.');
+      showSuccessToast('Configuration saved securely.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not save configuration.');
+      handleApiError(error, 'Could not save configuration.');
     } finally {
       setIsSavingConfigVariable(false);
     }
@@ -3239,7 +3239,7 @@ export default function AdminApp() {
 
   const deleteConfigVariable = async (key: string) => {
     if (!authToken) {
-      toast.error('Login required to delete configuration.');
+      showErrorToast('Login required to delete configuration.');
       return;
     }
 
@@ -3253,9 +3253,9 @@ export default function AdminApp() {
       if (activeSection !== 'system-config') {
         await refreshSystemStatus();
       }
-      toast.success(`Deleted configuration ${key}.`);
+      showSuccessToast(`Deleted configuration ${key}.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not delete configuration.');
+      handleApiError(error, 'Could not delete configuration.');
     } finally {
       setIsDeletingConfigVariable(null);
     }
@@ -3306,7 +3306,7 @@ export default function AdminApp() {
             clearAdminSession();
           } else {
             setAdminLoadError(message);
-            toast.error('Could not load admin data. Please try refreshing again.');
+            showErrorToast('Could not load admin data. Please try refreshing again.');
           }
         }
       } finally {
@@ -3495,13 +3495,13 @@ export default function AdminApp() {
       activeBankSection.label,
     ).catch(() => {
       setBankMcqs([]);
-      toast.error('Could not load question bank items for this section.');
+      showErrorToast('Could not load question bank items for this section.');
     });
   }, [isQuestionBankView, authToken, activeBankSubject, activeBankChapter, activeBankSection]);
 
   const login = async () => {
     if (!authForm.email || !authForm.password) {
-      toast.error('Email and password are required.');
+      showErrorToast('Email and password are required.');
       return;
     }
 
@@ -3513,7 +3513,7 @@ export default function AdminApp() {
       });
 
       if (payload.user?.role !== 'admin') {
-        toast.error('Admin access required for this panel.');
+        showErrorToast('Admin access required for this panel.');
         return;
       }
 
@@ -3534,20 +3534,20 @@ export default function AdminApp() {
         setRefreshToken(null);
       }
       navigateToSection('dashboard');
-      toast.success('Admin login successful.');
+      showSuccessToast('Admin login successful.');
 
       const tokenForAdminRequests = payload.token ?? COOKIE_SESSION_API_MARKER;
       void loadAdminData(tokenForAdminRequests).catch((error) => {
         const status = Number((error as { status?: number } | null)?.status || 0);
         if (status === 401 || status === 403) {
           clearAdminSession();
-          toast.error('Session expired after login. Please sign in again.');
+          showErrorToast('Session expired after login. Please sign in again.');
           return;
         }
-        toast.error('Login succeeded, but admin data failed to load. Please click Refresh Data.');
+        showErrorToast('Login succeeded, but admin data failed to load. Please click Refresh Data.');
       });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Admin login failed.');
+      handleApiError(error, 'Admin login failed.');
     } finally {
       setLoading(false);
     }
@@ -3567,10 +3567,10 @@ export default function AdminApp() {
 
     try {
       await apiRequest(`/api/admin/users/${user.id}`, { method: 'DELETE' }, authToken);
-      toast.success('User removed successfully.');
+      showSuccessToast('User removed successfully.');
       await loadAdminData(authToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not remove user.');
+      handleApiError(error, 'Could not remove user.');
     }
   };
 
@@ -3578,12 +3578,12 @@ export default function AdminApp() {
     if (!authToken) return;
 
     if (!createUserForm.email.trim() || !createUserForm.mobileNumber.trim() || !createUserForm.password.trim()) {
-      toast.error('Email, mobile number, and password are required.');
+      showErrorToast('Email, mobile number, and password are required.');
       return;
     }
 
     if (createUserForm.password.trim().length < 8) {
-      toast.error('Password must be at least 8 characters.');
+      showErrorToast('Password must be at least 8 characters.');
       return;
     }
 
@@ -3602,7 +3602,7 @@ export default function AdminApp() {
         }),
       }, authToken);
 
-      toast.success('User account created successfully.');
+      showSuccessToast('User account created successfully.');
       setCreateUserForm({
         firstName: '',
         lastName: '',
@@ -3614,7 +3614,7 @@ export default function AdminApp() {
       });
       await loadAdminData(authToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not create user account.');
+      handleApiError(error, 'Could not create user account.');
     } finally {
       setIsCreatingUser(false);
     }
@@ -3627,20 +3627,20 @@ export default function AdminApp() {
     try {
       if (navigator.clipboard?.writeText) {
         await navigator.clipboard.writeText(generated);
-        toast.success('Temporary password generated and copied.');
+        showSuccessToast('Temporary password generated and copied.');
         return;
       }
     } catch {
       // Continue with generated-only success feedback.
     }
 
-    toast.success('Temporary password generated.');
+    showSuccessToast('Temporary password generated.');
   };
 
   const copyTemporaryPassword = async () => {
     const currentPassword = createUserForm.password.trim();
     if (!currentPassword) {
-      toast.error('Enter or generate a password first.');
+      showErrorToast('Enter or generate a password first.');
       return;
     }
 
@@ -3658,9 +3658,9 @@ export default function AdminApp() {
         document.execCommand('copy');
         document.body.removeChild(temp);
       }
-      toast.success('Password copied.');
+      showSuccessToast('Password copied.');
     } catch {
-      toast.error('Could not copy password.');
+      showErrorToast('Could not copy password.');
     }
   };
 
@@ -3683,10 +3683,10 @@ export default function AdminApp() {
             codeDeliveryStatus: 'pending_send',
           }
         : item)));
-      toast.success(`Approved. Activation code generated: ${payload.token.code}`);
+      showSuccessToast('Request approved. Copy the activation code from the details panel.');
       await loadAdminData(authToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not approve request.');
+      handleApiError(error, 'Could not approve request.');
     }
   };
 
@@ -3697,10 +3697,10 @@ export default function AdminApp() {
         method: 'POST',
         body: JSON.stringify({ notes: 'Payment could not be verified.' }),
       }, authToken);
-      toast.success('Request rejected.');
+      showSuccessToast('Request rejected.');
       await loadAdminData(authToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not reject request.');
+      handleApiError(error, 'Could not reject request.');
     }
   };
 
@@ -3716,10 +3716,10 @@ export default function AdminApp() {
         authToken,
       );
       setIssuedPremiumTokens((prev) => ({ ...prev, [request.id]: payload.token.code }));
-      toast.success(`Premium request approved. Token: ${payload.token.code}`);
+      showSuccessToast('Premium request approved. Copy the code from the panel if needed.');
       await loadAdminData(authToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not approve premium request.');
+      handleApiError(error, 'Could not approve premium request.');
     }
   };
 
@@ -3734,10 +3734,10 @@ export default function AdminApp() {
         },
         authToken,
       );
-      toast.success('Premium request rejected.');
+      showSuccessToast('Premium request rejected.');
       await loadAdminData(authToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not reject premium request.');
+      handleApiError(error, 'Could not reject premium request.');
     }
   };
 
@@ -3756,9 +3756,9 @@ export default function AdminApp() {
         document.execCommand('copy');
         document.body.removeChild(temp);
       }
-      toast.success('Token copied to clipboard.');
+      showSuccessToast('Token copied to clipboard.');
     } catch {
-      toast.error('Could not copy token.');
+      showErrorToast('Could not copy token.');
     }
   };
 
@@ -3770,10 +3770,10 @@ export default function AdminApp() {
         : `/api/admin/signup-requests/${requestId}/send-code`;
 
       await apiRequest(endpoint, { method: 'POST' }, authToken);
-      toast.success('Code sent in-app successfully. User token field will auto-fill.');
+      showSuccessToast('Code sent in-app successfully. User token field will auto-fill.');
       await loadAdminData(authToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not send code in-app.');
+      handleApiError(error, 'Could not send code in-app.');
     }
   };
 
@@ -3785,7 +3785,7 @@ export default function AdminApp() {
       setActiveSupportUser(payload.user || null);
       setSupportMessages(payload.messages || []);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not load support thread.');
+      handleApiError(error, 'Could not load support thread.');
     } finally {
       setIsSupportThreadLoading(false);
     }
@@ -3794,7 +3794,7 @@ export default function AdminApp() {
   const sendSupportReply = async () => {
     if (!authToken || !selectedSupportUserId) return;
     if (activeSupportUser?.isDeleted) {
-      toast.error('This user account was deleted. Thread is read-only.');
+      showErrorToast('This user account was deleted. Thread is read-only.');
       return;
     }
     const text = supportReplyText.trim();
@@ -3819,7 +3819,7 @@ export default function AdminApp() {
           .catch(() => undefined),
       ]);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not send support reply.');
+      handleApiError(error, 'Could not send support reply.');
     } finally {
       setIsSendingSupportReply(false);
     }
@@ -3830,7 +3830,7 @@ export default function AdminApp() {
     if (!selected) return;
 
     if (selected.size > ADMIN_SUPPORT_ATTACHMENT_MAX_BYTES) {
-      toast.error('File exceeds 8MB size limit.');
+      showErrorToast('File exceeds 8MB size limit.');
       event.target.value = '';
       return;
     }
@@ -3843,9 +3843,9 @@ export default function AdminApp() {
         size: selected.size,
         dataUrl,
       });
-      toast.success('File attached to admin reply.');
+      showSuccessToast('File attached to admin reply.');
     } catch {
-      toast.error('Could not read selected file.');
+      showErrorToast('Could not read selected file.');
     } finally {
       event.target.value = '';
     }
@@ -3860,7 +3860,7 @@ export default function AdminApp() {
       }, authToken);
       await loadSupportThread(selectedSupportUserId, authToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not update reaction.');
+      handleApiError(error, 'Could not update reaction.');
     }
   };
 
@@ -3872,7 +3872,7 @@ export default function AdminApp() {
       if (fallback.startsWith('data:')) {
         if (download) {
           if (!downloadDataUrlFile(fallback, fileName || 'payment-proof')) {
-            toast.error('Could not download payment proof file.');
+            showErrorToast('Could not download payment proof file.');
           }
         } else {
           const opened = openDataUrlPreview(fallback);
@@ -3881,7 +3881,7 @@ export default function AdminApp() {
         return;
       }
       if (previewWindow) previewWindow.close();
-      toast.error('Session expired. Please log in again to access payment proof.');
+      showErrorToast('Session expired. Please log in again to access payment proof.');
       return;
     }
 
@@ -3909,7 +3909,7 @@ export default function AdminApp() {
       if (fallback.startsWith('data:')) {
         if (download) {
           if (!downloadDataUrlFile(fallback, fileName || 'payment-proof')) {
-            toast.error('Could not download payment proof file.');
+            showErrorToast('Could not download payment proof file.');
           }
         } else {
           const opened = openDataUrlPreview(fallback);
@@ -3918,7 +3918,7 @@ export default function AdminApp() {
         return;
       }
       if (previewWindow) previewWindow.close();
-      toast.error('Could not open payment proof. Please try again.');
+      showErrorToast('Could not open payment proof. Please try again.');
     }
   };
 
@@ -3967,7 +3967,7 @@ export default function AdminApp() {
     if (unreadTotal > lastUnreadTotalRef.current) {
       const latestIncoming = supportConversations.find((item) => Number(item.unreadForAdmin || 0) > 0);
       playNotificationTone();
-      toast.message('New incoming support message');
+      showNeutralToast('New incoming support message');
       notifyAdminDesktop(
         'NET360 Support Admin',
         latestIncoming
@@ -3991,7 +3991,7 @@ export default function AdminApp() {
     if (latestUserMessageId !== lastUserMessageInThreadRef.current) {
       lastUserMessageInThreadRef.current = latestUserMessageId;
       playNotificationTone();
-      toast.message('New message in active support thread');
+      showNeutralToast('New message in active support thread');
       notifyAdminDesktop(
         'NET360 Active Thread',
         latestUserMessage?.text || 'You have a new message in the active support thread.',
@@ -4021,11 +4021,11 @@ export default function AdminApp() {
 
   const openGestureImageEditorForFile = async (file: File, target: ManualImageEditorTarget) => {
     if (!isSupportedMcqImage(file)) {
-      toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+      showErrorToast('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
       return;
     }
     if (file.size > MCQ_IMAGE_MAX_BYTES) {
-      toast.error('Image is too large. Maximum size is 5 MB.');
+      showErrorToast('Image is too large. Maximum size is 5 MB.');
       return;
     }
 
@@ -4054,7 +4054,7 @@ export default function AdminApp() {
       imageGestureRef.current = null;
       cropDragStateRef.current = null;
     } catch {
-      toast.error('Could not open image editor.');
+      showErrorToast('Could not open image editor.');
     }
   };
 
@@ -4110,9 +4110,9 @@ export default function AdminApp() {
       }
 
       closeGestureImageEditor();
-      toast.success('Photo inserted into editor.');
+      showSuccessToast('Photo inserted into editor.');
     } catch {
-      toast.error('Could not apply photo edits.');
+      showErrorToast('Could not apply photo edits.');
     } finally {
       setIsApplyingGestureCrop(false);
     }
@@ -4368,9 +4368,9 @@ export default function AdminApp() {
           ? { videoUrl: url, questionImageUrl: '' }
           : { questionImageUrl: url }),
       }));
-      toast.success('Uploaded to S3. Submit the form to save this MCQ.');
+      showSuccessToast('Image uploaded. Save the form to attach it to this question.');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Upload failed.');
+      handleApiError(e, 'Image upload failed. Please try again.');
     } finally {
       setMcqS3UploadBusy(false);
     }
@@ -4382,7 +4382,7 @@ export default function AdminApp() {
 
     if (isSavingMcq) return;
     if (!authToken) {
-      toast.error('Failed to add MCQ');
+      showErrorToast('Please sign in again to add or save questions.');
       return;
     }
 
@@ -4398,12 +4398,12 @@ export default function AdminApp() {
 
     const normalizedQuestionType = form.questionType === 'image' ? 'image' : 'text';
     if (normalizedQuestionType === 'text' && !String(form.question || '').trim()) {
-      toast.error('Question Text is required.');
+      showErrorToast('Question Text is required.');
       return;
     }
 
     if (normalizedQuestionType === 'image' && !form.questionImage && !String(form.questionImageUrl || '').trim() && !String(form.videoUrl || '').trim()) {
-      toast.error('Question Image is required when Question Input Type is Image (upload a file, use S3, or paste a URL).');
+      showErrorToast('Add an image for this question: upload a file, use hosted media, or paste an image URL.');
       return;
     }
 
@@ -4419,18 +4419,18 @@ export default function AdminApp() {
     });
 
     if (missingRequiredOption) {
-      toast.error('Options A, B, C, and D are required.');
+      showErrorToast('Options A, B, C, and D are required.');
       return;
     }
 
     if (!String(form.answer || '').trim()) {
-      toast.error('Correct Answer is required.');
+      showErrorToast('Correct Answer is required.');
       return;
     }
 
     const answerKey = resolveAnswerKeyFromInput(normalizedOptionMedia, form.answer);
     if (!answerKey) {
-      toast.error('Provide a valid answer (A-D, option number, or exact option text).');
+      showErrorToast('Provide a valid answer (A-D, option number, or exact option text).');
       return;
     }
 
@@ -4453,27 +4453,27 @@ export default function AdminApp() {
     const requiresPartSelection = isPartSelectionRequiredSubject(normalizedSubject);
 
     if (!normalizedSubject) {
-      toast.error('Subject is required before adding MCQs.');
+      showErrorToast('Subject is required before adding MCQs.');
       return;
     }
 
     if (!String(selectedContext.section || '').trim()) {
-      toast.error('Section is required.');
+      showErrorToast('Section is required.');
       return;
     }
 
     if (!String(selectedContext.topic || '').trim()) {
-      toast.error('Topic is required.');
+      showErrorToast('Topic is required.');
       return;
     }
 
     if (!isFlatTopicSubject && requiresPartSelection && !String(selectedContext.part || '').trim()) {
-      toast.error('Part is required.');
+      showErrorToast('Part is required.');
       return;
     }
 
     if (!isFlatTopicSubject && !String(selectedContext.chapter || '').trim()) {
-      toast.error('Chapter is required.');
+      showErrorToast('Chapter is required.');
       return;
     }
 
@@ -4531,7 +4531,7 @@ export default function AdminApp() {
           setMcqs((previous) => previous.map((item) => (item.id === updateResult.mcq!.id ? updateResult.mcq! : item)));
         }
 
-        toast.success('MCQ updated.');
+        showSuccessToast('MCQ updated.');
       } else {
         const createResult = await apiRequest<{ mcq?: AdminMCQ }>('/api/admin/mcqs', {
           method: 'POST',
@@ -4547,7 +4547,7 @@ export default function AdminApp() {
           return next;
         });
 
-        toast.success('MCQ added successfully');
+        showSuccessToast('MCQ added successfully');
       }
 
       resetForm();
@@ -4555,7 +4555,7 @@ export default function AdminApp() {
 
       if (selectedHierarchy) {
         void loadSectionMcqs(authToken, selectedHierarchy).catch((error) => {
-          toast.error(error instanceof Error ? error.message : 'MCQ saved, but section refresh failed. Use Refresh Data.');
+          handleApiError(error, 'MCQ saved, but section refresh failed. Use Refresh Data.');
         });
       }
 
@@ -4564,7 +4564,7 @@ export default function AdminApp() {
         .catch(() => undefined);
     } catch (error) {
       console.error('Add MCQ failed:', error);
-      toast.error(error instanceof Error ? error.message : (form.id ? 'Could not save MCQ.' : 'Failed to add MCQ.'));
+      handleApiError(error, form.id ? 'Could not save this question. Please try again.' : 'Could not add this question. Please try again.');
     } finally {
       setIsSavingMcq(false);
     }
@@ -4584,7 +4584,7 @@ export default function AdminApp() {
 
     const now = Date.now();
     if (bulkAnalyzeInFlightRef.current) {
-      toast.message('Analysis is already running. Please wait...');
+      showNeutralToast('Analysis is already running. Please wait...');
       return;
     }
     if (now - bulkAnalyzeLastClickRef.current < BULK_ANALYZE_DEBOUNCE_MS) {
@@ -4595,12 +4595,12 @@ export default function AdminApp() {
     const effectiveFile = sourceOverride?.file === undefined ? bulkFile : sourceOverride.file;
     const hasText = Boolean(effectiveText.trim());
     if (!hasText && !effectiveFile) {
-      toast.error('Paste MCQs or upload a PDF, DOC, DOCX, or TXT file first.');
+      showErrorToast('Paste MCQs or upload a PDF, DOC, DOCX, or TXT file first.');
       return;
     }
 
     if (effectiveFile && effectiveFile.size > 8 * 1024 * 1024) {
-      toast.error('Uploaded file is too large. Maximum size is 8 MB.');
+      showErrorToast('Uploaded file is too large. Maximum size is 8 MB.');
       return;
     }
 
@@ -4729,7 +4729,12 @@ export default function AdminApp() {
 
       if (!withSelectedHierarchy.length) {
         setBulkAnalysisReady(false);
-        toast.error(payload.errors?.[0] || 'No questions were parsed after retries.');
+        showErrorToast(
+          audienceFriendlyError(
+            payload.errors?.[0] || '',
+            'No questions could be read from that content. Try another file or format.',
+          ),
+        );
         return;
       }
 
@@ -4752,7 +4757,7 @@ export default function AdminApp() {
         errors: payload.errors || [],
       });
 
-      toast.success(`Parsed ${limitedParsed.length} MCQ(s). Review and confirm target before saving.`);
+      showSuccessToast(`Parsed ${limitedParsed.length} MCQ(s). Review and confirm target before saving.`);
     } catch (error) {
       console.error('Admin Analyse by AI failed', error);
       if (runId === bulkAnalyzeRunIdRef.current) {
@@ -4762,17 +4767,16 @@ export default function AdminApp() {
         setBulkParseErrors([error instanceof Error ? error.message : 'AI analysis failed. Please try again.']);
       }
       const status = Number((error as { status?: number } | null)?.status || 0);
-      const aiParseUrl = buildApiUrl(AI_PARSE_ENDPOINT);
       if (status === 401 || status === 403) {
-        toast.error('Admin session expired. Please log in again to continue AI analysis.');
+        showErrorToast('Admin session expired. Please log in again to continue AI analysis.');
       } else if (status >= 500) {
-        toast.error('AI parser service is temporarily unavailable. Please retry in a moment.');
+        showErrorToast('AI parser service is temporarily unavailable. Please retry in a moment.');
       } else if (error instanceof Error && /^Backend offline on\s+/i.test(error.message)) {
-        toast.error(error.message);
+        showErrorToast('The service is not reachable right now. Please try again shortly.');
       } else if (error instanceof Error && /timeout|network error|failed to fetch|cors|backend url/i.test(error.message)) {
-        toast.error(`Could not reach AI parser at ${aiParseUrl}. Ensure backend server is running, URL/port is correct, and CORS allows this origin.`);
+        showErrorToast('Unable to reach the AI import service. Check your connection and try again.');
       } else {
-        toast.error(error instanceof Error ? error.message : 'AI analysis failed after retries. Please try again.');
+        handleApiError(error, 'AI analysis failed after retries. Please try again.');
       }
     } finally {
       setBulkProcessing(false);
@@ -4795,7 +4799,7 @@ export default function AdminApp() {
       .filter(Boolean);
 
     if (!htmlCandidates.length) {
-      toast.error('No editable HTML content found in the Paste MCQ editor.');
+      showErrorToast('No editable HTML content found in the Paste MCQ editor.');
       return;
     }
 
@@ -4826,7 +4830,7 @@ export default function AdminApp() {
       .filter((item) => !mappedByLabel[item.key])
       .map((item) => item.key);
     if (missing.length) {
-      toast.error(`Missing labeled image segment(s): ${missing.join(', ')}.`);
+      showErrorToast(`Missing labeled image segment(s): ${missing.join(', ')}.`);
       return;
     }
 
@@ -4846,7 +4850,7 @@ export default function AdminApp() {
     const explanationImage = parsedDataUrlToImage(mappedSources[6], 'explanation-image');
 
     if (!questionImage || optionImages.some((image) => !image) || !correctAnswerImage || !explanationImage) {
-      toast.error('Could not map one or more pasted image segments. Ensure images are valid data URLs.');
+      showErrorToast('Could not map one or more pasted image segments. Ensure images are valid data URLs.');
       return;
     }
 
@@ -4917,7 +4921,7 @@ export default function AdminApp() {
     setShowParsedPreview(true);
     setBulkAnalysisReady(true);
 
-    toast.success('Mapped pasted image segments to Question, Option A-D, Correct Answer, and Explanation fields.');
+    showSuccessToast('Mapped pasted image segments to Question, Option A-D, Correct Answer, and Explanation fields.');
   };
 
   const splitPastedMcqImageIntoSegments = async (dataUrl: string) => {
@@ -5011,7 +5015,7 @@ export default function AdminApp() {
     try {
       const segments = await splitPastedMcqImageIntoSegments(dataUrl);
       if (segments.length < 7) {
-        toast.error('Could not split pasted image into 7 segments. Use a clearer image.');
+        showErrorToast('Could not split pasted image into 7 segments. Use a clearer image.');
         return;
       }
 
@@ -5029,9 +5033,9 @@ export default function AdminApp() {
         const existing = String(previousValue || '').trimEnd();
         return existing ? `${existing}\n${formatted}` : formatted;
       });
-      toast.success('Pasted image segmented into Question, A-D, Correct Answer, and Explanation fields.');
+      showSuccessToast('Pasted image segmented into Question, A-D, Correct Answer, and Explanation fields.');
     } catch {
-      toast.error('Could not process pasted image. Please try again.');
+      showErrorToast('Could not process pasted image. Please try again.');
     }
   };
 
@@ -5050,7 +5054,7 @@ export default function AdminApp() {
         void handlePasteMcqImageSegmentation(dataUrl);
       })
       .catch(() => {
-        toast.error('Could not process pasted image. Please try again.');
+        showErrorToast('Could not process pasted image. Please try again.');
       });
 
     return true;
@@ -5066,22 +5070,22 @@ export default function AdminApp() {
     const topic = String(form.topic || form.section || '').trim();
 
     if (!subject) {
-      if (showToast) toast.error('Select Subject before parsing or uploading document MCQs.');
+      if (showToast) showErrorToast('Select Subject before parsing or uploading document MCQs.');
       return null;
     }
 
     if (requiresPartSelection && !part) {
-      if (showToast) toast.error('Select Part before parsing or uploading document MCQs.');
+      if (showToast) showErrorToast('Select Part before parsing or uploading document MCQs.');
       return null;
     }
 
     if (!isFlatTopicSubject && !chapter) {
-      if (showToast) toast.error('Select Chapter before parsing or uploading document MCQs.');
+      if (showToast) showErrorToast('Select Chapter before parsing or uploading document MCQs.');
       return null;
     }
 
     if (!section) {
-      if (showToast) toast.error('Select Section/Topic before parsing or uploading document MCQs.');
+      if (showToast) showErrorToast('Select Section/Topic before parsing or uploading document MCQs.');
       return null;
     }
 
@@ -5110,19 +5114,19 @@ export default function AdminApp() {
     const topic = String(aiGenTopic || aiGenSection || '').trim();
 
     if (!subject) {
-      if (showToast) toast.error('Select Subject before generating AI MCQ.');
+      if (showToast) showErrorToast('Select Subject before generating AI MCQ.');
       return null;
     }
     if (requiresPartSelection && !part) {
-      if (showToast) toast.error('Select Part before generating AI MCQ.');
+      if (showToast) showErrorToast('Select Part before generating AI MCQ.');
       return null;
     }
     if (!isFlatTopicSubject && !chapter) {
-      if (showToast) toast.error('Select Chapter before generating AI MCQ.');
+      if (showToast) showErrorToast('Select Chapter before generating AI MCQ.');
       return null;
     }
     if (!section) {
-      if (showToast) toast.error('Select Section/Topic before generating AI MCQ.');
+      if (showToast) showErrorToast('Select Section/Topic before generating AI MCQ.');
       return null;
     }
 
@@ -5145,7 +5149,7 @@ export default function AdminApp() {
     const hasText = Boolean(String(aiGenSourceText || '').trim());
 
     if (aiGenFile && aiGenFile.size > 20 * 1024 * 1024) {
-      toast.error('Uploaded file is too large. Maximum size is 20 MB.');
+      showErrorToast('Uploaded file is too large. Maximum size is 20 MB.');
       return;
     }
 
@@ -5263,20 +5267,20 @@ export default function AdminApp() {
       setUploadChapterKey(aiGenChapterKey || '');
       setUploadMode('document');
       setAiGenGenerateErrors(Array.isArray(payload?.errors) ? payload.errors : []);
-      toast.success(`AI generated exactly ${normalizedGenerated.length} MCQs. Review/edit the populated blocks and upload.`);
+      showSuccessToast(`AI generated exactly ${normalizedGenerated.length} MCQs. Review/edit the populated blocks and upload.`);
     } catch (error) {
       const status = Number((error as { status?: number } | null)?.status || 0);
-      const endpoint = buildApiUrl(AI_GENERATE_ENDPOINT);
       let message = error instanceof Error ? error.message : 'Could not generate AI MCQ.';
 
       if (status === 401 || status === 403) {
-        message = 'Admin session expired. Please log in again and retry AI generation.';
+        message = 'Your session expired. Please log in again to use AI generation.';
       } else if (status >= 500 || /timeout|network error|failed to fetch|backend offline|cors/i.test(message)) {
-        message = `Could not reach AI generation service at ${endpoint}. The backend may still be waking up. Please retry in a few seconds.`;
+        message = 'The AI generation service is not reachable right now. Please try again in a few seconds.';
       }
 
-      setAiGenGenerateErrors([message]);
-      toast.error(message);
+      const friendly = audienceFriendlyError(message, 'Could not generate questions. Please try again.');
+      setAiGenGenerateErrors([friendly]);
+      showErrorToast(friendly);
     } finally {
       setAiGenGenerating(false);
       aiGenGenerateInFlightRef.current = false;
@@ -5287,7 +5291,7 @@ export default function AdminApp() {
     if (!authToken) return;
     if (aiGenUploadInFlightRef.current || aiGenUploading) return;
     if (!aiGenGenerated) {
-      toast.error('Generate an AI MCQ first.');
+      showErrorToast('Generate an AI MCQ first.');
       return;
     }
 
@@ -5296,7 +5300,7 @@ export default function AdminApp() {
 
     const normalizedOptions = (aiGenGenerated.options || []).map((item) => String(item || '').trim()).filter(Boolean);
     if (normalizedOptions.length < 4) {
-      toast.error('Generated MCQ must contain 4 options (A-D).');
+      showErrorToast('Generated MCQ must contain 4 options (A-D).');
       return;
     }
 
@@ -5337,13 +5341,13 @@ export default function AdminApp() {
 
       setMcqs((previous) => [result.mcq!, ...previous.filter((item) => item.id !== result.mcq!.id)]);
       setAiGenGenerated(null);
-      toast.success('Generated MCQ uploaded successfully.');
+      showSuccessToast('Generated MCQ uploaded successfully.');
 
       void apiRequest<{ structure: AdminMcqBankStructureItem[] }>('/api/admin/mcq-bank/structure', {}, authToken)
         .then((structurePayload) => setMcqStructure(structurePayload.structure || []))
         .catch(() => undefined);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not upload generated MCQ.');
+      handleApiError(error, 'Could not upload generated MCQ.');
     } finally {
       setAiGenUploading(false);
       aiGenUploadInFlightRef.current = false;
@@ -5354,12 +5358,12 @@ export default function AdminApp() {
     if (!authToken) return;
 
     if (!bulkParsed.length) {
-      toast.error('Analyze content first, then save parsed MCQs.');
+      showErrorToast('Analyze content first, then save parsed MCQs.');
       return;
     }
 
     if (bulkParsed.length > 15) {
-      toast.error('You can upload at most 15 questions at once.');
+      showErrorToast('You can upload at most 15 questions at once.');
       return;
     }
 
@@ -5455,9 +5459,9 @@ export default function AdminApp() {
       ]);
 
       if (failedCount > 0) {
-        toast.warning(`Uploaded ${createdCount} MCQ(s). ${failedCount} failed.`);
+        showWarningToast(`Uploaded ${createdCount} MCQ(s). ${failedCount} failed.`);
       } else {
-        toast.success(`${createdCount} MCQ(s) uploaded successfully.`);
+        showSuccessToast(`${createdCount} MCQ(s) uploaded successfully.`);
       }
 
       setBulkInput('');
@@ -5469,7 +5473,7 @@ export default function AdminApp() {
         await loadSectionMcqs(authToken, selectedHierarchy);
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Bulk upload failed.');
+      handleApiError(error, 'Bulk upload failed.');
     } finally {
       setBulkUploading(false);
     }
@@ -5485,7 +5489,7 @@ export default function AdminApp() {
 
   const applyDifficultyToAllParsedMcqs = () => {
     if (!bulkAnalysisReady || !bulkParsed.length) {
-      toast.error('Run Analyse MCQs successfully first, then apply difficulty.');
+      showErrorToast('Run Analyse MCQs successfully first, then apply difficulty.');
       return;
     }
 
@@ -5493,20 +5497,20 @@ export default function AdminApp() {
       ...item,
       difficulty: bulkApplyDifficultyLevel,
     })));
-    toast.success(`Applied ${bulkApplyDifficultyLevel} to ${bulkParsed.length} parsed MCQ(s).`);
+    showSuccessToast(`Applied ${bulkApplyDifficultyLevel} to ${bulkParsed.length} parsed MCQ(s).`);
   };
 
   const openMcqTestPreview = (payload: AdminMcqPreviewPayload) => {
     try {
       localStorage.setItem(ADMIN_MCQ_TEST_PREVIEW_STORAGE_KEY, JSON.stringify(payload));
     } catch {
-      toast.error('Could not prepare preview data. Please try again.');
+      showErrorToast('Could not prepare preview data. Please try again.');
       return;
     }
 
     const previewWindow = window.open('/exam-interface?preview=admin-mcq-upload', '_blank', 'noopener,noreferrer');
     if (!previewWindow) {
-      toast.error('Preview window was blocked. Allow pop-ups and try again.');
+      showErrorToast('Preview window was blocked. Allow pop-ups and try again.');
       return;
     }
     previewWindow.focus();
@@ -5530,7 +5534,7 @@ export default function AdminApp() {
     const hasOptionContent = optionMedia.some((option) => option.text || option.image?.dataUrl);
 
     if (!hasQuestionContent || !hasOptionContent) {
-      toast.error('Add at least question and one option before opening preview.');
+      showErrorToast('Add at least question and one option before opening preview.');
       return;
     }
 
@@ -5556,7 +5560,7 @@ export default function AdminApp() {
 
   const openAiGeneratedMcqPreview = () => {
     if (!aiGenGenerated) {
-      toast.error('Generate an AI MCQ first, then open preview.');
+      showErrorToast('Generate an AI MCQ first, then open preview.');
       return;
     }
 
@@ -5572,13 +5576,13 @@ export default function AdminApp() {
     const hasQuestionContent = Boolean(String(aiGenGenerated.question || '').trim());
     const hasOptionContent = optionMedia.some((option) => option.text);
     if (!hasQuestionContent || !hasOptionContent) {
-      toast.error('Add question and options before opening preview.');
+      showErrorToast('Add question and options before opening preview.');
       return;
     }
 
     const answerKey = resolveAnswerKeyFromInput(optionMedia, aiGenGenerated.answer);
     if (!answerKey) {
-      toast.error('Choose a valid correct answer before opening preview.');
+      showErrorToast('Choose a valid correct answer before opening preview.');
       return;
     }
 
@@ -5605,7 +5609,7 @@ export default function AdminApp() {
 
   const openDocumentMcqPreview = () => {
     if (!bulkParsed.length) {
-      toast.error('Parse MCQs first, then open preview.');
+      showErrorToast('Parse MCQs first, then open preview.');
       return;
     }
 
@@ -5635,7 +5639,7 @@ export default function AdminApp() {
 
     const hasRenderableQuestion = questions.some((item) => item.question || item.questionImage?.dataUrl);
     if (!hasRenderableQuestion) {
-      toast.error('Parsed MCQs are empty. Add content before preview.');
+      showErrorToast('Parsed MCQs are empty. Add content before preview.');
       return;
     }
 
@@ -5664,13 +5668,13 @@ export default function AdminApp() {
     );
     const hasOptionContent = optionMedia.some((option) => option.text || option.image?.dataUrl);
     if (!hasQuestionContent || !hasOptionContent) {
-      toast.error('Add question and options before opening preview.');
+      showErrorToast('Add question and options before opening preview.');
       return;
     }
 
     const answerKey = resolveAnswerKeyFromInput(optionMedia, String(draft.answer || ''));
     if (!answerKey) {
-      toast.error('Choose a valid correct answer before opening preview.');
+      showErrorToast('Choose a valid correct answer before opening preview.');
       return;
     }
 
@@ -5741,14 +5745,14 @@ export default function AdminApp() {
 
     try {
       await apiRequest(`/api/admin/mcqs/${mcqId}`, { method: 'DELETE' }, authToken);
-      toast.success('MCQ removed.');
+      showSuccessToast('MCQ removed.');
       if (selectedHierarchy) {
         await loadSectionMcqs(authToken, selectedHierarchy);
       } else {
         await loadAdminData(authToken);
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not delete MCQ.');
+      handleApiError(error, 'Could not delete MCQ.');
     }
   };
 
@@ -5779,9 +5783,9 @@ export default function AdminApp() {
           ? { videoUrl: url, questionImageUrl: '' }
           : { questionImageUrl: url }),
       }));
-      toast.success('Uploaded to S3. Save changes to persist.');
+      showSuccessToast('Image uploaded. Save to keep changes.');
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Upload failed.');
+      handleApiError(e, 'Image upload failed. Please try again.');
     } finally {
       setMcqS3UploadBusy(false);
     }
@@ -5790,13 +5794,13 @@ export default function AdminApp() {
   const saveBankMcqChanges = async (mcqId: string) => {
     if (!authToken) return;
     if (!selectedHierarchy) {
-      toast.error('Select a section/topic first.');
+      showErrorToast('Select a section/topic first.');
       return;
     }
 
     const draft = bankEditDrafts[mcqId];
     if (!draft) {
-      toast.error('Could not find editable MCQ data.');
+      showErrorToast('Could not find editable MCQ data.');
       return;
     }
 
@@ -5809,7 +5813,7 @@ export default function AdminApp() {
       .filter((option) => option.text || option.image);
 
     if (!normalizedOptionMedia.length || normalizedOptionMedia.length < 4) {
-      toast.error('At least options A, B, C, and D are required.');
+      showErrorToast('At least options A, B, C, and D are required.');
       return;
     }
 
@@ -5820,23 +5824,23 @@ export default function AdminApp() {
       return !option.text && !option.image;
     });
     if (missingRequired) {
-      toast.error('Options A, B, C, and D are required.');
+      showErrorToast('Options A, B, C, and D are required.');
       return;
     }
 
     if (draft.questionType === 'text' && !String(draft.question || '').trim()) {
-      toast.error('Question text is required.');
+      showErrorToast('Question text is required.');
       return;
     }
 
     if (draft.questionType === 'image' && !draft.questionImage && !String(draft.questionImageUrl || '').trim() && !String(draft.videoUrl || '').trim()) {
-      toast.error('Question image or hosted URL is required when question type is Image.');
+      showErrorToast('Question image or hosted URL is required when question type is Image.');
       return;
     }
 
     const answerKey = resolveAnswerKeyFromInput(normalizedOptionMedia, draft.answer);
     if (!answerKey) {
-      toast.error('Choose a valid correct answer (A-E, number, or exact option text).');
+      showErrorToast('Choose a valid correct answer (A-E, number, or exact option text).');
       return;
     }
 
@@ -5905,9 +5909,9 @@ export default function AdminApp() {
         }));
       }
 
-      toast.success('MCQ updated successfully.');
+      showSuccessToast('MCQ updated successfully.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not update this MCQ.');
+      handleApiError(error, 'Could not update this MCQ.');
     } finally {
       setBankSavingIds((previous) => ({ ...previous, [mcqId]: false }));
     }
@@ -5924,22 +5928,22 @@ export default function AdminApp() {
     const sectionOrTopic = String(bulkDeleteSectionOrTopic || '').trim();
 
     if (bulkDeleteMode === 'subject' && !subject) {
-      toast.error('Select or type a subject for subject-level deletion.');
+      showErrorToast('Select or type a subject for subject-level deletion.');
       return;
     }
 
     if (bulkDeleteMode === 'chapter' && !isFlatTopicSubject && (!subject || !chapter)) {
-      toast.error('Subject and chapter are required for chapter-level deletion.');
+      showErrorToast('Subject and chapter are required for chapter-level deletion.');
       return;
     }
 
     if ((bulkDeleteMode === 'chapter' || bulkDeleteMode === 'section-topic') && !isFlatTopicSubject && requiresPartSelection && !part) {
-      toast.error('Select Part 1 or Part 2 before deleting for this subject.');
+      showErrorToast('Select Part 1 or Part 2 before deleting for this subject.');
       return;
     }
 
     if (bulkDeleteMode === 'section-topic' && (!subject || !sectionOrTopic)) {
-      toast.error('Subject and section/topic are required for section/topic deletion.');
+      showErrorToast('Subject and section/topic are required for section/topic deletion.');
       return;
     }
 
@@ -5972,13 +5976,13 @@ export default function AdminApp() {
         authToken,
       );
 
-      toast.success(`${payload.removed || 0} MCQ(s) deleted.`);
+      showSuccessToast(`${payload.removed || 0} MCQ(s) deleted.`);
       await loadAdminData(authToken);
       if (selectedHierarchy) {
         await loadSectionMcqs(authToken, selectedHierarchy);
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not bulk delete MCQs.');
+      handleApiError(error, 'Could not bulk delete MCQs.');
     } finally {
       setBulkDeleting(false);
     }
@@ -5999,10 +6003,10 @@ export default function AdminApp() {
         },
         authToken,
       );
-      toast.success('Subscription updated successfully.');
+      showSuccessToast('Subscription updated successfully.');
       await loadAdminData(authToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not update subscription.');
+      handleApiError(error, 'Could not update subscription.');
     }
   };
 
@@ -6010,7 +6014,7 @@ export default function AdminApp() {
     if (!authToken) return;
 
     if (!assignPlanForm.email.trim() || !assignPlanForm.planId.trim()) {
-      toast.error('User email and plan are required.');
+      showErrorToast('User email and plan are required.');
       return;
     }
 
@@ -6026,10 +6030,10 @@ export default function AdminApp() {
         }),
       }, authToken);
 
-      toast.success('Subscription assigned successfully.');
+      showSuccessToast('Subscription assigned successfully.');
       await loadAdminData(authToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not assign subscription.');
+      handleApiError(error, 'Could not assign subscription.');
     } finally {
       setIsAssigningPlan(false);
     }
@@ -6045,27 +6049,27 @@ export default function AdminApp() {
     if (!authToken) return;
 
     if (!practiceForm.subject.trim()) {
-      toast.error('Subject is required.');
+      showErrorToast('Subject is required.');
       return;
     }
 
     if (practiceQuestionUpload && !isSupportedPracticeFile(practiceQuestionUpload)) {
-      toast.error('Question file must be JPG, PNG, PDF, DOC, or DOCX.');
+      showErrorToast('Question file must be JPG, PNG, PDF, DOC, or DOCX.');
       return;
     }
 
     if (practiceSolutionUpload && !isSupportedPracticeFile(practiceSolutionUpload)) {
-      toast.error('Solution file must be JPG, PNG, PDF, DOC, or DOCX.');
+      showErrorToast('Solution file must be JPG, PNG, PDF, DOC, or DOCX.');
       return;
     }
 
     if (practiceQuestionUpload && practiceQuestionUpload.size > PRACTICE_FILE_MAX_BYTES) {
-      toast.error('Question file exceeds 8MB limit.');
+      showErrorToast('Question file exceeds 8MB limit.');
       return;
     }
 
     if (practiceSolutionUpload && practiceSolutionUpload.size > PRACTICE_FILE_MAX_BYTES) {
-      toast.error('Solution file exceeds 8MB limit.');
+      showErrorToast('Solution file exceeds 8MB limit.');
       return;
     }
 
@@ -6091,17 +6095,17 @@ export default function AdminApp() {
         };
       }
     } catch {
-      toast.error('Could not read uploaded file. Please try again.');
+      showErrorToast('Could not read uploaded file. Please try again.');
       return;
     }
 
     if (!practiceForm.questionText.trim() && !questionFilePayload) {
-      toast.error('Provide question text or upload a question file.');
+      showErrorToast('Provide question text or upload a question file.');
       return;
     }
 
     if (!practiceForm.solutionText.trim() && !solutionFilePayload) {
-      toast.error('Provide solution text or upload a solution file.');
+      showErrorToast('Provide solution text or upload a solution file.');
       return;
     }
 
@@ -6120,19 +6124,19 @@ export default function AdminApp() {
           method: 'PUT',
           body: JSON.stringify(payload),
         }, authToken);
-        toast.success('Practice board question updated.');
+        showSuccessToast('Practice board question updated.');
       } else {
         await apiRequest('/api/admin/practice-board/questions', {
           method: 'POST',
           body: JSON.stringify(payload),
         }, authToken);
-        toast.success('Practice board question added.');
+        showSuccessToast('Practice board question added.');
       }
 
       resetPracticeForm();
       await loadAdminData(authToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not save practice board question.');
+      handleApiError(error, 'Could not save practice board question.');
     }
   };
 
@@ -6142,13 +6146,13 @@ export default function AdminApp() {
 
     try {
       await apiRequest(`/api/admin/practice-board/questions/${questionId}`, { method: 'DELETE' }, authToken);
-      toast.success('Practice board question removed.');
+      showSuccessToast('Practice board question removed.');
       if (practiceForm.id === questionId) {
         resetPracticeForm();
       }
       await loadAdminData(authToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not delete practice board question.');
+      handleApiError(error, 'Could not delete practice board question.');
     }
   };
 
@@ -6190,7 +6194,7 @@ export default function AdminApp() {
         },
         authToken,
       );
-      toast.success('Submission review updated.');
+      showSuccessToast('Submission review updated.');
       await loadAdminData(authToken);
     } catch (error) {
       if (previousSubmission) {
@@ -6202,7 +6206,7 @@ export default function AdminApp() {
         delete next[submissionId];
         return next;
       });
-      toast.error(error instanceof Error ? error.message : 'Could not update submission review.');
+      handleApiError(error, 'Could not update submission review.');
     }
   };
 
@@ -6223,9 +6227,9 @@ export default function AdminApp() {
         authToken,
       );
       setContributionPolicy(payload.policy);
-      toast.success('Submission policy updated.');
+      showSuccessToast('Submission policy updated.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not update policy.');
+      handleApiError(error, 'Could not update policy.');
     }
   };
 
@@ -6248,10 +6252,10 @@ export default function AdminApp() {
         },
         authToken,
       );
-      toast.success(action === 'block' ? 'User blocked from community.' : 'Report dismissed.');
+      showSuccessToast(action === 'block' ? 'User blocked from community.' : 'Report dismissed.');
       await loadAdminData(authToken);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not review community report.');
+      handleApiError(error, 'Could not review community report.');
     }
   };
 
@@ -6280,7 +6284,7 @@ export default function AdminApp() {
     try {
       await loadSectionMcqs(authToken, normalizedSelection);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not load section MCQs.');
+      handleApiError(error, 'Could not load section MCQs.');
     }
   };
 
@@ -6311,7 +6315,7 @@ export default function AdminApp() {
     try {
       await loadSectionMcqs(authToken, normalizedSelection);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not load topic MCQs.');
+      handleApiError(error, 'Could not load topic MCQs.');
     }
   };
 
@@ -7766,9 +7770,9 @@ export default function AdminApp() {
                                     ].join('\n');
                                     try {
                                       await navigator.clipboard.writeText(text);
-                                      toast.success('Copied to clipboard.');
+                                      showSuccessToast('Copied to clipboard.');
                                     } catch {
-                                      toast.error('Could not copy.');
+                                      showErrorToast('Could not copy.');
                                     }
                                   }}
                                 >
@@ -9279,18 +9283,18 @@ export default function AdminApp() {
                                 const file = e.target.files?.[0] || null;
                                 if (!file) return;
                                 if (!isSupportedMcqImage(file)) {
-                                  toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                  showErrorToast('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
                                   e.currentTarget.value = '';
                                   return;
                                 }
                                 if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                                  toast.error('Image is too large. Maximum size is 5 MB.');
+                                  showErrorToast('Image is too large. Maximum size is 5 MB.');
                                   e.currentTarget.value = '';
                                   return;
                                 }
                                 void fileToMcqImage(file)
                                   .then((image) => updateBankEditDraft(item.id, (current) => ({ ...current, questionImage: image })))
-                                  .catch(() => toast.error('Could not read selected image.'));
+                                  .catch(() => showErrorToast('Could not read selected image.'));
                                 e.currentTarget.value = '';
                               }}
                             />
@@ -9447,12 +9451,12 @@ export default function AdminApp() {
                                       const file = e.target.files?.[0] || null;
                                       if (!file) return;
                                       if (!isSupportedMcqImage(file)) {
-                                        toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                        showErrorToast('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
                                         e.currentTarget.value = '';
                                         return;
                                       }
                                       if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                                        toast.error('Image is too large. Maximum size is 5 MB.');
+                                        showErrorToast('Image is too large. Maximum size is 5 MB.');
                                         e.currentTarget.value = '';
                                         return;
                                       }
@@ -9464,7 +9468,7 @@ export default function AdminApp() {
                                             return { ...current, optionMedia };
                                           });
                                         })
-                                        .catch(() => toast.error('Could not read selected image.'));
+                                        .catch(() => showErrorToast('Could not read selected image.'));
                                       e.currentTarget.value = '';
                                     }}
                                   />
@@ -9573,18 +9577,18 @@ export default function AdminApp() {
                                 const file = e.target.files?.[0] || null;
                                 if (!file) return;
                                 if (!isSupportedMcqImage(file)) {
-                                  toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                  showErrorToast('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
                                   e.currentTarget.value = '';
                                   return;
                                 }
                                 if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                                  toast.error('Image is too large. Maximum size is 5 MB.');
+                                  showErrorToast('Image is too large. Maximum size is 5 MB.');
                                   e.currentTarget.value = '';
                                   return;
                                 }
                                 void fileToMcqImage(file)
                                   .then((image) => updateBankEditDraft(item.id, (current) => ({ ...current, explanationImage: image })))
-                                  .catch(() => toast.error('Could not read selected image.'));
+                                  .catch(() => showErrorToast('Could not read selected image.'));
                                 e.currentTarget.value = '';
                               }}
                             />
@@ -9621,18 +9625,18 @@ export default function AdminApp() {
                                 const file = e.target.files?.[0] || null;
                                 if (!file) return;
                                 if (!isSupportedMcqImage(file)) {
-                                  toast.error('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
+                                  showErrorToast('Unsupported image format. Use JPG, PNG, WEBP, SVG, or GIF.');
                                   e.currentTarget.value = '';
                                   return;
                                 }
                                 if (file.size > MCQ_IMAGE_MAX_BYTES) {
-                                  toast.error('Image is too large. Maximum size is 5 MB.');
+                                  showErrorToast('Image is too large. Maximum size is 5 MB.');
                                   e.currentTarget.value = '';
                                   return;
                                 }
                                 void fileToMcqImage(file)
                                   .then((image) => updateBankEditDraft(item.id, (current) => ({ ...current, shortTrickImage: image })))
-                                  .catch(() => toast.error('Could not read selected image.'));
+                                  .catch(() => showErrorToast('Could not read selected image.'));
                                 e.currentTarget.value = '';
                               }}
                             />
@@ -10280,7 +10284,7 @@ export default function AdminApp() {
                                       variant="outline"
                                       onClick={() => {
                                         if (!openDataUrlPreview(file.dataUrl)) {
-                                          toast.error('Could not open attachment preview.');
+                                          showErrorToast('Could not open attachment preview.');
                                         }
                                       }}
                                     >
@@ -10291,7 +10295,7 @@ export default function AdminApp() {
                                       variant="outline"
                                       onClick={() => {
                                         if (!downloadDataUrlFile(file.dataUrl, file.name || 'attachment')) {
-                                          toast.error('Could not download attachment.');
+                                          showErrorToast('Could not download attachment.');
                                         }
                                       }}
                                     >

@@ -1,6 +1,6 @@
 import { type ChangeEvent, useEffect, useMemo, useState } from 'react';
 import { Upload, Send } from 'lucide-react';
-import { toast } from 'sonner';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { apiRequest } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -210,12 +210,12 @@ export function QuestionContribution() {
     if (!files.length) return;
 
     if (accessBlocked) {
-      toast.error('Upload access is temporarily restricted.');
+      showErrorToast('Upload access is temporarily restricted.');
       return;
     }
 
     if (attachments.length + files.length > limits.maxFilesPerSubmission) {
-      toast.error(`You can upload up to ${limits.maxFilesPerSubmission} files.`);
+      showErrorToast(`You can upload up to ${limits.maxFilesPerSubmission} files.`);
       return;
     }
 
@@ -223,11 +223,11 @@ export function QuestionContribution() {
       const nextFiles: SubmissionAttachment[] = [];
       for (const file of files) {
         if (!ACCEPTED_TYPES.has(file.type)) {
-          toast.error(`Unsupported file type: ${file.name}`);
+          showErrorToast(`Unsupported file type: ${file.name}`);
           continue;
         }
         if (file.size > limits.maxFileSizeBytes) {
-          toast.error('Upload failed: File size exceeds the allowed limit.');
+          showErrorToast('Upload failed: File size exceeds the allowed limit.');
           continue;
         }
 
@@ -242,9 +242,9 @@ export function QuestionContribution() {
 
       if (!nextFiles.length) return;
       setAttachments((prev) => [...prev, ...nextFiles]);
-      toast.success(`${nextFiles.length} file(s) attached.`);
+      showSuccessToast(`${nextFiles.length} file(s) attached.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not process selected file.');
+      handleApiError(error, 'Could not process selected file.');
     }
   };
 
@@ -254,27 +254,27 @@ export function QuestionContribution() {
 
   const submitQuestion = async () => {
     if (!subject.trim()) {
-      toast.error('Please choose a subject.');
+      showErrorToast('Please choose a subject.');
       return;
     }
 
     if (accessBlocked) {
-      toast.error('Upload access is temporarily restricted.');
+      showErrorToast('Upload access is temporarily restricted.');
       return;
     }
 
     if (limits.remainingSubmissionsToday <= 0) {
-      toast.error(`Daily limit reached. You can submit up to ${limits.maxSubmissionsPerDay} times per day.`);
+      showErrorToast(`Daily limit reached. You can submit up to ${limits.maxSubmissionsPerDay} times per day.`);
       return;
     }
 
     if (!questionText.trim() && !attachments.length) {
-      toast.error('Add typed text or attach at least one file.');
+      showErrorToast('Add typed text or attach at least one file.');
       return;
     }
 
     if (!submissionReason.trim()) {
-      toast.error('Please explain why this question should be added.');
+      showErrorToast('Please explain why this question should be added.');
       return;
     }
 
@@ -308,7 +308,7 @@ export function QuestionContribution() {
       setQuestionSource('');
       setSubmissionReason('');
       setAttachments([]);
-      toast.success('Question submitted for admin review. Thank you for contributing.');
+      showSuccessToast('Question submitted for admin review. Thank you for contributing.');
       await loadTrackedSubmissions();
       await loadAccessPolicy();
     } catch (error) {
@@ -328,7 +328,7 @@ export function QuestionContribution() {
         setBlockedUntil(String(blockedUntilValue));
       }
 
-      toast.error(error instanceof Error ? error.message : 'Could not submit your question.');
+      handleApiError(error, 'Could not submit your question.');
       await loadAccessPolicy();
     } finally {
       setSubmitting(false);

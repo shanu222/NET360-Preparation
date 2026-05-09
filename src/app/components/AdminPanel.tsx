@@ -7,7 +7,7 @@ import { Textarea } from './ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Badge } from './ui/badge';
-import { toast } from 'sonner';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { apiRequest } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 
@@ -79,7 +79,7 @@ export function AdminPanel() {
         }
       } catch (error) {
         if (!cancelled) {
-          toast.error(error instanceof Error ? error.message : 'Could not load admin data.');
+          handleApiError(error, 'Could not load admin data.');
         }
       } finally {
         if (!cancelled) {
@@ -110,7 +110,7 @@ export function AdminPanel() {
 
   const saveMcq = async () => {
     if (!token || !isAdmin) {
-      toast.error('Admin access required.');
+      showErrorToast('Admin access required.');
       return;
     }
 
@@ -120,7 +120,7 @@ export function AdminPanel() {
       .filter(Boolean);
 
     if (!form.question.trim() || options.length < 2 || !form.answer.trim()) {
-      toast.error('Question, at least two options, and answer are required.');
+      showErrorToast('Question, at least two options, and answer are required.');
       return;
     }
 
@@ -146,7 +146,7 @@ export function AdminPanel() {
         );
 
         setMcqs((prev) => prev.map((item) => (item.id === response.mcq.id ? response.mcq : item)));
-        toast.success('MCQ updated successfully.');
+        showSuccessToast('MCQ updated successfully.');
       } else {
         const response = await apiRequest<{ mcq: AdminMCQ }>(
           '/api/admin/mcqs',
@@ -158,12 +158,12 @@ export function AdminPanel() {
         );
 
         setMcqs((prev) => [response.mcq, ...prev]);
-        toast.success('MCQ added successfully.');
+        showSuccessToast('MCQ added successfully.');
       }
 
       resetForm();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not save MCQ.');
+      handleApiError(error, 'Could not save MCQ.');
     }
   };
 

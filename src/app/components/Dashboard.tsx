@@ -11,7 +11,7 @@ import {
   Trophy,
   Sparkles,
 } from 'lucide-react';
-import { toast } from 'sonner';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { Progress } from './ui/progress';
 import { useAppData } from '../context/AppDataContext';
 import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
@@ -324,7 +324,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               tone="from-sky-100 to-white"
               disabled
               onClick={() => {
-                toast.message('Coming Soon');
+                showNeutralToast('Coming Soon');
               }}
             />
             <QuickActionCard icon={Calculator} title="Merit Predictor" tone="from-amber-100 to-white" onClick={() => onNavigate('merit-calculator')} />

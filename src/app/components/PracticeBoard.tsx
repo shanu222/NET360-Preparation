@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Eraser, PenLine, RefreshCcw } from 'lucide-react';
-import { toast } from 'sonner';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
@@ -51,7 +51,7 @@ function openDataUrlFile(file?: { dataUrl?: string | null } | null) {
   const dataUrl = String(file?.dataUrl || '').trim();
   if (!dataUrl) return;
   if (!openDataUrlPreview(dataUrl)) {
-    toast.error('Could not open file preview.');
+    showErrorToast('Could not open file preview.');
   }
 }
 
@@ -60,7 +60,7 @@ function downloadDataUrlFile(file?: { dataUrl?: string | null; name?: string | n
   if (!dataUrl) return;
   const downloaded = downloadDataUrlFileSafe(dataUrl, String(file?.name || 'practice-file'));
   if (!downloaded) {
-    toast.error('Could not download this file.');
+    showErrorToast('Could not download this file.');
   }
 }
 
@@ -277,7 +277,7 @@ export function PracticeBoard() {
       setShowAnswer(false);
     } catch {
       setActiveQuestion(null);
-      toast.error('Could not load a practice board question from the database.');
+      showErrorToast('Could not load a practice board question from the database.');
     } finally {
       setLoadingQuestion(false);
     }
@@ -290,7 +290,7 @@ export function PracticeBoard() {
       setQuestionBankQuestions(payload?.questions || []);
     } catch {
       setQuestionBankQuestions([]);
-      toast.error('Could not load practice board question bank.');
+      showErrorToast('Could not load practice board question bank.');
     } finally {
       setQuestionBankLoading(false);
     }

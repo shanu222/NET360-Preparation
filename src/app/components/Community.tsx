@@ -13,7 +13,7 @@ import { apiRequest, buildSseStreamUrl } from '../lib/api';
 import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl } from '../lib/authSession';
 import { useAuth } from '../context/AuthContext';
-import { toast } from 'sonner';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError, toast } from '../lib/userToast';
 
 interface CommunityUser {
   id: string;
@@ -698,7 +698,7 @@ function CommunityInner() {
         await refreshCommunity(false);
       } catch (error) {
         if (!cancelled) {
-          toast.error(error instanceof Error ? error.message : 'Could not load community data.');
+          handleApiError(error, 'Could not load community data.');
         }
       }
     })();
@@ -868,7 +868,7 @@ function CommunityInner() {
       const opponentName = userNameById.get(String(opponentUserId)) || 'Student';
 
       if (!previous && !challenge.isChallenger && challenge.status === 'pending' && challenge.challengeType === 'async') {
-        toast.info(`New async challenge from ${opponentName}.`);
+        showInfoToast(`New async challenge from ${opponentName}.`);
       }
 
       if (
@@ -876,7 +876,7 @@ function CommunityInner() {
         && previous?.status === 'pending'
         && ['accepted', 'in_progress'].includes(String(challenge.status || ''))
       ) {
-        toast.success(`${opponentName} accepted your challenge.`);
+        showSuccessToast(`${opponentName} accepted your challenge.`);
       }
     }
 
@@ -905,13 +905,13 @@ function CommunityInner() {
 
     const mimeType = String(selected.type || '').toLowerCase();
     if (!PROFILE_PICTURE_ALLOWED_MIME_TYPES.has(mimeType)) {
-      toast.error('Profile picture format not supported. Use JPG, PNG, WEBP, GIF, or SVG.');
+      showErrorToast('Profile picture format not supported. Use JPG, PNG, WEBP, GIF, or SVG.');
       event.currentTarget.value = '';
       return;
     }
 
     if (selected.size > PROFILE_PICTURE_MAX_BYTES) {
-      toast.error('Profile picture exceeds 3MB limit.');
+      showErrorToast('Profile picture exceeds 3MB limit.');
       event.currentTarget.value = '';
       return;
     }
@@ -920,9 +920,9 @@ function CommunityInner() {
       const dataUrl = await fileToDataUrl(selected);
       setProfilePictureDataUrl(dataUrl);
       setProfilePictureUploadName(selected.name);
-      toast.success('Profile picture selected. Save profile to apply.');
+      showSuccessToast('Profile picture selected. Save profile to apply.');
     } catch {
-      toast.error('Could not read selected profile picture.');
+      showErrorToast('Could not read selected profile picture.');
     } finally {
       event.currentTarget.value = '';
     }
@@ -959,11 +959,11 @@ function CommunityInner() {
       setProfilePictureDataUrl(payload.profile?.profilePictureUrl || profilePictureDataUrl);
       setProfilePictureUploadName('');
       setIsCommunityProfileExpanded(false);
-      toast.success('Community profile updated.');
+      showSuccessToast('Community profile updated.');
       invalidateCommunityCache('/api/community');
       await refreshCommunity(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not update profile.');
+      handleApiError(error, 'Could not update profile.');
     }
   };
 
@@ -982,7 +982,7 @@ function CommunityInner() {
       }
     } catch (error) {
       if (!silent) {
-        toast.error(error instanceof Error ? error.message : 'Could not search users.');
+        handleApiError(error, 'Could not search users.');
       }
     } finally {
       setSearchLoading(false);
@@ -1013,7 +1013,7 @@ function CommunityInner() {
     ].find((row) => row.id === toUserId)?.connectionStatus;
 
     if (!canSendConnectionRequest(status)) {
-      toast.info(status === 'connected' ? 'Already connected.' : 'Connection request already exists.');
+      showInfoToast(status === 'connected' ? 'Already connected.' : 'Connection request already exists.');
       return;
     }
 
@@ -1022,12 +1022,12 @@ function CommunityInner() {
         method: 'POST',
         body: JSON.stringify({ toUserId }),
       }, token);
-      toast.success('Connection request sent.');
+      showSuccessToast('Connection request sent.');
       invalidateCommunityCache('/api/community');
       await refreshCommunity(true);
       await searchUsers(searchQuery, true, true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not send request.');
+      handleApiError(error, 'Could not send request.');
     }
   };
 
@@ -1038,18 +1038,18 @@ function CommunityInner() {
         method: 'POST',
         body: JSON.stringify({ action }),
       }, token);
-      toast.success(action === 'accept' ? 'Connection accepted.' : 'Request rejected.');
+      showSuccessToast(action === 'accept' ? 'Connection accepted.' : 'Request rejected.');
       invalidateCommunityCache('/api/community');
       await refreshCommunity(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not update request.');
+      handleApiError(error, 'Could not update request.');
     }
   };
 
   const createRoomPost = async () => {
     if (!token || !activeRoomId) return;
     if (!newPostText.trim()) {
-      toast.error('Write your discussion or doubt before posting.');
+      showErrorToast('Write your discussion or doubt before posting.');
       return;
     }
     try {
@@ -1059,13 +1059,13 @@ function CommunityInner() {
       }, token);
       setNewPostTitle('');
       setNewPostText('');
-      toast.success('Posted to discussion room.');
+      showSuccessToast('Posted to discussion room.');
       invalidateCommunityCache('/api/community/discussion-rooms');
       await loadDiscussionRoomPosts(activeRoomId, true);
       const roomsPayload = await requestCached<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms', { force: true });
       setRooms(roomsPayload.rooms || []);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not post to room.');
+      handleApiError(error, 'Could not post to room.');
     }
   };
 
@@ -1082,7 +1082,7 @@ function CommunityInner() {
       invalidateCommunityCache('/api/community/discussion');
       await loadDiscussionRoomPosts(activeRoomId, true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not post answer.');
+      handleApiError(error, 'Could not post answer.');
     }
   };
 
@@ -1096,7 +1096,7 @@ function CommunityInner() {
       invalidateCommunityCache('/api/community/discussion');
       await loadDiscussionRoomPosts(activeRoomId, true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not update vote.');
+      handleApiError(error, 'Could not update vote.');
     }
   };
 
@@ -1115,7 +1115,7 @@ function CommunityInner() {
   }) => {
     if (!token || !activeConnectionId || isSendingMessage) return;
     if (activeConnection && activeConnection.canMessage === false) {
-      toast.error('Messaging is blocked for this connection until unblocked.');
+      showErrorToast('Messaging is blocked for this connection until unblocked.');
       return;
     }
 
@@ -1131,7 +1131,7 @@ function CommunityInner() {
       await refreshActiveMessages();
       await refreshCommunity(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not send message.');
+      handleApiError(error, 'Could not send message.');
     } finally {
       setIsSendingMessage(false);
     }
@@ -1145,7 +1145,7 @@ function CommunityInner() {
 
   const sendFileMessage = async () => {
     if (!messageAttachment) {
-      toast.error('Select a file first.');
+      showErrorToast('Select a file first.');
       return;
     }
     await sendCommunityMessage({ messageType: 'file', attachment: messageAttachment });
@@ -1156,7 +1156,7 @@ function CommunityInner() {
     if (!selected) return;
 
     if (selected.size > CHAT_ATTACHMENT_MAX_BYTES) {
-      toast.error('File exceeds 8MB size limit.');
+      showErrorToast('File exceeds 8MB size limit.');
       event.currentTarget.value = '';
       return;
     }
@@ -1169,9 +1169,9 @@ function CommunityInner() {
         size: selected.size,
         dataUrl,
       });
-      toast.success('File attached to chat.');
+      showSuccessToast('File attached to chat.');
     } catch {
-      toast.error('Could not read selected file.');
+      showErrorToast('Could not read selected file.');
     } finally {
       event.currentTarget.value = '';
     }
@@ -1187,7 +1187,7 @@ function CommunityInner() {
       invalidateCommunityCache('/api/community/messages');
       await refreshActiveMessages();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not update reaction.');
+      handleApiError(error, 'Could not update reaction.');
     }
   };
 
@@ -1200,11 +1200,11 @@ function CommunityInner() {
         method: 'POST',
         body: JSON.stringify({ blocked: nextBlockedState }),
       }, token);
-      toast.success(nextBlockedState ? 'Connection blocked. Messaging paused.' : 'Connection unblocked. Messaging restored.');
+      showSuccessToast(nextBlockedState ? 'Connection blocked. Messaging paused.' : 'Connection unblocked. Messaging restored.');
       invalidateCommunityCache('/api/community/connections');
       await refreshCommunity(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not update block state.');
+      handleApiError(error, 'Could not update block state.');
     } finally {
       setIsBlockingConnection(false);
     }
@@ -1219,13 +1219,13 @@ function CommunityInner() {
       await apiRequest(`/api/community/connections/${activeConnection.connectionId}/unfriend`, {
         method: 'POST',
       }, token);
-      toast.success('Connection removed.');
+      showSuccessToast('Connection removed.');
       setActiveConnectionId('');
       setMessages([]);
       invalidateCommunityCache('/api/community/connections');
       await refreshCommunity(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not unfriend this connection.');
+      handleApiError(error, 'Could not unfriend this connection.');
     } finally {
       setIsUnfriendingConnection(false);
     }
@@ -1268,7 +1268,7 @@ function CommunityInner() {
 
   const startVoiceRecording = async () => {
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      toast.error('Voice notes are not supported on this device/browser.');
+      showErrorToast('Voice notes are not supported on this device/browser.');
       return;
     }
 
@@ -1308,9 +1308,9 @@ function CommunityInner() {
       voiceStartAtRef.current = Date.now();
       recorder.start();
       setIsRecordingVoice(true);
-      toast.message('Recording voice note... tap Stop to send.');
+      showNeutralToast('Recording voice note... tap Stop to send.');
     } catch {
-      toast.error('Microphone permission denied or unavailable.');
+      showErrorToast('Microphone permission denied or unavailable.');
     }
   };
 
@@ -1332,16 +1332,16 @@ function CommunityInner() {
         }),
       }, token);
       setReportReason('');
-      toast.success('Report submitted. Our moderation team will review this.');
+      showSuccessToast('Report submitted. Our moderation team will review this.');
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not submit report.');
+      handleApiError(error, 'Could not submit report.');
     }
   };
 
   const createQuizChallenge = async () => {
     if (!token) return;
     if (!quizOpponentUserId) {
-      toast.error('Select a student to challenge.');
+      showErrorToast('Select a student to challenge.');
       return;
     }
     try {
@@ -1358,13 +1358,13 @@ function CommunityInner() {
           durationSeconds: quizDurationSeconds,
         }),
       }, token);
-      toast.success('Quiz challenge sent.');
+      showSuccessToast('Quiz challenge sent.');
       setQuizAnswers({});
       setQuizStartedAtMs(null);
       invalidateCommunityCache('/api/community/quiz');
       await loadQuizData(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not create quiz challenge.');
+      handleApiError(error, 'Could not create quiz challenge.');
     }
   };
 
@@ -1378,17 +1378,17 @@ function CommunityInner() {
       if (action === 'accept') {
         openChallengeExamWindow(challengeId);
       }
-      toast.success(action === 'accept' ? 'Challenge accepted.' : 'Challenge declined.');
+      showSuccessToast(action === 'accept' ? 'Challenge accepted.' : 'Challenge declined.');
       invalidateCommunityCache('/api/community/quiz');
       await loadQuizData(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not respond to challenge.');
+      handleApiError(error, 'Could not respond to challenge.');
     }
   };
 
   const openChallengeExamWindow = (challengeId: string) => {
     if (!token) {
-      toast.error('Please login first to launch a challenge test.');
+      showErrorToast('Please login first to launch a challenge test.');
       return;
     }
 
@@ -1396,7 +1396,7 @@ function CommunityInner() {
     const examWindow = isNativeRuntime ? null : window.open('about:blank', '_blank', 'width=1400,height=900');
 
     if (!isNativeRuntime && !examWindow) {
-      toast.error('Popup blocked. Please allow popups and try again.');
+      showErrorToast('Popup blocked. Please allow popups and try again.');
       return;
     }
 
@@ -1439,13 +1439,13 @@ function CommunityInner() {
         method: 'POST',
         body: JSON.stringify({ answers, elapsedSeconds }),
       }, token);
-      toast.success('Challenge submitted.');
+      showSuccessToast('Challenge submitted.');
       setQuizStartedAtMs(null);
       setQuizAnswers({});
       invalidateCommunityCache('/api/community/quiz');
       await loadQuizData(true);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not submit challenge.');
+      handleApiError(error, 'Could not submit challenge.');
     }
   };
 

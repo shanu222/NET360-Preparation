@@ -9,7 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Award, Bot, ChevronDown, ChevronUp, FlaskConical, GraduationCap, Loader2, LogOut, MessageCircle, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
-import { toast } from 'sonner';
+import { showSuccessToast, showErrorToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK } from '../lib/paymentMethods';
@@ -152,13 +152,13 @@ export function Profile({ onNavigate }: ProfileProps) {
       }
 
       if (!authForm.email) {
-        toast.error('Email is required.');
+        showErrorToast('Enter your email address.');
         return;
       }
 
       if (isRegisterMode) {
         if (!authForm.password) {
-          toast.error('Password is required.');
+          showErrorToast('Enter a password.');
           return;
         }
 
@@ -170,13 +170,13 @@ export function Profile({ onNavigate }: ProfileProps) {
           lastName: authForm.lastName,
         });
         setAuthActionState('idle');
-        toast.success('Account created successfully.');
+        showSuccessToast('Account created successfully.');
       } else {
         setAuthActionState('loggingIn');
 
         if (!authForm.password) {
           setAuthActionState('idle');
-          toast.error('Password is required.');
+          showErrorToast('Enter a password.');
           return;
         }
 
@@ -198,38 +198,41 @@ export function Profile({ onNavigate }: ProfileProps) {
           }
         }
         setAuthActionState('idle');
-        toast.success('Logged in successfully.');
+        showSuccessToast('Logged in successfully.');
       }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Authentication failed.';
       const typed = error as Error & { status?: number };
       setAuthActionState('idle');
+      const friendly = audienceFriendlyError(
+        error,
+        isRegisterMode ? 'Could not create your account. Please try again.' : 'Unable to sign you in. Please check your email and password.',
+      );
       if (isRegisterMode && typed.status === 409) {
-        setRegisterConflictBanner(message);
+        setRegisterConflictBanner(friendly);
       }
-      toast.error(message);
+      showErrorToast(friendly);
     }
   };
 
   const handleForgotPasswordRequest = async () => {
     if (forgotCooldownSeconds > 0) {
-      toast.error(`Please wait ${forgotCooldownSeconds}s before sending another reset email.`);
+      showNeutralToast(`Please wait ${forgotCooldownSeconds}s before requesting another reset email.`);
       return;
     }
 
     const identifier = forgotIdentifier.trim() || authForm.email.trim();
 
     if (!identifier) {
-      toast.error('Enter your registered email.');
+      showErrorToast('Enter your registered email.');
       return;
     }
 
     try {
       await sendRecoveryEmail(identifier);
-      toast.success('Password reset email sent. Check your inbox.');
+      showSuccessToast('Password reset email sent. Check your inbox and spam folder.');
       setForgotCooldownSeconds(30);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not send password reset email.');
+      handleApiError(error, 'Could not send a reset email. Please try again.');
     }
   };
 
@@ -239,10 +242,10 @@ export function Profile({ onNavigate }: ProfileProps) {
       setAuthActionState('loggingIn');
       await loginWithGoogle();
       setAuthActionState('idle');
-      toast.success('Signed in with Google successfully.');
+      showSuccessToast('Signed in with Google.');
     } catch (error) {
       setAuthActionState('idle');
-      toast.error(error instanceof Error ? error.message : 'Social login failed.');
+      handleApiError(error, 'Google sign-in did not finish. Please try again.');
     }
   };
 
@@ -254,10 +257,10 @@ export function Profile({ onNavigate }: ProfileProps) {
         phone: localProfile.phone,
         city: localProfile.city,
       });
-      toast.success('Personal information saved to server.');
+      showSuccessToast('Personal information saved.');
       setIsPersonalInfoExpanded(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not save profile.');
+      handleApiError(error, 'Could not save profile.');
     }
   };
 
@@ -270,10 +273,10 @@ export function Profile({ onNavigate }: ProfileProps) {
         hsscPercentage: localProfile.hsscPercentage,
         testDate: localProfile.testDate,
       });
-      toast.success('Preparation details updated on server.');
+      showSuccessToast('Preparation details saved.');
       setIsPreparationExpanded(false);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not update details.');
+      handleApiError(error, 'Could not update details.');
     }
   };
 
@@ -290,10 +293,10 @@ export function Profile({ onNavigate }: ProfileProps) {
 
     try {
       await saveProfile({ targetProgram });
-      toast.success('Target program updated. Dashboard refreshed.');
+      showSuccessToast('Target program updated. Dashboard refreshed.');
     } catch (error) {
       setLocalProfile((previous) => ({ ...previous, targetProgram: previousProgram }));
-      toast.error(error instanceof Error ? error.message : 'Could not update target program.');
+      handleApiError(error, 'Could not update target program.');
     } finally {
       setIsSavingTargetProgram(false);
     }
@@ -303,9 +306,9 @@ export function Profile({ onNavigate }: ProfileProps) {
     const nextValue = !preferences[key];
     try {
       await savePreferences({ [key]: nextValue });
-      toast.message(`${key} ${nextValue ? 'enabled' : 'disabled'}.`);
+      showNeutralToast(`${key} ${nextValue ? 'enabled' : 'disabled'}.`);
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not save preference.');
+      handleApiError(error, 'Could not save preference.');
     }
   };
 
@@ -321,7 +324,7 @@ export function Profile({ onNavigate }: ProfileProps) {
     reader.onload = () => {
       const nextUrl = typeof reader.result === 'string' ? reader.result : '';
       if (!nextUrl) {
-        toast.error('Could not read selected photo.');
+        showErrorToast('Could not read selected photo.');
         return;
       }
 
@@ -338,11 +341,11 @@ export function Profile({ onNavigate }: ProfileProps) {
         // Non-blocking when storage is not available.
       }
 
-      toast.success('Profile photo updated locally for this browser session.');
+      showSuccessToast('Profile photo updated locally for this browser session.');
     };
 
     reader.onerror = () => {
-      toast.error('Could not read selected photo.');
+      showErrorToast('Could not read selected photo.');
     };
 
     reader.readAsDataURL(file);
@@ -350,12 +353,12 @@ export function Profile({ onNavigate }: ProfileProps) {
 
   const handleDeleteAccount = async () => {
     if (!deleteAccountPassword.trim()) {
-      toast.error('Enter your registration password to confirm account deletion.');
+      showErrorToast('Enter your registration password to confirm account deletion.');
       return;
     }
 
     if (deleteAccountConfirmationText.trim() !== 'DELETE') {
-      toast.error('Type DELETE exactly to confirm permanent account deletion.');
+      showErrorToast('Type DELETE exactly to confirm permanent account deletion.');
       return;
     }
 
@@ -366,7 +369,7 @@ export function Profile({ onNavigate }: ProfileProps) {
 
     try {
       setIsDeletingAccount(true);
-      const payload = await apiRequest<{ message: string }>('/api/auth/delete-account', {
+      await apiRequest<{ message: string }>('/api/auth/delete-account', {
         method: 'POST',
         body: JSON.stringify({
           password: deleteAccountPassword,
@@ -374,12 +377,12 @@ export function Profile({ onNavigate }: ProfileProps) {
         }),
       });
 
-      toast.success(payload.message || 'Account deleted successfully.');
+      showSuccessToast('Your account was deleted successfully.');
       setDeleteAccountPassword('');
       setDeleteAccountConfirmationText('');
       logout();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not delete account.');
+      handleApiError(error, 'Could not delete account.');
     } finally {
       setIsDeletingAccount(false);
     }

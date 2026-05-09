@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Bookmark, CircleHelp, FastForward, Rewind, Save, Send, SkipBack, SkipForward } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
-import { toast } from 'sonner';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest, probeAuthenticatedSession } from '../lib/api';
 import { COOKIE_SESSION_API_MARKER, readPersistedStudentAccessToken, shouldPersistAuthTokens } from '../lib/authSession';
@@ -524,7 +524,7 @@ export function TestInterfacePage() {
     } catch {
       // Best effort: redirect even if request fails.
     } finally {
-      toast.error(
+      showErrorToast(
         isChallengeMode
           ? 'Challenge cancelled. You lost this challenge because you left the test environment.'
           : 'Test cancelled because you left the secured test environment.',
@@ -545,7 +545,7 @@ export function TestInterfacePage() {
     violationDebounceAtRef.current = now;
 
     violationCountRef.current += 1;
-    toast.warning(
+    showWarningToast(
       isChallengeMode
         ? 'Warning: Leaving the test environment will cancel this challenge and you will lose.'
         : 'Warning: Leaving the test environment will cancel this test.',
@@ -781,7 +781,7 @@ export function TestInterfacePage() {
   const handleSubmit = async (auto = false) => {
     if (isPreviewMode) {
       if (auto) {
-        toast.message('Preview timer ended. Close this window to return to editor.');
+        showNeutralToast('Preview timer ended. Close this window to return to editor.');
       }
       return;
     }
@@ -822,9 +822,9 @@ export function TestInterfacePage() {
         localStorage.removeItem(getChallengeAttemptStorageKey(resolvedChallengeId));
 
         if (auto) {
-          toast.message('Time is up. Challenge auto-submitted.');
+          showNeutralToast('Time is up. Challenge auto-submitted.');
         } else {
-          toast.success('Challenge submitted successfully.');
+          showSuccessToast('Challenge submitted successfully.');
         }
         return;
       }
@@ -855,12 +855,12 @@ export function TestInterfacePage() {
       setReviewRows(Array.isArray(response.review) ? response.review : []);
 
       if (auto) {
-        toast.message('Time is up. Test auto-submitted.');
+        showNeutralToast('Time is up. Test auto-submitted.');
       } else {
-        toast.success('Test submitted successfully.');
+        showSuccessToast('Test submitted successfully.');
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not submit test.');
+      handleApiError(err, 'Could not submit your test. Please try again.');
     } finally {
       setIsSubmitting(false);
     }
@@ -1051,12 +1051,12 @@ export function TestInterfacePage() {
                     }
 
                     if (challengeLockedAnswers[question.id]) {
-                      toast.message('Live challenge answers are locked after first selection.');
+                      showNeutralToast('Live challenge answers are locked after first selection.');
                       return;
                     }
 
                     if (!resolvedChallengeId || !resolvedToken) {
-                      toast.error('Challenge context is missing. Reload and try again.');
+                      showErrorToast('Challenge context is missing. Reload and try again.');
                       return;
                     }
 
@@ -1074,7 +1074,7 @@ export function TestInterfacePage() {
                         setAnswers((prev) => ({ ...prev, [question.id]: optionValue }));
                       })
                       .catch((error) => {
-                        toast.error(error instanceof Error ? error.message : 'Could not lock answer for live challenge.');
+                        handleApiError(error, 'Could not lock answer for live challenge.');
                       });
                   }}
                 />
@@ -1104,7 +1104,7 @@ export function TestInterfacePage() {
 
           <div className="min-w-0 max-lg:overflow-x-auto max-lg:pb-1 max-lg:[-webkit-overflow-scrolling:touch]">
             <div className="grid min-w-0 grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9">
-              <ExamButton label="Save" icon={Save} onClick={() => toast.success('Answer saved for this question.')} />
+              <ExamButton label="Save" icon={Save} onClick={() => showSuccessToast('Answer saved for this question.')} />
               <ExamButton label="Next" icon={ArrowRight} onClick={() => setCurrentIndex((prev) => Math.min(session.questionCount - 1, prev + 1))} />
               <ExamButton label="Prev" icon={ArrowLeft} onClick={() => setCurrentIndex((prev) => Math.max(0, prev - 1))} />
               <ExamButton label="Review" icon={Bookmark} onClick={() => setMarkedForReview((prev) => ({ ...prev, [question.id]: !prev[question.id] }))} />
@@ -1112,7 +1112,7 @@ export function TestInterfacePage() {
               <ExamButton label="Prev Section" icon={SkipBack} onClick={goToPreviousSection} />
               <ExamButton label="First" icon={Rewind} onClick={() => setCurrentIndex(0)} />
               <ExamButton label="Last" icon={FastForward} onClick={() => setCurrentIndex(session.questionCount - 1)} />
-              <ExamButton label="Help" icon={CircleHelp} onClick={() => toast.message('Use Next/Prev, section controls, and Submit when done.')} />
+              <ExamButton label="Help" icon={CircleHelp} onClick={() => showNeutralToast('Use Next/Prev, section controls, and Submit when done.')} />
             </div>
           </div>
         </section>

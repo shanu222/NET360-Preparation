@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  useSyncExternalStore,
   type ErrorInfo,
   type ReactNode,
 } from 'react';
@@ -53,23 +52,12 @@ import { Sheet, SheetContent, SheetTrigger } from './components/ui/sheet';
 import { AppDataProvider } from './context/AppDataContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { preloadCommunityCache } from './lib/communityPreload';
-import { Toaster, toast } from 'sonner';
+import { showNeutralToast, showSuccessToast } from './lib/userToast';
+import { Toaster } from 'sonner';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { brandLogoUrl } from './lib/publicMedia';
-
-function useMinWidthSm(): boolean {
-  return useSyncExternalStore(
-    (onStoreChange) => {
-      const mq = window.matchMedia('(min-width: 640px)');
-      mq.addEventListener('change', onStoreChange);
-      return () => mq.removeEventListener('change', onStoreChange);
-    },
-    () => window.matchMedia('(min-width: 640px)').matches,
-    () => false,
-  );
-}
 
 function SessionReady({ children }: { children: ReactNode }) {
   const { loading } = useAuth();
@@ -334,7 +322,6 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
 }
 
 export default function App() {
-  const toastPosition = useMinWidthSm() ? 'top-right' : 'top-center';
   const smartMentorTabId = 'smart-mentor';
   const [sidebarMenuOpen, setSidebarMenuOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(resolveInitialThemeMode);
@@ -367,7 +354,7 @@ export default function App() {
       }
 
       // Stay in app on root instead of closing process abruptly.
-      toast.message('You are already on Home');
+      showNeutralToast('You are already on the home page.');
     });
 
     return () => {
@@ -526,7 +513,7 @@ export default function App() {
   const activeTitle = activeNavigationItem?.label || seoTitle || 'Dashboard';
 
   const handleSmartMentorComingSoon = () => {
-    toast.message('Coming Soon');
+    showNeutralToast('Coming soon.');
   };
 
   const shareImageUrl = useMemo(() => {
@@ -617,7 +604,7 @@ export default function App() {
                   variant="ghost"
                   size="icon"
                   className="touch-manipulation min-h-11 min-w-11 rounded-xl text-slate-600 hover:bg-indigo-50"
-                  onClick={() => toast.success('You will receive updates here.')}
+                  onClick={() => showSuccessToast('We will show your updates here.')}
                   aria-label="Notifications"
                 >
                   <Bell className="w-4 h-4" />
@@ -687,7 +674,7 @@ export default function App() {
         </div>
       </div>
 
-      <Toaster richColors position={toastPosition} />
+      <Toaster richColors position="top-right" closeButton visibleToasts={4} expand={false} offset={16} />
       <SupportChatWidget />
     </AppDataProvider>
       </SessionReady>

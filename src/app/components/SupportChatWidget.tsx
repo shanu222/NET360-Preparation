@@ -7,7 +7,7 @@ import { ScrollArea } from './ui/scroll-area';
 import { Badge } from './ui/badge';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
-import { toast } from 'sonner';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { PushNotifications } from '@capacitor/push-notifications';
 
 interface SupportMessage {
@@ -155,38 +155,38 @@ export function SupportChatWidget() {
         if (permission.receive === 'granted') {
           await PushNotifications.register();
           setNotificationPreference(true);
-          toast.success('Notifications enabled on this device.');
+          showSuccessToast('Notifications enabled on this device.');
         } else {
-          toast.error('Notification permission was not granted on this device.');
+          showErrorToast('Notification permission was not granted on this device.');
         }
       } catch {
-        toast.error('Could not enable notifications on this device.');
+        showErrorToast('Could not enable notifications on this device.');
       }
       return;
     }
 
     if (!canUseWebNotifications) {
-      toast.error('Notifications are not supported in this browser.');
+      showErrorToast('Notifications are not supported in this browser.');
       return;
     }
 
     if (Notification.permission === 'granted') {
       setNotificationPreference(true);
-      toast.success('Notifications enabled for this tab.');
+      showSuccessToast('Notifications enabled for this tab.');
       return;
     }
 
     if (Notification.permission === 'denied') {
-      toast.error('Notifications are blocked in browser settings.');
+      showErrorToast('Notifications are blocked in browser settings.');
       return;
     }
 
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
       setNotificationPreference(true);
-      toast.success('Notifications enabled for this tab.');
+      showSuccessToast('Notifications enabled for this tab.');
     } else {
-      toast.error('Notification permission was not granted.');
+      showErrorToast('Notification permission was not granted.');
     }
   };
 
@@ -238,7 +238,7 @@ export function SupportChatWidget() {
       } else if (latestAdminId && latestAdminId !== lastAdminMessageIdRef.current) {
         lastAdminMessageIdRef.current = latestAdminId;
         playNotificationTone();
-        toast.message('New reply from admin support');
+        showNeutralToast('New reply from admin support');
         notifyDesktop('NET360 Support', latestAdmin?.text || 'You have a new reply from admin support.');
       }
     } catch {
@@ -368,7 +368,7 @@ export function SupportChatWidget() {
       setMessageAttachment(null);
       await loadMessages();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not send message.');
+      handleApiError(error, 'Could not send message.');
     } finally {
       setSending(false);
     }
@@ -379,7 +379,7 @@ export function SupportChatWidget() {
     if (!file) return;
 
     if (file.size > SUPPORT_ATTACHMENT_MAX_BYTES) {
-      toast.error('File exceeds 8MB size limit.');
+      showErrorToast('File exceeds 8MB size limit.');
       event.target.value = '';
       return;
     }
@@ -392,9 +392,9 @@ export function SupportChatWidget() {
         size: file.size,
         dataUrl,
       });
-      toast.success('File attached.');
+      showSuccessToast('File attached.');
     } catch {
-      toast.error('Could not read selected file.');
+      showErrorToast('Could not read selected file.');
     } finally {
       event.target.value = '';
     }
@@ -409,7 +409,7 @@ export function SupportChatWidget() {
       }, token);
       await loadMessages();
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Could not update reaction.');
+      handleApiError(error, 'Could not update reaction.');
     }
   };
 
