@@ -76,7 +76,7 @@ export async function initSocketIo(httpServer, opts) {
     cors: {
       origin: corsOrigins,
       credentials: true,
-      methods: ['GET', 'POST'],
+      methods: ['GET', 'POST', 'OPTIONS'],
     },
     transports: ['websocket', 'polling'],
     connectionStateRecovery: {

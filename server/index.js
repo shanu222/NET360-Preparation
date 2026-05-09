@@ -600,57 +600,6 @@ const PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024;
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.set('query parser', 'simple');
-app.use(compression({ level: 6, threshold: 512 }));
-const hstsHttpsOnly = helmet.hsts({
-  maxAge: 86400,
-  includeSubDomains: false,
-  preload: false,
-});
-app.use(
-  helmet({
-    crossOriginResourcePolicy: { policy: 'cross-origin' },
-    referrerPolicy: { policy: 'no-referrer' },
-    xContentTypeOptions: true,
-    xFrameOptions: { action: 'deny' },
-    strictTransportSecurity: false,
-    contentSecurityPolicy: {
-      useDefaults: false,
-      directives: buildCspDirectives(),
-    },
-  }),
-);
-app.use((req, res, next) => {
-  if (!req.secure) {
-    next();
-    return;
-  }
-  hstsHttpsOnly(req, res, next);
-});
-
-function sanitizePrimitive(value) {
-  if (typeof value !== 'string') return value;
-  return value.replace(/\u0000/g, '');
-}
-
-function sanitizePayload(value) {
-  if (Array.isArray(value)) {
-    return value.map((item) => sanitizePayload(item));
-  }
-
-  if (value && typeof value === 'object') {
-    const out = {};
-    Object.entries(value).forEach(([key, nested]) => {
-      const safeKey = String(key || '').trim();
-      if (!safeKey) return;
-      if (safeKey === '__proto__' || safeKey === 'constructor' || safeKey === 'prototype') return;
-      if (safeKey.startsWith('$')) return;
-      out[safeKey] = sanitizePayload(nested);
-    });
-    return out;
-  }
-
-  return sanitizePrimitive(value);
-}
 
 const expressCorsDisabled = String(process.env.DISABLE_EXPRESS_CORS || '').toLowerCase() === 'true';
 
@@ -727,6 +676,20 @@ const corsOriginResolver = corsAllowedOriginsList
 const corsMiddleware = cors({
   origin: corsOriginResolver,
   credentials: true,
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+    'Cookie',
+    'X-CSRF-Token',
+    'Cache-Control',
+  ],
+  exposedHeaders: ['Content-Length', 'Content-Type'],
+  maxAge: 86_400,
+  optionsSuccessStatus: 204,
 });
 
 if (!expressCorsDisabled) {
@@ -736,6 +699,58 @@ if (!expressCorsDisabled) {
   console.warn(
     '[net360] Express CORS disabled (DISABLE_EXPRESS_CORS=true). Set Access-Control-* exactly once at your reverse proxy or you will break browsers.',
   );
+}
+
+app.use(compression({ level: 6, threshold: 512 }));
+const hstsHttpsOnly = helmet.hsts({
+  maxAge: 86400,
+  includeSubDomains: false,
+  preload: false,
+});
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    referrerPolicy: { policy: 'no-referrer' },
+    xContentTypeOptions: true,
+    xFrameOptions: { action: 'deny' },
+    strictTransportSecurity: false,
+    contentSecurityPolicy: {
+      useDefaults: false,
+      directives: buildCspDirectives(),
+    },
+  }),
+);
+app.use((req, res, next) => {
+  if (!req.secure) {
+    next();
+    return;
+  }
+  hstsHttpsOnly(req, res, next);
+});
+
+function sanitizePrimitive(value) {
+  if (typeof value !== 'string') return value;
+  return value.replace(/\u0000/g, '');
+}
+
+function sanitizePayload(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizePayload(item));
+  }
+
+  if (value && typeof value === 'object') {
+    const out = {};
+    Object.entries(value).forEach(([key, nested]) => {
+      const safeKey = String(key || '').trim();
+      if (!safeKey) return;
+      if (safeKey === '__proto__' || safeKey === 'constructor' || safeKey === 'prototype') return;
+      if (safeKey.startsWith('$')) return;
+      out[safeKey] = sanitizePayload(nested);
+    });
+    return out;
+  }
+
+  return sanitizePrimitive(value);
 }
 
 function redactRequestUrl(rawUrl) {
@@ -797,6 +812,11 @@ app.get('/api/public/media-config', (_req, res) => {
   });
 });
 
+/** Browsers must not get 429 on OPTIONS; without CORS headers that breaks preflight. */
+function skipOptionsPreflightForRateLimit(req) {
+  return req.method === 'OPTIONS';
+}
+
 app.use(
   '/api',
   rateLimit({
@@ -804,6 +824,7 @@ app.use(
     max: 800,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
     message: { error: 'Too many requests. Please try again later.' },
   }),
 );
@@ -815,6 +836,7 @@ app.use(
     max: 80,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
     message: { error: 'Too many auth attempts. Please try again shortly.' },
   }),
 );
@@ -826,6 +848,7 @@ app.use(
     max: 30,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
     message: { error: 'Too many login attempts. Please wait a minute and try again.' },
   }),
 );
@@ -837,6 +860,7 @@ app.use(
     max: 10,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
     message: { error: 'Too many reset requests. Please wait before retrying.' },
   }),
 );
@@ -848,6 +872,7 @@ app.use(
     max: 15,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
     message: { error: 'Too many password reset attempts. Please try again later.' },
   }),
 );
@@ -859,6 +884,7 @@ app.use(
     max: 40,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
     message: { error: 'AI endpoint rate limit reached. Please wait a moment and retry.' },
   }),
 );
@@ -870,6 +896,7 @@ app.use(
     max: 40,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
     message: { error: 'Too many uploads. Please wait and try again.' },
   }),
   createUploadRouter({ authMiddleware, requireAdmin }),
@@ -880,6 +907,7 @@ const mcqsReadLimiter = rateLimit({
   max: IS_PRODUCTION ? 90 : 400,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: skipOptionsPreflightForRateLimit,
   keyGenerator: (req) => String(req.user?._id || req.ip || 'unknown'),
   message: { error: 'Too many MCQ data requests. Please try again later.' },
 });
