@@ -154,6 +154,18 @@ const REFRESH_TOKEN_COOKIE_NAME = String(process.env.REFRESH_TOKEN_COOKIE_NAME |
 const AUTH_COOKIE_DOMAIN = String(process.env.AUTH_COOKIE_DOMAIN || '').trim();
 /** Production uses HTTPS + cross-site cookies; development uses lax + non-secure. */
 const AUTH_COOKIE_SECURE = IS_PRODUCTION;
+const ENV_ADMIN_LOGIN_EMAIL_RAW = String(
+  process.env.ADMIN_LOGIN_EMAIL
+  || process.env.ADMIN_EMAIL
+  || process.env.BOOTSTRAP_ADMIN_EMAIL
+  || '',
+).trim();
+const ENV_ADMIN_LOGIN_PASSWORD = String(
+  process.env.ADMIN_LOGIN_PASSWORD
+  || process.env.ADMIN_PASSWORD
+  || process.env.BOOTSTRAP_ADMIN_PASSWORD
+  || '',
+);
 const BOOTSTRAP_ADMIN_EMAIL_RAW = String(process.env.BOOTSTRAP_ADMIN_EMAIL || process.env.ADMIN_EMAIL || '').trim();
 const BOOTSTRAP_ADMIN_PASSWORD = String(process.env.BOOTSTRAP_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || '');
 const BOOTSTRAP_ADMIN_FORCE_PASSWORD_RESET = String(process.env.BOOTSTRAP_ADMIN_FORCE_PASSWORD_RESET || 'true').toLowerCase() === 'true';
@@ -2858,6 +2870,69 @@ function makeRefreshToken(user) {
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+function isEnvAdminLoginConfigured() {
+  return Boolean(normalizeEmail(ENV_ADMIN_LOGIN_EMAIL_RAW) && ENV_ADMIN_LOGIN_PASSWORD);
+}
+
+function credentialsEqualTimingSafe(actual, expected) {
+  const a = Buffer.from(String(actual || ''), 'utf8');
+  const b = Buffer.from(String(expected || ''), 'utf8');
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+function isEnvAdminLoginAttempt(email, password) {
+  const configuredEmail = normalizeEmail(ENV_ADMIN_LOGIN_EMAIL_RAW);
+  if (!configuredEmail || !ENV_ADMIN_LOGIN_PASSWORD) return false;
+  return normalizeEmail(email) === configuredEmail && credentialsEqualTimingSafe(password, ENV_ADMIN_LOGIN_PASSWORD);
+}
+
+async function ensureEnvAdminUserForLogin(email, password) {
+  const adminEmail = normalizeEmail(email);
+  if (!adminEmail || !password) return null;
+  if (!isValidEmail(adminEmail)) return null;
+  if (String(password).length < 8) return null;
+
+  const escapedEmail = escapeRegexLiteral(adminEmail, 254);
+  if (!escapedEmail) return null;
+
+  let user = await UserModel.findOne({
+    email: { $regex: `^${escapedEmail}$`, $options: 'i' },
+  }).select('+password');
+
+  const passwordHash = await hashPassword(password);
+
+  if (!user) {
+    user = await UserModel.create({
+      email: adminEmail,
+      passwordHash,
+      password: passwordHash,
+      firstName: 'Admin',
+      lastName: '',
+      role: 'admin',
+    });
+    console.log(`[auth/env-admin-login] Created env admin user for ${adminEmail}.`);
+    return user;
+  }
+
+  let changed = false;
+  if ((user.role || 'student') !== 'admin') {
+    user.role = 'admin';
+    changed = true;
+  }
+
+  user.passwordHash = passwordHash;
+  user.password = passwordHash;
+  changed = true;
+
+  if (changed) {
+    await user.save();
+    console.log(`[auth/env-admin-login] Synced env admin user for ${adminEmail}.`);
+  }
+
+  return user;
 }
 
 async function ensureBootstrapAdminAccount() {
@@ -6495,12 +6570,19 @@ app.post('/api/auth/login', async (req, res) => {
       return;
     }
 
-    const escapedEmail = escapeRegexLiteral(email, 254);
-    const user = escapedEmail
-      ? await UserModel.findOne({
-          email: { $regex: `^${escapedEmail}$`, $options: 'i' },
-        }).select('+password')
-      : null;
+    const envAdminAttempt = isEnvAdminLoginAttempt(email, password);
+    let user = null;
+
+    if (envAdminAttempt) {
+      user = await ensureEnvAdminUserForLogin(email, password);
+    } else {
+      const escapedEmail = escapeRegexLiteral(email, 254);
+      user = escapedEmail
+        ? await UserModel.findOne({
+            email: { $regex: `^${escapedEmail}$`, $options: 'i' },
+          }).select('+password')
+        : null;
+    }
 
     console.log('USER FOUND:', user ? { id: String(user._id), email: user.email } : null);
 
@@ -6514,29 +6596,33 @@ app.post('/api/auth/login', async (req, res) => {
       return;
     }
 
-    const storedHash = String(user.passwordHash || user.password || '').trim();
-    if (!storedHash) {
-      await logSecurityEvent(req, {
-        eventType: 'auth.login_missing_password_hash',
-        severity: 'warning',
-        actorUserId: user._id,
-        actorEmail: user.email,
-      });
-      res.status(401).json({ error: 'Invalid credentials.' });
-      return;
-    }
+    if (!envAdminAttempt) {
+      const storedHash = String(user.passwordHash || user.password || '').trim();
+      if (!storedHash) {
+        await logSecurityEvent(req, {
+          eventType: 'auth.login_missing_password_hash',
+          severity: 'warning',
+          actorUserId: user._id,
+          actorEmail: user.email,
+        });
+        res.status(401).json({ error: 'Invalid credentials.' });
+        return;
+      }
 
-    const isValid = await bcrypt.compare(String(password), storedHash);
-    console.log('PASSWORD MATCH:', isValid);
-    if (!isValid) {
-      await logSecurityEvent(req, {
-        eventType: 'auth.login_invalid_password',
-        severity: 'warning',
-        actorUserId: user._id,
-        actorEmail: user.email,
-      });
-      res.status(401).json({ error: 'Invalid credentials.' });
-      return;
+      const isValid = await bcrypt.compare(String(password), storedHash);
+      console.log('PASSWORD MATCH:', isValid);
+      if (!isValid) {
+        await logSecurityEvent(req, {
+          eventType: 'auth.login_invalid_password',
+          severity: 'warning',
+          actorUserId: user._id,
+          actorEmail: user.email,
+        });
+        res.status(401).json({ error: 'Invalid credentials.' });
+        return;
+      }
+    } else {
+      console.log('[auth/login] env admin credentials accepted');
     }
 
     let role = user.role || 'student';
@@ -13647,6 +13733,9 @@ function validateCriticalConfiguration() {
   }
   if (IS_PRODUCTION && !JWT_REFRESH_SECRET_RAW) {
     warnings.push('JWT_REFRESH_SECRET is not set; refresh tokens cannot be verified.');
+  }
+  if (IS_PRODUCTION && isEnvAdminLoginConfigured()) {
+    warnings.push('ADMIN_LOGIN_EMAIL/ADMIN_LOGIN_PASSWORD are configured; env admin login is enabled.');
   }
 
   if (IS_PRODUCTION && JWT_SECRET && (JWT_SECRET === 'dev-secret-change-me' || JWT_SECRET.length < 32)) {

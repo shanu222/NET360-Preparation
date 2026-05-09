@@ -61,10 +61,10 @@ Create environment variables for backend service:
 - `MODEL_PROVIDER_MODEL` = optional, default `gpt-4o-mini`
 - `SMART_DAILY_LIMIT` = optional, default `50`
 - Admin access:
-  - Primary: set `role: "admin"` on the user document in MongoDB
-  - Recovery bootstrap (optional): set `BOOTSTRAP_ADMIN_EMAIL` + `BOOTSTRAP_ADMIN_PASSWORD` on API service
-  - Optional `BOOTSTRAP_ADMIN_FORCE_PASSWORD_RESET=true` (default) resets that admin password on startup
-  - After recovery, remove bootstrap vars (or set reset flag to `false`)
+  - Env login (recommended): set `ADMIN_LOGIN_EMAIL` + `ADMIN_LOGIN_PASSWORD` on API service
+  - When env credentials are used, backend auto-creates/promotes admin user and syncs password on successful login
+  - Aliases also supported: `ADMIN_EMAIL`/`ADMIN_PASSWORD` and `BOOTSTRAP_ADMIN_EMAIL`/`BOOTSTRAP_ADMIN_PASSWORD`
+  - Optional `BOOTSTRAP_ADMIN_FORCE_PASSWORD_RESET=true` keeps startup bootstrap password sync enabled
 - `API_PORT` = optional when `PORT` is unset; server default is `5000`
 - CORS is handled in `server/index.js` with **`cors({ origin: true, credentials: true })`** so the API echoes the browser `Origin` (works for apex + `www` without env lists). Ensure **Nginx does not add conflicting `Access-Control-*` headers** for `/api`.
 - `MAX_JSON_BODY_MB` = optional request body limit, default `10`
