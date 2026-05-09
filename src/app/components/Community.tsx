@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type MouseEvent } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -6,6 +6,7 @@ import { Label } from './ui/label';
 import { Textarea } from './ui/textarea';
 import { Badge } from './ui/badge';
 import { ScrollArea } from './ui/scroll-area';
+import { Skeleton } from './ui/skeleton';
 import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
@@ -13,7 +14,7 @@ import { apiRequest, buildSseStreamUrl } from '../lib/api';
 import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl } from '../lib/authSession';
 import { useAuth } from '../context/AuthContext';
-import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError, toast } from '../lib/userToast';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 
 interface CommunityUser {
   id: string;
@@ -34,6 +35,17 @@ interface CommunityUser {
   testScoreRange?: { min: number; max: number };
   bio?: string;
   connectionStatus?: 'none' | 'connected' | 'pending-sent' | 'pending-received' | string;
+  hideOnlineStatus?: boolean;
+  doNotDisturb?: boolean;
+  lastSeenAt?: string | null;
+  communityInterests?: string[];
+  presenceStatus?: 'online' | 'away' | 'offline';
+  studyingSubject?: string;
+}
+
+interface OnlineStudentRow extends CommunityUser {
+  presenceStatus?: 'online' | 'away' | 'offline';
+  studyingSubject?: string;
 }
 
 interface CommunityRequestRow {
@@ -78,6 +90,7 @@ interface MessageRow {
   callInvite?: { mode: 'audio' | 'video' | string; roomUrl: string; roomCode?: string } | null;
   reactions?: MessageReaction[];
   createdAt: string | null;
+  readByUserIds?: string[];
 }
 
 interface DiscussionRoom {
@@ -330,8 +343,22 @@ function CommunityInner() {
   const [scoreRangeMax, setScoreRangeMax] = useState(200);
   const [bio, setBio] = useState('');
   const [isCommunityProfileExpanded, setIsCommunityProfileExpanded] = useState(true);
+  const [hideOnlineStatus, setHideOnlineStatus] = useState(false);
+  const [doNotDisturb, setDoNotDisturb] = useState(false);
+  const [interestsInput, setInterestsInput] = useState('');
+  const [onlineStudents, setOnlineStudents] = useState<OnlineStudentRow[]>([]);
+  const [presenceLoading, setPresenceLoading] = useState(false);
+  const [remoteTyping, setRemoteTyping] = useState(false);
+  const [studyingSubjectPing, setStudyingSubjectPing] = useState('');
+  const [sseDropped, setSseDropped] = useState(false);
 
-  const [searchQuery, setSearchQuery] = useState('');
+  const messageThreadEndRef = useRef<HTMLDivElement | null>(null);
+  const activeConnectionIdRef = useRef('');
+  const typingEmitTimerRef = useRef<number | null>(null);
+  const typingStopTimerRef = useRef<number | null>(null);
+  const typingIdleTimerRef = useRef<number | null>(null);
+  const lastSendFingerprintRef = useRef('');
+  const loadPresenceRef = useRef<() => Promise<void>>(async () => {});
   const [searchResults, setSearchResults] = useState<Array<CommunityUser & { connectionStatus?: string }>>([]);
   const [profilePreview, setProfilePreview] = useState<CommunityUser | null>(null);
   const [studyPartnersProfilePreview, setStudyPartnersProfilePreview] = useState<CommunityUser | null>(null);
@@ -370,6 +397,7 @@ function CommunityInner() {
   const [connections, setConnections] = useState<ConnectionRow[]>([]);
   const [activeConnectionId, setActiveConnectionId] = useState('');
   const [messages, setMessages] = useState<MessageRow[]>([]);
+  const [messagesThreadLoading, setMessagesThreadLoading] = useState(false);
   const [messageInput, setMessageInput] = useState('');
   const [messageAttachment, setMessageAttachment] = useState<MessageAttachment | null>(null);
   const [isSendingMessage, setIsSendingMessage] = useState(false);
@@ -485,6 +513,11 @@ function CommunityInner() {
     [connections, activeConnectionId],
   );
 
+  const peerChatPresence = useMemo(() => {
+    if (!activeConnection) return null;
+    return onlineStudents.find((s) => s.id === activeConnection.user.id) || null;
+  }, [activeConnection, onlineStudents]);
+
   const selectedQuizChallenge = useMemo(
     () => quizChallenges.find((item) => item.id === selectedQuizChallengeId) || null,
     [quizChallenges, selectedQuizChallengeId],
@@ -556,6 +589,67 @@ function CommunityInner() {
     setRoomPosts(payload.posts || []);
   }, [token, requestCached]);
 
+  const loadPresence = useCallback(async () => {
+    if (!token) return;
+    setPresenceLoading(true);
+    try {
+      const payload = await apiRequest<{ online: OnlineStudentRow[] }>('/api/community/presence', {}, token);
+      setOnlineStudents(payload.online || []);
+    } catch {
+      setOnlineStudents([]);
+    } finally {
+      setPresenceLoading(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    loadPresenceRef.current = loadPresence;
+  }, [loadPresence]);
+
+  useEffect(() => {
+    activeConnectionIdRef.current = activeConnectionId;
+  }, [activeConnectionId]);
+
+  const refreshActiveMessages = useCallback(async () => {
+    if (!token || !activeConnectionId) return;
+    const payload = await requestCached<{ messages: MessageRow[] }>(`/api/community/messages/${activeConnectionId}`, { force: true, ttlMs: 10_000 });
+    setMessages(payload.messages || []);
+  }, [token, activeConnectionId, requestCached]);
+
+  const refreshActiveMessagesRef = useRef(refreshActiveMessages);
+  useEffect(() => {
+    refreshActiveMessagesRef.current = refreshActiveMessages;
+  }, [refreshActiveMessages]);
+
+  const postTyping = useCallback(
+    async (typing: boolean) => {
+      if (!token || !activeConnectionId) return;
+      try {
+        await apiRequest(
+          `/api/community/messages/${activeConnectionId}/typing`,
+          { method: 'POST', body: JSON.stringify({ typing }) },
+          token,
+        );
+      } catch {
+        // Typing hints are best-effort.
+      }
+    },
+    [token, activeConnectionId],
+  );
+
+  const bumpTypingFromInput = useCallback(() => {
+    if (typingEmitTimerRef.current) window.clearTimeout(typingEmitTimerRef.current);
+    typingEmitTimerRef.current = window.setTimeout(() => {
+      void postTyping(true);
+      typingEmitTimerRef.current = null;
+    }, 450);
+    if (typingIdleTimerRef.current) window.clearTimeout(typingIdleTimerRef.current);
+    typingIdleTimerRef.current = window.setTimeout(() => {
+      void postTyping(false);
+      typingIdleTimerRef.current = null;
+    }, 2200);
+  }, [postTyping]);
+
   const refreshCommunity = useCallback(async (force = false) => {
     if (!token) return;
 
@@ -590,6 +684,9 @@ function CommunityInner() {
       setScoreRangeMin(Number(profilePayload.profile?.testScoreRange?.min ?? 0));
       setScoreRangeMax(Number(profilePayload.profile?.testScoreRange?.max ?? 200));
       setBio(profilePayload.profile?.bio || '');
+      setHideOnlineStatus(Boolean(profilePayload.profile?.hideOnlineStatus));
+      setDoNotDisturb(Boolean(profilePayload.profile?.doNotDisturb));
+      setInterestsInput((profilePayload.profile?.communityInterests || []).join(', '));
       setIsCommunityProfileExpanded(!(profilePayload.profile?.username || profilePayload.profile?.bio));
 
       setIncomingRequests(requestsPayload.incoming || []);
@@ -614,12 +711,13 @@ function CommunityInner() {
       } else {
         setMessages([]);
       }
+      void loadPresence();
     })().finally(() => {
       refreshInFlightRef.current = null;
     });
 
     return refreshInFlightRef.current;
-  }, [token, requestCached, activeRoomId, activeConnectionId, loadDiscussionRoomPosts]);
+  }, [token, requestCached, activeRoomId, activeConnectionId, loadDiscussionRoomPosts, loadPresence]);
 
   useLayoutEffect(() => {
     if (!token) return;
@@ -638,6 +736,9 @@ function CommunityInner() {
       setScoreRangeMin(Number(p.testScoreRange?.min ?? 0));
       setScoreRangeMax(Number(p.testScoreRange?.max ?? 200));
       setBio(p.bio || '');
+      setHideOnlineStatus(Boolean(p.hideOnlineStatus));
+      setDoNotDisturb(Boolean(p.doNotDisturb));
+      setInterestsInput((p.communityInterests || []).join(', '));
       setIsCommunityProfileExpanded(!(p.username || p.bio));
     }
 
@@ -729,15 +830,19 @@ function CommunityInner() {
   useEffect(() => {
     if (!token || !activeConnectionId) {
       setMessages([]);
+      setMessagesThreadLoading(false);
       return;
     }
     let cancelled = false;
     async function loadMessages() {
+      setMessagesThreadLoading(true);
       try {
         const payload = await requestCached<{ messages: MessageRow[] }>(`/api/community/messages/${activeConnectionId}`, { ttlMs: 15_000 });
         if (!cancelled) setMessages(payload.messages || []);
       } catch {
         if (!cancelled) setMessages([]);
+      } finally {
+        if (!cancelled) setMessagesThreadLoading(false);
       }
     }
     void loadMessages();
@@ -745,6 +850,28 @@ function CommunityInner() {
       cancelled = true;
     };
   }, [token, activeConnectionId, requestCached]);
+
+  useLayoutEffect(() => {
+    messageThreadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+  }, [messages, remoteTyping, activeConnectionId, activeTab]);
+
+  useEffect(() => {
+    if (!token || activeTab !== 'messages' || !activeConnectionId) return;
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshActiveMessages();
+      }
+    };
+    const onFocus = () => {
+      void refreshActiveMessages();
+    };
+    document.addEventListener('visibilitychange', onVis);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', onVis);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [token, activeTab, activeConnectionId, refreshActiveMessages]);
 
   useEffect(() => {
     if (!token) return;
@@ -814,9 +941,37 @@ function CommunityInner() {
   useEffect(() => {
     if (!token) return;
 
+    const ping = () => {
+      void apiRequest(
+        '/api/community/presence/ping',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            away: document.hidden,
+            studyingSubject: studyingSubjectPing.trim() || undefined,
+          }),
+        },
+        token,
+      ).catch(() => {});
+    };
+
+    ping();
+    const id = window.setInterval(ping, 45_000);
+    const onVis = () => ping();
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [token, studyingSubjectPing]);
+
+  useEffect(() => {
+    if (!token) return;
+
     let closed = false;
     let reconnectTimer: number | null = null;
     let source: EventSource | null = null;
+    let disconnectToastShown = false;
 
     const closeCurrent = () => {
       if (source) {
@@ -828,9 +983,40 @@ function CommunityInner() {
     const connect = () => {
       if (closed) return;
       closeCurrent();
+      setSseDropped(false);
+      disconnectToastShown = false;
 
       source = new EventSource(buildSseStreamUrl(token), { withCredentials: true });
-      source.addEventListener('sync', () => {
+      source.addEventListener('sync', (event: Event) => {
+        const me = event as MessageEvent;
+        let parsed: { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string } = {};
+        try {
+          parsed = JSON.parse(String(me.data || '{}'));
+        } catch {
+          parsed = {};
+        }
+        const t = String(parsed.type || '');
+        if (t === 'community.typing' && parsed.connectionId === activeConnectionIdRef.current) {
+          if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
+          setRemoteTyping(Boolean(parsed.typing));
+          if (parsed.typing) {
+            typingStopTimerRef.current = window.setTimeout(() => setRemoteTyping(false), 3200);
+          }
+          return;
+        }
+        if (t === 'community.presence') {
+          void loadPresenceRef.current();
+          return;
+        }
+        if (t === 'community.message.read') {
+          if (String(parsed.connectionId || '') === activeConnectionIdRef.current) {
+            void refreshActiveMessagesRef.current();
+          }
+          return;
+        }
+        if (t === 'community.message.sent') {
+          void loadPresenceRef.current();
+        }
         if (document.hidden) return;
         void refreshCommunity(true).catch(() => undefined);
       });
@@ -838,6 +1024,11 @@ function CommunityInner() {
         // Stream heartbeat keeps transport alive.
       });
       source.onerror = () => {
+        setSseDropped(true);
+        if (!disconnectToastShown) {
+          disconnectToastShown = true;
+          showNeutralToast('Live updates paused. Reconnecting…');
+        }
         closeCurrent();
         if (closed) return;
         reconnectTimer = window.setTimeout(() => connect(), 3000);
@@ -848,9 +1039,17 @@ function CommunityInner() {
     return () => {
       closed = true;
       if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
       closeCurrent();
     };
   }, [token, refreshCommunity]);
+
+  useEffect(() => {
+    return () => {
+      if (typingEmitTimerRef.current) window.clearTimeout(typingEmitTimerRef.current);
+      if (typingIdleTimerRef.current) window.clearTimeout(typingIdleTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     const currentMap = new Map(quizChallenges.map((challenge) => [challenge.id, { status: String(challenge.status || '') }]));
@@ -951,6 +1150,13 @@ function CommunityInner() {
             studyTimePreference,
             testScoreRange: { min: scoreRangeMin, max: scoreRangeMax },
             bio,
+            hideOnlineStatus,
+            doNotDisturb,
+            communityInterests: interestsInput
+              .split(',')
+              .map((item) => item.trim().toLowerCase())
+              .filter(Boolean)
+              .slice(0, 12),
           }),
         },
         token,
@@ -1100,12 +1306,6 @@ function CommunityInner() {
     }
   };
 
-  const refreshActiveMessages = async () => {
-    if (!token || !activeConnectionId) return;
-    const payload = await requestCached<{ messages: MessageRow[] }>(`/api/community/messages/${activeConnectionId}`, { force: true, ttlMs: 10_000 });
-    setMessages(payload.messages || []);
-  };
-
   const sendCommunityMessage = async (payload: {
     messageType: 'text' | 'file' | 'voice' | 'call-invite';
     text?: string;
@@ -1119,12 +1319,43 @@ function CommunityInner() {
       return;
     }
 
-    try {
-      setIsSendingMessage(true);
+    if (typingIdleTimerRef.current) window.clearTimeout(typingIdleTimerRef.current);
+    if (typingEmitTimerRef.current) window.clearTimeout(typingEmitTimerRef.current);
+    void postTyping(false);
+
+    const fingerprint = `${payload.messageType}:${payload.text || ''}:${payload.attachment?.name || ''}:${Date.now()}`;
+    const coarseKey = `${payload.messageType}:${payload.text || ''}:${payload.attachment?.name || ''}`;
+    if (lastSendFingerprintRef.current === coarseKey) {
+      showInfoToast('Message already sending or duplicate.');
+      return;
+    }
+    lastSendFingerprintRef.current = coarseKey;
+    window.setTimeout(() => {
+      if (lastSendFingerprintRef.current === coarseKey) {
+        lastSendFingerprintRef.current = '';
+      }
+    }, 2500);
+
+    const sendOnce = async () => {
       await apiRequest(`/api/community/messages/${activeConnectionId}`, {
         method: 'POST',
         body: JSON.stringify(payload),
       }, token);
+    };
+
+    try {
+      setIsSendingMessage(true);
+      try {
+        await sendOnce();
+      } catch (firstError) {
+        await new Promise((r) => setTimeout(r, 400));
+        try {
+          await sendOnce();
+        } catch {
+          throw firstError;
+        }
+      }
+      showSuccessToast('Message sent.');
       setMessageInput('');
       setMessageAttachment(null);
       invalidateCommunityCache('/api/community/messages');
@@ -1132,6 +1363,7 @@ function CommunityInner() {
       await refreshCommunity(true);
     } catch (error) {
       handleApiError(error, 'Could not send message.');
+      showErrorToast('Delivery failed. You can try again.');
     } finally {
       setIsSendingMessage(false);
     }
@@ -1241,30 +1473,6 @@ function CommunityInner() {
     });
   };
 
-  const showComingSoonToastNearButton = (event: MouseEvent<HTMLButtonElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const toastWidth = 110;
-    const top = Math.max(8, rect.top - 40);
-    const left = Math.max(8, Math.min(window.innerWidth - toastWidth - 8, rect.left + rect.width / 2 - toastWidth / 2));
-
-    toast.custom(() => (
-      <div
-        style={{
-          position: 'fixed',
-          top,
-          left,
-          zIndex: 9999,
-          pointerEvents: 'none',
-        }}
-        className="rounded-md border border-indigo-300 bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white shadow-lg"
-      >
-        Coming Soon
-      </div>
-    ), {
-      duration: 1400,
-      dismissible: false,
-    });
-  };
 
   const startVoiceRecording = async () => {
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
@@ -1449,6 +1657,37 @@ function CommunityInner() {
     }
   };
 
+  const profileCompletionPercent = useMemo(() => {
+    let score = 0;
+    if (usernameInput.trim()) score += 22;
+    if (bio.trim()) score += 18;
+    if (targetNetType) score += 10;
+    if (subjectsNeedHelpInput.trim()) score += 15;
+    if (Number(scoreRangeMax) > 0) score += 8;
+    if (profilePictureDataUrl || profile?.profilePictureUrl) score += 12;
+    if (interestsInput.trim()) score += 15;
+    return Math.min(100, score);
+  }, [usernameInput, bio, targetNetType, subjectsNeedHelpInput, scoreRangeMax, profilePictureDataUrl, profile?.profilePictureUrl, interestsInput]);
+
+  const trendingRooms = useMemo(() => [...rooms].sort((a, b) => (Number(b.posts) || 0) - (Number(a.posts) || 0)), [rooms]);
+
+  const openChatWithUser = (userId: string) => {
+    const row = connections.find((c) => c.user.id === userId);
+    if (row) {
+      setActiveConnectionId(row.connectionId);
+      setActiveTab('messages');
+      showInfoToast('Opening messages.');
+      return;
+    }
+    showInfoToast('Send a connection request first to unlock chat.');
+  };
+
+  const inviteToQuizBattleFromPresence = (userId: string) => {
+    setQuizOpponentUserId(userId);
+    setActiveTab('quiz-battles');
+    showInfoToast('Configure the battle, then tap Send Challenge.');
+  };
+
   if (!token || !user) {
     return (
       <Card>
@@ -1470,6 +1709,7 @@ function CommunityInner() {
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-4">
         <div className="net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1 [scrollbar-gutter:stable]">
           <TabsList className="inline-flex h-auto w-max min-w-max flex-nowrap gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 via-indigo-50 to-fuchsia-50 p-1.5 shadow-[0_10px_20px_rgba(99,102,241,0.12)]">
+            <TabsTrigger value="online-students" className={sectionTabTriggerClassName}>Online</TabsTrigger>
             <TabsTrigger value="discover-students" className={sectionTabTriggerClassName}>Discover Students</TabsTrigger>
             <TabsTrigger value="study-partners" className={sectionTabTriggerClassName}>Study Partners</TabsTrigger>
             <TabsTrigger value="discussion-rooms" className={sectionTabTriggerClassName}>Discussion Rooms</TabsTrigger>
@@ -1478,6 +1718,114 @@ function CommunityInner() {
             <TabsTrigger value="messages" className={sectionTabTriggerClassName}>Messages</TabsTrigger>
           </TabsList>
         </div>
+
+        <TabsContent value="online-students" className="mt-0 space-y-4">
+          <Card className="overflow-hidden border-indigo-200/60 bg-gradient-to-br from-white via-indigo-50/30 to-fuchsia-50/20 shadow-md dark:border-indigo-500/20 dark:from-slate-950 dark:via-indigo-950/20 dark:to-slate-900">
+            <CardHeader>
+              <CardTitle className="flex flex-wrap items-center gap-2 text-balance">
+                Online students
+                {sseDropped ? (
+                  <Badge variant="outline" className="border-amber-300 text-amber-800 dark:text-amber-200">Reconnecting…</Badge>
+                ) : (
+                  <Badge className="bg-emerald-600 text-white shadow-sm">Live</Badge>
+                )}
+              </CardTitle>
+              <CardDescription>
+                Real-time roster via your open session. Others only see you if you don&apos;t hide your status in your profile.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div className="min-w-0 flex-1 space-y-1.5">
+                  <Label>Currently studying (optional, shown on your tile)</Label>
+                  <Input
+                    value={studyingSubjectPing}
+                    onChange={(e) => setStudyingSubjectPing(e.target.value)}
+                    placeholder="e.g. Integration techniques"
+                  />
+                </div>
+                <Button type="button" variant="outline" className="shrink-0" onClick={() => void loadPresence()} disabled={presenceLoading}>
+                  {presenceLoading ? 'Refreshing…' : 'Refresh roster'}
+                </Button>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                {onlineStudents.map((s) => {
+                  const netStatus = [...allCommunityUsers, ...searchResults].find((x) => x.id === s.id)?.connectionStatus;
+                  return (
+                    <div
+                      key={s.id}
+                      className="group relative overflow-hidden rounded-2xl border border-slate-200/90 bg-white/95 p-4 shadow-sm ring-1 ring-transparent transition duration-300 hover:-translate-y-1 hover:shadow-lg hover:ring-indigo-200/60 dark:border-slate-700 dark:bg-slate-900/75 dark:hover:ring-indigo-500/30"
+                    >
+                      <div className="absolute right-3 top-3 flex items-center gap-1.5">
+                        <span
+                          className={`inline-flex h-2.5 w-2.5 rounded-full shadow-[0_0_8px_currentColor] ${s.presenceStatus === 'away' ? 'bg-amber-400 text-amber-400' : 'bg-emerald-500 text-emerald-500'} animate-pulse`}
+                        />
+                        <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                          {s.presenceStatus === 'away' ? 'Away' : 'Online'}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-3 pr-12">
+                        <CommunityAvatar userLike={s} sizeClass="h-12 w-12 ring-2 ring-white shadow-md dark:ring-slate-800" />
+                        <div className="min-w-0">
+                          <p className="truncate font-semibold">{displayName(s)}</p>
+                          <p className="truncate text-xs text-muted-foreground">{s.username ? `@${s.username}` : 'Student'}</p>
+                          <p className="truncate text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                            {(s.targetNetType || 'net-engineering').replace(/-/g, ' ')}
+                          </p>
+                        </div>
+                      </div>
+                      {s.studyingSubject ? (
+                        <p className="mt-3 rounded-lg border border-slate-200/80 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-800 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100">
+                          <span className="text-muted-foreground">Focus: </span>
+                          <span className="font-medium">{s.studyingSubject}</span>
+                        </p>
+                      ) : null}
+                      {s.lastSeenAt ? (
+                        <p className="mt-1 text-[10px] text-muted-foreground">Last seen {new Date(s.lastSeenAt).toLocaleString()}</p>
+                      ) : null}
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <Button type="button" size="sm" variant="secondary" className="shadow-sm" onClick={() => openChatWithUser(s.id)}>
+                          Chat
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void sendConnectionRequest(s.id)}
+                          disabled={!canSendConnectionRequest(netStatus)}
+                        >
+                          Connect
+                        </Button>
+                        <Button type="button" size="sm" variant="outline" onClick={() => inviteToQuizBattleFromPresence(s.id)}>
+                          Quiz battle
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="text-indigo-700 dark:text-indigo-300"
+                          onClick={() => {
+                            if (rooms[0]?.id) setActiveRoomId(rooms[0].id);
+                            setActiveTab('discussion-rooms');
+                          }}
+                        >
+                          Study room
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {!onlineStudents.length && !presenceLoading ? (
+                <div className="rounded-xl border border-dashed p-8 text-center">
+                  <p className="text-sm font-medium text-slate-800 dark:text-slate-100">No visible classmates online</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Study sessions spike after school hours — invite friends or jump into Discussion Rooms meanwhile.</p>
+                </div>
+              ) : null}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="discover-students" className="mt-0 space-y-4">
           <Card className="min-h-[120px]">
@@ -1490,6 +1838,18 @@ function CommunityInner() {
                       ? 'Set your NET goals and preferences so matching is productive.'
                       : 'Saved profile summary. Use Edit Profile to update details.'}
                   </CardDescription>
+                  <div className="mt-3 space-y-1">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <span>Profile strength</span>
+                      <span>{profileCompletionPercent}%</span>
+                    </div>
+                    <div className="h-2 overflow-hidden rounded-full bg-slate-200/80 dark:bg-slate-800">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-cyan-500 via-indigo-500 to-violet-500 transition-all duration-500 ease-out"
+                        style={{ width: `${profileCompletionPercent}%` }}
+                      />
+                    </div>
+                  </div>
                 </div>
                 {!isCommunityProfileExpanded ? (
                   <Button type="button" variant="outline" onClick={() => setIsCommunityProfileExpanded(true)}>
@@ -1608,6 +1968,33 @@ function CommunityInner() {
               <div className="space-y-1.5">
                 <Label>Short Profile Bio</Label>
                 <Textarea value={bio} onChange={(e) => setBio(e.target.value)} className="min-h-[70px]" />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label>Interests &amp; focus tags (comma separated)</Label>
+                <Input
+                  value={interestsInput}
+                  onChange={(e) => setInterestsInput(e.target.value)}
+                  placeholder="calculus, group study, late-night sessions"
+                />
+                <p className="text-xs text-muted-foreground">Shown on your card for better matches (max 12 tags).</p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="flex items-center gap-3 rounded-lg border border-slate-200/80 bg-white/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                  <Switch checked={hideOnlineStatus} onCheckedChange={setHideOnlineStatus} id="hide-online" />
+                  <Label htmlFor="hide-online" className="cursor-pointer text-sm leading-snug">
+                    Hide my online status
+                    <span className="mt-0.5 block text-xs font-normal text-muted-foreground">Others won&apos;t see you in Online; you still see everyone.</span>
+                  </Label>
+                </div>
+                <div className="flex items-center gap-3 rounded-lg border border-slate-200/80 bg-white/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                  <Switch checked={doNotDisturb} onCheckedChange={setDoNotDisturb} id="dnd-mode" />
+                  <Label htmlFor="dnd-mode" className="cursor-pointer text-sm leading-snug">
+                    Do not disturb
+                    <span className="mt-0.5 block text-xs font-normal text-muted-foreground">Quiet live typing signals to you from peers.</span>
+                  </Label>
+                </div>
               </div>
 
               <div className="flex items-center gap-3">
@@ -1827,6 +2214,23 @@ function CommunityInner() {
                 <CardDescription>Join subject rooms and solve doubts together.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-2 max-h-[560px] overflow-auto">
+                <div className="mb-2 rounded-lg border border-amber-200/70 bg-amber-50/70 p-2 text-xs text-amber-950 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-50">
+                  <p className="font-semibold">Pinned study tip</p>
+                  <p className="mt-1 text-[11px] opacity-90">Use clear doubt titles, show your working, and upvote helpful explanations so the room stays high-signal for everyone.</p>
+                </div>
+                <p className="text-xs font-medium text-muted-foreground">Trending by activity</p>
+                <div className="flex flex-wrap gap-1 pb-2">
+                  {trendingRooms.slice(0, 4).map((room) => (
+                    <button
+                      key={`trend-${room.id}`}
+                      type="button"
+                      className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-800 transition hover:bg-indigo-100 dark:border-indigo-500/40 dark:bg-indigo-950/40 dark:text-indigo-100"
+                      onClick={() => setActiveRoomId(room.id)}
+                    >
+                      {room.title} ({room.posts})
+                    </button>
+                  ))}
+                </div>
                 {rooms.map((room) => (
                   <button
                     key={room.id}
@@ -2221,9 +2625,17 @@ function CommunityInner() {
                 <CardTitle>Private Chat</CardTitle>
                 <CardDescription>
                   {activeConnection ? (
-                    <span className="inline-flex items-center gap-2">
+                    <span className="inline-flex flex-wrap items-center gap-2">
                       <CommunityAvatar userLike={activeConnection.user} sizeClass="h-6 w-6" />
-                      {`Chat with ${displayName(activeConnection.user)}`}
+                      <span>{`Chat with ${displayName(activeConnection.user)}`}</span>
+                      {peerChatPresence ? (
+                        <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] font-medium text-emerald-800 dark:border-emerald-500/40 dark:bg-emerald-950/40 dark:text-emerald-100">
+                          <span className={`h-1.5 w-1.5 rounded-full ${peerChatPresence.presenceStatus === 'away' ? 'bg-amber-400' : 'bg-emerald-500'} animate-pulse shadow-[0_0_6px_currentColor]`} />
+                          {peerChatPresence.presenceStatus === 'away' ? 'Away' : 'Online'}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">Status hidden or offline</span>
+                      )}
                     </span>
                   ) : 'Select a connection to start chatting.'}
                 </CardDescription>
@@ -2241,14 +2653,38 @@ function CommunityInner() {
 
                 {activeConnection ? (
                   <div className="flex flex-wrap gap-2">
-                    <Button type="button" size="sm" variant="outline" onClick={(event) => showComingSoonToastNearButton(event)} disabled={activeConnection.canMessage === false || isSendingMessage}>Audio Call</Button>
-                    <Button type="button" size="sm" variant="outline" onClick={(event) => showComingSoonToastNearButton(event)} disabled={activeConnection.canMessage === false || isSendingMessage}>Video Call</Button>
-                    <Button type="button" size="sm" variant="outline" onClick={(event) => showComingSoonToastNearButton(event)} disabled={activeConnection.canMessage === false || isSendingMessage}>Attach File</Button>
                     <Button
                       type="button"
                       size="sm"
                       variant="outline"
-                      onClick={(event) => showComingSoonToastNearButton(event)}
+                      onClick={() => void sendCallInvite('audio')}
+                      disabled={activeConnection.canMessage === false || isSendingMessage}
+                    >
+                      Audio Call
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => void sendCallInvite('video')}
+                      disabled={activeConnection.canMessage === false || isSendingMessage}
+                    >
+                      Video Call
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => messageFileInputRef.current?.click()}
+                      disabled={activeConnection.canMessage === false || isSendingMessage}
+                    >
+                      Attach File
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => (isRecordingVoice ? stopVoiceRecording() : void startVoiceRecording())}
                       disabled={activeConnection.canMessage === false || isSendingMessage}
                     >
                       {isRecordingVoice ? 'Stop Voice' : 'Voice Note'}
@@ -2280,9 +2716,29 @@ function CommunityInner() {
                   </div>
                 ) : null}
 
-                <div className="max-h-[300px] overflow-auto rounded-lg border p-3 space-y-2 sm:max-h-[330px]">
-                  {messages.map((item) => (
-                    <div key={item.id} className={`max-w-[88%] rounded-md p-2 text-sm ${item.senderUserId === user.id ? 'ml-auto bg-indigo-100 text-indigo-900 dark:bg-indigo-500/30 dark:text-indigo-100' : 'bg-slate-100 text-slate-800 dark:bg-slate-800/85 dark:text-slate-100'}`}>
+                <div className="max-h-[300px] overflow-auto rounded-xl border border-slate-200/90 bg-gradient-to-b from-slate-50/50 to-white p-3 space-y-2 shadow-inner dark:border-slate-700 dark:from-slate-900/40 dark:to-slate-950/20 sm:max-h-[380px]">
+                  {messagesThreadLoading ? (
+                    <div className="space-y-2">
+                      <Skeleton className="h-10 w-[72%] rounded-lg" />
+                      <Skeleton className="ml-auto h-10 w-[64%] rounded-lg" />
+                      <Skeleton className="h-10 w-[80%] rounded-lg" />
+                    </div>
+                  ) : (
+                    <>
+                      {messages.map((item) => {
+                        const isMine = item.senderUserId === user.id;
+                        const peerHasRead = isMine && activeConnection
+                          ? (item.readByUserIds || []).includes(activeConnection.user.id)
+                          : false;
+                        return (
+                          <div
+                            key={item.id}
+                            className={`max-w-[88%] rounded-2xl p-2.5 text-sm shadow-sm transition-all duration-200 ${
+                              isMine
+                                ? 'ml-auto bg-gradient-to-br from-indigo-600 to-violet-600 text-white'
+                                : 'bg-white text-slate-800 ring-1 ring-slate-200 dark:bg-slate-800/90 dark:text-slate-100 dark:ring-slate-600'
+                            }`}
+                          >
                       {item.messageType === 'call-invite' && item.callInvite?.roomUrl ? (
                         <div className="space-y-1">
                           <p>{item.text || `${item.callInvite.mode === 'video' ? 'Video' : 'Audio'} call invite`}</p>
@@ -2309,7 +2765,11 @@ function CommunityInner() {
                           <button
                             key={`${item.id}-${emoji}`}
                             type="button"
-                            className="rounded border bg-white/70 px-1.5 py-0.5 text-[11px] text-slate-800 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100"
+                            className={`rounded border px-1.5 py-0.5 text-[11px] ${
+                              isMine
+                                ? 'border-white/25 bg-white/15 text-white hover:bg-white/25'
+                                : 'bg-white/70 text-slate-800 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100'
+                            }`}
                             onClick={() => void toggleMessageReaction(item.id, emoji)}
                           >
                             {emoji}
@@ -2317,12 +2777,33 @@ function CommunityInner() {
                         ))}
                       </div>
                       {Array.isArray(item.reactions) && item.reactions.length ? (
-                        <p className="mt-1 text-[11px] text-muted-foreground">{item.reactions.map((reaction) => reaction.emoji).join(' ')}</p>
+                        <p className={`mt-1 text-[11px] ${isMine ? 'text-indigo-100/90' : 'text-muted-foreground'}`}>
+                          {item.reactions.map((reaction) => reaction.emoji).join(' ')}
+                        </p>
                       ) : null}
-                      <p className="mt-1 text-[11px] text-muted-foreground">{item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}</p>
+                      <div className={`mt-1 flex flex-wrap items-center justify-between gap-2 text-[11px] ${isMine ? 'text-indigo-100/85' : 'text-muted-foreground'}`}>
+                        <span>{item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}</span>
+                        {isMine ? <span className="font-medium">{peerHasRead ? 'Seen' : 'Sent'}</span> : null}
+                      </div>
                     </div>
-                  ))}
-                  {!messages.length ? <p className="text-xs text-muted-foreground">No messages yet.</p> : null}
+                        );
+                      })}
+                      {remoteTyping ? (
+                        <div className="rounded-lg border border-dashed border-slate-200 bg-white/70 px-2 py-1.5 text-xs text-muted-foreground dark:border-slate-600 dark:bg-slate-800/60">
+                          <span className="inline-flex items-center gap-2">
+                            <span className="inline-flex gap-0.5">
+                              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-indigo-400 [animation-duration:0.6s]" />
+                              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-indigo-400 [animation-duration:0.6s] [animation-delay:120ms]" />
+                              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-indigo-400 [animation-duration:0.6s] [animation-delay:240ms]" />
+                            </span>
+                            {activeConnection ? `${displayName(activeConnection.user)} is typing…` : 'Typing…'}
+                          </span>
+                        </div>
+                      ) : null}
+                      <div ref={messageThreadEndRef} />
+                      {!messages.length ? <p className="text-xs text-muted-foreground">No messages yet.</p> : null}
+                    </>
+                  )}
                 </div>
                 <form
                   className="flex flex-col gap-2 sm:flex-row"
@@ -2333,7 +2814,12 @@ function CommunityInner() {
                 >
                   <Input
                     value={messageInput}
-                    onChange={(e) => setMessageInput(e.target.value)}
+                    onChange={(e) => {
+                      setMessageInput(e.target.value);
+                      if (activeConnection && activeConnection.canMessage !== false && activeConnectionId) {
+                        bumpTypingFromInput();
+                      }
+                    }}
                     placeholder={activeConnection ? 'Type a respectful message...' : 'Select connection first'}
                     disabled={!activeConnection || isSendingMessage || activeConnection.canMessage === false}
                   />

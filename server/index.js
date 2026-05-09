@@ -361,16 +361,100 @@ async function logSecurityEvent(req, {
   }
 }
 
+/** Active SSE tab ids per student user (multi-tab support). */
+const studentPresenceClientIdsByUser = new Map();
+/** Ephemeral presence metadata (studying subject, away) keyed by userId string. */
+const studentPresenceMetaByUser = new Map();
+
+function registerStudentPresence(userId, clientId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return;
+  let set = studentPresenceClientIdsByUser.get(uid);
+  if (!set) {
+    set = new Set();
+    studentPresenceClientIdsByUser.set(uid, set);
+  }
+  const wasEmpty = set.size === 0;
+  set.add(clientId);
+  if (!studentPresenceMetaByUser.has(uid)) {
+    studentPresenceMetaByUser.set(uid, { studyingSubject: '', away: false, lastPing: Date.now() });
+  } else {
+    const meta = studentPresenceMetaByUser.get(uid);
+    meta.lastPing = Date.now();
+  }
+  if (wasEmpty) {
+    broadcastSyncEvent({
+      role: 'student',
+      event: 'sync',
+      data: { type: 'community.presence', action: 'online', userId: uid },
+    });
+  }
+}
+
+function unregisterStudentPresence(userId, clientId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return;
+  const set = studentPresenceClientIdsByUser.get(uid);
+  if (!set) return;
+  set.delete(clientId);
+  if (!set.size) {
+    studentPresenceClientIdsByUser.delete(uid);
+    studentPresenceMetaByUser.delete(uid);
+    CommunityProfileModel.updateOne({ userId: uid }, { $set: { lastSeenAt: new Date() } }).catch(() => {});
+    broadcastSyncEvent({
+      role: 'student',
+      event: 'sync',
+      data: { type: 'community.presence', action: 'offline', userId: uid },
+    });
+  }
+}
+
+function touchStudentPresenceMeta(userId, patch) {
+  const uid = String(userId || '').trim();
+  if (!uid) return;
+  const prev = studentPresenceMetaByUser.get(uid) || { studyingSubject: '', away: false, lastPing: 0 };
+  if (patch.studyingSubject !== undefined) {
+    prev.studyingSubject = String(patch.studyingSubject || '').trim().slice(0, 80);
+  }
+  if (patch.away !== undefined) {
+    prev.away = Boolean(patch.away);
+  }
+  prev.lastPing = Date.now();
+  studentPresenceMetaByUser.set(uid, prev);
+}
+
+function broadcastCommunityEventsToUserIds(targetUserIds, data) {
+  const idSet = new Set(targetUserIds.map((x) => String(x || '')));
+  const payload = `event: sync\ndata: ${JSON.stringify({ ...data, ts: Date.now() })}\n\n`;
+  for (const [clientId, client] of sseClients.student.entries()) {
+    if (idSet.has(String(client.userId || ''))) {
+      try {
+        client.res.write(payload);
+      } catch {
+        sseClients.student.delete(clientId);
+      }
+    }
+  }
+}
+
 function addSseClient(role, userId, res) {
   const streamRole = role === 'admin' ? 'admin' : 'student';
   const clientId = crypto.randomUUID();
   const bucket = sseClients[streamRole];
-  bucket.set(clientId, { userId: String(userId || ''), res });
+  const uid = String(userId || '');
+  bucket.set(clientId, { userId: uid, res });
+
+  if (streamRole === 'student' && uid) {
+    registerStudentPresence(uid, clientId);
+  }
 
   res.write(`event: sync\ndata: ${JSON.stringify({ type: 'connected', role: streamRole, ts: Date.now() })}\n\n`);
 
   reqCleanup(res, () => {
     bucket.delete(clientId);
+    if (streamRole === 'student' && uid) {
+      unregisterStudentPresence(uid, clientId);
+    }
   });
 
   return clientId;
@@ -730,7 +814,7 @@ async function hashPassword(plain) {
   return bcrypt.hash(String(plain || ''), 12);
 }
 
-const COMMUNITY_PROFILE_SELECT = 'userId username shareProfilePicture profilePictureUrl favoriteSubjects targetNetType subjectsNeedHelp preparationLevel studyTimePreference testScoreRange bio quizStats createdAt';
+const COMMUNITY_PROFILE_SELECT = 'userId username shareProfilePicture profilePictureUrl favoriteSubjects targetNetType subjectsNeedHelp preparationLevel studyTimePreference testScoreRange bio hideOnlineStatus doNotDisturb lastSeenAt communityInterests quizStats createdAt';
 const COMMUNITY_USER_SELECT = 'firstName lastName targetProgram city progress.averageScore progress.weakTopics role';
 const COMMUNITY_CONNECTION_SELECT = 'participantA participantB createdAt blockedByUserIds';
 const COMMUNITY_REQUEST_SELECT = 'fromUserId toUserId status createdAt';
@@ -1395,6 +1479,7 @@ function serializeCommunityMessage(item) {
       : null,
     reactions: serializeMessageReactions(item.reactions),
     createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+    readByUserIds: Array.isArray(item.readByUserIds) ? item.readByUserIds.map((id) => String(id)) : [],
   };
 }
 
@@ -5281,6 +5366,10 @@ function serializeCommunityUser(params) {
     },
     favoriteSubjects: normalizeSubjectList(profile.favoriteSubjects || []),
     bio: String(profile.bio || ''),
+    hideOnlineStatus: Boolean(profile.hideOnlineStatus),
+    doNotDisturb: Boolean(profile.doNotDisturb),
+    lastSeenAt: profile.lastSeenAt ? new Date(profile.lastSeenAt).toISOString() : null,
+    communityInterests: normalizeSubjectList(profile.communityInterests || [], 12),
   };
 }
 
@@ -7351,9 +7440,88 @@ app.put('/api/community/profile', authMiddleware, async (req, res) => {
   if (Object.prototype.hasOwnProperty.call(req.body || {}, 'bio')) {
     profile.bio = String(req.body?.bio || '').trim().slice(0, 280);
   }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'hideOnlineStatus')) {
+    profile.hideOnlineStatus = Boolean(req.body?.hideOnlineStatus);
+  }
+  if (Object.prototype.hasOwnProperty.call(req.body || {}, 'doNotDisturb')) {
+    profile.doNotDisturb = Boolean(req.body?.doNotDisturb);
+  }
+  if (Array.isArray(req.body?.communityInterests)) {
+    profile.communityInterests = normalizeSubjectList(req.body.communityInterests, 12);
+  }
 
   await profile.save();
   res.json({ profile: serializeCommunityUser({ user: req.user, profile, includePrivatePicture: true }) });
+});
+
+app.get('/api/community/presence', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const viewerId = String(req.user._id);
+  const now = Date.now();
+  const STALE_PING_MS = 120_000;
+
+  const onlineUserIds = Array.from(studentPresenceClientIdsByUser.keys());
+  if (!onlineUserIds.length) {
+    res.json({ online: [], serverTime: new Date().toISOString() });
+    return;
+  }
+
+  const privacyRows = await CommunityProfileModel.find({ userId: { $in: onlineUserIds } })
+    .select('userId hideOnlineStatus doNotDisturb lastSeenAt')
+    .lean();
+  const privacyById = new Map(privacyRows.map((row) => [String(row.userId), row]));
+
+  const visibleIds = onlineUserIds.filter((id) => {
+    if (id === viewerId) return true;
+    const row = privacyById.get(id);
+    return !row?.hideOnlineStatus;
+  });
+
+  const [users, profiles] = await Promise.all([
+    UserModel.find({ _id: { $in: visibleIds }, role: 'student' }).select(COMMUNITY_USER_SELECT).lean(),
+    CommunityProfileModel.find({ userId: { $in: visibleIds } }).select(COMMUNITY_PROFILE_SELECT).lean(),
+  ]);
+
+  const profileByUser = new Map(profiles.map((item) => [String(item.userId), item]));
+  const userById = new Map(users.map((item) => [String(item._id), item]));
+
+  const online = visibleIds
+    .filter((id) => userById.has(id))
+    .map((id) => {
+      const u = userById.get(id);
+      const p = profileByUser.get(id) || {};
+      const meta = studentPresenceMetaByUser.get(id) || { studyingSubject: '', away: false, lastPing: now };
+      const pingStale = now - Number(meta.lastPing || 0) > STALE_PING_MS;
+      const presenceStatus = meta.away || pingStale ? 'away' : 'online';
+      const base = serializeCommunityUser({ user: u, profile: p });
+      return {
+        ...base,
+        presenceStatus,
+        studyingSubject: String(meta.studyingSubject || ''),
+        lastSeenAt: p.lastSeenAt ? new Date(p.lastSeenAt).toISOString() : null,
+        doNotDisturb: Boolean(p.doNotDisturb),
+        hideOnlineStatus: Boolean(p.hideOnlineStatus),
+      };
+    });
+
+  res.json({ online, serverTime: new Date().toISOString() });
+});
+
+app.post('/api/community/presence/ping', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const uid = String(req.user._id);
+  touchStudentPresenceMeta(uid, {
+    studyingSubject: req.body?.studyingSubject,
+    away: req.body?.away,
+  });
+  if (studentPresenceClientIdsByUser.has(uid)) {
+    broadcastSyncEvent({
+      role: 'student',
+      event: 'sync',
+      data: { type: 'community.presence', action: 'update', userId: uid },
+    });
+  }
+  res.json({ ok: true });
 });
 
 app.get('/api/community/users/search', authMiddleware, async (req, res) => {
@@ -7807,7 +7975,7 @@ app.get('/api/community/messages/:connectionId', authMiddleware, async (req, res
     .limit(limit)
     .lean();
 
-  await CommunityMessageModel.updateMany(
+  const readAck = await CommunityMessageModel.updateMany(
     {
       connectionId,
       senderUserId: { $ne: req.user._id },
@@ -7815,6 +7983,15 @@ app.get('/api/community/messages/:connectionId', authMiddleware, async (req, res
     },
     { $addToSet: { readByUserIds: req.user._id } },
   );
+
+  const otherUserId = String(connection.participantA) === myId ? String(connection.participantB) : String(connection.participantA);
+  if (readAck?.modifiedCount > 0) {
+    broadcastCommunityEventsToUserIds([otherUserId], {
+      type: 'community.message.read',
+      connectionId,
+      readerUserId: myId,
+    });
+  }
 
   res.json({
     page,
@@ -7933,6 +8110,41 @@ app.post('/api/community/messages/:connectionId', authMiddleware, async (req, re
   res.status(201).json({
     message: serializeCommunityMessage(created),
   });
+});
+
+app.post('/api/community/messages/:connectionId/typing', authMiddleware, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const connectionId = String(req.params.connectionId || '').trim();
+  if (!isValidObjectId(connectionId)) {
+    res.status(400).json({ error: 'Valid connection id is required.' });
+    return;
+  }
+
+  const connection = await CommunityConnectionModel.findById(connectionId).lean();
+  if (!connection) {
+    res.status(404).json({ error: 'Connection not found.' });
+    return;
+  }
+  const myId = String(req.user._id);
+  if (![String(connection.participantA), String(connection.participantB)].includes(myId)) {
+    res.status(403).json({ error: 'Access denied for this chat.' });
+    return;
+  }
+
+  const otherUserId = String(connection.participantA) === myId ? String(connection.participantB) : String(connection.participantA);
+  const typing = Boolean(req.body?.typing);
+
+  const targetProfile = await CommunityProfileModel.findOne({ userId: otherUserId }).select('doNotDisturb').lean();
+  if (!targetProfile?.doNotDisturb) {
+    broadcastCommunityEventsToUserIds([otherUserId], {
+      type: 'community.typing',
+      connectionId,
+      fromUserId: myId,
+      typing,
+    });
+  }
+
+  res.json({ ok: true });
 });
 
 app.post('/api/community/messages/:messageId/reactions', authMiddleware, async (req, res) => {

@@ -16,6 +16,12 @@ const communityProfileSchema = new mongoose.Schema(
       max: { type: Number, default: 200 },
     },
     bio: { type: String, default: '' },
+    /** When true, user still sees others' presence but is omitted from others' online lists. */
+    hideOnlineStatus: { type: Boolean, default: false },
+    /** Soft signal for peers (e.g. suppress non-critical toast nudges client-side). */
+    doNotDisturb: { type: Boolean, default: false },
+    lastSeenAt: { type: Date, default: null },
+    communityInterests: { type: [String], default: [] },
     quizStats: {
       totalWins: { type: Number, default: 0 },
       totalMatchesPlayed: { type: Number, default: 0 },
