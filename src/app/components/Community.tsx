@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -388,6 +389,23 @@ function CommunityInner() {
 
   const [quizChallenges, setQuizChallenges] = useState<QuizChallengeRow[]>([]);
   const [quizLeaderboard, setQuizLeaderboard] = useState<QuizLeaderboardRow[]>([]);
+
+  const competitiveLeaderboardScrollRef = useRef<HTMLDivElement>(null);
+  const quizLeaderboardScrollRef = useRef<HTMLDivElement>(null);
+
+  const competitiveLeaderboardVirtual = useVirtualizer({
+    count: leaderboard.length,
+    getScrollElement: () => competitiveLeaderboardScrollRef.current,
+    estimateSize: () => 84,
+    overscan: 8,
+  });
+
+  const quizLeaderboardVirtual = useVirtualizer({
+    count: quizLeaderboard.length,
+    getScrollElement: () => quizLeaderboardScrollRef.current,
+    estimateSize: () => 76,
+    overscan: 6,
+  });
   const [selectedQuizChallengeId, setSelectedQuizChallengeId] = useState('');
   const [quizMode, setQuizMode] = useState<'subject-wise' | 'mock' | 'adaptive' | 'custom'>('subject-wise');
   const [quizSubject, setQuizSubject] = useState('mathematics');
@@ -726,6 +744,11 @@ function CommunityInner() {
     return refreshInFlightRef.current;
   }, [token, requestCached, activeRoomId, activeConnectionId, loadDiscussionRoomPosts, loadPresence]);
 
+  const refreshCommunityRef = useRef(refreshCommunity);
+  useEffect(() => {
+    refreshCommunityRef.current = refreshCommunity;
+  }, [refreshCommunity]);
+
   useLayoutEffect(() => {
     if (!token) return;
     const profilePayload = readExpiredCommunityCachePayload<{ profile: CommunityUser }>('/api/community/profile');
@@ -979,6 +1002,7 @@ function CommunityInner() {
     let reconnectTimer: number | null = null;
     let source: EventSource | null = null;
     let disconnectToastShown = false;
+    let fullRefreshTimer: number | null = null;
 
     const closeSse = () => {
       if (reconnectTimer) {
@@ -989,6 +1013,15 @@ function CommunityInner() {
         source.close();
         source = null;
       }
+    };
+
+    const scheduleFullCommunityRefresh = () => {
+      if (document.hidden) return;
+      if (fullRefreshTimer != null) return;
+      fullRefreshTimer = window.setTimeout(() => {
+        fullRefreshTimer = null;
+        void refreshCommunityRef.current(true).catch(() => undefined);
+      }, 160);
     };
 
     const applyCommunityPayload = (parsed: { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string }) => {
@@ -1015,7 +1048,7 @@ function CommunityInner() {
         void loadPresenceRef.current();
       }
       if (document.hidden) return;
-      void refreshCommunity(true).catch(() => undefined);
+      scheduleFullCommunityRefresh();
     };
 
     const openSse = () => {
@@ -1090,11 +1123,13 @@ function CommunityInner() {
     return () => {
       closed = true;
       closeSse();
+      socket.removeAllListeners();
       socket.close();
       communitySocketRef.current = null;
       if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
+      if (fullRefreshTimer != null) window.clearTimeout(fullRefreshTimer);
     };
-  }, [token, refreshCommunity]);
+  }, [token]);
 
   useEffect(() => {
     return () => {
@@ -2606,13 +2641,24 @@ function CommunityInner() {
                     <CardTitle>Quiz Battles Leaderboard</CardTitle>
                     <CardDescription>Top performers by wins, win rate, and volume.</CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-2 max-h-[220px] overflow-auto">
-                    {quizLeaderboard.map((entry) => (
-                      <div key={entry.userId} className="rounded-md border p-2 text-sm">
-                        <p className="font-medium">#{entry.rank} {entry.name || entry.username || 'Student'}</p>
-                        <p className="text-xs text-muted-foreground">Wins {entry.totalWins} | Matches {entry.totalMatchesPlayed} | Win Rate {entry.winRate}%</p>
-                      </div>
-                    ))}
+                  <CardContent className="space-y-2 max-h-[220px] overflow-auto" ref={quizLeaderboardScrollRef}>
+                    <div className="relative w-full" style={{ height: quizLeaderboardVirtual.getTotalSize() }}>
+                      {quizLeaderboardVirtual.getVirtualItems().map((vi) => {
+                        const entry = quizLeaderboard[vi.index];
+                        return (
+                          <div
+                            key={entry.userId}
+                            className="absolute left-0 top-0 w-full px-0.5"
+                            style={{ height: vi.size, transform: `translateY(${vi.start}px)` }}
+                          >
+                            <div className="rounded-md border p-2 text-sm">
+                              <p className="font-medium">#{entry.rank} {entry.name || entry.username || 'Student'}</p>
+                              <p className="text-xs text-muted-foreground">Wins {entry.totalWins} | Matches {entry.totalMatchesPlayed} | Win Rate {entry.winRate}%</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                     {!quizLeaderboard.length ? <p className="text-xs text-muted-foreground">No quiz ranking data yet.</p> : null}
                   </CardContent>
                 </Card>
@@ -2632,16 +2678,27 @@ function CommunityInner() {
                 <Button size="sm" variant={leaderboardPeriod === 'weekly' ? 'default' : 'outline'} onClick={() => setLeaderboardPeriod('weekly')}>Weekly</Button>
                 <Button size="sm" variant={leaderboardPeriod === 'monthly' ? 'default' : 'outline'} onClick={() => setLeaderboardPeriod('monthly')}>Monthly</Button>
               </div>
-              <div className="space-y-2 max-h-[360px] overflow-auto">
-                {leaderboard.map((entry) => (
-                  <div key={entry.id} className="flex items-center justify-between rounded-lg border p-3">
-                    <div>
-                      <p className="text-sm">#{entry.rank} {displayName(entry)}</p>
-                      <p className="text-xs text-muted-foreground">Avg {entry.averageScore}  Acc {entry.accuracy}%  Improvement {entry.improvement}</p>
-                    </div>
-                    <Badge variant="outline">{Math.round(Number(entry.score || 0))}</Badge>
-                  </div>
-                ))}
+              <div className="max-h-[360px] overflow-auto" ref={competitiveLeaderboardScrollRef}>
+                <div className="relative w-full" style={{ height: competitiveLeaderboardVirtual.getTotalSize() }}>
+                  {competitiveLeaderboardVirtual.getVirtualItems().map((vi) => {
+                    const entry = leaderboard[vi.index];
+                    return (
+                      <div
+                        key={entry.id}
+                        className="absolute left-0 top-0 w-full px-0.5"
+                        style={{ height: vi.size, transform: `translateY(${vi.start}px)` }}
+                      >
+                        <div className="flex items-center justify-between rounded-lg border p-3">
+                          <div>
+                            <p className="text-sm">#{entry.rank} {displayName(entry)}</p>
+                            <p className="text-xs text-muted-foreground">Avg {entry.averageScore}  Acc {entry.accuracy}%  Improvement {entry.improvement}</p>
+                          </div>
+                          <Badge variant="outline">{Math.round(Number(entry.score || 0))}</Badge>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
                 {!leaderboard.length ? <p className="text-xs text-muted-foreground">No ranking data yet.</p> : null}
               </div>
             </CardContent>

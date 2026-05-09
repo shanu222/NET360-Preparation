@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useTransition,
   memo,
   type ErrorInfo,
   type ReactNode,
@@ -294,7 +295,7 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
       if (event.key === 'Escape') setMenuOpen(false);
     };
 
-    window.addEventListener('mousedown', handlePointerDown);
+    window.addEventListener('mousedown', handlePointerDown, { passive: true });
     window.addEventListener('keydown', handleEscape);
     return () => {
       window.removeEventListener('mousedown', handlePointerDown);
@@ -364,7 +365,17 @@ export default function App() {
   const [themeMode, setThemeMode] = useState<ThemeMode>(resolveInitialThemeMode);
   const location = useLocation();
   const navigate = useNavigate();
+  const [, startRouteTransition] = useTransition();
   const activeTab = useMemo(() => resolveSectionFromLocation(location.pathname, location.hash), [location.hash, location.pathname]);
+
+  const navigateWithTransition = useCallback(
+    (to: string) => {
+      startRouteTransition(() => {
+        navigate(to);
+      });
+    },
+    [navigate, startRouteTransition],
+  );
 
   useEffect(() => {
     const root = document.documentElement;
@@ -527,8 +538,12 @@ export default function App() {
   }, [activeTab]);
 
   const onNavigateSection = useCallback(
-    (section: string) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home']),
-    [navigate],
+    (section: string) => {
+      startRouteTransition(() => {
+        navigate(PATH_BY_SECTION[(section as SectionId) || 'home']);
+      });
+    },
+    [navigate, startRouteTransition],
   );
 
   const activeNavigationItem = STUDENT_NAVIGATION_ITEMS.find((item) => item.id === activeTab);
@@ -730,7 +745,7 @@ export default function App() {
                         navigationItems={STUDENT_NAVIGATION_ITEMS}
                         activeTab={activeTab}
                         smartMentorTabId={smartMentorTabId}
-                        navigate={navigate}
+                        navigate={navigateWithTransition}
                         setSidebarMenuOpen={setSidebarMenuOpen}
                         onSmartMentorClick={handleSmartMentorComingSoon}
                       />

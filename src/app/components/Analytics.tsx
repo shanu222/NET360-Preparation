@@ -1,28 +1,25 @@
-import { useMemo } from 'react';
+import { lazy, Suspense, useMemo } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Progress } from './ui/progress';
 import { Badge } from './ui/badge';
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  RadarChart,
-  PolarGrid,
-  PolarAngleAxis,
-  PolarRadiusAxis,
-  Radar,
-} from 'recharts';
 import { AlertTriangle, TrendingUp } from 'lucide-react';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { Button } from './ui/button';
 import { downloadReport } from '../lib/api';
-import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
+import { showSuccessToast, showErrorToast, handleApiError } from '../lib/userToast';
+
+const AnalyticsLineChart = lazy(() =>
+  import('./AnalyticsCharts').then((m) => ({ default: m.AnalyticsLineChart })),
+);
+const AnalyticsRadarChart = lazy(() =>
+  import('./AnalyticsCharts').then((m) => ({ default: m.AnalyticsRadarChart })),
+);
+
+function AnalyticsChartFallback() {
+  return <div className="min-h-[248px] rounded-xl border border-indigo-100 bg-white/80" aria-busy="true" />;
+}
 
 const subjects: SubjectKey[] = ['mathematics', 'physics', 'english'];
 
@@ -233,34 +230,15 @@ export function Analytics() {
                 </div>
               </div>
 
-              <div className="rounded-xl border border-indigo-100 bg-white p-4">
-                <h4 className="mb-1 text-indigo-950">Progress Over Time</h4>
-                <p className="mb-3 text-sm text-slate-500">Weekly average test scores</p>
-                <ResponsiveContainer width="100%" height={180}>
-                  <LineChart data={progressData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#eef0ff" />
-                    <XAxis dataKey="week" hide />
-                    <YAxis domain={[0, 100]} tick={{ fontSize: 11 }} width={30} />
-                    <Tooltip />
-                    <Line type="monotone" dataKey="score" stroke="#8a8ef5" strokeWidth={2.5} dot={{ r: 2 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
+              <Suspense fallback={<AnalyticsChartFallback />}>
+                <AnalyticsLineChart progressData={progressData} />
+              </Suspense>
             </div>
 
             <div className="space-y-4">
-              <div className="rounded-xl border border-indigo-100 bg-white p-4">
-                <h4 className="mb-1 text-indigo-950">Topic Performance</h4>
-                <p className="mb-3 text-sm text-slate-500">Score distribution by subject</p>
-                <ResponsiveContainer width="100%" height={180}>
-                  <RadarChart data={radarData}>
-                    <PolarGrid stroke="#d8dcff" />
-                    <PolarAngleAxis dataKey="topic" tick={{ fill: '#68709c', fontSize: 12 }} />
-                    <PolarRadiusAxis angle={90} domain={[0, 100]} tick={{ fontSize: 10 }} />
-                    <Radar name="Score" dataKey="score" stroke="#8a8ef5" fill="#8a8ef5" fillOpacity={0.3} />
-                  </RadarChart>
-                </ResponsiveContainer>
-              </div>
+              <Suspense fallback={<AnalyticsChartFallback />}>
+                <AnalyticsRadarChart radarData={radarData} />
+              </Suspense>
 
               <div className="rounded-xl border border-indigo-100 bg-white p-4">
                 <h4 className="mb-1 inline-flex items-center gap-2 text-indigo-950">
