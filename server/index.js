@@ -10679,7 +10679,7 @@ app.get('/api/subscriptions/plans', (_req, res) => {
   res.json({ plans: Object.values(SUBSCRIPTION_PLANS) });
 });
 
-app.post('/api/subscriptions/start-trial', authMiddleware, subscriptionExpiryRefresh(UserModel), async (req, res) => {
+async function handlePremiumStartTrial(req, res) {
   if (req.user.role === 'admin') {
     res.status(400).json({ error: 'Not available for admin accounts.' });
     return;
@@ -10704,7 +10704,11 @@ app.post('/api/subscriptions/start-trial', authMiddleware, subscriptionExpiryRef
   await invalidateUserSubscriptionCache(req.user._id);
   emitSubscriptionRefresh(String(req.user._id), { reason: 'trial_started' });
   res.status(201).json({ ok: true, subscription: r.subscription });
-});
+}
+
+app.post('/api/subscriptions/start-trial', authMiddleware, subscriptionExpiryRefresh(UserModel), handlePremiumStartTrial);
+/** Shorter alias — identical behavior (some proxies cache or map paths inconsistently). */
+app.post('/api/trial/start', authMiddleware, subscriptionExpiryRefresh(UserModel), handlePremiumStartTrial);
 
 app.post('/api/payments/order', authMiddleware, subscriptionExpiryRefresh(UserModel), async (req, res) => {
   if (payfastCheckoutDisabled()) {

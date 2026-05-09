@@ -1,14 +1,20 @@
 import { Lock } from 'lucide-react';
 import { Button } from '../ui/button';
+import { cn } from '../ui/utils';
 import { useSubscription } from '../../context/SubscriptionContext';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { apiRequest } from '../../lib/api';
 import {
   COOKIE_SESSION_API_MARKER,
   isCookieSessionApiMarker,
   shouldPersistAuthTokens,
 } from '../../lib/authSession';
+import {
+  clearTrialSyncPending,
+  markTrialSyncPending,
+  postStartTrialWithFallback,
+  shouldMarkTrialPendingAfterError,
+} from '../../lib/startTrialRequest';
 import { audienceFriendlyError, showErrorToast, showSuccessToast } from '../../lib/userToast';
 
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
@@ -30,7 +36,7 @@ export function PremiumLockScreen({
 }) {
   const navigate = useNavigate();
   const { surface, me, refresh } = useSubscription();
-  const { token: authToken } = useAuth();
+  const { token: authToken, user } = useAuth();
   const needsTrial = !me?.subscription?.hasUsedTrial;
 
   async function startTrial() {
@@ -39,24 +45,19 @@ export function PremiumLockScreen({
         ? authToken
         : bearerForApi();
     const sessionMarker = bearer || COOKIE_SESSION_API_MARKER;
+    const uid = user?.id?.trim();
     try {
-      await apiRequest(
-        '/api/subscriptions/start-trial',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({}),
-        },
-        sessionMarker,
-      );
+      await postStartTrialWithFallback(sessionMarker);
+      if (uid) clearTrialSyncPending(uid);
       showSuccessToast('Free trial activated successfully');
       await refresh();
     } catch (e) {
-      const err = e as Error & { status?: number; code?: string };
-      if (err.status === 404) {
+      if (uid && shouldMarkTrialPendingAfterError(e)) {
+        markTrialSyncPending(uid);
         showErrorToast(
-          'Subscription service was not found. Please refresh the page. If this continues, the app may need an update on the server.',
+          'Could not reach the subscription service. Your unlock will retry automatically when the connection is back.',
         );
+        void refresh();
         return;
       }
       showErrorToast(audienceFriendlyError(e, 'Unable to start trial. Try again or open Subscription from the menu.'));
@@ -85,7 +86,11 @@ export function PremiumLockScreen({
           <Button
             type="button"
             variant={needsTrial ? 'outline' : 'default'}
-            className="rounded-xl"
+            className={cn(
+              'rounded-xl',
+              needsTrial &&
+                'border-indigo-500/45 bg-white text-indigo-950 shadow-sm hover:bg-indigo-50 dark:border-indigo-300/50 dark:bg-slate-800 dark:text-slate-50 dark:hover:bg-slate-700/95',
+            )}
             onClick={() => navigate('/subscription')}
           >
             View plans &amp; pay

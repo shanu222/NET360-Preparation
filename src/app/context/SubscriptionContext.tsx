@@ -9,6 +9,11 @@ import {
   type ReactNode,
 } from 'react';
 import { apiRequest } from '../lib/api';
+import {
+  clearTrialSyncPending,
+  isTrialSyncPending,
+  postStartTrialWithFallback,
+} from '../lib/startTrialRequest';
 import { useAuth } from './AuthContext';
 import {
   COOKIE_SESSION_API_MARKER,
@@ -86,6 +91,8 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<SubscriptionMePayload | null>(null);
   const serverOffsetRef = useRef(0);
   const [tick, setTick] = useState(0);
+  const trialAutoSyncAttemptedRef = useRef(false);
+  const trialAutoSyncUserIdRef = useRef<string | null>(null);
 
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
 
@@ -128,6 +135,45 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const uid = user?.id?.trim();
+    if (!uid || !me) {
+      trialAutoSyncAttemptedRef.current = false;
+      trialAutoSyncUserIdRef.current = null;
+      return;
+    }
+    if (trialAutoSyncUserIdRef.current !== uid) {
+      trialAutoSyncUserIdRef.current = uid;
+      trialAutoSyncAttemptedRef.current = false;
+    }
+    if (me.premiumSurface?.hasSurfaceAccess) {
+      clearTrialSyncPending(uid);
+      trialAutoSyncAttemptedRef.current = false;
+      return;
+    }
+    if (!isTrialSyncPending(uid)) {
+      trialAutoSyncAttemptedRef.current = false;
+      return;
+    }
+    if (trialAutoSyncAttemptedRef.current) return;
+    trialAutoSyncAttemptedRef.current = true;
+
+    const bearer = resolveBearer(authToken);
+    const stored = shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+    const t = bearer ?? (stored && !isCookieSessionApiMarker(stored) ? stored : undefined);
+    const sessionMarker = t || COOKIE_SESSION_API_MARKER;
+
+    void postStartTrialWithFallback(sessionMarker)
+      .then(async () => {
+        clearTrialSyncPending(uid);
+        trialAutoSyncAttemptedRef.current = false;
+        await refresh();
+      })
+      .catch(() => {
+        trialAutoSyncAttemptedRef.current = false;
+      });
+  }, [authToken, me, refresh, user?.id]);
 
   useEffect(() => {
     const id = window.setInterval(() => {
