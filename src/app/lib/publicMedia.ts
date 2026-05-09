@@ -1,8 +1,14 @@
 /**
- * S3/CDN media URLs — MongoDB stores object keys; the client builds absolute URLs.
+ * S3/CDN media URLs — MongoDB stores object keys; the client builds absolute URLs with `getMediaUrl(key)`.
  *
- * Set `VITE_S3_BASE_URL` (no trailing slash), e.g.
- * `https://net360-media.s3.ap-south-1.amazonaws.com`
+ * Built-in UI keys (ship under `public/` for fallback; mirror to S3 via `npm run media:upload-s3`):
+ *   - schools/<slug>.png — NUST Schools & Campuses (see `NUSTSchoolsCampuses.tsx`)
+ *   - images/login-banner.png, images/app-promo.png — Profile
+ *   - videos/net360-guide.mp4 — Profile user guide
+ *
+ * Other `getMediaUrl` uses: MCQ assets, community posts, avatars — keys from DB / uploads API only (no files in git).
+ *
+ * Set `VITE_S3_BASE_URL` (no trailing slash), e.g. `https://net360-media.s3.ap-south-1.amazonaws.com`
  *
  * Falls back to `VITE_PUBLIC_MEDIA_BASE_URL`, then the production bucket host below.
  * Optional full-URL overrides per asset: `VITE_BRAND_LOGO_URL` (defaults to same-origin `/net360-logo.png`), `VITE_USER_GUIDE_VIDEO_URL`, …

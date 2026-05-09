@@ -16,6 +16,7 @@ import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK } from '../lib/paymen
 import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 import { loginBannerImageUrl, appPromoImageUrl, getMediaUrl } from '../lib/publicMedia';
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
+import { ImageWithFallback } from './figma/ImageWithFallback';
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
 
 function GoogleLogo(props: { className?: string }) {
@@ -624,8 +625,9 @@ export function Profile({ onNavigate }: ProfileProps) {
                   </div>
 
                   <div className="mt-6 flex justify-center px-1 sm:mt-8">
-                    <img
+                    <ImageWithFallback
                       src={loginBannerImageUrl()}
+                      fallbackSrc="/images/login-banner.png"
                       alt="NET360"
                       className="h-auto w-full max-w-[min(90vw,500px)] rounded-xl shadow-[0_8px_24px_rgba(0,0,0,0.2)] transition-transform duration-300 ease-out hover:scale-[1.02] sm:max-w-[500px]"
                       loading="lazy"
@@ -649,8 +651,9 @@ export function Profile({ onNavigate }: ProfileProps) {
               </CardHeader>
               <CardContent className="relative pb-7">
                 <div className="mx-auto mt-4 flex w-full max-w-[min(100%,680px)] justify-center rounded-2xl border border-indigo-100/80 bg-white/70 p-2 shadow-[0_18px_34px_rgba(79,70,229,0.14)] backdrop-blur-sm">
-                  <img
+                  <ImageWithFallback
                     src={appPromoImageUrl()}
+                    fallbackSrc="/images/app-promo.png"
                     alt="NET360 advertisement"
                     className="mx-auto h-auto w-full max-w-full object-contain rounded-xl"
                     loading="lazy"

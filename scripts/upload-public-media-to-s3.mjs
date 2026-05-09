@@ -1,14 +1,17 @@
 /**
- * Upload bundled public media (NUST school cards + user guide video) to S3.
- * Keys match src/app paths: schools/*.png, videos/net360-guide.mp4
+ * Upload built-in marketing/NUST assets from `public/` to S3 (keys must match `getMediaUrl()` paths).
  *
- * Requires AWS credentials (env or ~/.aws/credentials), same as the API upload route:
- *   AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_BUCKET_NAME
+ * Uploaded:
+ *   schools/*.png — NUST Schools & Campuses cards (see NUSTSchoolsCampuses.tsx slugs)
+ *   images/login-banner.png, images/app-promo.png — Profile login / featured ad
+ *   videos/net360-guide.mp4 — Profile user guide video
  *
- * Optional faster delivery: put CloudFront in front of the bucket and set VITE_S3_BASE_URL to the distribution URL.
+ * Not uploaded: brand logo (`/net360-logo.png` same-origin). MCQ/community/avatar media uses DB keys → upload via app API.
  *
- * Bucket CORS (for video Range / cross-origin from your web app), e.g. aws s3api put-bucket-cors --bucket YOUR_BUCKET --cors-configuration file://cors.json
- *   [{"AllowedHeaders":["*"],"AllowedMethods":["GET","HEAD"],"AllowedOrigins":["*"],"ExposeHeaders":["Content-Length","Content-Type","ETag"],"MaxAgeSeconds":3600}]
+ * Env: AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_BUCKET_NAME
+ * Frontend: VITE_S3_BASE_URL=https://BUCKET.s3.REGION.amazonaws.com (or CloudFront).
+ *
+ * CORS on bucket: GET/HEAD, expose Content-Length / Accept-Ranges for video.
  */
 
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -65,6 +68,20 @@ async function main() {
       if (!fs.statSync(abs).isFile()) continue;
       await uploadFile(abs, `schools/${name}`);
     }
+  } else {
+    console.warn('Missing folder:', schoolsDir);
+  }
+
+  const imagesDir = path.join(root, 'public', 'images');
+  if (fs.existsSync(imagesDir)) {
+    for (const name of fs.readdirSync(imagesDir)) {
+      if (!/\.(png|jpg|jpeg|webp)$/i.test(name)) continue;
+      const abs = path.join(imagesDir, name);
+      if (!fs.statSync(abs).isFile()) continue;
+      await uploadFile(abs, `images/${name}`);
+    }
+  } else {
+    console.warn('Missing folder:', imagesDir);
   }
 
   const video = path.join(root, 'public', 'assets', 'videos', 'net360-guide.mp4');
