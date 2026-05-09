@@ -1,4 +1,4 @@
-import { createElement, type ChangeEvent, type FormEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, type ChangeEvent, type FormEvent, type MouseEvent, type PointerEvent as ReactPointerEvent, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
   BarChart3,
@@ -2443,7 +2443,7 @@ export default function AdminApp() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = document.documentElement;
     root.classList.toggle('dark', themeMode === 'dark');
     root.style.colorScheme = themeMode;
@@ -6875,7 +6875,7 @@ export default function AdminApp() {
         <div className="admin-content mx-auto w-full max-w-[1700px] space-y-5">
           <header className="admin-header-panel rounded-2xl border border-slate-300/70 bg-white/75 p-4 shadow-[0_16px_40px_rgba(15,23,42,0.12)] backdrop-blur-md dark:border-white/15 dark:bg-white/10 dark:shadow-[0_20px_50px_rgba(8,20,46,0.45)]">
             <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-3">
+              <div className="flex min-w-0 max-w-full flex-1 items-center gap-3">
                 <div
                   className="inline-flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-indigo-100 bg-transparent shadow-[0_6px_12px_rgba(76,93,172,0.14)] dark:border-slate-600/50 dark:bg-slate-900/35"
                   aria-hidden="true"
@@ -6888,8 +6888,8 @@ export default function AdminApp() {
                     decoding="async"
                   />
                 </div>
-                <div>
-                  <h2 className="text-2xl font-semibold tracking-tight">NET360 Admin Management</h2>
+                <div className="min-w-0 flex-1">
+                  <h2 className="text-xl font-semibold tracking-tight sm:text-2xl">NET360 Admin Management</h2>
                   <p className="text-sm text-slate-600 dark:text-slate-300">Manage users and MCQs from this separate panel</p>
                 </div>
               </div>
@@ -6959,20 +6959,22 @@ export default function AdminApp() {
                 </div>
               </section>
 
-              <Card className="rounded-2xl border border-white/20 bg-white/10 shadow-[0_20px_45px_rgba(6,10,40,0.45)] backdrop-blur-xl">
+              <Card className="rounded-2xl border border-slate-200/80 bg-white/85 shadow-[0_16px_40px_rgba(15,23,42,0.1)] backdrop-blur-xl dark:border-white/20 dark:bg-white/10 dark:shadow-[0_20px_45px_rgba(6,10,40,0.45)]">
                 <CardHeader>
                   <CardTitle>Password Recovery Snapshot</CardTitle>
-                  <CardDescription className="text-slate-300">Quick delivery status overview for recent recovery activity.</CardDescription>
+                  <CardDescription className="text-slate-600 dark:text-slate-300">Quick delivery status overview for recent recovery activity.</CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-wrap gap-2">
                   <Badge className="bg-emerald-500 text-white">sent: {overview?.recoveryStatusCounts?.sent || 0}</Badge>
                   <Badge className="bg-amber-500 text-white">partial: {overview?.recoveryStatusCounts?.partial || 0}</Badge>
                   <Badge className="bg-rose-500 text-white">failed: {overview?.recoveryStatusCounts?.failed || 0}</Badge>
-                  <Badge className="border border-white/20 bg-slate-900/30 text-slate-100">not_found: {overview?.recoveryStatusCounts?.not_found || 0}</Badge>
+                  <Badge className="border border-slate-300/80 bg-slate-100 text-slate-800 dark:border-white/20 dark:bg-slate-900/40 dark:text-slate-100">
+                    not_found: {overview?.recoveryStatusCounts?.not_found || 0}
+                  </Badge>
                 </CardContent>
               </Card>
 
-              <Card className="rounded-2xl border border-white/20 bg-white/10 shadow-[0_20px_45px_rgba(6,10,40,0.45)] backdrop-blur-xl">
+              <Card className="rounded-2xl border border-slate-200/80 bg-white/85 shadow-[0_16px_40px_rgba(15,23,42,0.1)] backdrop-blur-xl dark:border-white/20 dark:bg-white/10 dark:shadow-[0_20px_45px_rgba(6,10,40,0.45)]">
                 <CardHeader>
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <CardTitle>System Status</CardTitle>
@@ -6980,7 +6982,7 @@ export default function AdminApp() {
                       type="button"
                       size="sm"
                       variant="outline"
-                      className="h-9 border-white/25 bg-white/10 text-slate-100 hover:bg-white/20"
+                      className="h-9 border-slate-200 bg-white text-slate-800 hover:bg-slate-50 dark:border-white/25 dark:bg-white/10 dark:text-slate-100 dark:hover:bg-white/20"
                       onClick={() => void refreshSystemStatus()}
                       disabled={isRefreshingSystemStatus}
                     >
@@ -6988,14 +6990,18 @@ export default function AdminApp() {
                       {isRefreshingSystemStatus ? 'Refreshing...' : 'Refresh'}
                     </Button>
                   </div>
-                  <CardDescription className="text-slate-300">Live backend connectivity check for AI mentor services.</CardDescription>
+                  <CardDescription className="text-slate-600 dark:text-slate-300">Live backend connectivity check for AI mentor services.</CardDescription>
                 </CardHeader>
                 <CardContent className="flex flex-wrap items-center gap-2">
                   <Badge className={systemStatus?.openai?.configured ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'}>
                     OpenAI: {systemStatus?.openai?.configured ? 'Configured' : 'Missing key'}
                   </Badge>
-                  <Badge className="border border-white/20 bg-slate-900/30 text-slate-100">Model: {systemStatus?.openai?.model || 'unknown'}</Badge>
-                  <Badge className="border border-white/20 bg-slate-900/30 text-slate-100">Key source: {systemStatus?.openai?.keySource || 'missing'}</Badge>
+                  <Badge className="border border-slate-300/80 bg-slate-100 text-slate-800 dark:border-white/20 dark:bg-slate-900/40 dark:text-slate-100">
+                    Model: {systemStatus?.openai?.model || 'unknown'}
+                  </Badge>
+                  <Badge className="border border-slate-300/80 bg-slate-100 text-slate-800 dark:border-white/20 dark:bg-slate-900/40 dark:text-slate-100">
+                    Key source: {systemStatus?.openai?.keySource || 'missing'}
+                  </Badge>
                 </CardContent>
               </Card>
             </>
