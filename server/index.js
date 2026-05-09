@@ -4214,6 +4214,26 @@ function sanitizeDeviceId(value) {
   return `ua:${hashToken(String(value || '')).slice(0, 16)}`;
 }
 
+/** Safe log line for emails (PII). */
+function redactEmailForLog(email) {
+  const e = String(email || '').trim().toLowerCase();
+  const at = e.indexOf('@');
+  if (at < 1) return '(redacted)';
+  return `${e.slice(0, 1)}***${e.slice(at)}`;
+}
+
+/** Stable short fingerprint for deviceId / UA-derived ids in logs (not reversible). */
+function authDeviceFingerprint(value) {
+  const s = String(value || '').trim();
+  if (!s) return 'empty';
+  return crypto.createHash('sha256').update(s, 'utf8').digest('hex').slice(0, 16);
+}
+
+/** When true, keep 409 ACTIVE_SESSION_ELSEWHERE unless client sends forceLogoutOtherDevice. Default: false (new login replaces prior session). */
+function shouldRequireDeviceLoginConfirmation() {
+  return String(process.env.REQUIRE_CONFIRM_FOR_DEVICE_LOGIN || '').toLowerCase() === 'true';
+}
+
 function generateSignupTokenCode() {
   const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let token = '';
@@ -7125,16 +7145,49 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (role === 'student') {
       const activeSession = user.activeSession || null;
-      if (activeSession && activeSession.deviceId && activeSession.deviceId !== deviceId && !forceLogoutOtherDevice) {
+      const ua = String(req.headers['user-agent'] || '').slice(0, 250);
+      const lastIp = String(req.ip || req.headers['x-forwarded-for'] || '').split(',')[0].trim().slice(0, 45);
+      const conflictingDevice = Boolean(
+        activeSession?.deviceId && activeSession.deviceId !== deviceId,
+      );
+
+      const loginAudit = !IS_PRODUCTION
+        || String(process.env.NET360_AUTH_DEBUG || '').trim() === '1'
+        || String(process.env.NET360_AUTH_LOGIN_AUDIT || '').trim() === '1';
+      if (loginAudit) {
+        console.log('[auth/login] request', {
+          email: redactEmailForLog(email),
+          userId: String(user._id),
+          hasPassword: Boolean(password),
+          hasFirebaseToken: Boolean(firebaseIdToken),
+          deviceFp: authDeviceFingerprint(deviceId),
+          hadActiveSession: Boolean(activeSession?.sessionId),
+          conflictingDevice,
+          forceLogoutOtherDevice,
+          strictDeviceConfirm: shouldRequireDeviceLoginConfirmation(),
+        });
+      }
+
+      /*
+       * 409 was returned here when another device had activeSession (single-device UX).
+       * Default now: new login invalidates the previous Mongo session + refresh chain, syncs Redis,
+       * and notifies sockets (OPTION A). Set REQUIRE_CONFIRM_FOR_DEVICE_LOGIN=true to restore 409 + forceLogoutOtherDevice.
+       */
+      if (conflictingDevice && shouldRequireDeviceLoginConfirmation() && !forceLogoutOtherDevice) {
         await logSecurityEvent(req, {
           eventType: 'auth.active_session_conflict',
           severity: 'info',
           actorUserId: user._id,
           actorEmail: user.email,
           metadata: {
-            existingDeviceId: activeSession.deviceId,
-            attemptedDeviceId: deviceId,
+            existingDeviceFp: authDeviceFingerprint(activeSession.deviceId),
+            attemptedDeviceFp: authDeviceFingerprint(deviceId),
           },
+        });
+        console.warn('[auth/login] blocked strict device policy', {
+          userId: String(user._id),
+          email: redactEmailForLog(email),
+          code: 'ACTIVE_SESSION_ELSEWHERE',
         });
         res.status(409).json({
           error: 'Your account is already active on another device.',
@@ -7143,9 +7196,29 @@ app.post('/api/auth/login', async (req, res) => {
         return;
       }
 
+      if (conflictingDevice) {
+        console.log('[auth/login] session_takeover', {
+          userId: String(user._id),
+          email: redactEmailForLog(email),
+          previousSessionId: String(activeSession.sessionId || ''),
+          previousDeviceFp: authDeviceFingerprint(activeSession.deviceId),
+          newDeviceFp: authDeviceFingerprint(deviceId),
+          clientAcknowledgedReplace: Boolean(forceLogoutOtherDevice),
+        });
+        await logSecurityEvent(req, {
+          eventType: 'auth.session_takeover',
+          severity: 'info',
+          actorUserId: user._id,
+          actorEmail: user.email,
+          metadata: {
+            previousSessionId: String(activeSession.sessionId || ''),
+            previousDeviceFp: authDeviceFingerprint(activeSession.deviceId),
+            newDeviceFp: authDeviceFingerprint(deviceId),
+          },
+        });
+      }
+
       const previousSessionId = activeSession?.sessionId ? String(activeSession.sessionId) : null;
-      const ua = String(req.headers['user-agent'] || '').slice(0, 250);
-      const lastIp = String(req.ip || req.headers['x-forwarded-for'] || '').split(',')[0].trim().slice(0, 45);
 
       user.activeSession = {
         sessionId: crypto.randomUUID(),
@@ -7157,6 +7230,10 @@ app.post('/api/auth/login', async (req, res) => {
       };
       const newSessionId = user.activeSession.sessionId;
 
+      if (conflictingDevice) {
+        user.refreshTokens = [];
+      }
+
       const payload = await issueAuthPayload(user, req);
       setAuthCookies(res, payload.token, payload.refreshToken);
       await logSecurityEvent(req, {
@@ -7164,13 +7241,25 @@ app.post('/api/auth/login', async (req, res) => {
         severity: 'info',
         actorUserId: user._id,
         actorEmail: user.email,
+        ...(conflictingDevice
+          ? { metadata: { sessionTakeover: true } }
+          : {}),
       });
       mirrorStudentSessionRedis(user._id, newSessionId, deviceId);
       if (previousSessionId && previousSessionId !== newSessionId) {
         notifyRevokedStudentSession(String(user._id), previousSessionId);
+        console.log('[auth/login] revoked_previous_session', {
+          userId: String(user._id),
+          previousSessionId,
+          newSessionId,
+        });
       }
-      if (!IS_PRODUCTION || String(process.env.NET360_AUTH_DEBUG || '').trim() === '1') {
-        console.log('[auth/login] success', { email: user.email, role });
+      if (loginAudit) {
+        console.log('[auth/login] session_created', {
+          userId: String(user._id),
+          newSessionId,
+          deviceFp: authDeviceFingerprint(deviceId),
+        });
       }
       res.status(200).json(buildAuthJsonBody(payload));
       return;
@@ -7303,14 +7392,27 @@ app.post('/api/auth/logout', async (req, res) => {
   try {
     const payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
     const user = await UserModel.findById(payload.userId);
-    if (user) {
+      if (user) {
       const tokenHash = hashToken(refreshToken);
       user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
 
       if ((user.role || 'student') === 'student') {
         const tokenSessionId = String(payload.sessionId || '');
-        if (tokenSessionId && String(user.activeSession?.sessionId || '') === tokenSessionId) {
+        const activeId = String(user.activeSession?.sessionId || '');
+        if (tokenSessionId && activeId === tokenSessionId) {
           user.activeSession = null;
+          console.log('[auth/logout] cleared_active_session', {
+            userId: String(user._id),
+            sessionId: tokenSessionId,
+            email: redactEmailForLog(user.email || ''),
+          });
+        } else if (tokenSessionId) {
+          console.log('[auth/logout] refresh_session_mismatch_skip_clear', {
+            userId: String(user._id),
+            tokenSessionId,
+            activeId: activeId || '(none)',
+            email: redactEmailForLog(user.email || ''),
+          });
         }
       }
 
