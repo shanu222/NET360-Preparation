@@ -5,7 +5,7 @@
 import { Server } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';
 import jwt from 'jsonwebtoken';
-import { createSocketAdapterClients } from './redis.js';
+import { getSocketIoAdapterRedisClients } from './redis.js';
 
 function readCookieFromHeader(headerValue, key) {
   const source = String(headerValue || '').trim();
@@ -84,12 +84,12 @@ export async function initSocketIo(httpServer, opts) {
   });
 
   try {
-    const pair = await createSocketAdapterClients();
-    if (pair?.pub && pair.sub) {
+    const pair = await getSocketIoAdapterRedisClients();
+    if (pair?.pub && pair?.sub) {
       io.adapter(createAdapter(pair.pub, pair.sub));
       console.log('[socket.io] Redis adapter enabled');
     } else {
-      console.warn('[socket.io] Running without Redis adapter (single-instance mode)');
+      console.warn('[socket.io] Running without Redis adapter');
     }
   } catch (e) {
     console.warn('[socket.io] Adapter init skipped:', e?.message || e);
