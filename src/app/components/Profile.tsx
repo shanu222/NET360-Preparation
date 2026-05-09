@@ -34,7 +34,7 @@ import {
 } from '../lib/publicMedia';
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 import { ImageWithFallback } from './figma/ImageWithFallback';
-import { apiRequest, buildUrl } from '../lib/api';
+import { apiRequest } from '../lib/api';
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
 
 function GoogleLogo(props: { className?: string }) {
@@ -101,8 +101,6 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const [isPersonalInfoExpanded, setIsPersonalInfoExpanded] = useState(true);
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
   const [isSavingTargetProgram, setIsSavingTargetProgram] = useState(false);
-  /** Same absolute URL the API advertises (uses server S3_BASE_URL); avoids stale build-time bucket mismatch → broken promo img. */
-  const [mediaConfigAppPromoUrl, setMediaConfigAppPromoUrl] = useState<string | null>(null);
 
   const targetProgramOptions = useMemo(() => NET_TARGET_PROGRAM_OPTIONS, []);
   const selectedTargetProgramLabel =
@@ -113,28 +111,6 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   useEffect(() => {
     setLocalProfile(profile);
   }, [profile]);
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await fetch(buildUrl('/api/public/media-config'), {
-          method: 'GET',
-          credentials: 'omit',
-          cache: 'default',
-        });
-        if (!res.ok || cancelled) return;
-        const data = (await res.json()) as { appPromoImageUrl?: string };
-        const url = String(data?.appPromoImageUrl || '').trim();
-        if (url && !cancelled) setMediaConfigAppPromoUrl(url);
-      } catch {
-        /* fall back to appPromoImageUrl() from publicMedia */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -736,7 +712,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               <CardContent className="relative pb-7">
                 <div className="mx-auto mt-4 flex w-full max-w-[min(100%,680px)] justify-center rounded-2xl border border-indigo-100/80 bg-white/70 p-2 shadow-[0_18px_34px_rgba(79,70,229,0.14)] backdrop-blur-sm">
                   <ImageWithFallback
-                    src={mediaConfigAppPromoUrl || appPromoImageUrl()}
+                    src={appPromoImageUrl()}
                     {...(shouldUseLocalMediaFallback() ? { fallbackSrc: '/images/app-promo.png' } : {})}
                     alt="NET360 advertisement"
                     width={680}

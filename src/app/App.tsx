@@ -49,6 +49,7 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { brandLogoUrl } from './lib/publicMedia';
+import { fetchAndApplyPublicMediaConfig } from './lib/publicMediaRuntime';
 import { PremiumCountdownBadge } from './components/subscription/PremiumCountdownBadge';
 
 const SubscriptionPageLazy = lazyWithRetry(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
@@ -401,6 +402,8 @@ export default function App() {
   const smartMentorTabId = 'smart-mentor';
   const [sidebarMenuOpen, setSidebarMenuOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(resolveInitialThemeMode);
+  /** Bumps when `/api/public/media-config` is applied so media URLs re-resolve. */
+  const [, setPublicMediaEpoch] = useState(0);
   const location = useLocation();
   const navigate = useNavigate();
   const [, startRouteTransition] = useTransition();
@@ -422,6 +425,17 @@ export default function App() {
     root.style.colorScheme = themeMode;
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
   }, [themeMode]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      await fetchAndApplyPublicMediaConfig();
+      if (!cancelled) setPublicMediaEpoch((n) => n + 1);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const tab = new URLSearchParams(window.location.search).get('tab') as SectionId | null;

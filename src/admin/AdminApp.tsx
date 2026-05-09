@@ -32,6 +32,7 @@ import {
 import { apiRequest, API_BASE, buildApiUrl, buildSseStreamUrl, buildUrl } from '../app/lib/api';
 import { uploadMediaToS3 } from '../app/lib/uploadMedia';
 import { brandLogoUrl, getMediaUrl } from '../app/lib/publicMedia';
+import { fetchAndApplyPublicMediaConfig } from '../app/lib/publicMediaRuntime';
 import { COOKIE_SESSION_API_MARKER } from '../app/lib/authSession';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../app/lib/hierarchyDedup';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
@@ -2110,6 +2111,7 @@ export default function AdminApp() {
   });
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const [themeMode, setThemeMode] = useState<ThemeMode>(resolveInitialThemeMode);
+  const [, setPublicMediaEpoch] = useState(0);
 
   const [authForm, setAuthForm] = useState({ email: '', password: '' });
   const [overview, setOverview] = useState<AdminOverview | null>(null);
@@ -2390,6 +2392,17 @@ export default function AdminApp() {
     if (!practiceQuestionsBySubject.length) return null;
     return practiceQuestionsBySubject.find((item) => item.subject === practiceBankSubjectKey) || practiceQuestionsBySubject[0];
   }, [practiceQuestionsBySubject, practiceBankSubjectKey]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      await fetchAndApplyPublicMediaConfig();
+      if (!cancelled) setPublicMediaEpoch((n) => n + 1);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const syncSection = () => {

@@ -7,6 +7,7 @@ import { apiRequest, probeAuthenticatedSession } from '../lib/api';
 import { COOKIE_SESSION_API_MARKER, readPersistedStudentAccessToken, shouldPersistAuthTokens } from '../lib/authSession';
 import { McqMathText, normalizeMcqImageSrc } from './McqRender';
 import { getMediaUrl } from '../lib/publicMedia';
+import { fetchAndApplyPublicMediaConfig } from '../lib/publicMediaRuntime';
 import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
 
 type Difficulty = 'Easy' | 'Medium' | 'Hard';
@@ -199,13 +200,26 @@ const ADMIN_MCQ_TEST_PREVIEW_STORAGE_KEY = 'net360-admin-mcq-test-preview';
 
 export function TestInterfacePage() {
   const { user } = useAuth();
+  const [mediaRuntimeRev, setMediaRuntimeRev] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      await fetchAndApplyPublicMediaConfig();
+      if (!cancelled) setMediaRuntimeRev((n) => n + 1);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const candidatePhoto = useMemo(() => {
     try {
       return getMediaUrl(localStorage.getItem(PROFILE_PHOTO_STORAGE_KEY) || '');
     } catch {
       return '';
     }
-  }, []);
+  }, [mediaRuntimeRev]);
 
   const [session, setSession] = useState<TestSession | null>(null);
   const [loading, setLoading] = useState(true);

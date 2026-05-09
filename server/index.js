@@ -737,6 +737,7 @@ app.get('/api/public/media-config', (_req, res) => {
     return `${mediaBaseUrl}${s}`;
   };
   const appPromoAssetVersion = String(process.env.PUBLIC_APP_PROMO_ASSET_VERSION || '20260509').trim();
+  const mediaAssetVersion = String(process.env.PUBLIC_MEDIA_ASSET_VERSION || '').trim();
   const appPromoDefaultBase = withBase('images/app-promo.png');
   const appPromoDefault = appPromoDefaultBase && appPromoAssetVersion
     ? `${appPromoDefaultBase}${appPromoDefaultBase.includes('?') ? '&' : '?'}v=${encodeURIComponent(appPromoAssetVersion)}`
@@ -744,6 +745,8 @@ app.get('/api/public/media-config', (_req, res) => {
   res.json({
     mediaBaseUrl,
     s3BaseUrl: mediaBaseUrl,
+    /** Bumps cache on all HTTPS media URLs built client-side (optional). */
+    ...(mediaAssetVersion ? { mediaAssetVersion } : {}),
     /** Same-origin app asset when unset; not served from S3. */
     brandLogoUrl: String(process.env.PUBLIC_BRAND_LOGO_URL || '').trim() || '/net360-logo.png',
     userGuideVideoUrl: String(process.env.PUBLIC_USER_GUIDE_VIDEO_URL || '').trim() || withBase('videos/net360-guide.mp4'),
