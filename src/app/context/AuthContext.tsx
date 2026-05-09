@@ -34,11 +34,8 @@ interface AuthContextValue {
   registerWithToken: (params: {
     email: string;
     password: string;
-    mobileNumber: string;
     firstName?: string;
     lastName?: string;
-    securityQuestion: string;
-    securityAnswer: string;
   }) => Promise<void>;
   sendRecoveryEmail: (email: string) => Promise<void>;
   logout: () => void;
@@ -258,11 +255,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const registerWithToken = useCallback<AuthContextValue['registerWithToken']>(async ({
     email,
     password,
-    mobileNumber,
     firstName = '',
     lastName = '',
-    securityQuestion,
-    securityAnswer,
   }) => {
     if (!isFirebaseConfigured() || !firebaseAuth) {
       throw new Error('Firebase auth is not configured.');
@@ -277,11 +271,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           method: 'POST',
           body: JSON.stringify({
             email,
-            mobileNumber,
             firstName,
             lastName,
-            securityQuestion,
-            securityAnswer,
             deviceId,
             firebaseIdToken,
           }),

@@ -6258,13 +6258,10 @@ async function createDirectStudentAccount(req, res) {
   }
   const firstName = sanitizeHumanName(req.body?.firstName || '');
   const lastName = sanitizeHumanName(req.body?.lastName || '');
-  const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber || req.body?.phone || '');
-  const securityQuestion = normalizeSecurityQuestion(req.body?.securityQuestion || '');
-  const securityAnswer = normalizeSecurityAnswer(req.body?.securityAnswer || '');
   const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
 
-  if (!email || !mobileNumber) {
-    res.status(400).json({ error: 'Email and mobile number are required.' });
+  if (!email) {
+    res.status(400).json({ error: 'Email is required.' });
     return;
   }
 
@@ -6273,45 +6270,20 @@ async function createDirectStudentAccount(req, res) {
     return;
   }
 
-  if (!isValidMobileNumber(mobileNumber)) {
-    res.status(400).json({ error: 'Enter a valid mobile number.' });
-    return;
-  }
-
-  if (!securityQuestion || securityQuestion.length < 10) {
-    res.status(400).json({ error: 'Security question is required and should be clear.' });
-    return;
-  }
-
-  if (!securityAnswer || securityAnswer.length < 3) {
-    res.status(400).json({ error: 'Security answer is required.' });
-    return;
-  }
-
-  const [existingByEmail, existingByMobile, existingByFirebaseUid] = await Promise.all([
+  const [existingByEmail, existingByFirebaseUid] = await Promise.all([
     UserModel.findOne({ email }).select('email phone subscription').lean(),
-    findUserByMobileNumber(mobileNumber),
     UserModel.findOne({ firebaseUid: firebaseIdentity.uid }).lean(),
   ]);
 
-  if (existingByEmail || existingByMobile || existingByFirebaseUid) {
-    const matchedBy = existingByEmail && existingByMobile
-      ? 'both'
-      : existingByEmail
-        ? 'email'
-        : existingByMobile
-          ? 'mobile'
-          : 'email';
-    const matchedUser = existingByEmail || existingByMobile || existingByFirebaseUid;
+  if (existingByEmail || existingByFirebaseUid) {
+    const matchedUser = existingByEmail || existingByFirebaseUid;
     res.status(409).json({
-      error: duplicateAccountErrorMessage(matchedBy, hasActiveSubscription(matchedUser)),
+      error: duplicateAccountErrorMessage('email', hasActiveSubscription(matchedUser)),
     });
     return;
   }
 
   const passwordHash = await bcrypt.hash(`firebase:${firebaseIdentity.uid}:${crypto.randomUUID()}`, 12);
-  const securityAnswerHash = await bcrypt.hash(securityAnswer, 12);
-  const securityAnswerEncrypted = encryptSecurityAnswerPlaintext(securityAnswer);
   const activeSession = {
     sessionId: crypto.randomUUID(),
     deviceId,
@@ -6324,13 +6296,13 @@ async function createDirectStudentAccount(req, res) {
     passwordHash,
     firstName,
     lastName,
-    phone: mobileNumber,
+    phone: '',
     role: 'student',
     authProvider: 'firebase',
     firebaseUid: firebaseIdentity.uid,
-    securityQuestion,
-    securityAnswerHash,
-    securityAnswerEncrypted: securityAnswerEncrypted || '',
+    securityQuestion: '',
+    securityAnswerHash: '',
+    securityAnswerEncrypted: '',
     activeSession,
     preferences: defaultPreferences(),
     progress: defaultProgress(),

@@ -51,9 +51,6 @@ export function Profile({ onNavigate }: ProfileProps) {
     lastName: '',
     email: '',
     password: '',
-    mobileNumber: '',
-    securityQuestion: '',
-    securityAnswer: '',
   });
   const [forgotIdentifier, setForgotIdentifier] = useState('');
   const [forgotCooldownSeconds, setForgotCooldownSeconds] = useState(0);
@@ -143,23 +140,8 @@ export function Profile({ onNavigate }: ProfileProps) {
       }
 
       if (isRegisterMode) {
-        if (!authForm.securityQuestion.trim()) {
-          toast.error('Security question is required for account recovery.');
-          return;
-        }
-
-        if (!authForm.securityAnswer.trim()) {
-          toast.error('Security answer is required for account recovery.');
-          return;
-        }
-
         if (!authForm.password) {
           toast.error('Password is required.');
-          return;
-        }
-
-        if (!authForm.mobileNumber.trim()) {
-          toast.error('Mobile number is required.');
           return;
         }
 
@@ -167,11 +149,8 @@ export function Profile({ onNavigate }: ProfileProps) {
         await registerWithToken({
           email: authForm.email,
           password: authForm.password,
-          mobileNumber: authForm.mobileNumber,
           firstName: authForm.firstName,
           lastName: authForm.lastName,
-          securityQuestion: authForm.securityQuestion,
-          securityAnswer: authForm.securityAnswer,
         });
         setAuthActionState('idle');
         toast.success('Account created successfully.');
@@ -476,23 +455,6 @@ export function Profile({ onNavigate }: ProfileProps) {
                   </div>
                 ) : null}
 
-              {isRegisterMode ? (
-                <div className="space-y-1.5">
-                  <Label htmlFor="mobile-number">Mobile Number</Label>
-                  <Input
-                    id="mobile-number"
-                    value={authForm.mobileNumber}
-                    onChange={(e) => {
-                      setRegisterConflictBanner('');
-                      setAuthForm((prev) => ({ ...prev, mobileNumber: e.target.value }));
-                    }}
-                    placeholder="e.g. +923001234567"
-                    className="h-11 border-indigo-100"
-                  />
-                    <p className="text-xs text-slate-500">This mobile number is saved to your account profile.</p>
-                </div>
-              ) : null}
-
               <div className="space-y-1.5">
                 <Label htmlFor="auth-password">Password</Label>
                 <PasswordInput
@@ -505,44 +467,7 @@ export function Profile({ onNavigate }: ProfileProps) {
               </div>
 
               {isRegisterMode ? (
-                <div className="grid gap-2 md:grid-cols-2">
-                  <div className="space-y-1.5">
-                    <Label htmlFor="security-question">Security Question</Label>
-                    <Input
-                      id="security-question"
-                      value={authForm.securityQuestion}
-                      onChange={(e) => setAuthForm((prev) => ({ ...prev, securityQuestion: e.target.value }))}
-                      placeholder="e.g. What is your childhood nickname?"
-                      className="h-11 border-indigo-100"
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="security-answer">Security Answer</Label>
-                    <Input
-                      id="security-answer"
-                      value={authForm.securityAnswer}
-                      onChange={(e) => setAuthForm((prev) => ({ ...prev, securityAnswer: e.target.value }))}
-                      placeholder="Your answer"
-                      className="h-11 border-indigo-100"
-                    />
-                  </div>
-                </div>
-              ) : null}
-
-              {isRegisterMode ? (
-                <>
-                  <div className="space-y-1.5">
-                    <Label htmlFor="mobile-number">Mobile Number</Label>
-                    <Input
-                      id="mobile-number"
-                      value={authForm.mobileNumber}
-                      onChange={(e) => setAuthForm((prev) => ({ ...prev, mobileNumber: e.target.value }))}
-                      placeholder="+923001234567"
-                      className="h-11 border-indigo-100"
-                    />
-                    <p className="text-xs text-slate-500">No admin token or payment proof is required.</p>
-                  </div>
-                </>
+                <p className="text-xs text-slate-500">Create account with first name, last name, email, and password only.</p>
               ) : null}
 
               <Button
