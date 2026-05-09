@@ -60,7 +60,17 @@ export function SubscriptionPage() {
 
   const premiumPlan = plans.find((p) => p.id === 'premium_6m');
 
-  const checkoutDisabled = me?.payfastCheckoutDisabled === true;
+  /** Automated PayFast only when `/subscriptions/me` sets `payfastCheckoutDisabled: false`. Missing flag (older API) → manual flow to avoid 404 on `/payments/order`. */
+  const automatedCheckoutLive = me?.payfastCheckoutDisabled === false;
+  const checkoutDisabled = !automatedCheckoutLive;
+  const [paymentStep, setPaymentStep] = useState<'summary' | 'manual'>('summary');
+
+  useEffect(() => {
+    if (automatedCheckoutLive) {
+      setPaymentStep('summary');
+    }
+  }, [automatedCheckoutLive]);
+
   const whatsappRaw = (
     me?.manualSubscriptionWhatsapp ||
     `${import.meta.env.VITE_MANUAL_SUBSCRIPTION_WHATSAPP || ''}`
@@ -208,7 +218,7 @@ export function SubscriptionPage() {
           <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Subscription</h1>
           <p className="text-sm text-slate-600 dark:text-slate-300">
             {checkoutDisabled
-              ? 'Wallet auto-pay is paused — premium areas stay open during this rollout.'
+              ? 'Easypaisa & JazzCash auto-pay is coming soon — pay manually via WhatsApp for now.'
               : 'Automated checkout — no admin approval required.'}
           </p>
         </div>
@@ -236,40 +246,59 @@ export function SubscriptionPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           {checkoutDisabled ? (
-            <>
-              <div className="rounded-xl border border-amber-200/90 bg-amber-50/85 p-4 text-sm text-amber-950 dark:border-amber-500/35 dark:bg-amber-950/45 dark:text-amber-50">
-                <p className="font-semibold">Automatic wallet checkout is paused</p>
-                <p className="mt-2 text-amber-900/95 dark:text-amber-100/90">
-                  JazzCash and Easypaisa self-service payments are coming soon. For manual premium activation, message us on WhatsApp.
-                </p>
-                {whatsappRaw ? (
-                  <p className="mt-3 font-medium">
-                    WhatsApp:{' '}
-                    <a
-                      href={`https://wa.me/${whatsappDigits}`}
-                      className="underline underline-offset-2"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      {whatsappRaw}
-                    </a>
+            paymentStep === 'summary' ? (
+              <>
+                <div className="rounded-xl border border-indigo-200/80 bg-indigo-50/90 p-4 text-left text-sm text-slate-800 dark:border-indigo-500/30 dark:bg-indigo-950/40 dark:text-slate-100">
+                  <p className="font-semibold text-indigo-950 dark:text-indigo-50">NET360 Premium</p>
+                  <p className="mt-1 text-slate-700 dark:text-slate-200">
+                    PKR {premiumPlan?.pricePkr ?? 1000} / 6 months — unlock tests, preparation materials, and community.
                   </p>
-                ) : null}
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-                <Button type="button" className="rounded-xl" variant="default" disabled={payBusy || loading} onClick={notifyCheckoutPaused}>
+                </div>
+                <Button type="button" className="w-full rounded-xl sm:w-auto" onClick={() => setPaymentStep('manual')}>
                   Continue to payment
                 </Button>
-                <Button type="button" className="rounded-xl" variant="outline" onClick={openWhatsappManual}>
-                  Chat on WhatsApp
-                </Button>
-              </div>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                PayFast integration remains in the codebase. Re-enable by setting{' '}
-                <code className="rounded bg-slate-100 px-1 dark:bg-slate-800">PAYFAST_CHECKOUT_DISABLED=false</code> on the API
-                server when you are ready to go live.
-              </p>
-            </>
+              </>
+            ) : (
+              <>
+                <div className="rounded-xl border border-amber-200/90 bg-amber-50/90 p-4 text-sm text-amber-950 shadow-sm dark:border-amber-500/35 dark:bg-amber-950/50 dark:text-amber-50">
+                  <p className="text-base font-semibold">Manual payment via WhatsApp</p>
+                  <p className="mt-3 leading-relaxed text-amber-950/95 dark:text-amber-100/95">
+                    Automated Easypaisa and JazzCash checkout is <span className="font-medium">coming soon</span>. To activate
+                    premium now, contact the admin team on WhatsApp with your registered email and proof of payment (screenshot /
+                    transaction ID).
+                  </p>
+                  {whatsappRaw ? (
+                    <p className="mt-4 text-base font-semibold">
+                      WhatsApp:{' '}
+                      <a
+                        href={`https://wa.me/${whatsappDigits}`}
+                        className="text-amber-900 underline underline-offset-2 dark:text-amber-200"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {whatsappRaw}
+                      </a>
+                    </p>
+                  ) : (
+                    <p className="mt-4 text-sm text-amber-900/90 dark:text-amber-200/90">
+                      Ask your administrator to set <code className="rounded bg-white/70 px-1 dark:bg-black/30">MANUAL_SUBSCRIPTION_WHATSAPP</code>{' '}
+                      on the API server so your number appears here.
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Button type="button" variant="outline" className="rounded-xl" onClick={() => setPaymentStep('summary')}>
+                    Back
+                  </Button>
+                  <Button type="button" className="rounded-xl" onClick={openWhatsappManual}>
+                    Open WhatsApp
+                  </Button>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-slate-400">
+                  When automated PayFast checkout is enabled on the server, this page will show wallet fields again.
+                </p>
+              </>
+            )
           ) : (
             <>
               <div className="flex gap-2">

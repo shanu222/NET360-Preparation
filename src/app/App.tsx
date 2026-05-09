@@ -1,10 +1,12 @@
 import {
   Component,
   Suspense,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
   useState,
+  memo,
   type ErrorInfo,
   type ReactNode,
 } from 'react';
@@ -55,6 +57,7 @@ import { Sheet, SheetContent, SheetTrigger } from './components/ui/sheet';
 import { AppDataProvider } from './context/AppDataContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { preloadCommunityCache } from './lib/communityPreload';
+import { prefetchStudentSection } from './lib/routePrefetch';
 import { showNeutralToast, showSuccessToast } from './lib/userToast';
 import { Toaster } from 'sonner';
 import { App as CapacitorApp } from '@capacitor/app';
@@ -129,7 +132,25 @@ const PATH_BY_SECTION: Record<SectionId, string> = {
   'nust-entry-test-preparation': '/nust-entry-test-preparation',
 };
 
-function SidebarNavigation({
+const STUDENT_NAVIGATION_ITEMS: Array<{ id: SectionId; label: string; icon: typeof Home }> = [
+  { id: 'home', label: 'Dashboard', icon: Home },
+  { id: 'guide', label: 'NUST Guide', icon: BookOpen },
+  { id: 'programs', label: 'Programs', icon: GraduationCap },
+  { id: 'schools-campuses', label: 'NUST Schools & Campuses', icon: Building2 },
+  { id: 'net-types', label: 'NET Types', icon: FlaskConical },
+  { id: 'practice-board', label: 'Practice Board', icon: Pencil },
+  { id: 'question-contribution', label: 'Question Contribution', icon: Upload },
+  { id: 'smart-mentor', label: 'Smart Study Mentor', icon: Brain },
+  { id: 'preparation', label: 'Preparation Materials', icon: BookOpen },
+  { id: 'tests', label: 'Tests', icon: FileText },
+  { id: 'analytics', label: 'Analytics', icon: TrendingUp },
+  { id: 'merit-calculator', label: 'Merit Calculator', icon: Calculator },
+  { id: 'community', label: 'Community', icon: Users },
+  { id: 'subscription', label: 'Subscription', icon: Crown },
+  { id: 'profile', label: 'Profile', icon: User },
+];
+
+const SidebarNavigation = memo(function SidebarNavigation({
   navigationItems,
   activeTab,
   smartMentorTabId,
@@ -153,6 +174,13 @@ function SidebarNavigation({
         return (
           <button
             key={item.id}
+            type="button"
+            onPointerEnter={() => {
+              if (item.id !== smartMentorTabId) prefetchStudentSection(item.id);
+            }}
+            onFocus={() => {
+              if (item.id !== smartMentorTabId) prefetchStudentSection(item.id);
+            }}
             onClick={() => {
               if (item.id === smartMentorTabId) {
                 onSmartMentorClick();
@@ -182,7 +210,7 @@ function SidebarNavigation({
       })}
     </nav>
   );
-}
+});
 
 function resolveSectionFromPath(pathname: string): SectionId | null {
   const normalized = pathname === '/' ? '/' : pathname.replace(/\/+$/, '');
@@ -494,25 +522,12 @@ export default function App() {
     };
   }, [activeTab]);
 
-  const navigationItems: Array<{ id: SectionId; label: string; icon: typeof Home }> = [
-    { id: 'home', label: 'Dashboard', icon: Home },
-    { id: 'guide', label: 'NUST Guide', icon: BookOpen },
-    { id: 'programs', label: 'Programs', icon: GraduationCap },
-    { id: 'schools-campuses', label: 'NUST Schools & Campuses', icon: Building2 },
-    { id: 'net-types', label: 'NET Types', icon: FlaskConical },
-    { id: 'practice-board', label: 'Practice Board', icon: Pencil },
-    { id: 'question-contribution', label: 'Question Contribution', icon: Upload },
-    { id: 'smart-mentor', label: 'Smart Study Mentor', icon: Brain },
-    { id: 'preparation', label: 'Preparation Materials', icon: BookOpen },
-    { id: 'tests', label: 'Tests', icon: FileText },
-    { id: 'analytics', label: 'Analytics', icon: TrendingUp },
-    { id: 'merit-calculator', label: 'Merit Calculator', icon: Calculator },
-    { id: 'community', label: 'Community', icon: Users },
-    { id: 'subscription', label: 'Subscription', icon: Crown },
-    { id: 'profile', label: 'Profile', icon: User }
-  ];
+  const onNavigateSection = useCallback(
+    (section: string) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home']),
+    [navigate],
+  );
 
-  const activeNavigationItem = navigationItems.find((item) => item.id === activeTab);
+  const activeNavigationItem = STUDENT_NAVIGATION_ITEMS.find((item) => item.id === activeTab);
   const seoTitle = (() => {
     if (activeTab === 'physics-mcqs-net') return 'Physics MCQs NET';
     if (activeTab === 'math-mcqs-net') return 'Math MCQs NET';
@@ -525,6 +540,134 @@ export default function App() {
   const handleSmartMentorComingSoon = () => {
     showNeutralToast('Coming soon.');
   };
+
+  const mainSection = useMemo(() => {
+    switch (activeTab) {
+      case 'home':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <Dashboard onNavigate={onNavigateSection} />
+          </div>
+        );
+      case 'physics-mcqs-net':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <SeoLandingPage page="physics-mcqs-net" />
+          </div>
+        );
+      case 'math-mcqs-net':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <SeoLandingPage page="math-mcqs-net" />
+          </div>
+        );
+      case 'net-preparation-pakistan':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <SeoLandingPage page="net-preparation-pakistan" />
+          </div>
+        );
+      case 'nust-entry-test-preparation':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <SeoLandingPage page="nust-entry-test-preparation" />
+          </div>
+        );
+      case 'guide':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <NUSTGuide />
+          </div>
+        );
+      case 'programs':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <SectionErrorBoundary sectionName="Programs" resetKey={activeTab}>
+              <ProgramExplorer />
+            </SectionErrorBoundary>
+          </div>
+        );
+      case 'schools-campuses':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <NUSTSchoolsCampuses />
+          </div>
+        );
+      case 'net-types':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <SectionErrorBoundary sectionName="NET Types" resetKey={activeTab}>
+              <NETTypes />
+            </SectionErrorBoundary>
+          </div>
+        );
+      case 'practice-board':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <PracticeBoard />
+          </div>
+        );
+      case 'question-contribution':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <QuestionContribution />
+          </div>
+        );
+      case 'smart-mentor':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <div className="rounded-2xl border border-indigo-100 bg-white/90 p-8 text-center shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
+              <p className="text-xl font-semibold text-indigo-950">Coming Soon for Smart Study Mentor</p>
+              <p className="mt-2 text-sm text-slate-600">This feature is currently unavailable.</p>
+            </div>
+          </div>
+        );
+      case 'preparation':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <Preparation />
+          </div>
+        );
+      case 'tests':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <Tests onNavigate={onNavigateSection} />
+          </div>
+        );
+      case 'analytics':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <Analytics />
+          </div>
+        );
+      case 'merit-calculator':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <MeritCalculator />
+          </div>
+        );
+      case 'profile':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <Profile onNavigate={onNavigateSection} />
+          </div>
+        );
+      case 'subscription':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <SubscriptionPageLazy />
+          </div>
+        );
+      case 'community':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <Community />
+          </div>
+        );
+      default:
+        return null;
+    }
+  }, [activeTab, onNavigateSection]);
 
   const shareImageUrl = useMemo(() => {
     if (typeof window === 'undefined') return 'https://net360preparation.com/net360-logo.png';
@@ -576,7 +719,7 @@ export default function App() {
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-8 [scrollbar-gutter:stable]">
                       <SidebarNavigation
-                        navigationItems={navigationItems}
+                        navigationItems={STUDENT_NAVIGATION_ITEMS}
                         activeTab={activeTab}
                         smartMentorTabId={smartMentorTabId}
                         navigate={navigate}
@@ -640,54 +783,7 @@ export default function App() {
 
             {/* Main Content — lazy routes + Suspense avoid blank flash while chunks load */}
             <main className="net360-main min-h-0 min-w-0 flex-1 overflow-y-auto px-0 py-2.5 sm:py-5">
-              <Suspense fallback={<PageRouteFallback />}>
-                {activeTab === 'home' ? (
-                  <div className="mt-0 net360-page net360-page-enter">
-                    <Dashboard onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} />
-                  </div>
-                ) : null}
-                {activeTab === 'physics-mcqs-net' ? <div className="mt-0 net360-page net360-page-enter"><SeoLandingPage page="physics-mcqs-net" /></div> : null}
-                {activeTab === 'math-mcqs-net' ? <div className="mt-0 net360-page net360-page-enter"><SeoLandingPage page="math-mcqs-net" /></div> : null}
-                {activeTab === 'net-preparation-pakistan' ? <div className="mt-0 net360-page net360-page-enter"><SeoLandingPage page="net-preparation-pakistan" /></div> : null}
-                {activeTab === 'nust-entry-test-preparation' ? <div className="mt-0 net360-page net360-page-enter"><SeoLandingPage page="nust-entry-test-preparation" /></div> : null}
-                {activeTab === 'guide' ? <div className="mt-0 net360-page net360-page-enter"><NUSTGuide /></div> : null}
-                {activeTab === 'programs' ? (
-                  <div className="mt-0 net360-page net360-page-enter">
-                    <SectionErrorBoundary sectionName="Programs" resetKey={activeTab}>
-                      <ProgramExplorer />
-                    </SectionErrorBoundary>
-                  </div>
-                ) : null}
-                {activeTab === 'schools-campuses' ? <div className="mt-0 net360-page net360-page-enter"><NUSTSchoolsCampuses /></div> : null}
-                {activeTab === 'net-types' ? (
-                  <div className="mt-0 net360-page net360-page-enter">
-                    <SectionErrorBoundary sectionName="NET Types" resetKey={activeTab}>
-                      <NETTypes />
-                    </SectionErrorBoundary>
-                  </div>
-                ) : null}
-                {activeTab === 'practice-board' ? <div className="mt-0 net360-page net360-page-enter"><PracticeBoard /></div> : null}
-                {activeTab === 'question-contribution' ? <div className="mt-0 net360-page net360-page-enter"><QuestionContribution /></div> : null}
-                {activeTab === 'smart-mentor' ? (
-                  <div className="mt-0 net360-page net360-page-enter">
-                    <div className="rounded-2xl border border-indigo-100 bg-white/90 p-8 text-center shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
-                      <p className="text-xl font-semibold text-indigo-950">Coming Soon for Smart Study Mentor</p>
-                      <p className="mt-2 text-sm text-slate-600">This feature is currently unavailable.</p>
-                    </div>
-                  </div>
-                ) : null}
-                {activeTab === 'preparation' ? <div className="mt-0 net360-page net360-page-enter"><Preparation /></div> : null}
-                {activeTab === 'tests' ? <div className="mt-0 net360-page net360-page-enter"><Tests onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} /></div> : null}
-                {activeTab === 'analytics' ? <div className="mt-0 net360-page net360-page-enter"><Analytics /></div> : null}
-                {activeTab === 'merit-calculator' ? <div className="mt-0 net360-page net360-page-enter"><MeritCalculator /></div> : null}
-                {activeTab === 'profile' ? <div className="mt-0 net360-page net360-page-enter"><Profile onNavigate={(section) => navigate(PATH_BY_SECTION[(section as SectionId) || 'home'])} /></div> : null}
-                {activeTab === 'subscription' ? (
-                  <div className="mt-0 net360-page net360-page-enter">
-                    <SubscriptionPageLazy />
-                  </div>
-                ) : null}
-                {activeTab === 'community' ? <div className="mt-0 net360-page net360-page-enter"><Community /></div> : null}
-              </Suspense>
+              <Suspense fallback={<PageRouteFallback />}>{mainSection}</Suspense>
             </main>
           </section>
         </div>

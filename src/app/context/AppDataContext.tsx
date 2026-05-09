@@ -184,6 +184,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [preferences, setPreferences] = useState<PreferencesState>(defaultPreferences);
   const syncInFlightRef = useRef(false);
   const syncQueuedRef = useRef(false);
+  const syncDebounceTimerRef = useRef<number | null>(null);
 
   const applyUserPayload = useCallback((userData: ProfileState & { preferences: PreferencesState }) => {
     setProfile({
@@ -263,6 +264,20 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     }
   }, [loadMcqData, loadUserData, user]);
 
+  const scheduleDebouncedForegroundSync = useCallback(
+    (authToken: string) => {
+      if (!authToken) return;
+      if (syncDebounceTimerRef.current) {
+        window.clearTimeout(syncDebounceTimerRef.current);
+      }
+      syncDebounceTimerRef.current = window.setTimeout(() => {
+        syncDebounceTimerRef.current = null;
+        void runForegroundSync(authToken);
+      }, 420);
+    },
+    [runForegroundSync],
+  );
+
   useEffect(() => {
     let cancelled = false;
 
@@ -338,7 +353,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
       const runSync = () => {
         if (document.hidden) return;
-        void runForegroundSync(authToken);
+        scheduleDebouncedForegroundSync(authToken);
       };
 
       source.addEventListener('sync', runSync);
@@ -364,9 +379,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       if (reconnectTimer) {
         window.clearTimeout(reconnectTimer);
       }
+      if (syncDebounceTimerRef.current) {
+        window.clearTimeout(syncDebounceTimerRef.current);
+        syncDebounceTimerRef.current = null;
+      }
       closeCurrent();
     };
-  }, [token, runForegroundSync, resolveClientAuthToken]);
+  }, [token, runForegroundSync, resolveClientAuthToken, scheduleDebouncedForegroundSync]);
 
   useEffect(() => {
     if (!user) return;
@@ -375,16 +394,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
     const onVisibility = () => {
       if (document.hidden) return;
-      void runForegroundSync(authToken);
+      scheduleDebouncedForegroundSync(authToken);
     };
 
     const onOnline = () => {
-      void runForegroundSync(authToken);
+      scheduleDebouncedForegroundSync(authToken);
     };
 
     const onFocus = () => {
       if (document.hidden) return;
-      void runForegroundSync(authToken);
+      scheduleDebouncedForegroundSync(authToken);
     };
 
     document.addEventListener('visibilitychange', onVisibility);
@@ -395,8 +414,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('online', onOnline);
       window.removeEventListener('focus', onFocus);
+      if (syncDebounceTimerRef.current) {
+        window.clearTimeout(syncDebounceTimerRef.current);
+        syncDebounceTimerRef.current = null;
+      }
     };
-  }, [token, user, runForegroundSync, resolveClientAuthToken]);
+  }, [token, user, scheduleDebouncedForegroundSync, resolveClientAuthToken]);
 
   const mcqsBySubject = useMemo(() => {
     const grouped = Object.fromEntries(SUBJECT_KEYS.map((subject) => [subject, [] as MCQ[]])) as Record<SubjectKey, MCQ[]>;

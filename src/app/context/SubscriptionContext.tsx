@@ -87,28 +87,42 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const serverOffsetRef = useRef(0);
   const [tick, setTick] = useState(0);
 
+  const refreshInFlightRef = useRef<Promise<void> | null>(null);
+
   const refresh = useCallback(async () => {
     if (!user) {
       setMe(null);
       return;
     }
 
-    const bearer = resolveBearer(authToken);
-
-    setLoading(true);
-    try {
-      const stored = shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
-      const t = bearer ?? (stored && !isCookieSessionApiMarker(stored) ? stored : undefined);
-      const payload = await apiRequest<SubscriptionMePayload>('/api/subscriptions/me', {}, t || COOKIE_SESSION_API_MARKER);
-      if (payload?.serverTime) {
-        serverOffsetRef.current = new Date(payload.serverTime).getTime() - Date.now();
-      }
-      setMe(payload);
-    } catch {
-      setMe(null);
-    } finally {
-      setLoading(false);
+    let p = refreshInFlightRef.current;
+    if (!p) {
+      const bearer = resolveBearer(authToken);
+      p = (async () => {
+        setLoading(true);
+        try {
+          const stored = shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+          const t = bearer ?? (stored && !isCookieSessionApiMarker(stored) ? stored : undefined);
+          const payload = await apiRequest<SubscriptionMePayload>('/api/subscriptions/me', {}, t || COOKIE_SESSION_API_MARKER);
+          if (payload?.serverTime) {
+            serverOffsetRef.current = new Date(payload.serverTime).getTime() - Date.now();
+          }
+          setMe(payload);
+        } catch {
+          setMe(null);
+        } finally {
+          setLoading(false);
+        }
+      })();
+      refreshInFlightRef.current = p;
+      void p.finally(() => {
+        if (refreshInFlightRef.current === p) {
+          refreshInFlightRef.current = null;
+        }
+      });
     }
+
+    return p;
   }, [authToken, user]);
 
   useEffect(() => {

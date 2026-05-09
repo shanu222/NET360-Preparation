@@ -11,6 +11,7 @@
     "start:web": "node server/web.js",
     "dev:server": "node server/index.js",
     "start:server": "node server/index.js",
+    "build:check": "vite build",
     "mcq:backfill-ids": "node scripts/backfill-mcq-unique-ids.mjs",
     "mcq:normalize-parts": "node scripts/normalize-mcq-parts.mjs",
     "brand:assets": "node scripts/generate-brand-assets.mjs",

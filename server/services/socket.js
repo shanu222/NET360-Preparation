@@ -103,7 +103,7 @@ export async function initSocketIo(httpServer, opts) {
         return;
       }
       const payload = jwt.verify(token, jwtSecret);
-      const user = await UserModel.findById(payload.userId);
+      const user = await UserModel.findById(payload.userId).select('role activeSession').lean();
       if (!user) {
         next(new Error('user_not_found'));
         return;

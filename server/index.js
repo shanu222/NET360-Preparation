@@ -1,5 +1,6 @@
 import dotenv from 'dotenv';
 import express from 'express';
+import compression from 'compression';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
@@ -25,7 +26,7 @@ import mongoose from 'mongoose';
 import http from 'node:http';
 import { connectMongo } from './lib/mongo.js';
 import { getRedisMain, REDIS_CONFIGURED } from './services/redis.js';
-import { cacheGetJson, cacheSetJson, cacheKey, invalidateCommunityLeaderboardCache, invalidateQuizLeaderboardCache, invalidateUserSubscriptionCache } from './utils/cache.js';
+import { cacheGetJson, cacheSetJson, cacheKey, cacheDel, invalidateCommunityLeaderboardCache, invalidateQuizLeaderboardCache, invalidateUserSubscriptionCache } from './utils/cache.js';
 import { initSocketIo, emitSocketSyncToStudentUser, mirrorBroadcastSyncEvent, getIo, emitSubscriptionRefresh } from './services/socket.js';
 import { subscriptionExpiryRefresh, requireTrialOrPremiumContent } from './middleware/subscriptionGate.js';
 import {
@@ -562,6 +563,7 @@ const PAYMENT_PROOF_MAX_BYTES = 5 * 1024 * 1024;
 app.set('trust proxy', 1);
 app.disable('x-powered-by');
 app.set('query parser', 'simple');
+app.use(compression({ threshold: 1024 }));
 const hstsHttpsOnly = helmet.hsts({
   maxAge: 86400,
   includeSubDomains: false,
@@ -628,10 +630,12 @@ function redactRequestUrl(rawUrl) {
   return pathOnly || '/';
 }
 
-app.use((req, res, next) => {
-  console.log('[request]', req.method, redactRequestUrl(req.originalUrl || req.url));
-  next();
-});
+if (!IS_PRODUCTION || String(process.env.NET360_LOG_REQUESTS || '').trim() === '1') {
+  app.use((req, res, next) => {
+    console.log('[request]', req.method, redactRequestUrl(req.originalUrl || req.url));
+    next();
+  });
+}
 app.use(express.json({ limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use(express.urlencoded({ extended: false, limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use((req, res, next) => {
@@ -10056,6 +10060,14 @@ app.get('/api/mcqs', authMiddleware, mcqsReadLimiter, async (req, res) => {
 
 app.get('/api/mcqs/counts', authMiddleware, mcqsReadLimiter, async (_req, res) => {
   try {
+    const ck = cacheKey('mcqs:counts:v1');
+    const cached = await cacheGetJson(ck);
+    if (cached && typeof cached === 'object' && cached.counts) {
+      res.set('Cache-Control', 'private, max-age=30');
+      res.json(cached);
+      return;
+    }
+
     const rows = await MCQModel.aggregate([
       {
         $group: {
@@ -10072,7 +10084,10 @@ app.get('/api/mcqs/counts', authMiddleware, mcqsReadLimiter, async (_req, res) =
       counts[key] = Number(counts[key] || 0) + Number(row?.total || 0);
     });
 
-    res.json({ counts });
+    const out = { counts };
+    await cacheSetJson(ck, out, 90);
+    res.set('Cache-Control', 'private, max-age=30');
+    res.json(out);
   } catch {
     res.status(500).json({ error: 'Failed to load MCQ counts.' });
   }
@@ -10577,6 +10592,13 @@ app.post('/api/subscriptions/start-trial', authMiddleware, subscriptionExpiryRef
       res.status(409).json({ code: 'TRIAL_ALREADY_USED', error: 'Your free trial has already been used.' });
       return;
     }
+    if (r.code === 'USER_NOT_FOUND') {
+      res.status(503).json({
+        code: 'USER_NOT_FOUND',
+        error: 'Your profile is still loading. Please wait a moment and try again.',
+      });
+      return;
+    }
     res.status(400).json({ error: 'Could not start trial.' });
     return;
   }
@@ -10886,11 +10908,10 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
   }
 
   const day = new Date().toISOString().slice(0, 10);
-  const usage = await AIUsageModel.findOne({ userId: req.user._id, day }).lean();
-  const latestActivationRequest = await PremiumSubscriptionRequestModel
-    .findOne({ userId: req.user._id })
-    .sort({ createdAt: -1 })
-    .lean();
+  const [usage, latestActivationRequest] = await Promise.all([
+    AIUsageModel.findOne({ userId: req.user._id, day }).lean(),
+    PremiumSubscriptionRequestModel.findOne({ userId: req.user._id }).sort({ createdAt: -1 }).lean(),
+  ]);
   const requestPlan = resolveSubscriptionPlan(latestActivationRequest?.planId || '');
 
   res.json({
@@ -13664,6 +13685,7 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
     const mcqDocument = buildAdminMcqDocument(req.body || {});
     const mcq = await MCQModel.create(mcqDocument);
 
+    await cacheDel(cacheKey('mcqs:counts:v1'));
     broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'create' } });
 
     res.status(201).json({
@@ -13720,6 +13742,7 @@ app.post('/api/admin/upload-mcqs-bulk', authMiddleware, requireAdmin, async (req
   }
 
   if (created.length > 0) {
+    await cacheDel(cacheKey('mcqs:counts:v1'));
     broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'bulk-create' } });
   }
 
@@ -13884,6 +13907,7 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
   Object.assign(mcq, payload);
   await mcq.save();
 
+  await cacheDel(cacheKey('mcqs:counts:v1'));
   broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'update' } });
 
   res.json({
@@ -13906,6 +13930,7 @@ app.delete('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, r
 
   await MCQModel.deleteOne({ _id: removed._id });
 
+  await cacheDel(cacheKey('mcqs:counts:v1'));
   broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'delete' } });
 
   res.json({ ok: true, removedMcqId: String(removed._id || mcqId) });

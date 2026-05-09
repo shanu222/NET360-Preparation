@@ -87,8 +87,15 @@ export default defineConfig(({ mode }) => {
       modulePreload: { polyfill: true },
       rollupOptions: {
         output: {
-          // Avoid stacking extra manual chunk rules on Vite defaults (reduces odd split edge cases).
-          manualChunks: undefined,
+          manualChunks(id) {
+            if (!id.includes('node_modules')) return
+            if (id.includes('firebase')) return 'vendor-firebase'
+            if (id.includes('@mui') || id.includes('@emotion')) return 'vendor-mui'
+            if (id.includes('recharts')) return 'vendor-charts'
+            if (id.includes('katex') || id.includes('mathlive')) return 'vendor-math'
+            if (id.includes('socket.io-client')) return 'vendor-socket'
+            return
+          },
         },
       },
     },
