@@ -29,17 +29,6 @@ function GoogleLogo(props: { className?: string }) {
   );
 }
 
-function AppleLogo(props: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className={props.className}>
-      <path
-        fill="currentColor"
-        d="M16.37 12.56c.02 2.22 1.95 2.96 1.97 2.97-.02.05-.3 1.05-.98 2.08-.59.89-1.2 1.78-2.16 1.8-.94.02-1.25-.56-2.33-.56-1.08 0-1.43.54-2.3.58-.93.03-1.63-.94-2.22-1.83-1.2-1.73-2.12-4.9-.88-7.05.61-1.06 1.7-1.74 2.89-1.75.9-.02 1.75.61 2.33.61.58 0 1.66-.76 2.8-.65.48.02 1.82.19 2.67 1.43-.07.04-1.6.94-1.58 2.37zM14.66 6.67c.49-.59.82-1.41.73-2.22-.7.03-1.55.47-2.05 1.06-.45.52-.84 1.36-.74 2.16.78.06 1.57-.39 2.06-1z"
-      />
-    </svg>
-  );
-}
-
 const LEGACY_TARGET_PROGRAM_LABELS: Record<string, string> = {
   cs: 'Computer Science',
   ee: 'Electrical Engineering',
@@ -56,7 +45,7 @@ type AuthPanelMode = 'login' | 'register' | 'recovery';
 type AuthActionState = 'idle' | 'loggingIn' | 'creatingAccount';
 
 export function Profile({ onNavigate }: ProfileProps) {
-  const { user, login, loginWithGoogle, loginWithApple, registerWithToken, sendRecoveryEmail, logout } = useAuth();
+  const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, logout } = useAuth();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
   const [localProfile, setLocalProfile] = useState(profile);
   const [avatarPreview, setAvatarPreview] = useState(() => {
@@ -238,17 +227,13 @@ export function Profile({ onNavigate }: ProfileProps) {
     }
   };
 
-  const handleSocialAuth = async (provider: 'google' | 'apple') => {
+  const handleSocialAuth = async () => {
     if (isAuthBusy) return;
     try {
       setAuthActionState('loggingIn');
-      if (provider === 'google') {
-        await loginWithGoogle();
-      } else {
-        await loginWithApple();
-      }
+      await loginWithGoogle();
       setAuthActionState('idle');
-      toast.success(`Signed in with ${provider === 'google' ? 'Google' : 'Apple'} successfully.`);
+      toast.success('Signed in with Google successfully.');
     } catch (error) {
       setAuthActionState('idle');
       toast.error(error instanceof Error ? error.message : 'Social login failed.');
@@ -612,26 +597,16 @@ export function Profile({ onNavigate }: ProfileProps) {
                     <div className="absolute left-0 right-0 top-1/2 h-px bg-indigo-100" />
                     <span className="relative bg-white px-3 text-slate-500">or continue with</span>
                   </div>
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-2">
                     <Button
                       type="button"
                       variant="outline"
                       className="h-11 rounded-xl border-indigo-200 bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-800"
                       disabled={isAuthBusy}
-                      onClick={() => void handleSocialAuth('google')}
+                      onClick={() => void handleSocialAuth()}
                     >
                       <GoogleLogo className="mr-2 h-4 w-4" />
                       Google
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-11 rounded-xl border-indigo-200 bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-800"
-                      disabled={isAuthBusy}
-                      onClick={() => void handleSocialAuth('apple')}
-                    >
-                      <AppleLogo className="mr-2 h-4 w-4" />
-                      Apple
                     </Button>
                   </div>
                 </div>

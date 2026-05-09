@@ -4,7 +4,6 @@ import {
   createUserWithEmailAndPassword,
   deleteUser,
   GoogleAuthProvider,
-  OAuthProvider,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
@@ -35,7 +34,6 @@ interface AuthContextValue {
   loading: boolean;
   login: (email: string, password: string, opts?: { forceLogoutOtherDevice?: boolean }) => Promise<void>;
   loginWithGoogle: () => Promise<void>;
-  loginWithApple: () => Promise<void>;
   registerWithToken: (params: {
     email: string;
     password: string;
@@ -324,29 +322,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
   }, [upsertSocialAuthSession]);
 
-  const loginWithApple = useCallback<AuthContextValue['loginWithApple']>(async () => {
-    if (!isFirebaseConfigured() || !firebaseAuth) {
-      throw new Error('Firebase auth is not configured.');
-    }
-    const provider = new OAuthProvider('apple.com');
-    provider.addScope('email');
-    provider.addScope('name');
-    const credential = await signInWithPopup(firebaseAuth, provider);
-    const firebaseIdToken = await credential.user.getIdToken();
-    const [firstName = '', ...rest] = String(credential.user.displayName || '').trim().split(/\s+/);
-    const lastName = rest.join(' ').trim();
-    const email = String(credential.user.email || '').trim().toLowerCase();
-    if (!email) {
-      throw new Error('Apple login did not return an email. Enable Apple email scope in Firebase and try again.');
-    }
-    await upsertSocialAuthSession({
-      email,
-      firebaseIdToken,
-      firstName,
-      lastName,
-    });
-  }, [upsertSocialAuthSession]);
-
   const registerWithToken = useCallback<AuthContextValue['registerWithToken']>(async ({
     email,
     password,
@@ -410,12 +385,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loading,
       login,
       loginWithGoogle,
-      loginWithApple,
       registerWithToken,
       sendRecoveryEmail,
       logout,
     }),
-    [token, user, loading, login, loginWithGoogle, loginWithApple, registerWithToken, sendRecoveryEmail, logout],
+    [token, user, loading, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
