@@ -4,7 +4,7 @@
   "version": "0.0.1",
   "type": "module",
   "scripts": {
-    "build": "vite build",
+    "build": "vite build && node scripts/strip-bundled-cdn-media-from-dist.mjs",
     "serve:dist": "serve -s dist -l 3000",
     "dev": "vite",
     "start": "npm run start:web",
@@ -17,7 +17,7 @@
     "media:upload-s3": "node scripts/upload-public-media-to-s3.mjs",
     "purge:students": "node scripts/purge-student-accounts.mjs",
     "purge:legacy-local-users": "node scripts/purge-legacy-local-users.mjs",
-    "mobile:build": "node scripts/validate-mobile-env.mjs && vite build --mode android && npx cap sync android",
+    "mobile:build": "node scripts/validate-mobile-env.mjs && vite build --mode android && node scripts/strip-bundled-cdn-media-from-dist.mjs && npx cap sync android",
     "android:sync": "npx cap sync android",
     "android:open": "npx cap open android",
     "android:run": "npx cap run android"

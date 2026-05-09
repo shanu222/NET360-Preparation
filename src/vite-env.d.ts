@@ -11,6 +11,8 @@ interface ImportMetaEnv {
   /** S3 or CloudFront base for object keys (no trailing slash). Prefer over VITE_PUBLIC_MEDIA_BASE_URL. */
   readonly VITE_S3_BASE_URL?: string;
   readonly VITE_PUBLIC_MEDIA_BASE_URL?: string;
+  /** If `"true"` in production, allow same-origin fallbacks for built-in media (keep dist copies; not typical). */
+  readonly VITE_MEDIA_LOCAL_FALLBACK?: string;
   readonly VITE_BRAND_LOGO_URL?: string;
   readonly VITE_USER_GUIDE_VIDEO_URL?: string;
   readonly VITE_LOGIN_BANNER_URL?: string;

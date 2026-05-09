@@ -34,4 +34,13 @@ if (/^http:\/\//i.test(apiBaseUrl)) {
   console.warn('[mobile:build] Warning: non-HTTPS API URL detected. Prefer HTTPS for Android production builds.');
 }
 
+const mediaBase = String(process.env.VITE_S3_BASE_URL || process.env.VITE_PUBLIC_MEDIA_BASE_URL || '').trim();
+if (!mediaBase) {
+  console.warn(
+    '[mobile:build] VITE_S3_BASE_URL is unset. Schools/profile/guide media are stripped from the app bundle — set it in .env.android.',
+  );
+} else {
+  console.log('[mobile:build] Media base URL:', mediaBase.replace(/\/+$/, ''));
+}
+
 console.log('[mobile:build] Using backend URL:', apiBaseUrl);

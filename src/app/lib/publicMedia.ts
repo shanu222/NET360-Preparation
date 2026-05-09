@@ -10,6 +10,11 @@
  *
  * Set `VITE_S3_BASE_URL` (no trailing slash), e.g. `https://net360-media.s3.ap-south-1.amazonaws.com`
  *
+ * **Production build:** `npm run build` removes heavy copies of this media from `dist/` (see
+ * `strip-bundled-cdn-media-from-dist.mjs`) so deploy/Mobile stays small — keep objects on S3 (`npm run media:upload-s3`).
+ *
+ * **Local fallbacks** (`/schools/…`, etc.): Vite dev only, or `VITE_MEDIA_LOCAL_FALLBACK=true` for emergency prod debugging.
+ *
  * Falls back to `VITE_PUBLIC_MEDIA_BASE_URL`, then the production bucket host below.
  * Optional full-URL overrides per asset: `VITE_BRAND_LOGO_URL` (defaults to same-origin `/net360-logo.png`), `VITE_USER_GUIDE_VIDEO_URL`, …
  *
@@ -20,6 +25,15 @@ const DEFAULT_S3_BASE_URL = 'https://net360-media.s3.ap-south-1.amazonaws.com';
 
 function trimSlash(input: string): string {
   return input.replace(/\/+$/, '');
+}
+
+/**
+ * Same-origin `public/` fallbacks only in dev, unless `VITE_MEDIA_LOCAL_FALLBACK=true`.
+ * Production relies on S3 after the post-build strip removes bundled marketing media from `dist/`.
+ */
+export function shouldUseLocalMediaFallback(): boolean {
+  if (import.meta.env.DEV) return true;
+  return String(import.meta.env.VITE_MEDIA_LOCAL_FALLBACK || '').toLowerCase() === 'true';
 }
 
 /** Public S3 (or CloudFront) origin for keys — no trailing slash. */

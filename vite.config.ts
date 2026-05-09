@@ -1,8 +1,26 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import { loadEnv } from 'vite'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
+
+function injectS3PreconnectPlugin(mode: string): Plugin {
+  const env = loadEnv(mode, process.cwd(), '')
+  const raw = String(env.VITE_S3_BASE_URL || env.VITE_PUBLIC_MEDIA_BASE_URL || '').trim().replace(/\/+$/, '')
+  return {
+    name: 'inject-s3-preconnect',
+    transformIndexHtml(html) {
+      if (!raw || !/^https?:\/\//i.test(raw)) return html
+      try {
+        const origin = new URL(raw).origin
+        const extra = `  <link rel="dns-prefetch" href="${origin}" />\n  <link rel="preconnect" href="${origin}" crossorigin />\n`
+        return html.replace(/<\/head>/i, `${extra}</head>`)
+      } catch {
+        return html
+      }
+    },
+  }
+}
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
@@ -14,6 +32,7 @@ export default defineConfig(({ mode }) => {
       // Tailwind is not being actively used – do not remove them
       react(),
       tailwindcss(),
+      injectS3PreconnectPlugin(mode),
     ],
     resolve: {
       alias: {

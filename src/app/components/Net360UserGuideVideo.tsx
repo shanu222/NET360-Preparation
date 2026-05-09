@@ -1,13 +1,12 @@
-import { userGuideVideoUrl } from '../lib/publicMedia';
+import { shouldUseLocalMediaFallback, userGuideVideoUrl } from '../lib/publicMedia';
 
 /**
- * Login-area user guide: native HTML5 video for broad mobile/desktop support.
- * Primary: S3/CDN URL from `userGuideVideoUrl()`. Fallback: same-origin `/assets/videos/...`
- * (bundled under `public/`) when the bucket object is missing, CORS blocks Range requests, or `VITE_S3_BASE_URL` is unset.
+ * User guide video: primary URL from `userGuideVideoUrl()` (S3). Optional local `<source>` in dev or when
+ * `VITE_MEDIA_LOCAL_FALLBACK=true`.
  */
 export function Net360UserGuideVideoSection() {
   const remote = userGuideVideoUrl();
-  const local = '/assets/videos/net360-guide.mp4';
+  const localFallback = shouldUseLocalMediaFallback() ? '/assets/videos/net360-guide.mp4' : null;
 
   return (
     <div className="mx-auto mb-6 w-full max-w-[900px] px-1 text-center sm:mb-8">
@@ -24,7 +23,7 @@ export function Net360UserGuideVideoSection() {
           playsInline
         >
           <source src={remote} type="video/mp4" />
-          <source src={local} type="video/mp4" />
+          {localFallback ? <source src={localFallback} type="video/mp4" /> : null}
           Your browser does not support the video tag.
         </video>
       </div>

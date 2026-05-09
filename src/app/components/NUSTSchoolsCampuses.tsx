@@ -1,5 +1,5 @@
 import { MapPin } from 'lucide-react';
-import { getMediaUrl } from '../lib/publicMedia';
+import { getMediaUrl, shouldUseLocalMediaFallback } from '../lib/publicMedia';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 
@@ -182,12 +182,12 @@ const SCHOOL_CARDS: SchoolCard[] = [
   },
 ];
 
-function resolveImagePath(card: SchoolCard): { src: string; fallbackSrc: string } {
+function resolveImagePath(card: SchoolCard): { src: string; fallbackSrc?: string } {
   const raw = card.imageCandidates.length ? card.imageCandidates[0] : 'schools/missing-image.png';
   const key = raw.replace(/^\/+/, '');
   return {
     src: getMediaUrl(key),
-    fallbackSrc: `/${key}`,
+    ...(shouldUseLocalMediaFallback() ? { fallbackSrc: `/${key}` } : {}),
   };
 }
 
@@ -212,9 +212,10 @@ export function NUSTSchoolsCampuses() {
               <div className="h-44 w-full overflow-hidden border-b border-indigo-100 bg-slate-100">
                 <ImageWithFallback
                   src={src}
-                  fallbackSrc={fallbackSrc}
+                  {...(fallbackSrc ? { fallbackSrc } : {})}
                   alt={`${school.shortName} campus`}
                   className="h-full w-full object-cover"
+                  fetchPriority="low"
                 />
               </div>
 
