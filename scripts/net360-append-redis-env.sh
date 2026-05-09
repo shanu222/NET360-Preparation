@@ -9,7 +9,7 @@
 #   bash scripts/net360-append-redis-env.sh
 #
 # Optional overrides:
-#   REDIS_HOST=... REDIS_PORT=11326 REDIS_USERNAME=default REDIS_PASSWORD='...' \
+#   REDIS_HOST=... REDIS_PORT=11326 REDIS_USERNAME=default REDIS_TLS=true REDIS_PASSWORD='...' \
 #     bash scripts/net360-append-redis-env.sh
 #
 set -euo pipefail
@@ -48,6 +48,7 @@ fi
   echo "REDIS_PORT=${REDIS_PORT}"
   echo "REDIS_USERNAME=${REDIS_USERNAME}"
   echo "REDIS_PASSWORD=${REDIS_PASSWORD}"
+  echo "REDIS_TLS=${REDIS_TLS:-true}"
 } >> "${ENV_FILE}"
 
 echo "Appended Redis settings to ${ENV_FILE}"

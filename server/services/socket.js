@@ -92,7 +92,8 @@ export async function initSocketIo(httpServer, opts) {
       console.warn('[socket.io] Running without Redis adapter');
     }
   } catch (e) {
-    console.warn('[socket.io] Adapter init skipped:', e?.message || e);
+    console.error('[redis] connection failed', e?.message || e);
+    console.warn('[socket.io] Running without Redis adapter');
   }
 
   io.use(async (socket, next) => {

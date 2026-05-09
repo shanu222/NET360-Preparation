@@ -19,15 +19,42 @@ function normalizeRedisHost(host) {
   return h;
 }
 
+function isTruthyEnv(raw) {
+  const s = String(raw ?? '').trim().toLowerCase();
+  return s === 'true' || s === '1' || s === 'yes' || s === 'on';
+}
+
+function isFalsyEnv(raw) {
+  const s = String(raw ?? '').trim().toLowerCase();
+  return s === 'false' || s === '0' || s === 'no' || s === 'off';
+}
+
+/** Redis Cloud / managed vendors that require TLS on the public endpoint. */
+function hostLooksLikeManagedRedisTls(host) {
+  const h = String(host || '').toLowerCase();
+  return h.includes('redislabs.com') || h.includes('redis-cloud.com');
+}
+
 const REDIS_URL = normalizeRedisUrl(process.env.REDIS_URL);
 const REDIS_HOST = normalizeRedisHost(process.env.REDIS_HOST);
 const REDIS_PORT = Number(process.env.REDIS_PORT || 6379);
 const REDIS_PASSWORD = String(process.env.REDIS_PASSWORD || '').trim() || undefined;
 /** Redis Cloud / ACL: when password is set and username omitted, default user is standard. */
 const REDIS_USERNAME = String(process.env.REDIS_USERNAME || '').trim() || (REDIS_PASSWORD ? 'default' : undefined);
-const REDIS_USE_TLS =
-  String(process.env.REDIS_TLS || process.env.REDIS_USE_TLS || '').toLowerCase() === 'true'
-  || REDIS_URL.startsWith('rediss://');
+
+const tlsEnvRaw = process.env.REDIS_TLS ?? process.env.REDIS_USE_TLS;
+let REDIS_USE_TLS = REDIS_URL.startsWith('rediss://');
+let redisTlsAuto = false;
+if (!REDIS_USE_TLS && REDIS_HOST) {
+  if (isTruthyEnv(tlsEnvRaw)) {
+    REDIS_USE_TLS = true;
+  } else if (isFalsyEnv(tlsEnvRaw)) {
+    REDIS_USE_TLS = false;
+  } else if (hostLooksLikeManagedRedisTls(REDIS_HOST)) {
+    REDIS_USE_TLS = true;
+    redisTlsAuto = true;
+  }
+}
 
 export const REDIS_CONFIGURED = Boolean(REDIS_URL || REDIS_HOST);
 
@@ -35,6 +62,10 @@ const rawRedisHost = String(process.env.REDIS_HOST || '').trim();
 const rawRedisUrl = String(process.env.REDIS_URL || '').trim();
 if ((rawRedisHost === PLACEHOLDER_REDIS_HOST || rawRedisUrl.includes(PLACEHOLDER_REDIS_HOST)) && (rawRedisHost || rawRedisUrl)) {
   console.warn('[redis] Ignoring placeholder host (your-redis-host) — set real REDIS_HOST/REDIS_URL or remove those lines.');
+}
+
+if (redisTlsAuto) {
+  console.log('[redis] TLS enabled automatically for managed Redis host. Set REDIS_TLS=false to force plaintext.');
 }
 
 const SOCKET_OPTIONS = {
@@ -49,6 +80,19 @@ function reconnectStrategy(retries) {
   return Math.min(500 + retries * 200, 10_000);
 }
 
+function buildTlsForSocket() {
+  if (!REDIS_USE_TLS) return undefined;
+  /** @type {import('node:tls').ConnectionOptions} */
+  const tls = {};
+  if (REDIS_HOST) {
+    tls.servername = REDIS_HOST;
+  }
+  if (isTruthyEnv(process.env.REDIS_TLS_INSECURE)) {
+    tls.rejectUnauthorized = false;
+  }
+  return tls;
+}
+
 function buildClientOptions() {
   if (REDIS_URL) {
     return {
@@ -60,16 +104,20 @@ function buildClientOptions() {
     };
   }
   if (!REDIS_HOST) return null;
+
+  const tls = buildTlsForSocket();
+  const socket = {
+    ...SOCKET_OPTIONS,
+    host: REDIS_HOST,
+    port: REDIS_PORT,
+    reconnectStrategy,
+    ...(tls ? { tls } : {}),
+  };
+
   return {
     username: REDIS_USERNAME,
     password: REDIS_PASSWORD,
-    socket: {
-      ...SOCKET_OPTIONS,
-      host: REDIS_HOST,
-      port: REDIS_PORT,
-      reconnectStrategy,
-      ...(REDIS_USE_TLS ? { tls: true } : {}),
-    },
+    socket,
   };
 }
 
@@ -122,6 +170,12 @@ export function isRedisReady() {
 /** @type {Promise<{ pub: import('redis').RedisClientType, sub: import('redis').RedisClientType } | null> | null} */
 let socketAdapterPairPromise = null;
 
+function attachRedisClientHandlers(client) {
+  const onErr = (e) => console.error('[redis] Client error:', e?.message || e);
+  client.on('error', onErr);
+  client.on('reconnecting', () => console.warn('[redis] Reconnecting…'));
+}
+
 async function connectSocketIoAdapterPairOnce() {
   const opts = buildClientOptions();
   if (!opts) return null;
@@ -129,13 +183,11 @@ async function connectSocketIoAdapterPairOnce() {
   let pub;
   let sub;
   try {
-    pub = createClient(opts);
-    sub = pub.duplicate();
-    const onErr = (e) => console.error('[redis] Client error:', e?.message || e);
-    pub.on('error', onErr);
-    sub.on('error', onErr);
-    pub.on('reconnecting', () => console.warn('[redis] Reconnecting…'));
-    sub.on('reconnecting', () => console.warn('[redis] Reconnecting…'));
+    // Two separate clients (avoid duplicate() + TLS edge cases in some node-redis versions).
+    pub = createClient(structuredClone(opts));
+    sub = createClient(structuredClone(opts));
+    attachRedisClientHandlers(pub);
+    attachRedisClientHandlers(sub);
     await Promise.all([pub.connect(), sub.connect()]);
     console.log('[redis] connected successfully');
     return { pub, sub };
@@ -156,7 +208,7 @@ async function connectSocketIoAdapterPairOnce() {
 }
 
 /**
- * Lazily creates one pub + one sub client for @socket.io/redis-adapter (duplicate() shares connection options).
+ * Lazily creates one pub + one sub client for @socket.io/redis-adapter.
  * @returns {Promise<{ pub: import('redis').RedisClientType, sub: import('redis').RedisClientType } | null>}
  */
 export function getSocketIoAdapterRedisClients() {
