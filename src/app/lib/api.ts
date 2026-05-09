@@ -20,15 +20,44 @@ type ApiRequestOptions = RequestInit & {
 
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
 
-if (!import.meta.env.VITE_API_URL) {
-  throw new Error('Missing VITE_API_URL in production');
+function resolveApiBase() {
+  const configured = String(import.meta.env.VITE_API_URL || '').replace(/\/$/, '').trim();
+  const browserOrigin = typeof window !== 'undefined'
+    ? String(window.location.origin || '').replace(/\/$/, '').trim()
+    : '';
+
+  // Native builds should always use explicit backend URL.
+  if (isNativeCapacitorRuntime()) {
+    if (!configured) {
+      throw new Error('Missing VITE_API_URL in production');
+    }
+    return configured;
+  }
+
+  // Web builds can safely default to same-origin.
+  if (!configured) {
+    if (browserOrigin) return browserOrigin;
+    throw new Error('Missing VITE_API_URL in production');
+  }
+
+  // If the configured host differs from current web origin, prefer same-origin
+  // to avoid cross-origin failures on custom domains.
+  if (browserOrigin) {
+    try {
+      const configuredOrigin = new URL(configured).origin.replace(/\/$/, '');
+      if (configuredOrigin !== browserOrigin) {
+        console.warn(`[net360] API base host mismatch (${configuredOrigin} != ${browserOrigin}); using same-origin.`);
+        return browserOrigin;
+      }
+    } catch {
+      // Keep configured value when it is not a valid absolute URL.
+    }
+  }
+
+  return configured;
 }
 
-export const API_BASE = String(import.meta.env.VITE_API_URL).replace(/\/$/, '').trim();
-
-if (!API_BASE) {
-  throw new Error('Missing VITE_API_URL in production');
-}
+export const API_BASE = resolveApiBase();
 
 console.log('[net360] API BASE:', API_BASE);
 
