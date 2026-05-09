@@ -1,6 +1,7 @@
 /**
  * After `vite build`, remove large marketing/media files from `dist/` so deploys and Capacitor
- * bundles stay small. Assets must be served from S3 (`getMediaUrl` / `VITE_S3_BASE_URL`).
+ * bundles stay small. Most marketing media is served from S3 (`getMediaUrl` / `VITE_S3_BASE_URL`).
+ * `images/app-promo.png` stays in dist for the login hero (same-origin, no S3 dependency).
  */
 
 import fs from 'node:fs';
@@ -20,7 +21,6 @@ const paths = [
   path.join(dist, 'schools'),
   path.join(dist, 'assets', 'videos', 'net360-guide.mp4'),
   path.join(dist, 'images', 'login-banner.png'),
-  path.join(dist, 'images', 'app-promo.png'),
 ];
 
 for (const p of paths) {
@@ -39,4 +39,4 @@ for (const p of paths) {
   }
 }
 
-console.log('[strip-bundled-cdn-media] done. Ensure S3 has schools/, images/, videos/ and VITE_S3_BASE_URL is set.');
+console.log('[strip-bundled-cdn-media] done. Ensure S3 has schools/, images/, videos/ and VITE_S3_BASE_URL is set (login still ships images/app-promo.png in dist).');

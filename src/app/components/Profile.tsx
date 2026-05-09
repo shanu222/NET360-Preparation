@@ -27,7 +27,6 @@ import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK } from '../lib/paymentMethods';
 import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 import {
-  loginBannerImageUrl,
   appPromoImageUrl,
   getMediaUrl,
   shouldUseLocalMediaFallback,
@@ -684,14 +683,14 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
 
                   <div className="mt-6 flex justify-center px-1 sm:mt-8">
                     <ImageWithFallback
-                      src={loginBannerImageUrl()}
-                      {...(shouldUseLocalMediaFallback() ? { fallbackSrc: '/images/login-banner.png' } : {})}
+                      src="/images/app-promo.png"
                       alt="NET360"
                       width={500}
                       height={300}
                       className="h-auto w-full max-w-[min(90vw,500px)] rounded-xl shadow-[0_8px_24px_rgba(0,0,0,0.2)] transition-transform duration-300 ease-out hover:scale-[1.02] sm:max-w-[500px]"
-                      loading="lazy"
+                      loading="eager"
                       decoding="async"
+                      fetchPriority="high"
                     />
                   </div>
                 </>
