@@ -1947,45 +1947,33 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const db = readDb();
     const email = normalizeEmail(body.email);
     const password = String(body.password || '');
+    const firebaseIdToken = String(body.firebaseIdToken || '').trim();
     const firstName = String(body.firstName || '').trim();
     const lastName = String(body.lastName || '').trim();
-    const mobileNumber = normalizeMobileNumber(body.mobileNumber || body.phone);
-    const securityQuestion = String(body.securityQuestion || '').trim();
-    const securityAnswer = normalizeSecurityAnswer(body.securityAnswer || '');
-
-    if (!email || !password || !mobileNumber) {
-      throw new Error('Email, password, and mobile number are required.');
+    if (!email) {
+      throw new Error('Email is required.');
     }
     if (!isValidEmail(email)) {
       throw new Error('Enter a valid email address.');
     }
-    if (!isValidMobileNumber(mobileNumber)) {
-      throw new Error('Enter a valid mobile number.');
+    if (!firebaseIdToken && !password) {
+      throw new Error('Email and password are required.');
     }
-    if (password.length < 8) {
+    if (!firebaseIdToken && password.length < 8) {
       throw new Error('Password must be at least 8 characters.');
-    }
-    if (!securityQuestion || securityQuestion.length < 10) {
-      throw new Error('Security question is required and should be clear.');
-    }
-    if (!securityAnswer || securityAnswer.length < 3) {
-      throw new Error('Security answer is required.');
     }
     if (db.users.some((item) => item.email === email)) {
       throw new Error('Email is already registered.');
-    }
-    if (db.users.some((item) => compactMobile(item.phone) === compactMobile(mobileNumber))) {
-      throw new Error('Mobile number is already registered.');
     }
 
     const role: 'student' | 'admin' = email.includes('admin') ? 'admin' : 'student';
     const user: LocalUser = {
       id: `user-${Date.now()}`,
       email,
-      password,
+      password: password || `firebase-local:${Date.now()}`,
       firstName,
       lastName,
-      phone: mobileNumber,
+      phone: '',
       city: '',
       targetProgram: '',
       testSeries: '',
@@ -1999,9 +1987,9 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       refreshTokens: [],
       resetPasswordToken: null,
       resetPasswordExpiresAt: null,
-      securityQuestion,
-      securityAnswerHash: hashLocalSecurityAnswer(securityAnswer),
-      securityAnswerEncrypted: encodeLocalSecurityAnswerForStorage(securityAnswer),
+      securityQuestion: '',
+      securityAnswerHash: '',
+      securityAnswerEncrypted: '',
       securityChallengeToken: null,
       securityChallengeExpiresAt: null,
     };
