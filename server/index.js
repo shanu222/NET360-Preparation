@@ -5772,6 +5772,14 @@ async function requireAdmin(req, res, next) {
   next();
 }
 
+/** Legacy token-based signup, admin premium proof queues, and recovery lists — fully retired (410). */
+function respondLegacyAdminWorkflowGone(_req, res) {
+  res.status(410).json({
+    error:
+      'This admin API is retired. Accounts use Firebase; use subscription tools in the admin panel for Firebase users.',
+  });
+}
+
 const NET_TEST_PROFILES = {
   'net-engineering': {
     label: 'NET Engineering',
@@ -10959,19 +10967,12 @@ app.get('/api/reports/export', authMiddleware, async (req, res) => {
 
 app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) => {
   const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
-  const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingSignupRequests, pendingPremiumRequests, pendingQuestionSubmissions, recoveryRequestCount, recoverySentCount, recoveryPartialCount, recoveryFailedCount, recoveryNotFoundCount] = await Promise.all([
+  const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingQuestionSubmissions] = await Promise.all([
     UserModel.countDocuments(managedUserFilter),
     MCQModel.countDocuments(),
     AttemptModel.countDocuments(),
     AttemptModel.find().sort({ attemptedAt: -1 }).limit(12).lean(),
-    SignupRequestModel.countDocuments({ status: 'pending' }),
-    PremiumSubscriptionRequestModel.countDocuments({ status: 'pending' }),
     QuestionSubmissionModel.countDocuments({ status: 'pending' }),
-    PasswordRecoveryRequestModel.countDocuments(),
-    PasswordRecoveryRequestModel.countDocuments({ recoveryStatus: 'sent' }),
-    PasswordRecoveryRequestModel.countDocuments({ recoveryStatus: 'partial' }),
-    PasswordRecoveryRequestModel.countDocuments({ recoveryStatus: 'failed' }),
-    PasswordRecoveryRequestModel.countDocuments({ recoveryStatus: 'not_found' }),
   ]);
 
   const averageScore = latestAttempts.length
@@ -10982,15 +10983,15 @@ app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) =>
     usersCount,
     mcqCount,
     attemptsCount,
-    pendingSignupRequests,
-    pendingPremiumRequests,
+    pendingSignupRequests: 0,
+    pendingPremiumRequests: 0,
     pendingQuestionSubmissions,
-    recoveryRequestCount,
+    recoveryRequestCount: 0,
     recoveryStatusCounts: {
-      sent: recoverySentCount,
-      partial: recoveryPartialCount,
-      failed: recoveryFailedCount,
-      not_found: recoveryNotFoundCount,
+      sent: 0,
+      partial: 0,
+      failed: 0,
+      not_found: 0,
     },
     averageScore,
     recentAttempts: latestAttempts.map((item) => serializeAttempt(item)),
@@ -11093,72 +11094,9 @@ app.delete('/api/admin/configurations/:key', authMiddleware, requireAdmin, async
   res.json({ ok: true, key });
 });
 
-app.get('/api/admin/password-recovery-requests', authMiddleware, requireAdmin, async (req, res) => {
-  const status = String(req.query?.status || 'all').toLowerCase();
-  const q = String(req.query?.q || '').trim();
+app.get('/api/admin/password-recovery-requests', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
-  const filter = status === 'all' ? {} : { recoveryStatus: status };
-  if (q) {
-    filter.$or = [
-      { identifier: { $regex: q, $options: 'i' } },
-      { email: { $regex: q, $options: 'i' } },
-      { mobileNumber: { $regex: q, $options: 'i' } },
-      { userName: { $regex: q, $options: 'i' } },
-    ];
-  }
-
-  const requests = await PasswordRecoveryRequestModel.find(filter).sort({ createdAt: -1 }).limit(400).lean();
-  res.json({ requests: requests.map((item) => serializePasswordRecoveryRequest(item)) });
-});
-
-app.get('/api/admin/users/security-info', authMiddleware, requireAdmin, async (req, res) => {
-  const page = Math.max(1, parseInt(String(req.query.page || '1'), 10) || 1);
-  const rawLimit = parseInt(String(req.query.limit || req.query.pageSize || '20'), 10);
-  const pageSize = Math.min(100, Math.max(5, Number.isFinite(rawLimit) ? rawLimit : 20));
-  const q = String(req.query.q || '').trim();
-
-  const escapeRegexText = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const filter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
-  if (q) {
-    filter.email = { $regex: escapeRegexText(q), $options: 'i' };
-  }
-
-  const total = await UserModel.countDocuments(filter);
-  const skip = (page - 1) * pageSize;
-  const users = await UserModel.find(filter)
-    .select('email securityQuestion securityAnswerHash securityAnswerEncrypted')
-    .sort({ email: 1 })
-    .skip(skip)
-    .limit(pageSize)
-    .lean();
-
-  await logSecurityEvent(req, {
-    eventType: 'admin.security_info_list',
-    severity: 'info',
-    actorUserId: req.user._id,
-    actorEmail: req.user.email,
-    metadata: { page, pageSize, hasQuery: Boolean(q) },
-  });
-
-  res.json({
-    items: users.map((u) => {
-      const decrypted = decryptSecurityAnswerCiphertext(String(u.securityAnswerEncrypted || '').trim());
-      const securityAnswerPlaintext =
-        decrypted && String(decrypted).length > 0 ? String(decrypted) : null;
-      return {
-        userId: String(u._id),
-        email: String(u.email || ''),
-        securityQuestion: String(u.securityQuestion || '').trim() || '—',
-        hasSecurityAnswerHash: Boolean(String(u.securityAnswerHash || '').trim()),
-        securityAnswerPlaintext,
-      };
-    }),
-    page,
-    pageSize,
-    total,
-    totalPages: Math.max(1, Math.ceil(total / pageSize)),
-  });
-});
+app.get('/api/admin/users/security-info', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
 app.get('/api/admin/question-submissions', authMiddleware, requireAdmin, async (req, res) => {
   const status = String(req.query.status || 'all').trim().toLowerCase();
@@ -11346,361 +11284,25 @@ app.post('/api/admin/subscriptions/:userId/update', authMiddleware, requireAdmin
   res.json({ ok: true, userId, subscription: normalizeSubscription(user) });
 });
 
-app.get('/api/admin/subscriptions/requests', authMiddleware, requireAdmin, async (req, res) => {
-  const status = String(req.query?.status || 'all').toLowerCase();
-  const q = String(req.query?.q || '').trim();
-  const filter = status === 'all' ? {} : { status };
+app.get('/api/admin/subscriptions/requests', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
-  if (q) {
-    filter.$or = [
-      { email: { $regex: q, $options: 'i' } },
-      { mobileNumber: { $regex: q, $options: 'i' } },
-      { paymentTransactionId: { $regex: q, $options: 'i' } },
-      { planId: { $regex: q, $options: 'i' } },
-    ];
-  }
+app.post('/api/admin/subscriptions/requests/:requestId/approve', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
-  const requests = await PremiumSubscriptionRequestModel.find(filter).sort({ createdAt: -1 }).limit(400).lean();
-  const tokenIds = requests
-    .map((item) => item.activationTokenId)
-    .filter(Boolean);
-  const tokens = tokenIds.length
-    ? await PremiumActivationTokenModel.find({ _id: { $in: tokenIds } }, { _id: 1, inAppSentAt: 1, status: 1 }).lean()
-    : [];
-  const tokenById = new Map(tokens.map((item) => [String(item._id), item]));
+app.post('/api/admin/subscriptions/requests/:requestId/send-code', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
-  res.json({
-    requests: requests.map((item) => {
-      const plan = resolveSubscriptionPlan(item.planId);
-      const serialized = serializePremiumSubscriptionRequest(item, plan?.name || '');
-      const token = item.activationTokenId ? tokenById.get(String(item.activationTokenId)) : null;
-      const codeDeliveryStatus = token?.inAppSentAt ? 'sent' : token ? 'pending_send' : 'not_generated';
-      return {
-        ...serialized,
-        codeDeliveryStatus,
-        codeSentAt: token?.inAppSentAt ? new Date(token.inAppSentAt).toISOString() : null,
-      };
-    }),
-  });
-});
+app.post('/api/admin/subscriptions/requests/:requestId/reject', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
-app.post('/api/admin/subscriptions/requests/:requestId/approve', authMiddleware, requireAdmin, async (req, res) => {
-  const request = await PremiumSubscriptionRequestModel.findById(req.params.requestId);
-  if (!request) {
-    res.status(404).json({ error: 'Premium activation request not found.' });
-    return;
-  }
+app.get('/api/admin/signup-requests', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
-  if (request.status !== 'pending') {
-    res.status(400).json({ error: 'Only pending premium requests can be approved.' });
-    return;
-  }
+app.get('/api/admin/signup-requests/:requestId/payment-proof', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
-  const user = await UserModel.findById(request.userId).lean();
-  if (!user) {
-    request.status = 'rejected';
-    request.notes = 'User account not found.';
-    request.reviewedByAdminId = req.user._id;
-    request.reviewedByEmail = req.user.email;
-    request.reviewedAt = new Date();
-    await request.save();
-    res.status(409).json({ error: 'User account missing. Request auto-rejected.' });
-    return;
-  }
+app.post('/api/admin/signup-requests/:requestId/approve', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
-  let code = '';
-  for (let i = 0; i < 5; i += 1) {
-    const candidate = generatePremiumTokenCode();
-    const exists = await PremiumActivationTokenModel.findOne({ code: candidate }).lean();
-    if (!exists) {
-      code = candidate;
-      break;
-    }
-  }
+app.post('/api/admin/signup-requests/:requestId/send-code', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
-  if (!code) {
-    res.status(500).json({ error: 'Could not generate unique premium activation token. Try again.' });
-    return;
-  }
+app.post('/api/admin/signup-requests/:requestId/reject', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
-  const expiresAt = new Date(Date.now() + PREMIUM_TOKEN_TTL_HOURS * 60 * 60 * 1000);
-  const tokenDoc = await PremiumActivationTokenModel.create({
-    code,
-    userId: request.userId,
-    email: request.email,
-    premiumRequestId: request._id,
-    status: 'active',
-    expiresAt,
-  });
-
-  request.status = 'approved';
-  request.activationTokenId = tokenDoc._id;
-  request.notes = String(req.body?.notes || '').trim();
-  request.reviewedByAdminId = req.user._id;
-  request.reviewedByEmail = req.user.email;
-  request.reviewedAt = new Date();
-  await request.save();
-
-  res.status(201).json({
-    requestId: String(request._id),
-    token: {
-      code,
-      expiresAt: expiresAt.toISOString(),
-    },
-  });
-});
-
-app.post('/api/admin/subscriptions/requests/:requestId/send-code', authMiddleware, requireAdmin, async (req, res) => {
-  const request = await PremiumSubscriptionRequestModel.findById(req.params.requestId);
-  if (!request) {
-    res.status(404).json({ error: 'Premium activation request not found.' });
-    return;
-  }
-
-  if (request.status !== 'approved' || !request.activationTokenId) {
-    res.status(400).json({ error: 'Approve and generate token before sending code.' });
-    return;
-  }
-
-  const tokenDoc = await PremiumActivationTokenModel.findById(request.activationTokenId);
-  if (!tokenDoc) {
-    res.status(404).json({ error: 'Activation token not found for this request.' });
-    return;
-  }
-
-  if (tokenDoc.status !== 'active') {
-    res.status(400).json({ error: 'Only active tokens can be sent in-app.' });
-    return;
-  }
-
-  if (new Date(tokenDoc.expiresAt).getTime() <= Date.now()) {
-    tokenDoc.status = 'expired';
-    await tokenDoc.save();
-    res.status(400).json({ error: 'Token expired. Approve request again to generate a new code.' });
-    return;
-  }
-
-  tokenDoc.inAppSentAt = new Date();
-  tokenDoc.inAppSentByAdminId = req.user._id;
-  await tokenDoc.save();
-
-  res.json({
-    ok: true,
-    requestId: String(request._id),
-    sentAt: tokenDoc.inAppSentAt ? new Date(tokenDoc.inAppSentAt).toISOString() : null,
-  });
-});
-
-app.post('/api/admin/subscriptions/requests/:requestId/reject', authMiddleware, requireAdmin, async (req, res) => {
-  const request = await PremiumSubscriptionRequestModel.findById(req.params.requestId);
-  if (!request) {
-    res.status(404).json({ error: 'Premium activation request not found.' });
-    return;
-  }
-
-  if (request.status !== 'pending') {
-    res.status(400).json({ error: 'Only pending premium requests can be rejected.' });
-    return;
-  }
-
-  request.status = 'rejected';
-  request.notes = String(req.body?.notes || '').trim();
-  request.reviewedByAdminId = req.user._id;
-  request.reviewedByEmail = req.user.email;
-  request.reviewedAt = new Date();
-  await request.save();
-
-  res.json({ ok: true, requestId: String(request._id) });
-});
-
-app.get('/api/admin/signup-requests', authMiddleware, requireAdmin, async (req, res) => {
-  const status = String(req.query?.status || 'all').toLowerCase();
-  const filter = status === 'all' ? {} : { status };
-
-  const requests = await SignupRequestModel.find(filter).sort({ createdAt: -1 }).limit(300).lean();
-  const tokenIds = requests
-    .map((item) => item.signupTokenId)
-    .filter(Boolean);
-  const tokens = tokenIds.length
-    ? await SignupTokenModel.find({ _id: { $in: tokenIds } }, { _id: 1, inAppSentAt: 1, status: 1 }).lean()
-    : [];
-  const tokenById = new Map(tokens.map((item) => [String(item._id), item]));
-
-  res.json({
-    requests: requests.map((item) => {
-      const serialized = serializeSignupRequest(item);
-      const token = item.signupTokenId ? tokenById.get(String(item.signupTokenId)) : null;
-      const codeDeliveryStatus = token?.inAppSentAt ? 'sent' : token ? 'pending_send' : 'not_generated';
-      return {
-        ...serialized,
-        codeDeliveryStatus,
-        codeSentAt: token?.inAppSentAt ? new Date(token.inAppSentAt).toISOString() : null,
-      };
-    }),
-  });
-});
-
-app.get('/api/admin/signup-requests/:requestId/payment-proof', authMiddleware, requireAdmin, async (req, res) => {
-  const request = await SignupRequestModel.findById(req.params.requestId).lean();
-  if (!request) {
-    res.status(404).json({ error: 'Signup request not found.' });
-    return;
-  }
-
-  const streamed = streamPaymentProofFromDataUrl(
-    res,
-    request.paymentProof,
-    `signup-proof-${String(request._id)}.dat`,
-  );
-  if (!streamed) {
-    res.status(404).json({ error: 'Payment proof is not available for this signup request.' });
-  }
-});
-
-app.post('/api/admin/signup-requests/:requestId/approve', authMiddleware, requireAdmin, async (req, res) => {
-  const request = await SignupRequestModel.findById(req.params.requestId);
-  if (!request) {
-    res.status(404).json({ error: 'Signup request not found.' });
-    return;
-  }
-
-  if (request.status !== 'pending') {
-    res.status(400).json({ error: 'Only pending requests can be approved.' });
-    return;
-  }
-
-  const existingUser = await UserModel.findOne({ email: request.email }).lean();
-  if (existingUser) {
-    request.status = 'rejected';
-    request.notes = 'Email already registered.';
-    request.reviewedByAdminId = req.user._id;
-    request.reviewedByEmail = req.user.email;
-    request.reviewedAt = new Date();
-    await request.save();
-    res.status(409).json({ error: 'Email already registered. Request auto-rejected.' });
-    return;
-  }
-
-  let code = '';
-  for (let i = 0; i < 5; i += 1) {
-    const candidate = generateSignupTokenCode();
-    const exists = await SignupTokenModel.findOne({ code: candidate }).lean();
-    if (!exists) {
-      code = candidate;
-      break;
-    }
-  }
-
-  if (!code) {
-    res.status(500).json({ error: 'Could not generate unique signup token. Try again.' });
-    return;
-  }
-
-  const expiresAt = new Date(Date.now() + SIGNUP_TOKEN_TTL_MINUTES * 60 * 1000);
-  const tokenDoc = await SignupTokenModel.create({
-    code,
-    email: request.email,
-    signupRequestId: request._id,
-    status: 'active',
-    expiresAt,
-  });
-
-  request.status = 'approved';
-  request.signupTokenId = tokenDoc._id;
-  request.notes = String(req.body?.notes || '').trim();
-  request.reviewedByAdminId = req.user._id;
-  request.reviewedByEmail = req.user.email;
-  request.reviewedAt = new Date();
-  await request.save();
-
-  res.status(201).json({
-    requestId: String(request._id),
-    token: {
-      code,
-      expiresAt: expiresAt.toISOString(),
-    },
-  });
-});
-
-app.post('/api/admin/signup-requests/:requestId/send-code', authMiddleware, requireAdmin, async (req, res) => {
-  const request = await SignupRequestModel.findById(req.params.requestId);
-  if (!request) {
-    res.status(404).json({ error: 'Signup request not found.' });
-    return;
-  }
-
-  if (request.status !== 'approved' || !request.signupTokenId) {
-    res.status(400).json({ error: 'Approve and generate token before sending code.' });
-    return;
-  }
-
-  const tokenDoc = await SignupTokenModel.findById(request.signupTokenId);
-  if (!tokenDoc) {
-    res.status(404).json({ error: 'Signup token not found for this request.' });
-    return;
-  }
-
-  if (tokenDoc.status !== 'active') {
-    res.status(400).json({ error: 'Only active tokens can be sent in-app.' });
-    return;
-  }
-
-  if (new Date(tokenDoc.expiresAt).getTime() <= Date.now()) {
-    tokenDoc.status = 'expired';
-    await tokenDoc.save();
-    res.status(400).json({ error: 'Token expired. Approve request again to generate a new code.' });
-    return;
-  }
-
-  tokenDoc.inAppSentAt = new Date();
-  tokenDoc.inAppSentByAdminId = req.user._id;
-  await tokenDoc.save();
-
-  res.json({
-    ok: true,
-    requestId: String(request._id),
-    sentAt: tokenDoc.inAppSentAt ? new Date(tokenDoc.inAppSentAt).toISOString() : null,
-  });
-});
-
-app.post('/api/admin/signup-requests/:requestId/reject', authMiddleware, requireAdmin, async (req, res) => {
-  const request = await SignupRequestModel.findById(req.params.requestId);
-  if (!request) {
-    res.status(404).json({ error: 'Signup request not found.' });
-    return;
-  }
-
-  if (request.status !== 'pending') {
-    res.status(400).json({ error: 'Only pending requests can be rejected.' });
-    return;
-  }
-
-  request.status = 'rejected';
-  request.notes = String(req.body?.notes || '').trim();
-  request.reviewedByAdminId = req.user._id;
-  request.reviewedByEmail = req.user.email;
-  request.reviewedAt = new Date();
-  await request.save();
-
-  res.json({ ok: true, requestId: String(request._id) });
-});
-
-app.get('/api/admin/subscriptions/requests/:requestId/payment-proof', authMiddleware, requireAdmin, async (req, res) => {
-  const request = await PremiumSubscriptionRequestModel.findById(req.params.requestId).lean();
-  if (!request) {
-    res.status(404).json({ error: 'Premium activation request not found.' });
-    return;
-  }
-
-  const streamed = streamPaymentProofFromDataUrl(
-    res,
-    request.paymentProof,
-    `premium-proof-${String(request._id)}.dat`,
-  );
-  if (!streamed) {
-    res.status(404).json({ error: 'Payment proof is not available for this premium request.' });
-  }
-});
+app.get('/api/admin/subscriptions/requests/:requestId/payment-proof', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
 app.get('/api/admin/users', authMiddleware, requireAdmin, async (req, res) => {
   const users = await UserModel.find({ role: { $ne: 'admin' }, authProvider: 'firebase' }, {
