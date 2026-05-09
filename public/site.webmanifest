@@ -1,7 +1,11 @@
 {
+  "id": "/",
   "name": "NET360 Preparation",
   "short_name": "NET360",
+  "lang": "en",
+  "dir": "ltr",
   "description": "NUST NET preparation with MCQs, mock tests, and analytics.",
+  "categories": ["education", "productivity"],
   "icons": [
     {
       "src": "/android-chrome-512x512.png",
@@ -25,6 +29,8 @@
   "theme_color": "#5f4ee6",
   "background_color": "#eef0ff",
   "display": "standalone",
+  "display_override": ["standalone", "browser"],
+  "orientation": "any",
   "start_url": "/",
   "scope": "/"
 }

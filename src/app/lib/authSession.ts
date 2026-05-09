@@ -16,17 +16,41 @@ export function isCookieSessionApiMarker(value: string | null | undefined): bool
 const STUDENT_ACCESS_KEY = 'net360-auth-token';
 const STUDENT_REFRESH_KEY = 'net360-auth-refresh-token';
 
+function lsGet(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function lsSet(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    /* Quota, private mode, or WebView storage blocked */
+  }
+}
+
+function lsRemove(key: string) {
+  try {
+    localStorage.removeItem(key);
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Persist cookie-only session hint so AppData / exam flows see a stable token (Authorization omitted; fetch uses credentials). */
 export function persistCookieSessionMode() {
   if (!shouldPersistAuthTokens()) return;
-  localStorage.setItem(STUDENT_ACCESS_KEY, COOKIE_SESSION_API_MARKER);
-  localStorage.removeItem(STUDENT_REFRESH_KEY);
+  lsSet(STUDENT_ACCESS_KEY, COOKIE_SESSION_API_MARKER);
+  lsRemove(STUDENT_REFRESH_KEY);
 }
 
 /** Read stored student access JWT or cookie-session marker (same key as AuthContext). */
 export function readPersistedStudentAccessToken(): string | null {
   if (!shouldPersistAuthTokens()) return null;
-  return localStorage.getItem(STUDENT_ACCESS_KEY);
+  return lsGet(STUDENT_ACCESS_KEY);
 }
 
 /** Read `sessionId` claim from stored JWT (no verification; server validates). */
@@ -48,8 +72,8 @@ export function readSessionIdFromAccessToken(): string | null {
 /** True if localStorage has any student auth material (JWT, cookie-session marker, or refresh token). */
 export function hasStoredAuthCredentials(): boolean {
   if (!shouldPersistAuthTokens() || typeof localStorage === 'undefined') return false;
-  const access = localStorage.getItem(STUDENT_ACCESS_KEY);
-  const refresh = localStorage.getItem(STUDENT_REFRESH_KEY);
+  const access = lsGet(STUDENT_ACCESS_KEY);
+  const refresh = lsGet(STUDENT_REFRESH_KEY);
   return Boolean((access && access.trim()) || (refresh && refresh.trim()));
 }
 
@@ -91,15 +115,15 @@ export function formatStudentTokenDebugPreview(): string {
 
 export function persistStudentTokens(access: string | null, refresh: string | null) {
   if (!shouldPersistAuthTokens()) return;
-  if (access) localStorage.setItem(STUDENT_ACCESS_KEY, access);
-  else localStorage.removeItem(STUDENT_ACCESS_KEY);
-  if (refresh) localStorage.setItem(STUDENT_REFRESH_KEY, refresh);
-  else localStorage.removeItem(STUDENT_REFRESH_KEY);
+  if (access) lsSet(STUDENT_ACCESS_KEY, access);
+  else lsRemove(STUDENT_ACCESS_KEY);
+  if (refresh) lsSet(STUDENT_REFRESH_KEY, refresh);
+  else lsRemove(STUDENT_REFRESH_KEY);
 }
 
 export function clearPersistedStudentTokens() {
-  localStorage.removeItem(STUDENT_ACCESS_KEY);
-  localStorage.removeItem(STUDENT_REFRESH_KEY);
+  lsRemove(STUDENT_ACCESS_KEY);
+  lsRemove(STUDENT_REFRESH_KEY);
 }
 
 /** Omit cookie-only sessions from query strings / launch payloads (avoid useless markers in URLs). */

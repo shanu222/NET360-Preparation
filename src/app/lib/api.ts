@@ -193,6 +193,16 @@ function resolveRetryCount(explicitRetryCount?: number) {
   return Math.max(0, Math.min(MAX_API_RETRY_COUNT, Math.floor(Number(explicitRetryCount))));
 }
 
+/** Default one retry for read-only methods on flaky mobile / cold-start APIs; explicit retryCount always wins. */
+function resolveEffectiveRetryCount(method: string, explicitRetryCount?: number) {
+  if (Number.isFinite(explicitRetryCount)) {
+    return resolveRetryCount(explicitRetryCount);
+  }
+  const m = String(method || 'GET').toUpperCase();
+  if (m === 'GET' || m === 'HEAD' || m === 'OPTIONS') return 1;
+  return 0;
+}
+
 function resolveRetryDelayMs(explicitRetryDelayMs?: number) {
   if (!Number.isFinite(explicitRetryDelayMs) || Number(explicitRetryDelayMs) <= 0) {
     return DEFAULT_API_RETRY_DELAY_MS;
@@ -438,7 +448,8 @@ function buildMissingNativeApiBaseUrlError(path: string) {
 export async function apiRequest<T>(path: string, options: ApiRequestOptions = {}, token?: string | null): Promise<T> {
   const effectiveBaseUrl = API_BASE;
   const timeoutMs = resolveRequestTimeoutMs(path, options.timeoutMs);
-  const retryCount = resolveRetryCount(options.retryCount);
+  const method = String(options.method || 'GET');
+  const retryCount = resolveEffectiveRetryCount(method, options.retryCount);
   const retryDelayMs = resolveRetryDelayMs(options.retryDelayMs);
   const resolvedPath = resolveApiPath(path);
 

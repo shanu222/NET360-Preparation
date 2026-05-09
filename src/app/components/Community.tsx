@@ -1118,8 +1118,11 @@ function CommunityInner() {
       ...(shouldPersistAuthTokens() ? { auth: { token } } : {}),
       withCredentials: true,
       transports: ['websocket', 'polling'],
-      reconnectionAttempts: 25,
-      reconnectionDelay: 1200,
+      reconnectionAttempts: 50,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 15000,
+      randomizationFactor: 0.5,
+      timeout: 25000,
     });
     communitySocketRef.current = socket;
 

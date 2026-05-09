@@ -1246,3 +1246,29 @@
 .dark .net360-token-field .net360-token-input--loading {
   background: linear-gradient(90deg, #1e293b 25%, #334155 37%, #1e293b 63%);
 }
+
+/* -------------------------------------------------------------------------- */
+/* Universal baseline: readability, safe areas, media (no visual redesign).   */
+/* -------------------------------------------------------------------------- */
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+.net360-viewport {
+  /* Notch / home indicator — additive to existing Tailwind padding */
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+#root {
+  isolation: isolate;
+}
+
+img,
+video,
+canvas {
+  max-width: 100%;
+  height: auto;
+}
