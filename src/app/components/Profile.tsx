@@ -26,7 +26,7 @@ import { useSubscription } from '../context/SubscriptionContext';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK } from '../lib/paymentMethods';
 import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
-import { getMediaUrl } from '../lib/publicMedia';
+import { getMediaUrl, loginBannerImageUrl, shouldUseLocalMediaFallback } from '../lib/publicMedia';
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { apiRequest } from '../lib/api';
@@ -679,8 +679,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
 
                   <div className="mt-6 flex justify-center px-1 sm:mt-8">
                     <ImageWithFallback
-                      src="/images/app-promo.png"
-                      alt="NET360"
+                      src={loginBannerImageUrl()}
+                      {...(shouldUseLocalMediaFallback() ? { fallbackSrc: '/images/login-banner.png' } : {})}
+                      alt="NET360 login"
                       width={500}
                       height={300}
                       className="h-auto w-full max-w-[min(90vw,500px)] rounded-xl shadow-[0_8px_24px_rgba(0,0,0,0.2)] transition-transform duration-300 ease-out hover:scale-[1.02] sm:max-w-[500px]"
