@@ -614,7 +614,7 @@ function MathLiveInput({
     ref: (node: MathFieldLikeElement | null) => {
       fieldRef.current = node;
     },
-    class: `block min-h-[44px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ${className || ''}`.trim(),
+    class: `block min-h-[44px] w-full rounded-md border border-input bg-input-background px-3 py-2 text-base text-foreground md:text-sm ${className || ''}`.trim(),
     placeholder: placeholder || '',
     'virtual-keyboard-mode': 'onfocus',
     'smart-mode': 'false',

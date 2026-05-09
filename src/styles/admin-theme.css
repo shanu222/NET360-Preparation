@@ -10,6 +10,8 @@
 }
 
 .admin-shell {
+  /* Align system form colors (field / fieldtext) inside admin on both themes */
+  color-scheme: light;
   --admin-radius: 14px;
   --admin-radius-sm: 12px;
   --admin-radius-lg: 16px;
@@ -155,6 +157,10 @@
 
 .admin-shell svg {
   color: inherit;
+}
+
+.dark .admin-shell {
+  color-scheme: dark;
 }
 
 .dark .admin-shell .admin-header-panel,
@@ -409,6 +415,70 @@
 .dark .admin-shell [data-slot='input']::placeholder,
 .dark .admin-shell [data-slot='textarea']::placeholder {
   color: var(--admin-dark-text-soft);
+}
+
+/*
+ * MathLive math-field uses shadow :host with system colors (field / fieldtext).
+ * On some browsers those resolve poorly → white text on white. Force explicit contrast.
+ */
+.admin-shell math-field {
+  --hue: 220;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: var(--admin-radius-sm);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  background-color: var(--admin-surface-light);
+  color: var(--admin-text-strong);
+  --placeholder-color: rgb(71 85 105);
+  --placeholder-opacity: 0.75;
+  caret-color: var(--admin-text-strong);
+}
+
+.dark .admin-shell math-field {
+  border-color: rgba(148, 163, 184, 0.34);
+  background-color: rgba(8, 16, 30, 0.74);
+  color: var(--admin-dark-text-body);
+  --placeholder-color: rgb(148 163 184);
+  --placeholder-opacity: 0.9;
+  caret-color: var(--admin-dark-text-strong);
+}
+
+@media (forced-colors: active) {
+  .admin-shell math-field {
+    border-color: ButtonBorder;
+    background-color: Field;
+    color: FieldText;
+    caret-color: FieldText;
+    --placeholder-color: GrayText;
+    --placeholder-opacity: 1;
+  }
+}
+
+/* Native file inputs: label text + "Choose file" chip must stay readable in both themes */
+.admin-shell input[type='file'] {
+  color: var(--admin-text-body);
+}
+
+.admin-shell input[type='file']::file-selector-button {
+  margin-right: 0.75rem;
+  border-radius: var(--admin-radius-sm);
+  border: 1px solid rgba(148, 163, 184, 0.32);
+  background: rgba(241, 245, 249, 0.98);
+  color: var(--admin-text-strong);
+  padding: 0.4rem 0.85rem;
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.dark .admin-shell input[type='file'] {
+  color: var(--admin-dark-text-muted);
+}
+
+.dark .admin-shell input[type='file']::file-selector-button {
+  border-color: rgba(148, 163, 184, 0.34);
+  background: rgba(30, 41, 59, 0.92);
+  color: var(--admin-dark-text-strong);
 }
 
 .admin-shell [data-slot='input']:focus-visible,
