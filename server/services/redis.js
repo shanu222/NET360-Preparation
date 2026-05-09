@@ -2,6 +2,10 @@
  * Central Redis connection for caching and Socket.IO (@socket.io/redis-adapter) pub/sub.
  * Uses env vars only — never embed credentials in code.
  * If Redis is unreachable, the API continues without cache / without multi-instance Socket.IO.
+ *
+ * IMPORTANT: All REDIS_* settings are read lazily from process.env inside functions.
+ * In ESM, static imports run before dotenv.config() in server/index.js; reading env at
+ * module top level would miss values from .env and disable Redis permanently.
  */
 import { createClient } from 'redis';
 
@@ -35,42 +39,63 @@ function hostLooksLikeManagedRedisTls(host) {
   return h.includes('redislabs.com') || h.includes('redis-cloud.com');
 }
 
-const REDIS_URL = normalizeRedisUrl(process.env.REDIS_URL);
-const REDIS_HOST = normalizeRedisHost(process.env.REDIS_HOST);
-const REDIS_PORT = Number(process.env.REDIS_PORT || 6379);
-const REDIS_PASSWORD = String(process.env.REDIS_PASSWORD || '').trim() || undefined;
-/** Redis Cloud / ACL: when password is set and username omitted, default user is standard. */
-const REDIS_USERNAME = String(process.env.REDIS_USERNAME || '').trim() || (REDIS_PASSWORD ? 'default' : undefined);
-
-const tlsEnvRaw = process.env.REDIS_TLS ?? process.env.REDIS_USE_TLS;
-let REDIS_USE_TLS = REDIS_URL.startsWith('rediss://');
-let redisTlsAuto = false;
-if (!REDIS_USE_TLS && REDIS_HOST) {
-  if (isTruthyEnv(tlsEnvRaw)) {
-    REDIS_USE_TLS = true;
-  } else if (isFalsyEnv(tlsEnvRaw)) {
-    REDIS_USE_TLS = false;
-  } else if (hostLooksLikeManagedRedisTls(REDIS_HOST)) {
-    REDIS_USE_TLS = true;
-    redisTlsAuto = true;
-  }
-}
-
-export const REDIS_CONFIGURED = Boolean(REDIS_URL || REDIS_HOST);
-
-const rawRedisHost = String(process.env.REDIS_HOST || '').trim();
-const rawRedisUrl = String(process.env.REDIS_URL || '').trim();
-if ((rawRedisHost === PLACEHOLDER_REDIS_HOST || rawRedisUrl.includes(PLACEHOLDER_REDIS_HOST)) && (rawRedisHost || rawRedisUrl)) {
-  console.warn('[redis] Ignoring placeholder host (your-redis-host) — set real REDIS_HOST/REDIS_URL or remove those lines.');
-}
-
-if (redisTlsAuto) {
-  console.log('[redis] TLS enabled automatically for managed Redis host. Set REDIS_TLS=false to force plaintext.');
-}
-
 const SOCKET_OPTIONS = {
   connectTimeout: 15_000,
 };
+
+let loggedPlaceholder = false;
+let loggedAutoTls = false;
+
+/**
+ * Fresh read of Redis-related env (call after dotenv has loaded).
+ */
+function readRedisEnvFromProcess() {
+  const REDIS_URL = normalizeRedisUrl(process.env.REDIS_URL);
+  const REDIS_HOST = normalizeRedisHost(process.env.REDIS_HOST);
+  const REDIS_PORT = Number(process.env.REDIS_PORT || 6379);
+  const REDIS_PASSWORD = String(process.env.REDIS_PASSWORD || '').trim() || undefined;
+  const REDIS_USERNAME = String(process.env.REDIS_USERNAME || '').trim() || (REDIS_PASSWORD ? 'default' : undefined);
+
+  const tlsEnvRaw = process.env.REDIS_TLS ?? process.env.REDIS_USE_TLS;
+  let REDIS_USE_TLS = REDIS_URL.startsWith('rediss://');
+  let redisTlsAuto = false;
+  if (!REDIS_USE_TLS && REDIS_HOST) {
+    if (isTruthyEnv(tlsEnvRaw)) {
+      REDIS_USE_TLS = true;
+    } else if (isFalsyEnv(tlsEnvRaw)) {
+      REDIS_USE_TLS = false;
+    } else if (hostLooksLikeManagedRedisTls(REDIS_HOST)) {
+      REDIS_USE_TLS = true;
+      redisTlsAuto = true;
+    }
+  }
+
+  const rawRedisHost = String(process.env.REDIS_HOST || '').trim();
+  const rawRedisUrl = String(process.env.REDIS_URL || '').trim();
+  if (!loggedPlaceholder && (rawRedisHost === PLACEHOLDER_REDIS_HOST || rawRedisUrl.includes(PLACEHOLDER_REDIS_HOST)) && (rawRedisHost || rawRedisUrl)) {
+    loggedPlaceholder = true;
+    console.warn('[redis] Ignoring placeholder host (your-redis-host) — set real REDIS_HOST/REDIS_URL or remove those lines.');
+  }
+  if (!loggedAutoTls && redisTlsAuto) {
+    loggedAutoTls = true;
+    console.log('[redis] TLS enabled automatically for managed Redis host. Set REDIS_TLS=false to force plaintext.');
+  }
+
+  return {
+    REDIS_URL,
+    REDIS_HOST,
+    REDIS_PORT,
+    REDIS_PASSWORD,
+    REDIS_USERNAME,
+    REDIS_USE_TLS,
+  };
+}
+
+/** Whether Redis host or URL is configured (after .env load). */
+export function isRedisConfigured() {
+  const { REDIS_URL, REDIS_HOST } = readRedisEnvFromProcess();
+  return Boolean(REDIS_URL || REDIS_HOST);
+}
 
 function reconnectStrategy(retries) {
   if (retries > 50) {
@@ -80,12 +105,12 @@ function reconnectStrategy(retries) {
   return Math.min(500 + retries * 200, 10_000);
 }
 
-function buildTlsForSocket() {
-  if (!REDIS_USE_TLS) return undefined;
+/** @param {string} redisHost */
+function buildTlsForSocket(redisHost) {
   /** @type {import('node:tls').ConnectionOptions} */
   const tls = {};
-  if (REDIS_HOST) {
-    tls.servername = REDIS_HOST;
+  if (redisHost) {
+    tls.servername = redisHost;
   }
   if (isTruthyEnv(process.env.REDIS_TLS_INSECURE)) {
     tls.rejectUnauthorized = false;
@@ -94,6 +119,15 @@ function buildTlsForSocket() {
 }
 
 function buildClientOptions() {
+  const {
+    REDIS_URL,
+    REDIS_HOST,
+    REDIS_PORT,
+    REDIS_PASSWORD,
+    REDIS_USERNAME,
+    REDIS_USE_TLS,
+  } = readRedisEnvFromProcess();
+
   if (REDIS_URL) {
     return {
       url: REDIS_URL,
@@ -105,7 +139,7 @@ function buildClientOptions() {
   }
   if (!REDIS_HOST) return null;
 
-  const tls = buildTlsForSocket();
+  const tls = REDIS_USE_TLS ? buildTlsForSocket(REDIS_HOST) : undefined;
   const socket = {
     ...SOCKET_OPTIONS,
     host: REDIS_HOST,
@@ -130,7 +164,7 @@ let mainConnectPromise = null;
  * @returns {Promise<import('redis').RedisClientType | null>}
  */
 export async function getRedisMain() {
-  if (!REDIS_CONFIGURED) return null;
+  if (!isRedisConfigured()) return null;
   if (mainClient?.isOpen) return mainClient;
   if (mainConnectPromise) return mainConnectPromise;
 
@@ -177,13 +211,17 @@ function attachRedisClientHandlers(client) {
 }
 
 async function connectSocketIoAdapterPairOnce() {
+  if (!isRedisConfigured()) return null;
+
   const opts = buildClientOptions();
-  if (!opts) return null;
+  if (!opts) {
+    console.warn('[redis] Socket.IO adapter skipped: could not build Redis client options (check REDIS_HOST / REDIS_URL).');
+    return null;
+  }
 
   let pub;
   let sub;
   try {
-    // Two separate clients (avoid duplicate() + TLS edge cases in some node-redis versions).
     pub = createClient(structuredClone(opts));
     sub = createClient(structuredClone(opts));
     attachRedisClientHandlers(pub);
@@ -212,7 +250,7 @@ async function connectSocketIoAdapterPairOnce() {
  * @returns {Promise<{ pub: import('redis').RedisClientType, sub: import('redis').RedisClientType } | null>}
  */
 export function getSocketIoAdapterRedisClients() {
-  if (!REDIS_CONFIGURED) return Promise.resolve(null);
+  if (!isRedisConfigured()) return Promise.resolve(null);
   if (!socketAdapterPairPromise) {
     socketAdapterPairPromise = connectSocketIoAdapterPairOnce();
   }

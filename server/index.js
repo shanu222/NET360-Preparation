@@ -26,7 +26,7 @@ import * as cheerio from 'cheerio';
 import mongoose from 'mongoose';
 import http from 'node:http';
 import { connectMongo } from './lib/mongo.js';
-import { getRedisMain, REDIS_CONFIGURED } from './services/redis.js';
+import { getRedisMain, isRedisConfigured } from './services/redis.js';
 import { cacheGetJson, cacheSetJson, cacheKey, cacheDel, invalidateCommunityLeaderboardCache, invalidateQuizLeaderboardCache, invalidateUserSubscriptionCache } from './utils/cache.js';
 import {
   initSocketIo,
@@ -517,7 +517,7 @@ function notifyRevokedStudentSession(userId, previousSessionId) {
 
 /** Optional Redis mirror for observability / future auth workers (Mongo remains source of truth). */
 function mirrorStudentSessionRedis(userId, sessionId, deviceId) {
-  if (!REDIS_CONFIGURED) return;
+  if (!isRedisConfigured()) return;
   const uid = String(userId || '').trim();
   const sid = String(sessionId || '').trim();
   if (!uid || !sid) return;
@@ -6571,7 +6571,7 @@ app.get('/api/health', async (_req, res) => {
     firebaseAdminConfigured: Boolean(firebaseAdminAuth),
     firebaseAdminMissingEnv: getMissingFirebaseAdminEnvVars(),
     redis: {
-      configured: REDIS_CONFIGURED,
+      configured: isRedisConfigured(),
       pingOk: redisPing,
     },
     socketIo: {
@@ -7209,7 +7209,7 @@ app.post('/api/auth/logout', async (req, res) => {
       }
 
       await user.save();
-      if (REDIS_CONFIGURED && (user.role || 'student') === 'student') {
+      if (isRedisConfigured() && (user.role || 'student') === 'student') {
         void cacheDel(cacheKey(`studentSession:${user._id}`));
       }
       await logSecurityEvent(req, {
@@ -14360,7 +14360,7 @@ async function bootstrap() {
   // so deployment health checks are not blocked by Mongo/network latency.
   void (async () => {
     try {
-      if (REDIS_CONFIGURED) {
+      if (isRedisConfigured()) {
         void getRedisMain().then((client) => {
           if (client) console.log('[startup] Redis cache client warmed up');
         }).catch(() => undefined);
