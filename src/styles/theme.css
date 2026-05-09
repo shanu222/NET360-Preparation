@@ -667,29 +667,16 @@
     color: #b7c2eb;
   }
 
-  .dark .net360-shell header [data-slot='button'],
-  .dark .net360-shell header button {
+  /* Scope header control colors to toolbar actions only — not account dropdown items ([role="menuitem"]) on light panels. */
+  .dark .net360-shell header [data-slot='button']:not([role='menuitem']),
+  .dark .net360-shell header button:not([role='menuitem']) {
     color: #d7e0ff;
   }
 
-  .dark .net360-shell header [data-slot='button']:hover,
-  .dark .net360-shell header button:hover {
+  .dark .net360-shell header [data-slot='button']:not([role='menuitem']):hover,
+  .dark .net360-shell header button:not([role='menuitem']):hover {
     background: rgba(121, 141, 252, 0.18);
     color: #f2f5ff;
-  }
-
-  .dark .net360-page h1,
-  .dark .net360-page h2,
-  .dark .net360-page h3,
-  .dark .net360-page h4 {
-    color: #e7ecff;
-  }
-
-  .dark .net360-page p,
-  .dark .net360-page span,
-  .dark .net360-page label,
-  .dark .net360-page a {
-    color: var(--net360-text-secondary);
   }
 
   .net360-page .text-white,
@@ -833,8 +820,45 @@
   .dark .net360-page .bg-slate-50\/70,
   .dark .net360-page .bg-indigo-50,
   .dark .net360-page .bg-indigo-50\/40,
-  .dark .net360-page .bg-indigo-50\/50 {
+  .dark .net360-page .bg-indigo-50\/50,
+  .dark .net360-page .bg-emerald-50,
+  .dark .net360-page .bg-emerald-50\/35,
+  .dark .net360-page .bg-emerald-50\/40,
+  .dark .net360-page .bg-emerald-50\/45,
+  .dark .net360-page .bg-emerald-50\/60,
+  .dark .net360-page .bg-emerald-50\/70,
+  .dark .net360-page .bg-emerald-50\/80,
+  .dark .net360-page .bg-emerald-100,
+  .dark .net360-page .bg-amber-50,
+  .dark .net360-page .bg-amber-50\/25,
+  .dark .net360-page .bg-amber-50\/60,
+  .dark .net360-page .bg-amber-100,
+  .dark .net360-page .bg-blue-50,
+  .dark .net360-page .bg-blue-50\/60,
+  .dark .net360-page .bg-rose-50,
+  .dark .net360-page .bg-rose-100,
+  .dark .net360-page .bg-violet-50,
+  .dark .net360-page .bg-teal-50 {
     background-color: rgba(28, 40, 84, 0.78);
+  }
+
+  .dark .net360-page .text-emerald-900,
+  .dark .net360-page .text-emerald-800,
+  .dark .net360-page .text-emerald-700,
+  .dark .net360-page .text-emerald-600 {
+    color: #a7f3d0;
+  }
+
+  .dark .net360-page .text-amber-900,
+  .dark .net360-page .text-amber-800,
+  .dark .net360-page .text-amber-700 {
+    color: #fcd34d;
+  }
+
+  .dark .net360-page .text-rose-800,
+  .dark .net360-page .text-rose-700,
+  .dark .net360-page .text-rose-600 {
+    color: #fda4af;
   }
 
   .dark .net360-page .border,
@@ -858,7 +882,14 @@
   .dark .net360-shell main [class*='bg-gradient-to-'][class*='to-white'],
   .dark .net360-shell main [class*='bg-gradient-to-'][class*='to-[#eef1ff]'],
   .dark .net360-shell main [class*='bg-gradient-to-'][class*='to-[#e6ebff]'],
-  .dark .net360-shell main [class*='bg-gradient-to-'][class*='to-[#eef2ff]'] {
+  .dark .net360-shell main [class*='bg-gradient-to-'][class*='to-[#eef2ff]'],
+  .dark .net360-shell main [class*='bg-gradient-to-'][class*='to-[#f8dff0]'],
+  .dark .net360-shell main [class*='bg-gradient-to-'][class*='to-[#f5f8ff]'],
+  .dark .net360-shell main [class*='bg-gradient-to-'][class*='to-[#f1ecff]'],
+  .dark .net360-shell main [class*='bg-gradient-to-'][class*='via-[#e8e5ff]'],
+  .dark .net360-shell main [class*='bg-gradient-to-'][class*='via-[#f1ecff]'],
+  .dark .net360-shell main [class*='bg-gradient-to-'][class*='from-[#edf2ff]'],
+  .dark .net360-shell main [class*='bg-gradient-to-'][class*='from-[#eef2ff]'] {
     background-image: linear-gradient(180deg, rgba(34, 47, 95, 0.86), rgba(22, 32, 70, 0.9));
   }
 
@@ -885,8 +916,45 @@
   .dark .net360-shell main .bg-slate-50\/70,
   .dark .net360-shell main .bg-indigo-50,
   .dark .net360-shell main .bg-indigo-50\/40,
-  .dark .net360-shell main .bg-indigo-50\/50 {
+  .dark .net360-shell main .bg-indigo-50\/50,
+  .dark .net360-shell main .bg-emerald-50,
+  .dark .net360-shell main .bg-emerald-50\/35,
+  .dark .net360-shell main .bg-emerald-50\/40,
+  .dark .net360-shell main .bg-emerald-50\/45,
+  .dark .net360-shell main .bg-emerald-50\/60,
+  .dark .net360-shell main .bg-emerald-50\/70,
+  .dark .net360-shell main .bg-emerald-50\/80,
+  .dark .net360-shell main .bg-emerald-100,
+  .dark .net360-shell main .bg-amber-50,
+  .dark .net360-shell main .bg-amber-50\/25,
+  .dark .net360-shell main .bg-amber-50\/60,
+  .dark .net360-shell main .bg-amber-100,
+  .dark .net360-shell main .bg-blue-50,
+  .dark .net360-shell main .bg-blue-50\/60,
+  .dark .net360-shell main .bg-rose-50,
+  .dark .net360-shell main .bg-rose-100,
+  .dark .net360-shell main .bg-violet-50,
+  .dark .net360-shell main .bg-teal-50 {
     background-color: rgba(27, 38, 82, 0.8);
+  }
+
+  .dark .net360-shell main .text-emerald-900,
+  .dark .net360-shell main .text-emerald-800,
+  .dark .net360-shell main .text-emerald-700,
+  .dark .net360-shell main .text-emerald-600 {
+    color: #a7f3d0;
+  }
+
+  .dark .net360-shell main .text-amber-900,
+  .dark .net360-shell main .text-amber-800,
+  .dark .net360-shell main .text-amber-700 {
+    color: #fcd34d;
+  }
+
+  .dark .net360-shell main .text-rose-800,
+  .dark .net360-shell main .text-rose-700,
+  .dark .net360-shell main .text-rose-600 {
+    color: #fda4af;
   }
 
   .dark .net360-shell main input,

@@ -2229,8 +2229,8 @@ function CommunityInner() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
-                <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-800">
-                  <span>{ENCRYPTION_LABEL}</span>
+                <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-500/45 dark:bg-emerald-950/40 dark:text-emerald-100">
+                  <span className="text-inherit">{ENCRYPTION_LABEL}</span>
                   {activeConnection ? (
                     <div className="flex items-center gap-2">
                       {activeConnection.blockedByOther ? <Badge variant="outline">Blocked by user</Badge> : null}

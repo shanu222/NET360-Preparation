@@ -314,12 +314,12 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
       </button>
 
       <div
-        className={`absolute right-0 top-[calc(100%+8px)] z-50 min-w-[180px] rounded-xl border border-indigo-100 bg-white/95 p-1.5 shadow-[0_16px_30px_rgba(15,23,42,0.18)] backdrop-blur-md transition-all duration-150 dark:border-white/15 dark:bg-slate-900/95 ${menuOpen ? 'translate-y-0 opacity-100' : 'pointer-events-none -translate-y-1 opacity-0'}`}
+        className={`absolute right-0 top-[calc(100%+8px)] z-50 min-w-[180px] rounded-xl border border-indigo-100 bg-white/95 p-1.5 text-slate-800 shadow-[0_16px_30px_rgba(15,23,42,0.18)] backdrop-blur-md transition-all duration-150 dark:border-white/15 dark:bg-slate-900/95 dark:text-slate-100 ${menuOpen ? 'translate-y-0 opacity-100' : 'pointer-events-none -translate-y-1 opacity-0'}`}
         role="menu"
       >
         <button
           type="button"
-          className="min-h-11 w-full rounded-lg px-3 py-2.5 text-left text-sm text-rose-600 transition hover:bg-rose-50 dark:text-rose-300 dark:hover:bg-rose-500/15"
+          className="min-h-11 w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium text-rose-600 transition hover:bg-rose-50/90 dark:text-rose-300 dark:hover:bg-rose-500/15"
           role="menuitem"
           onClick={() => {
             logout();
