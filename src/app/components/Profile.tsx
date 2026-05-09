@@ -784,7 +784,7 @@ export function Profile({ onNavigate }: ProfileProps) {
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <Card className="lg:col-span-1">
           <CardHeader>
-            <CardTitle>Profile</CardTitle>
+            <CardTitle as="h2">Profile</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="flex flex-col items-center text-center">

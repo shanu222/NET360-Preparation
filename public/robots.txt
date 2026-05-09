@@ -1,3 +1,9 @@
 User-agent: *
 Allow: /
+
+# App shell and auth are still crawlable HTML; these routes are primarily tools/UIs for signed-in users.
+Disallow: /admin
+Disallow: /test-interface
+Disallow: /exam-interface
+
 Sitemap: https://net360preparation.com/sitemap.xml

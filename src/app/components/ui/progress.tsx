@@ -8,15 +8,23 @@ import { cn } from "./utils";
 function Progress({
   className,
   value,
+  "aria-label": ariaLabel,
+  "aria-labelledby": ariaLabelledby,
   ...props
 }: React.ComponentProps<typeof ProgressPrimitive.Root>) {
+  const pct = Math.round(Number(value ?? 0));
+  const accessibilityProps = ariaLabelledby
+    ? ({ 'aria-labelledby': ariaLabelledby } as const)
+    : ({ 'aria-label': ariaLabel ?? `Progress, ${pct} percent complete` } as const);
   return (
     <ProgressPrimitive.Root
+      {...accessibilityProps}
       data-slot="progress"
       className={cn(
         "bg-primary/20 relative h-2 w-full overflow-hidden rounded-full",
         className,
       )}
+      value={value}
       {...props}
     >
       <ProgressPrimitive.Indicator

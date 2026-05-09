@@ -28,9 +28,15 @@ function CardHeader({ className, ...props }: React.ComponentProps<"div">) {
   );
 }
 
-function CardTitle({ className, ...props }: React.ComponentProps<"div">) {
+type CardTitleElement = 'h2' | 'h3' | 'h4' | 'div';
+
+type CardTitleProps = Omit<React.ComponentPropsWithoutRef<'h4'>, 'as'> & {
+  as?: CardTitleElement;
+};
+
+function CardTitle({ className, as: Tag = 'h4', ...props }: CardTitleProps) {
   return (
-    <h4
+    <Tag
       data-slot="card-title"
       className={cn("leading-none", className)}
       {...props}

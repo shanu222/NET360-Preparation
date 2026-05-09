@@ -423,7 +423,7 @@ export function SupportChatWidget() {
           <CardHeader className="pb-2">
             <div className="flex items-center justify-between gap-2 cursor-move" onPointerDown={startPanelDrag}>
               <CardTitle className="text-base text-emerald-900 dark:text-emerald-300">Live Support Chat</CardTitle>
-              <Button size="icon" variant="ghost" className="h-8 w-8 dark:hover:bg-emerald-500/15 dark:text-emerald-100" onClick={() => setOpen(false)}>
+              <Button size="icon" variant="ghost" className="h-8 w-8 dark:hover:bg-emerald-500/15 dark:text-emerald-100" onClick={() => setOpen(false)} aria-label="Close support chat">
                 <X className="h-4 w-4" />
               </Button>
             </div>

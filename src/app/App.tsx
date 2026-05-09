@@ -169,7 +169,7 @@ const SidebarNavigation = memo(function SidebarNavigation({
   const { token } = useAuth();
 
   return (
-    <nav className="space-y-1.5">
+    <nav className="space-y-1.5" aria-label="Student portal sections">
       {navigationItems.map((item) => {
         const Icon = item.icon;
         return (
@@ -316,6 +316,7 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
       <button
         type="button"
         onClick={onOpenProfile}
+        aria-label="Login or sign up"
         className="touch-manipulation ml-1 inline-flex min-h-11 items-center gap-2 rounded-xl px-2 py-2 text-slate-700 transition hover:bg-indigo-50 sm:min-h-9 sm:py-1.5"
       >
         <div className="h-8 w-8 shrink-0 rounded-full bg-gradient-to-br from-amber-300 to-orange-500" />
@@ -331,6 +332,7 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
         type="button"
         onClick={() => setMenuOpen((current) => !current)}
         className="touch-manipulation inline-flex min-h-11 items-center gap-2 rounded-xl px-2 py-2 text-slate-700 transition hover:bg-indigo-50 dark:text-slate-100 dark:hover:bg-white/10 sm:min-h-9 sm:py-1.5"
+        aria-label={`Account menu, signed in as ${displayName}`}
         aria-haspopup="menu"
         aria-expanded={menuOpen}
       >
@@ -693,22 +695,39 @@ export default function App() {
     return `${window.location.origin}/net360-logo.png`;
   }, []);
 
+  const canonicalUrl = useMemo(() => {
+    const origin = typeof window !== 'undefined' ? window.location.origin : 'https://net360preparation.com';
+    const path = location.pathname && location.pathname.startsWith('/') ? location.pathname : '/';
+    return `${origin}${path}`;
+  }, [location.pathname]);
+
+  const pageTitleFull = `${activeTitle} | NUST Entry Test Preparation`;
+  const pageDescription =
+    'Practice MCQs and prepare for NUST entry test with high-quality questions, mock tests, analytics, and community features.';
+
   return (
     <AuthProvider>
       <SessionReady>
       <SubscriptionProvider>
       <AppDataProvider>
       <Helmet>
-        <title>{activeTitle} | NUST Entry Test Preparation</title>
-        <meta name="description" content="Practice MCQs and prepare for NUST entry test with high-quality questions and tests." />
-        <meta name="keywords" content="NUST, NET, MCQs, Entry Test, Physics MCQs, Math MCQs, Pakistan" />
-        <meta name="robots" content="index, follow" />
-        <meta property="og:title" content={`${activeTitle} | NUST Entry Test Preparation`} />
-        <meta property="og:description" content="Prepare for NUST entry test with MCQs and tests" />
+        <html lang="en" />
+        <link rel="canonical" href={canonicalUrl} />
+        <title>{pageTitleFull}</title>
+        <meta name="description" content={pageDescription} />
+        <meta name="keywords" content="NUST, NET, MCQs, Entry Test, Physics MCQs, Math MCQs, Pakistan, NET360" />
+        <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+        <meta property="og:title" content={pageTitleFull} />
+        <meta property="og:description" content={pageDescription} />
         <meta property="og:type" content="website" />
+        <meta property="og:url" content={canonicalUrl} />
+        <meta property="og:site_name" content="NET360 Preparation" />
+        <meta property="og:locale" content="en_PK" />
         <meta property="og:image" content={shareImageUrl} />
         <meta property="og:image:alt" content="NET360 Preparation" />
         <meta name="twitter:card" content="summary_large_image" />
+        <meta name="twitter:title" content={pageTitleFull} />
+        <meta name="twitter:description" content={pageDescription} />
         <meta name="twitter:image" content={shareImageUrl} />
       </Helmet>
       <div className="net360-viewport flex min-h-dvh min-h-screen flex-col p-1 sm:p-3 md:p-5 xl:p-6">
@@ -732,10 +751,18 @@ export default function App() {
                     <div className="shrink-0 border-b border-white/20 p-5 dark:border-slate-600/50">
                       <div className="flex items-center gap-2">
                         <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg border border-white/25 bg-transparent shadow-sm dark:border-slate-500/55 dark:bg-slate-900/35">
-                          <img src={brandLogoUrl()} alt="NET360 logo" className="h-full w-full scale-[1.3] object-contain" loading="lazy" />
+                          <img
+                            src={brandLogoUrl()}
+                            alt="NET360 logo"
+                            className="h-full w-full scale-[1.3] object-contain"
+                            width={36}
+                            height={36}
+                            decoding="async"
+                            loading="lazy"
+                          />
                         </div>
                         <div>
-                          <h2 className="text-lg font-semibold text-white dark:text-slate-100">NET360</h2>
+                          <p className="text-lg font-semibold text-white dark:text-slate-100">NET360</p>
                           <p className="text-xs text-indigo-100 dark:text-slate-300">Your Smart NET Preparation</p>
                         </div>
                       </div>
@@ -755,12 +782,21 @@ export default function App() {
                 </Sheet>
                 <div className="flex min-w-0 items-center gap-2">
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-indigo-100 bg-transparent shadow-[0_6px_12px_rgba(76,93,172,0.14)]">
-                    <img src={brandLogoUrl()} alt="NET360 logo" className="h-full w-full scale-[1.3] object-contain" loading="lazy" />
+                    <img
+                      src={brandLogoUrl()}
+                      alt="NET360 logo"
+                      className="h-full w-full scale-[1.3] object-contain"
+                      width={32}
+                      height={32}
+                      decoding="async"
+                      loading="lazy"
+                    />
                   </div>
                   <div className="min-w-0">
-                    <h1 className="min-w-0 max-w-full text-base leading-snug text-indigo-950 line-clamp-2 sm:line-clamp-1 sm:text-lg md:line-clamp-none md:text-xl">
+                    <p className="min-w-0 max-w-full text-base leading-snug text-indigo-950 line-clamp-2 sm:line-clamp-1 sm:text-lg md:line-clamp-none md:text-xl">
+                      <span className="sr-only">Current page: </span>
                       {activeTitle}
-                    </h1>
+                    </p>
                     <p className="hidden text-xs text-slate-500 sm:block">My page</p>
                   </div>
                 </div>
@@ -805,7 +841,7 @@ export default function App() {
             </header>
 
             {/* Main Content — lazy routes + Suspense avoid blank flash while chunks load */}
-            <main className="net360-main min-h-0 min-w-0 flex-1 overflow-y-auto px-0 py-2.5 sm:py-5">
+            <main id="main-content" className="net360-main min-h-0 min-w-0 flex-1 overflow-y-auto px-0 py-2.5 sm:py-5">
               <Suspense fallback={<PageRouteFallback />}>{mainSection}</Suspense>
             </main>
           </section>

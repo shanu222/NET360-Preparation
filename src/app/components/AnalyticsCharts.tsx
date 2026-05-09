@@ -19,7 +19,7 @@ type RadarPoint = { topic: string; score: number };
 export function AnalyticsLineChart({ progressData }: { progressData: ProgressPoint[] }) {
   return (
     <div className="rounded-xl border border-indigo-100 bg-white p-4">
-      <h4 className="mb-1 text-indigo-950">Progress Over Time</h4>
+      <h3 className="mb-1 text-indigo-950">Progress Over Time</h3>
       <p className="mb-3 text-sm text-slate-500">Weekly average test scores</p>
       <ResponsiveContainer width="100%" height={180}>
         <LineChart data={progressData}>
@@ -37,7 +37,7 @@ export function AnalyticsLineChart({ progressData }: { progressData: ProgressPoi
 export function AnalyticsRadarChart({ radarData }: { radarData: RadarPoint[] }) {
   return (
     <div className="rounded-xl border border-indigo-100 bg-white p-4">
-      <h4 className="mb-1 text-indigo-950">Topic Performance</h4>
+      <h3 className="mb-1 text-indigo-950">Topic Performance</h3>
       <p className="mb-3 text-sm text-slate-500">Score distribution by subject</p>
       <ResponsiveContainer width="100%" height={180}>
         <RadarChart data={radarData}>

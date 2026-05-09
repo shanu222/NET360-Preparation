@@ -228,7 +228,7 @@ export function SubscriptionPage() {
       {surface.allowed ? (
         <Card className="border-emerald-200/80 bg-emerald-50/40 dark:border-emerald-500/25 dark:bg-emerald-950/30">
           <CardHeader>
-            <CardTitle className="text-emerald-900 dark:text-emerald-100">You have premium access</CardTitle>
+            <CardTitle as="h2" className="text-emerald-900 dark:text-emerald-100">You have premium access</CardTitle>
             <CardDescription className="text-emerald-800/90 dark:text-emerald-200/90">
               {countdownLabel || me?.subscriptionBadge?.label || 'Enjoy full tests, preparation, and community.'}
             </CardDescription>
@@ -238,7 +238,7 @@ export function SubscriptionPage() {
 
       <Card>
         <CardHeader>
-          <CardTitle>{premiumPlan?.name || 'NET360 Premium'}</CardTitle>
+          <CardTitle as="h2">{premiumPlan?.name || 'NET360 Premium'}</CardTitle>
           <CardDescription>
             PKR {premiumPlan?.pricePkr ?? 1000} / 6 months — Easypaisa &amp; JazzCash
             {checkoutDisabled ? ' (PayFast checkout on standby).' : ' via PayFast.'}

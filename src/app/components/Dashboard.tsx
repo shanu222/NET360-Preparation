@@ -301,6 +301,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             </div>
             <Progress
               value={subject.progress}
+              aria-label={`${subject.label} question progress, ${subject.progress} percent`}
               className="h-2 bg-slate-200 [&>[data-slot=progress-indicator]]:bg-transparent"
             />
             <div className={`-mt-2 h-2 rounded-full ${subject.bar}`} style={{ width: `${subject.progress}%` }} />
@@ -317,7 +318,11 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           <p className="inline-flex items-center gap-2 font-medium text-indigo-950"><Trophy className="h-4 w-4" /> Great progress! Keep it up!</p>
           <span className="text-sm font-semibold text-indigo-950">{metrics.overallProgress}%</span>
         </div>
-        <Progress value={metrics.overallProgress} className="h-2 bg-slate-200 [&>[data-slot=progress-indicator]]:bg-indigo-700" />
+        <Progress
+          value={metrics.overallProgress}
+          aria-label={`Overall study progress, ${metrics.overallProgress} percent`}
+          className="h-2 bg-slate-200 [&>[data-slot=progress-indicator]]:bg-indigo-700"
+        />
       </section>
 
       <section className="space-y-3">
@@ -351,7 +356,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
 
           <div className="rounded-2xl border border-indigo-100 bg-white/90 p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
             <div className="mb-3 flex items-center justify-between">
-              <h4 className="text-base text-indigo-950">This Week Performance</h4>
+              <h3 className="text-base text-indigo-950">This Week Performance</h3>
               <span className="rounded-full bg-indigo-50 px-2 py-1 text-xs text-indigo-700">7D</span>
             </div>
             <div className="w-full rounded-xl bg-slate-50 p-3 sm:p-4" aria-label="Weekly performance">
@@ -432,6 +437,7 @@ function QuickActionCard({
     <button
       type="button"
       onClick={onClick}
+      aria-label={title}
       aria-disabled={disabled}
       className={`group rounded-2xl border border-indigo-100 bg-gradient-to-br ${tone} p-4 text-left transition-all ${
         disabled

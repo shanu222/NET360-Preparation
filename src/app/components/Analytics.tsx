@@ -139,6 +139,8 @@ export function Analytics() {
         <p className="text-muted-foreground">Live analytics based on your actual attempts</p>
       </div>
 
+      <h2 className="sr-only">Key performance indicators</h2>
+
       <div className="rounded-xl border border-indigo-100 bg-white/75 p-2">
         <div className="flex gap-2">
           <Button
@@ -154,7 +156,9 @@ export function Analytics() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card className="rounded-xl border-indigo-100 bg-white/92">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-slate-700">Tests Attempted</CardTitle>
+            <CardTitle as="h3" className="text-sm text-slate-700">
+              Tests Attempted
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-3xl text-indigo-950 sm:text-4xl">{overallStats.testsAttempted}</div>
@@ -164,7 +168,9 @@ export function Analytics() {
 
         <Card className="rounded-xl border-indigo-100 bg-white/92">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-slate-700">Average Score</CardTitle>
+            <CardTitle as="h3" className="text-sm text-slate-700">
+              Average Score
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-3xl text-indigo-950 sm:text-4xl">{overallStats.averageScore}%</div>
@@ -177,7 +183,9 @@ export function Analytics() {
 
         <Card className="rounded-xl border-indigo-100 bg-white/92">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-slate-700">Study Hours</CardTitle>
+            <CardTitle as="h3" className="text-sm text-slate-700">
+              Study Hours
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-3xl text-indigo-950 sm:text-4xl">{overallStats.timeSpent}h</div>
@@ -187,7 +195,9 @@ export function Analytics() {
 
         <Card className="rounded-xl border-indigo-100 bg-white/92">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm text-slate-700">Questions Solved</CardTitle>
+            <CardTitle as="h3" className="text-sm text-slate-700">
+              Questions Solved
+            </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-3xl text-indigo-950 sm:text-4xl">{overallStats.questionsAttempted}</div>
@@ -198,7 +208,7 @@ export function Analytics() {
 
       <Card className="rounded-2xl border-indigo-100 bg-white/90">
         <CardHeader>
-          <CardTitle>Subject-Wise Performance</CardTitle>
+          <CardTitle as="h2">Subject-Wise Performance</CardTitle>
           <CardDescription>Your measured accuracy in each subject</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -217,6 +227,7 @@ export function Analytics() {
                       </div>
                       <Progress
                         value={subject.accuracy}
+                        aria-label={`${subject.subject} accuracy, ${subject.accuracy} percent`}
                         className={`h-2 bg-slate-200 ${
                           idx === 0
                             ? '[&>[data-slot=progress-indicator]]:bg-indigo-500'
@@ -241,10 +252,10 @@ export function Analytics() {
               </Suspense>
 
               <div className="rounded-xl border border-indigo-100 bg-white p-4">
-                <h4 className="mb-1 inline-flex items-center gap-2 text-indigo-950">
+                <h3 className="mb-1 inline-flex items-center gap-2 text-indigo-950">
                   <AlertTriangle className="h-4 w-4 text-amber-500" />
                   Weak Areas
-                </h4>
+                </h3>
                 <p className="mb-3 text-sm text-slate-500">Lowest performing attempted topics</p>
                 {weakAreas.length ? (
                   <div className="space-y-2">
