@@ -68,7 +68,10 @@ Create environment variables for backend service:
 
 Frontend environment variable:
 
-- `VITE_API_URL` = required full backend URL for web and native builds (for example `https://api.net360preparation.com`; local dev often `http://localhost:5000`). All requests use this variable only.
+- `VITE_API_URL` = required API base URL for web and native builds.
+  - Local dev: usually backend URL (for example `http://localhost:5000`).
+  - Vercel web deploy: set this to your frontend origin (for example `https://net-360-preparation.vercel.app`) and proxy `/api/*` to backend in `vercel.json` to avoid browser CORS issues.
+  - Android builds: use your backend URL directly (for example `https://api.net360preparation.com`).
 
 For Android packaging, create `.env.android` from `.env.android.example`.
 
@@ -84,14 +87,18 @@ Deploy as two Render services:
 2. Frontend web service
 - Build: `npm install && npm run build`
 - Start: `npx vite preview --host 0.0.0.0 --port $PORT`
-- Add `VITE_API_URL` pointing to backend service URL
+- Add `VITE_API_URL`:
+  - Render/static hosts: backend service URL
+  - Vercel frontend: frontend origin, with `vercel.json` `/api/*` rewrite to backend
 
 ## Production API Connectivity Checklist
 
 If admin/client requests fail with network errors in production:
 
 1. Verify frontend base URL variables
-- `VITE_API_URL` must point to the API service (for example `https://api.net360preparation.com`)
+- `VITE_API_URL` should match how traffic is routed:
+  - Direct API mode: `https://api.net360preparation.com`
+  - Vercel proxy mode: `https://<your-frontend-domain>` with `/api/*` rewrite to API
 
 2. Verify backend CORS
 - Express uses **dynamic `Origin` reflection** — no `CORS_ALLOWED_ORIGINS` env. If you still see CORS errors, check **Nginx** is not returning an old 403 body or static `Access-Control-Allow-Origin` for `/api` (remove duplicate CORS headers; proxy to Node only).
