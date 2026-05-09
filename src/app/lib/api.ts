@@ -35,8 +35,15 @@ function hostnameStartsWithApiSubdomain(url: string) {
   }
 }
 
+function viteConfiguredApiBase(): string {
+  const meta = import.meta.env as ImportMetaEnv & { VITE_API_BASE_URL?: string };
+  return String(meta.VITE_API_URL || meta.VITE_API_BASE_URL || '')
+    .replace(/\/$/, '')
+    .trim();
+}
+
 function resolveApiBase() {
-  const configured = String(import.meta.env.VITE_API_URL || '').replace(/\/$/, '').trim();
+  const configured = viteConfiguredApiBase();
   const browserOrigin = typeof window !== 'undefined'
     ? String(window.location.origin || '').replace(/\/$/, '').trim()
     : '';
@@ -44,7 +51,7 @@ function resolveApiBase() {
   // Native builds should always use explicit backend URL.
   if (isNativeCapacitorRuntime()) {
     if (!configured) {
-      throw new Error('Missing VITE_API_URL in production');
+      throw new Error('Missing VITE_API_URL or VITE_API_BASE_URL for native build');
     }
     return configured;
   }
@@ -66,7 +73,7 @@ function resolveApiBase() {
   }
 
   if (!configured) {
-    throw new Error('Missing VITE_API_URL in production');
+    throw new Error('Missing VITE_API_URL or VITE_API_BASE_URL in production');
   }
 
   // Explicit api.* backend: always use it (Socket.IO + POST must hit Node, not static rewrites).

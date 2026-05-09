@@ -70,16 +70,16 @@ Create environment variables for backend service:
   - Aliases also supported: `ADMIN_EMAIL`/`ADMIN_PASSWORD` and `BOOTSTRAP_ADMIN_EMAIL`/`BOOTSTRAP_ADMIN_PASSWORD`
   - Optional `BOOTSTRAP_ADMIN_FORCE_PASSWORD_RESET=true` keeps startup bootstrap password sync enabled
 - `API_PORT` = optional when `PORT` is unset; server default is `5000`
-- CORS is handled in `server/index.js` with **`cors({ origin: true, credentials: true })`** so the API echoes the browser `Origin` (works for apex + `www` without env lists). Ensure **Nginx does not add conflicting `Access-Control-*` headers** for `/api`.
+- CORS is handled in `server/index.js` with **`cors({ origin: true, credentials: true })`** so the API echoes the browser `Origin`. If **Nginx (or Cloudflare)** also adds `Access-Control-Allow-Origin`, browsers may see **two values** (comma-separated) and block the request. Fix: **remove `add_header Access-Control-*` from nginx** for locations that proxy to Node, or set **`DISABLE_EXPRESS_CORS=true`** on the API and set CORS **once** in nginx only. See `deploy/nginx-api-proxy.example.conf`.
 - `MAX_JSON_BODY_MB` = optional request body limit, default `10`
 - `REQUEST_TIMEOUT_MS` = optional API request timeout in milliseconds, default `30000`
 
 Frontend environment variable:
 
-- `VITE_API_URL` = required API base URL for web and native builds.
+- `VITE_API_URL` = required API base URL for web and native builds (for production use `https://api.net360preparation.com`, **not** the static Vercel site URL).
+  - **`VITE_API_BASE_URL`** is accepted as an **alias** if `VITE_API_URL` is unset (some dashboards used the wrong name).
   - Local dev: usually backend URL (for example `http://localhost:5000`).
-  - Vercel web deploy: set this to your frontend origin (for example `https://net-360-preparation.vercel.app`) and proxy `/api/*` to backend in `vercel.json` to avoid browser CORS issues.
-  - Android builds: use your backend URL directly (for example `https://api.net360preparation.com`).
+  - Vercel: set **`VITE_API_URL`** to `https://api.net360preparation.com` (and keep Firebase `VITE_*` vars). You do **not** need backend secrets on Vercel.
 - Firebase client config:
   - `VITE_FIREBASE_API_KEY`
   - `VITE_FIREBASE_AUTH_DOMAIN`

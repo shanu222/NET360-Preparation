@@ -646,13 +646,21 @@ function sanitizePayload(value) {
   return sanitizePrimitive(value);
 }
 
+const expressCorsDisabled = String(process.env.DISABLE_EXPRESS_CORS || '').toLowerCase() === 'true';
+
 const corsMiddleware = cors({
   origin: true,
   credentials: true,
 });
 
-app.use(corsMiddleware);
-app.options('*', corsMiddleware);
+if (!expressCorsDisabled) {
+  app.use(corsMiddleware);
+  app.options('*', corsMiddleware);
+} else {
+  console.warn(
+    '[net360] Express CORS disabled (DISABLE_EXPRESS_CORS=true). Set Access-Control-* exactly once at your reverse proxy or you will break browsers.',
+  );
+}
 
 function redactRequestUrl(rawUrl) {
   const value = String(rawUrl || '').trim();

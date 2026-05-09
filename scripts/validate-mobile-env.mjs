@@ -9,11 +9,11 @@ const defaultEnvPath = path.join(workspaceRoot, '.env');
 dotenv.config({ path: defaultEnvPath, override: false });
 dotenv.config({ path: androidEnvPath, override: true });
 
-const apiBaseUrl = String(process.env.VITE_API_URL || '').trim();
+const apiBaseUrl = String(process.env.VITE_API_URL || process.env.VITE_API_BASE_URL || '').trim();
 
 if (!apiBaseUrl) {
   console.error(
-    '[mobile:build] Missing API base URL. Set VITE_API_URL in .env.android before building Android.',
+    '[mobile:build] Missing API base URL. Set VITE_API_URL (or VITE_API_BASE_URL) in .env.android before building Android.',
   );
   process.exit(1);
 }

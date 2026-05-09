@@ -40,7 +40,7 @@ function injectS3PreconnectPlugin(mode: string): Plugin {
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const devApiOrigin = String(env.VITE_API_URL || '').trim()
+  const devApiOrigin = String(env.VITE_API_URL || env.VITE_API_BASE_URL || '').trim()
 
   return {
     plugins: [
