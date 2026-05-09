@@ -26,11 +26,7 @@ import { useSubscription } from '../context/SubscriptionContext';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK } from '../lib/paymentMethods';
 import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
-import {
-  appPromoImageUrl,
-  getMediaUrl,
-  shouldUseLocalMediaFallback,
-} from '../lib/publicMedia';
+import { getMediaUrl } from '../lib/publicMedia';
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { apiRequest } from '../lib/api';
@@ -711,8 +707,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               <CardContent className="relative pb-7">
                 <div className="mx-auto mt-4 flex w-full max-w-[min(100%,680px)] justify-center rounded-2xl border border-indigo-100/80 bg-white/70 p-2 shadow-[0_18px_34px_rgba(79,70,229,0.14)] backdrop-blur-sm">
                   <ImageWithFallback
-                    src={appPromoImageUrl()}
-                    {...(shouldUseLocalMediaFallback() ? { fallbackSrc: '/images/app-promo.png' } : {})}
+                    src="/images/app-promo.png"
                     alt="NET360 advertisement"
                     width={680}
                     height={383}
@@ -720,7 +715,6 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                     loading="eager"
                     decoding="async"
                     fetchPriority="high"
-                    referrerPolicy="no-referrer"
                   />
                 </div>
               </CardContent>

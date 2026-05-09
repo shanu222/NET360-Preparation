@@ -666,7 +666,44 @@ function parseCorsAllowedOriginsList() {
   return list.length ? list : null;
 }
 
-const corsAllowedOriginsList = parseCorsAllowedOriginsList();
+/**
+ * If the allowlist only included apex OR www, browsers on the other host would get CORS failures.
+ * For typical two-label hosts (e.g. net360preparation.com), mirror www <-> apex automatically.
+ * Skips multi-label subdomains like app.example.com.
+ */
+function expandWwwApexCorsOrigins(list) {
+  if (!list || !list.length) return list;
+  const set = new Set(list);
+  for (const o of list) {
+    try {
+      const u = new URL(o);
+      const proto = u.protocol;
+      if (proto !== 'http:' && proto !== 'https:') continue;
+      const host = u.hostname.toLowerCase();
+      if (!host || /^\d+\.\d+\.\d+\.\d+$/.test(host)) continue;
+      if (host.startsWith('www.')) {
+        const rest = host.slice(4);
+        if (rest.split('.').length === 2) {
+          set.add(`${proto}//${rest}`);
+        }
+      } else if (host.split('.').length === 2) {
+        set.add(`${proto}//www.${host}`);
+      }
+    } catch {
+      /* keep entry as-is */
+    }
+  }
+  return Array.from(set);
+}
+
+const corsAllowedOriginsListRaw = parseCorsAllowedOriginsList();
+const corsAllowedOriginsList = corsAllowedOriginsListRaw
+  ? expandWwwApexCorsOrigins(corsAllowedOriginsListRaw)
+  : null;
+
+if (corsAllowedOriginsList && IS_PRODUCTION) {
+  console.log('[cors] Using explicit allowlist with', corsAllowedOriginsList.length, 'origins (www/apex expanded where applicable)');
+}
 
 const corsOriginResolver = corsAllowedOriginsList
   ? (origin, callback) => {
@@ -678,7 +715,9 @@ const corsOriginResolver = corsAllowedOriginsList
         callback(null, true);
         return;
       }
-      if (!IS_PRODUCTION) {
+      if (IS_PRODUCTION) {
+        console.warn('[cors] Blocked origin:', origin);
+      } else {
         console.warn('[cors] Blocked origin (dev):', origin);
       }
       callback(null, false);
