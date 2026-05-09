@@ -154,6 +154,9 @@ const REFRESH_TOKEN_COOKIE_NAME = String(process.env.REFRESH_TOKEN_COOKIE_NAME |
 const AUTH_COOKIE_DOMAIN = String(process.env.AUTH_COOKIE_DOMAIN || '').trim();
 /** Production uses HTTPS + cross-site cookies; development uses lax + non-secure. */
 const AUTH_COOKIE_SECURE = IS_PRODUCTION;
+const BOOTSTRAP_ADMIN_EMAIL_RAW = String(process.env.BOOTSTRAP_ADMIN_EMAIL || process.env.ADMIN_EMAIL || '').trim();
+const BOOTSTRAP_ADMIN_PASSWORD = String(process.env.BOOTSTRAP_ADMIN_PASSWORD || process.env.ADMIN_PASSWORD || '');
+const BOOTSTRAP_ADMIN_FORCE_PASSWORD_RESET = String(process.env.BOOTSTRAP_ADMIN_FORCE_PASSWORD_RESET || 'true').toLowerCase() === 'true';
 const AI_DAILY_LIMIT = Number(process.env.SMART_DAILY_LIMIT || process.env.AI_DAILY_LIMIT || 50);
 const OPENAI_MODEL = process.env.MODEL_PROVIDER_MODEL || process.env.OPENAI_MODEL || 'gpt-4o-mini';
 const SIGNUP_TOKEN_TTL_MINUTES = Number(
@@ -2855,6 +2858,68 @@ function makeRefreshToken(user) {
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+async function ensureBootstrapAdminAccount() {
+  const adminEmail = normalizeEmail(BOOTSTRAP_ADMIN_EMAIL_RAW);
+  if (!adminEmail || !BOOTSTRAP_ADMIN_PASSWORD) {
+    return;
+  }
+
+  if (!isValidEmail(adminEmail)) {
+    console.error('[auth/bootstrap-admin] Skipping bootstrap: invalid BOOTSTRAP_ADMIN_EMAIL.');
+    return;
+  }
+
+  if (BOOTSTRAP_ADMIN_PASSWORD.length < 8) {
+    console.error('[auth/bootstrap-admin] Skipping bootstrap: BOOTSTRAP_ADMIN_PASSWORD must be at least 8 characters.');
+    return;
+  }
+
+  const escapedEmail = escapeRegexLiteral(adminEmail, 254);
+  if (!escapedEmail) {
+    console.error('[auth/bootstrap-admin] Skipping bootstrap: invalid BOOTSTRAP_ADMIN_EMAIL.');
+    return;
+  }
+
+  const existing = await UserModel.findOne({
+    email: { $regex: `^${escapedEmail}$`, $options: 'i' },
+  }).select('+password');
+
+  const passwordHash = await hashPassword(BOOTSTRAP_ADMIN_PASSWORD);
+
+  if (!existing) {
+    await UserModel.create({
+      email: adminEmail,
+      passwordHash,
+      password: passwordHash,
+      firstName: 'Admin',
+      lastName: '',
+      role: 'admin',
+    });
+    console.log(`[auth/bootstrap-admin] Created bootstrap admin for ${adminEmail}.`);
+    return;
+  }
+
+  let changed = false;
+  if ((existing.role || 'student') !== 'admin') {
+    existing.role = 'admin';
+    changed = true;
+  }
+
+  const hasStoredHash = Boolean(String(existing.passwordHash || existing.password || '').trim());
+  if (BOOTSTRAP_ADMIN_FORCE_PASSWORD_RESET || !hasStoredHash) {
+    existing.passwordHash = passwordHash;
+    existing.password = passwordHash;
+    changed = true;
+  }
+
+  if (changed) {
+    await existing.save();
+    console.log(`[auth/bootstrap-admin] Updated bootstrap admin account for ${adminEmail}.`);
+  } else {
+    console.log(`[auth/bootstrap-admin] Bootstrap admin already configured for ${adminEmail}.`);
+  }
 }
 
 function isValidEmail(value) {
@@ -13674,6 +13739,11 @@ async function bootstrap() {
 
       if (mongoConnection?.readyState === 1) {
         console.log('[startup] MongoDB is connected and ready.');
+        try {
+          await ensureBootstrapAdminAccount();
+        } catch (error) {
+          console.error('[startup] Bootstrap admin setup failed (non-fatal):', error?.message || error);
+        }
       } else {
         const rs = mongoConnection?.readyState ?? '(no connection)';
         console.warn(`[startup] MongoDB not ready (readyState=${rs}). Background reconnect may be active; see [mongo] logs.`);
