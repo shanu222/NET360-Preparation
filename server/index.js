@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
+import { cert, getApps as getFirebaseAdminApps, initializeApp as initializeFirebaseAdminApp } from 'firebase-admin/app';
+import { getAuth as getFirebaseAdminAuth } from 'firebase-admin/auth';
 import OpenAI from 'openai';
 import nodemailer from 'nodemailer';
 import Twilio from 'twilio';
@@ -114,7 +116,8 @@ function buildAuthJsonBody(payload) {
 
 const loginBodySchema = z.object({
   email: z.string().max(254),
-  password: z.string().max(500),
+  password: z.union([z.string().max(500), z.null(), z.undefined()]).optional(),
+  firebaseIdToken: z.union([z.string().max(5000), z.null(), z.undefined()]).optional(),
   deviceId: z.union([z.string().max(400), z.null(), z.undefined()]).optional(),
   forceLogoutOtherDevice: z.union([z.boolean(), z.null(), z.undefined()]).optional(),
 });
@@ -154,6 +157,9 @@ const REFRESH_TOKEN_COOKIE_NAME = String(process.env.REFRESH_TOKEN_COOKIE_NAME |
 const AUTH_COOKIE_DOMAIN = String(process.env.AUTH_COOKIE_DOMAIN || '').trim();
 /** Production uses HTTPS + cross-site cookies; development uses lax + non-secure. */
 const AUTH_COOKIE_SECURE = IS_PRODUCTION;
+const FIREBASE_PROJECT_ID = String(process.env.FIREBASE_PROJECT_ID || '').trim();
+const FIREBASE_CLIENT_EMAIL = String(process.env.FIREBASE_CLIENT_EMAIL || '').trim();
+const FIREBASE_PRIVATE_KEY = String(process.env.FIREBASE_PRIVATE_KEY || '').replace(/\\n/g, '\n').trim();
 const ENV_ADMIN_LOGIN_EMAIL_RAW = String(
   process.env.ADMIN_LOGIN_EMAIL
   || process.env.ADMIN_EMAIL
@@ -233,6 +239,22 @@ const smtpTransporter = SMTP_USER && SMTP_PASS
 const twilioClient = TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN
   ? Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
   : null;
+
+const firebaseAdminAuth = (() => {
+  if (!FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY) {
+    return null;
+  }
+  if (!getFirebaseAdminApps().length) {
+    initializeFirebaseAdminApp({
+      credential: cert({
+        projectId: FIREBASE_PROJECT_ID,
+        clientEmail: FIREBASE_CLIENT_EMAIL,
+        privateKey: FIREBASE_PRIVATE_KEY,
+      }),
+    });
+  }
+  return getFirebaseAdminAuth();
+})();
 
 const SUBSCRIPTION_PLANS = {
   basic_monthly: {
@@ -2887,6 +2909,25 @@ function isEnvAdminLoginAttempt(email, password) {
   const configuredEmail = normalizeEmail(ENV_ADMIN_LOGIN_EMAIL_RAW);
   if (!configuredEmail || !ENV_ADMIN_LOGIN_PASSWORD) return false;
   return normalizeEmail(email) === configuredEmail && credentialsEqualTimingSafe(password, ENV_ADMIN_LOGIN_PASSWORD);
+}
+
+async function verifyFirebaseUserToken(idToken) {
+  const token = String(idToken || '').trim();
+  if (!token) {
+    throw new Error('Firebase ID token is required.');
+  }
+  if (!firebaseAdminAuth) {
+    throw new Error('Firebase Admin SDK is not configured on server.');
+  }
+  const decoded = await firebaseAdminAuth.verifyIdToken(token);
+  const email = normalizeEmail(decoded.email || '');
+  if (!decoded.uid || !email) {
+    throw new Error('Invalid Firebase token payload.');
+  }
+  return {
+    uid: String(decoded.uid),
+    email,
+  };
 }
 
 async function ensureEnvAdminUserForLogin(email, password) {
@@ -6201,8 +6242,20 @@ app.post('/api/auth/signup-token-inbox', (_req, res) => {
 });
 
 async function createDirectStudentAccount(req, res) {
-  const email = normalizeEmail(req.body?.email);
-  const password = String(req.body?.password || '');
+  const firebaseIdToken = String(req.body?.firebaseIdToken || '').trim();
+  let firebaseIdentity;
+  try {
+    firebaseIdentity = await verifyFirebaseUserToken(firebaseIdToken);
+  } catch (error) {
+    res.status(401).json({ error: error instanceof Error ? error.message : 'Invalid Firebase token.' });
+    return;
+  }
+
+  const email = normalizeEmail(req.body?.email || firebaseIdentity.email);
+  if (normalizeEmail(req.body?.email || '') && normalizeEmail(req.body?.email || '') !== firebaseIdentity.email) {
+    res.status(400).json({ error: 'Firebase token email does not match registration email.' });
+    return;
+  }
   const firstName = sanitizeHumanName(req.body?.firstName || '');
   const lastName = sanitizeHumanName(req.body?.lastName || '');
   const mobileNumber = normalizeMobileNumber(req.body?.mobileNumber || req.body?.phone || '');
@@ -6210,8 +6263,8 @@ async function createDirectStudentAccount(req, res) {
   const securityAnswer = normalizeSecurityAnswer(req.body?.securityAnswer || '');
   const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
 
-  if (!email || !password || !mobileNumber) {
-    res.status(400).json({ error: 'Email, password, and mobile number are required.' });
+  if (!email || !mobileNumber) {
+    res.status(400).json({ error: 'Email and mobile number are required.' });
     return;
   }
 
@@ -6225,11 +6278,6 @@ async function createDirectStudentAccount(req, res) {
     return;
   }
 
-  if (password.length < 8) {
-    res.status(400).json({ error: 'Password must be at least 8 characters.' });
-    return;
-  }
-
   if (!securityQuestion || securityQuestion.length < 10) {
     res.status(400).json({ error: 'Security question is required and should be clear.' });
     return;
@@ -6240,25 +6288,28 @@ async function createDirectStudentAccount(req, res) {
     return;
   }
 
-  const [existingByEmail, existingByMobile] = await Promise.all([
+  const [existingByEmail, existingByMobile, existingByFirebaseUid] = await Promise.all([
     UserModel.findOne({ email }).select('email phone subscription').lean(),
     findUserByMobileNumber(mobileNumber),
+    UserModel.findOne({ firebaseUid: firebaseIdentity.uid }).lean(),
   ]);
 
-  if (existingByEmail || existingByMobile) {
+  if (existingByEmail || existingByMobile || existingByFirebaseUid) {
     const matchedBy = existingByEmail && existingByMobile
       ? 'both'
       : existingByEmail
         ? 'email'
-        : 'mobile';
-    const matchedUser = existingByEmail || existingByMobile;
+        : existingByMobile
+          ? 'mobile'
+          : 'email';
+    const matchedUser = existingByEmail || existingByMobile || existingByFirebaseUid;
     res.status(409).json({
       error: duplicateAccountErrorMessage(matchedBy, hasActiveSubscription(matchedUser)),
     });
     return;
   }
 
-  const passwordHash = await bcrypt.hash(password, 12);
+  const passwordHash = await bcrypt.hash(`firebase:${firebaseIdentity.uid}:${crypto.randomUUID()}`, 12);
   const securityAnswerHash = await bcrypt.hash(securityAnswer, 12);
   const securityAnswerEncrypted = encryptSecurityAnswerPlaintext(securityAnswer);
   const activeSession = {
@@ -6275,6 +6326,8 @@ async function createDirectStudentAccount(req, res) {
     lastName,
     phone: mobileNumber,
     role: 'student',
+    authProvider: 'firebase',
+    firebaseUid: firebaseIdentity.uid,
     securityQuestion,
     securityAnswerHash,
     securityAnswerEncrypted: securityAnswerEncrypted || '',
@@ -6373,15 +6426,16 @@ app.post('/api/auth/login', async (req, res) => {
 
     const email = normalizeEmail(parsed.data.email);
     const password = String(parsed.data.password || '');
+    const firebaseIdToken = String(parsed.data.firebaseIdToken || '').trim();
     const forceLogoutOtherDevice = Boolean(parsed.data.forceLogoutOtherDevice);
     const deviceId = sanitizeDeviceId(parsed.data.deviceId || req.headers['user-agent'] || '');
-    if (!email || !password) {
+    if (!email || (!password && !firebaseIdToken)) {
       await logSecurityEvent(req, {
         eventType: 'auth.login_missing_credentials',
         severity: 'warning',
         actorEmail: email,
       });
-      res.status(400).json({ error: 'Email and password are required.' });
+      res.status(400).json({ error: 'Email and authentication credentials are required.' });
       return;
     }
 
@@ -6396,17 +6450,30 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const envAdminAttempt = isEnvAdminLoginAttempt(email, password);
+    let verifiedFirebase = null;
+    if (!envAdminAttempt) {
+      try {
+        verifiedFirebase = await verifyFirebaseUserToken(firebaseIdToken);
+      } catch (error) {
+        res.status(401).json({ error: error instanceof Error ? error.message : 'Invalid Firebase token.' });
+        return;
+      }
+      if (verifiedFirebase.email !== email) {
+        res.status(400).json({ error: 'Firebase token email does not match login email.' });
+        return;
+      }
+    }
     let user = null;
 
     if (envAdminAttempt) {
       user = await ensureEnvAdminUserForLogin(email, password);
     } else {
-      const escapedEmail = escapeRegexLiteral(email, 254);
-      user = escapedEmail
-        ? await UserModel.findOne({
-            email: { $regex: `^${escapedEmail}$`, $options: 'i' },
-          }).select('+password')
-        : null;
+      user = await UserModel.findOne({
+        $or: [
+          { firebaseUid: verifiedFirebase.uid },
+          { email: { $regex: `^${escapeRegexLiteral(email, 254)}$`, $options: 'i' } },
+        ],
+      }).select('+password');
     }
 
     console.log('USER FOUND:', user ? { id: String(user._id), email: user.email } : null);
@@ -6422,29 +6489,16 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     if (!envAdminAttempt) {
-      const storedHash = String(user.passwordHash || user.password || '').trim();
-      if (!storedHash) {
-        await logSecurityEvent(req, {
-          eventType: 'auth.login_missing_password_hash',
-          severity: 'warning',
-          actorUserId: user._id,
-          actorEmail: user.email,
-        });
-        res.status(401).json({ error: 'Invalid credentials.' });
-        return;
+      if (String(user.authProvider || 'local') !== 'firebase') {
+        user.authProvider = 'firebase';
+      }
+      if (String(user.firebaseUid || '') !== String(verifiedFirebase.uid)) {
+        user.firebaseUid = String(verifiedFirebase.uid);
       }
 
-      const isValid = await bcrypt.compare(String(password), storedHash);
-      console.log('PASSWORD MATCH:', isValid);
-      if (!isValid) {
-        await logSecurityEvent(req, {
-          eventType: 'auth.login_invalid_password',
-          severity: 'warning',
-          actorUserId: user._id,
-          actorEmail: user.email,
-        });
-        res.status(401).json({ error: 'Invalid credentials.' });
-        return;
+      const storedHash = String(user.passwordHash || user.password || '').trim();
+      if (!storedHash) {
+        user.passwordHash = await hashPassword(`firebase:${verifiedFirebase.uid}:${crypto.randomUUID()}`);
       }
     } else {
       console.log('[auth/login] env admin credentials accepted');
@@ -10913,8 +10967,9 @@ app.get('/api/reports/export', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) => {
+  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
   const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingSignupRequests, pendingPremiumRequests, pendingQuestionSubmissions, recoveryRequestCount, recoverySentCount, recoveryPartialCount, recoveryFailedCount, recoveryNotFoundCount] = await Promise.all([
-    UserModel.countDocuments(),
+    UserModel.countDocuments(managedUserFilter),
     MCQModel.countDocuments(),
     AttemptModel.countDocuments(),
     AttemptModel.find().sort({ attemptedAt: -1 }).limit(12).lean(),
@@ -11072,7 +11127,7 @@ app.get('/api/admin/users/security-info', authMiddleware, requireAdmin, async (r
   const q = String(req.query.q || '').trim();
 
   const escapeRegexText = (value) => String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const filter = {};
+  const filter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
   if (q) {
     filter.email = { $regex: escapeRegexText(q), $options: 'i' };
   }
@@ -11206,10 +11261,11 @@ app.post('/api/admin/question-submissions/:submissionId/review', authMiddleware,
 
 app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async (_req, res) => {
   const now = new Date();
+  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
   const [activeUsers, expiredUsers, totalUsers, dailyUsage] = await Promise.all([
-    UserModel.countDocuments({ 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } }),
-    UserModel.countDocuments({ 'subscription.status': { $in: ['expired', 'cancelled'] } }),
-    UserModel.countDocuments(),
+    UserModel.countDocuments({ ...managedUserFilter, 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } }),
+    UserModel.countDocuments({ ...managedUserFilter, 'subscription.status': { $in: ['expired', 'cancelled'] } }),
+    UserModel.countDocuments(managedUserFilter),
     AIUsageModel.aggregate([
       { $group: { _id: '$day', chatCount: { $sum: '$chatCount' }, solverCount: { $sum: '$solverCount' }, tokenConsumed: { $sum: '$tokenConsumed' } } },
       { $sort: { _id: -1 } },
@@ -11233,7 +11289,7 @@ app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async
 
 app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (req, res) => {
   const status = String(req.query?.status || 'all').toLowerCase();
-  const filter = {};
+  const filter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
   if (status !== 'all') {
     filter['subscription.status'] = status;
   }
@@ -11656,10 +11712,11 @@ app.get('/api/admin/subscriptions/requests/:requestId/payment-proof', authMiddle
 });
 
 app.get('/api/admin/users', authMiddleware, requireAdmin, async (req, res) => {
-  const users = await UserModel.find({}, {
+  const users = await UserModel.find({ role: { $ne: 'admin' }, authProvider: 'firebase' }, {
     email: 1,
     firstName: 1,
     lastName: 1,
+    phone: 1,
     role: 1,
     createdAt: 1,
   })
@@ -13558,6 +13615,9 @@ function validateCriticalConfiguration() {
   }
   if (IS_PRODUCTION && !JWT_REFRESH_SECRET_RAW) {
     warnings.push('JWT_REFRESH_SECRET is not set; refresh tokens cannot be verified.');
+  }
+  if (IS_PRODUCTION && !firebaseAdminAuth) {
+    warnings.push('Firebase Admin SDK env vars are missing; Firebase login/register will fail.');
   }
   if (IS_PRODUCTION && isEnvAdminLoginConfigured()) {
     warnings.push('ADMIN_LOGIN_EMAIL/ADMIN_LOGIN_PASSWORD are configured; env admin login is enabled.');

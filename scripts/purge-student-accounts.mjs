@@ -7,6 +7,9 @@ import { PasswordRecoveryRequestModel } from '../server/models/PasswordRecoveryR
 import { SignupRequestModel } from '../server/models/SignupRequest.js';
 import { SignupTokenModel } from '../server/models/SignupToken.js';
 import { PremiumSubscriptionRequestModel } from '../server/models/PremiumSubscriptionRequest.js';
+import { PremiumActivationTokenModel } from '../server/models/PremiumActivationToken.js';
+import { QuestionSubmissionModel } from '../server/models/QuestionSubmission.js';
+import { SupportChatMessageModel } from '../server/models/SupportChatMessage.js';
 import { CommunityProfileModel } from '../server/models/CommunityProfile.js';
 import { CommunityConnectionRequestModel } from '../server/models/CommunityConnectionRequest.js';
 import { CommunityConnectionModel } from '../server/models/CommunityConnection.js';
@@ -26,27 +29,20 @@ async function run() {
 
   const students = await UserModel.find({ role: { $ne: 'admin' } }).select('_id email');
   const studentIds = students.map((item) => item._id);
-  const emails = students.map((item) => String(item.email || '').trim().toLowerCase()).filter(Boolean);
-
-  if (!studentIds.length) {
-    console.log('No non-admin users found. Nothing to purge.');
-    process.exit(0);
-  }
 
   await Promise.all([
-    AttemptModel.deleteMany({ userId: { $in: studentIds } }),
-    TestSessionModel.deleteMany({ userId: { $in: studentIds } }),
-    AIUsageModel.deleteMany({ userId: { $in: studentIds } }),
-    PasswordRecoveryRequestModel.deleteMany({
-      $or: [
-        { userId: { $in: studentIds } },
-        { email: { $in: emails } },
-      ],
-    }),
-    SignupRequestModel.deleteMany({ email: { $in: emails } }),
-    SignupTokenModel.deleteMany({ email: { $in: emails } }),
-    PremiumSubscriptionRequestModel.deleteMany({ userId: { $in: studentIds } }),
-    CommunityProfileModel.deleteMany({ userId: { $in: studentIds } }),
+    AttemptModel.deleteMany(studentIds.length ? { userId: { $in: studentIds } } : {}),
+    TestSessionModel.deleteMany(studentIds.length ? { userId: { $in: studentIds } } : {}),
+    AIUsageModel.deleteMany(studentIds.length ? { userId: { $in: studentIds } } : {}),
+    // Clean all admin-facing request queues so panel starts from zero.
+    PasswordRecoveryRequestModel.deleteMany({}),
+    SignupRequestModel.deleteMany({}),
+    SignupTokenModel.deleteMany({}),
+    PremiumSubscriptionRequestModel.deleteMany({}),
+    PremiumActivationTokenModel.deleteMany({}),
+    QuestionSubmissionModel.deleteMany({}),
+    SupportChatMessageModel.deleteMany({}),
+    CommunityProfileModel.deleteMany(studentIds.length ? { userId: { $in: studentIds } } : {}),
     CommunityConnectionRequestModel.deleteMany({
       $or: [
         { fromUserId: { $in: studentIds } },
@@ -76,8 +72,12 @@ async function run() {
     }),
   ]);
 
-  const deleted = await UserModel.deleteMany({ _id: { $in: studentIds } });
-  console.log(`Purged ${deleted.deletedCount || 0} non-admin user account(s).`);
+  let deletedUsers = 0;
+  if (studentIds.length) {
+    const deleted = await UserModel.deleteMany({ _id: { $in: studentIds } });
+    deletedUsers = Number(deleted.deletedCount || 0);
+  }
+  console.log(`Purged ${deletedUsers} non-admin user account(s) and reset request queues.`);
 }
 
 run().catch((error) => {

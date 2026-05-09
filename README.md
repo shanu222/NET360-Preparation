@@ -60,6 +60,10 @@ Create environment variables for backend service:
 - `MODEL_PROVIDER_API_KEY` = required for live Smart Study Mentor
 - `MODEL_PROVIDER_MODEL` = optional, default `gpt-4o-mini`
 - `SMART_DAILY_LIMIT` = optional, default `50`
+- Firebase Auth (required for user auth):
+  - `FIREBASE_PROJECT_ID`
+  - `FIREBASE_CLIENT_EMAIL`
+  - `FIREBASE_PRIVATE_KEY` (single-line value with escaped `\n`)
 - Admin access:
   - Env login (recommended): set `ADMIN_LOGIN_EMAIL` + `ADMIN_LOGIN_PASSWORD` on API service
   - When env credentials are used, backend auto-creates/promotes admin user and syncs password on successful login
@@ -76,6 +80,11 @@ Frontend environment variable:
   - Local dev: usually backend URL (for example `http://localhost:5000`).
   - Vercel web deploy: set this to your frontend origin (for example `https://net-360-preparation.vercel.app`) and proxy `/api/*` to backend in `vercel.json` to avoid browser CORS issues.
   - Android builds: use your backend URL directly (for example `https://api.net360preparation.com`).
+- Firebase client config:
+  - `VITE_FIREBASE_API_KEY`
+  - `VITE_FIREBASE_AUTH_DOMAIN`
+  - `VITE_FIREBASE_PROJECT_ID`
+  - `VITE_FIREBASE_APP_ID`
 
 For Android packaging, create `.env.android` from `.env.android.example`.
 

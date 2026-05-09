@@ -1,6 +1,13 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api';
 import {
+  createUserWithEmailAndPassword,
+  deleteUser,
+  sendPasswordResetEmail,
+  signInWithEmailAndPassword,
+  signOut,
+} from 'firebase/auth';
+import {
   COOKIE_SESSION_API_MARKER,
   clearPersistedStudentTokens,
   hasStoredAuthCredentials,
@@ -9,6 +16,7 @@ import {
   persistStudentTokens,
   shouldPersistAuthTokens,
 } from '../lib/authSession';
+import { firebaseAuth, isFirebaseConfigured } from '../lib/firebase';
 
 interface AuthUser {
   id: string;
@@ -32,6 +40,7 @@ interface AuthContextValue {
     securityQuestion: string;
     securityAnswer: string;
   }) => Promise<void>;
+  sendRecoveryEmail: (email: string) => Promise<void>;
   logout: () => void;
 }
 
@@ -215,14 +224,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback<AuthContextValue['login']>(async (email, password, opts) => {
+    if (!isFirebaseConfigured() || !firebaseAuth) {
+      throw new Error('Firebase auth is not configured.');
+    }
+    const credential = await signInWithEmailAndPassword(firebaseAuth, email, password);
+    const firebaseIdToken = await credential.user.getIdToken();
     const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
       '/api/auth/login',
       {
         method: 'POST',
         body: JSON.stringify({
           email,
-          password,
           deviceId,
+          firebaseIdToken,
           forceLogoutOtherDevice: Boolean(opts?.forceLogoutOtherDevice),
         }),
       },
@@ -250,13 +264,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     securityQuestion,
     securityAnswer,
   }) => {
-    const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
-      '/api/auth/register',
-      {
-        method: 'POST',
-        body: JSON.stringify({ email, password, mobileNumber, firstName, lastName, securityQuestion, securityAnswer, deviceId }),
-      },
-    );
+    if (!isFirebaseConfigured() || !firebaseAuth) {
+      throw new Error('Firebase auth is not configured.');
+    }
+    const credential = await createUserWithEmailAndPassword(firebaseAuth, email, password);
+    const firebaseIdToken = await credential.user.getIdToken();
+    let payload: { token?: string; refreshToken?: string; user: AuthUser };
+    try {
+      payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+        '/api/auth/register',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            email,
+            mobileNumber,
+            firstName,
+            lastName,
+            securityQuestion,
+            securityAnswer,
+            deviceId,
+            firebaseIdToken,
+          }),
+        },
+      );
+    } catch (error) {
+      await deleteUser(credential.user).catch(() => undefined);
+      throw error;
+    }
 
     setUser(payload.user);
     if (payload.token && shouldPersistAuthTokens()) {
@@ -270,6 +304,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [deviceId]);
 
+  const sendRecoveryEmail = useCallback<AuthContextValue['sendRecoveryEmail']>(async (email) => {
+    if (!isFirebaseConfigured() || !firebaseAuth) {
+      throw new Error('Firebase auth is not configured.');
+    }
+    await sendPasswordResetEmail(firebaseAuth, email);
+  }, []);
+
   const logout = useCallback(() => {
     const rt = shouldPersistAuthTokens() ? refreshToken : null;
     void apiRequest('/api/auth/logout', {
@@ -280,11 +321,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setRefreshToken(null);
     setUser(null);
     clearPersistedStudentTokens();
+    if (firebaseAuth) {
+      void signOut(firebaseAuth).catch(() => undefined);
+    }
   }, [refreshToken]);
 
   const value = useMemo(
-    () => ({ token, user, loading, login, registerWithToken, logout }),
-    [token, user, loading, login, registerWithToken, logout],
+    () => ({ token, user, loading, login, registerWithToken, sendRecoveryEmail, logout }),
+    [token, user, loading, login, registerWithToken, sendRecoveryEmail, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
