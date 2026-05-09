@@ -332,6 +332,7 @@ function CommunityInner() {
   const { surface, loading: subLoading } = useSubscription();
 
   const [searchLoading, setSearchLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('discover-students');
   const [leaderboardPeriod, setLeaderboardPeriod] = useState<'weekly' | 'monthly'>('weekly');
 
