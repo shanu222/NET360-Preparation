@@ -3998,6 +3998,12 @@ async function buildAdminConfigurationListPayload(rows, liveVerify) {
   };
 }
 
+function redactSecretsInLogMessage(message) {
+  return String(message || '')
+    .replace(/\bsk-[a-zA-Z0-9_*-]{14,}\b/g, 'sk-[redacted]')
+    .replace(/sk-proj-[^\s.,;)]+/g, 'sk-proj-[redacted]');
+}
+
 function logOpenAiProbeStatus(probeResult) {
   if (probeResult.ok) {
     console.log(`[openai] API key loaded successfully (source: ${probeResult.keySource}).`);
@@ -4011,16 +4017,16 @@ function logOpenAiProbeStatus(probeResult) {
   }
 
   if (probeResult.category === 'auth') {
-    console.error(`[openai] Authentication error: ${probeResult.detail}`);
+    console.error(`[openai] Authentication error: ${redactSecretsInLogMessage(probeResult.detail)}`);
     return;
   }
 
   if (probeResult.category === 'quota') {
-    console.error(`[openai] Quota/rate-limit error: ${probeResult.detail}`);
+    console.error(`[openai] Quota/rate-limit error: ${redactSecretsInLogMessage(probeResult.detail)}`);
     return;
   }
 
-  console.error(`[openai] Connection error: ${probeResult.detail}`);
+  console.error(`[openai] Connection error: ${redactSecretsInLogMessage(probeResult.detail)}`);
 }
 
 function buildSafeDownloadName(rawName, fallback = 'payment-proof') {
