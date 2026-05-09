@@ -10,9 +10,10 @@ import { Skeleton } from './ui/skeleton';
 import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { apiRequest, buildSseStreamUrl } from '../lib/api';
+import { apiRequest, buildSseStreamUrl, API_BASE } from '../lib/api';
 import { getMediaUrl } from '../lib/publicMedia';
-import { bearerForLaunchUrl } from '../lib/authSession';
+import { bearerForLaunchUrl, shouldPersistAuthTokens } from '../lib/authSession';
+import { io, type Socket } from 'socket.io-client';
 import { useAuth } from '../context/AuthContext';
 import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 
@@ -352,6 +353,7 @@ function CommunityInner() {
   const [studyingSubjectPing, setStudyingSubjectPing] = useState('');
   const [sseDropped, setSseDropped] = useState(false);
 
+  const communitySocketRef = useRef<Socket | null>(null);
   const messageThreadEndRef = useRef<HTMLDivElement | null>(null);
   const activeConnectionIdRef = useRef('');
   const typingEmitTimerRef = useRef<number | null>(null);
@@ -973,16 +975,47 @@ function CommunityInner() {
     let source: EventSource | null = null;
     let disconnectToastShown = false;
 
-    const closeCurrent = () => {
+    const closeSse = () => {
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
       if (source) {
         source.close();
         source = null;
       }
     };
 
-    const connect = () => {
-      if (closed) return;
-      closeCurrent();
+    const applyCommunityPayload = (parsed: { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string }) => {
+      const t = String(parsed.type || '');
+      if (t === 'community.typing' && parsed.connectionId === activeConnectionIdRef.current) {
+        if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
+        setRemoteTyping(Boolean(parsed.typing));
+        if (parsed.typing) {
+          typingStopTimerRef.current = window.setTimeout(() => setRemoteTyping(false), 3200);
+        }
+        return;
+      }
+      if (t === 'community.presence') {
+        void loadPresenceRef.current();
+        return;
+      }
+      if (t === 'community.message.read') {
+        if (String(parsed.connectionId || '') === activeConnectionIdRef.current) {
+          void refreshActiveMessagesRef.current();
+        }
+        return;
+      }
+      if (t === 'community.message.sent') {
+        void loadPresenceRef.current();
+      }
+      if (document.hidden) return;
+      void refreshCommunity(true).catch(() => undefined);
+    };
+
+    const openSse = () => {
+      if (closed || communitySocketRef.current?.connected) return;
+      closeSse();
       setSseDropped(false);
       disconnectToastShown = false;
 
@@ -995,52 +1028,60 @@ function CommunityInner() {
         } catch {
           parsed = {};
         }
-        const t = String(parsed.type || '');
-        if (t === 'community.typing' && parsed.connectionId === activeConnectionIdRef.current) {
-          if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
-          setRemoteTyping(Boolean(parsed.typing));
-          if (parsed.typing) {
-            typingStopTimerRef.current = window.setTimeout(() => setRemoteTyping(false), 3200);
-          }
-          return;
-        }
-        if (t === 'community.presence') {
-          void loadPresenceRef.current();
-          return;
-        }
-        if (t === 'community.message.read') {
-          if (String(parsed.connectionId || '') === activeConnectionIdRef.current) {
-            void refreshActiveMessagesRef.current();
-          }
-          return;
-        }
-        if (t === 'community.message.sent') {
-          void loadPresenceRef.current();
-        }
-        if (document.hidden) return;
-        void refreshCommunity(true).catch(() => undefined);
+        applyCommunityPayload(parsed);
       });
-      source.addEventListener('heartbeat', () => {
-        // Stream heartbeat keeps transport alive.
-      });
+      source.addEventListener('heartbeat', () => {});
       source.onerror = () => {
         setSseDropped(true);
         if (!disconnectToastShown) {
           disconnectToastShown = true;
-          showNeutralToast('Live updates paused. Reconnecting…');
+          showNeutralToast('Connection lost. Reconnecting…');
         }
-        closeCurrent();
+        closeSse();
         if (closed) return;
-        reconnectTimer = window.setTimeout(() => connect(), 3000);
+        reconnectTimer = window.setTimeout(() => openSse(), 3000);
       };
     };
 
-    connect();
+    const socket = io(API_BASE, {
+      path: '/socket.io',
+      ...(shouldPersistAuthTokens() ? { auth: { token } } : {}),
+      withCredentials: true,
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 25,
+      reconnectionDelay: 1200,
+    });
+    communitySocketRef.current = socket;
+
+    socket.on('connect', () => {
+      closeSse();
+      setSseDropped(false);
+    });
+
+    socket.on('disconnect', () => {
+      setSseDropped(true);
+      if (!disconnectToastShown) {
+        disconnectToastShown = true;
+        showNeutralToast('Connection lost. Reconnecting…');
+      }
+      openSse();
+    });
+
+    socket.on('sync', (data: unknown) => {
+      const parsed = (data && typeof data === 'object')
+        ? (data as { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string })
+        : {};
+      applyCommunityPayload(parsed);
+    });
+
+    openSse();
+
     return () => {
       closed = true;
-      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      closeSse();
+      socket.close();
+      communitySocketRef.current = null;
       if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
-      closeCurrent();
     };
   }, [token, refreshCommunity]);
 

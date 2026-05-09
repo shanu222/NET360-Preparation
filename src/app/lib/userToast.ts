@@ -12,7 +12,7 @@ export const TOAST_DURATION = {
 } as const;
 
 const TECHNICAL_PATTERN =
-  /mongo|mongoose|firebase\s*admin|firestore|stack\s*trace|ECONN|axios|syntaxerror|referenceerror|typeerror|undefined|null\.|\/api\/|statuscode|internal server|exception in thread| casting | ObjectId |duplicate key|localhost:\d+|VITE_|http:\/\/|https:\/\/.*:\d{4}/i;
+  /mongo|mongoose|redis|socket\.?io|ioredis|websocket|firebase\s*admin|firestore|stack\s*trace|ECONN|axios|syntaxerror|referenceerror|typeerror|undefined|null\.|\/api\/|statuscode|internal server|exception in thread| casting | ObjectId |duplicate key|localhost:\d+|VITE_|http:\/\/|https:\/\/.*:\d{4}/i;
 
 function toastId(kind: string, message: string): string {
   let h = 0;

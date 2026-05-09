@@ -22,7 +22,11 @@ import mammoth from 'mammoth';
 import multer from 'multer';
 import * as cheerio from 'cheerio';
 import mongoose from 'mongoose';
+import http from 'node:http';
 import { connectMongo } from './lib/mongo.js';
+import { getRedisMain, REDIS_CONFIGURED } from './services/redis.js';
+import { cacheGetJson, cacheSetJson, cacheKey, invalidateCommunityLeaderboardCache, invalidateQuizLeaderboardCache } from './utils/cache.js';
+import { initSocketIo, emitSocketSyncToStudentUser, mirrorBroadcastSyncEvent, getIo } from './services/socket.js';
 import { createUploadRouter } from './routes/upload.js';
 import { buildMcqContentFingerprint } from './lib/mcqIdentity.js';
 import { encryptSecurityAnswerPlaintext, decryptSecurityAnswerCiphertext } from './lib/securityAnswerCrypto.js';
@@ -186,6 +190,9 @@ const SIGNUP_TOKEN_TTL_MINUTES = Number(
 const PREMIUM_TOKEN_TTL_HOURS = Number(process.env.PREMIUM_TOKEN_TTL_HOURS || 24);
 const NUST_UPDATES_CACHE_MS = Number(process.env.NUST_UPDATES_CACHE_MS || 60 * 1000);
 const NUST_ADMISSIONS_REFRESH_MS = clamp(Number(process.env.NUST_ADMISSIONS_REFRESH_MS || 3 * 60 * 60 * 1000), 15 * 60 * 1000, 24 * 60 * 60 * 1000);
+/** Community leaderboard Redis cache TTL (seconds). */
+const COMMUNITY_LEADERBOARD_CACHE_TTL_SEC = clamp(Number(process.env.COMMUNITY_LEADERBOARD_CACHE_TTL_SEC || 45), 15, 180);
+const QUIZ_LEADERBOARD_CACHE_TTL_SEC = clamp(Number(process.env.QUIZ_LEADERBOARD_CACHE_TTL_SEC || 50), 20, 180);
 const MAX_JSON_BODY_MB = clamp(Number(process.env.MAX_JSON_BODY_MB || 10), 1, 20);
 const REQUEST_TIMEOUT_MS = clamp(Number(process.env.REQUEST_TIMEOUT_MS || 30_000), 5_000, 120_000);
 const AI_PARSE_MAX_FILE_MB = clamp(Number(process.env.AI_PARSE_MAX_FILE_MB || 20), 1, 50);
@@ -435,6 +442,11 @@ function broadcastCommunityEventsToUserIds(targetUserIds, data) {
       }
     }
   }
+  for (const uid of idSet) {
+    if (uid) {
+      emitSocketSyncToStudentUser(uid, data);
+    }
+  }
 }
 
 function addSseClient(role, userId, res) {
@@ -488,6 +500,10 @@ function broadcastSyncEvent({ role = 'all', event = 'sync', data = {} }) {
       }
     }
   });
+
+  if (event === 'sync') {
+    mirrorBroadcastSyncEvent(role, data);
+  }
 }
 
 setInterval(() => {
@@ -5241,6 +5257,7 @@ async function applyQuizStatsToProfiles(challenge) {
     };
     await profile.save();
   }
+  void invalidateQuizLeaderboardCache();
 }
 
 async function getCommunityRestriction(userId) {
@@ -6411,12 +6428,29 @@ async function refreshUserProgress(userId) {
   });
 }
 
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', async (_req, res) => {
+  let redisPing = false;
+  try {
+    const r = await getRedisMain();
+    if (r?.isOpen) {
+      await r.ping();
+      redisPing = true;
+    }
+  } catch {
+    redisPing = false;
+  }
   res.json({
     status: 'ok',
     message: 'Backend is live',
     firebaseAdminConfigured: Boolean(firebaseAdminAuth),
     firebaseAdminMissingEnv: getMissingFirebaseAdminEnvVars(),
+    redis: {
+      configured: REDIS_CONFIGURED,
+      pingOk: redisPing,
+    },
+    socketIo: {
+      enabled: Boolean(getIo()),
+    },
   });
 });
 
@@ -8296,6 +8330,12 @@ app.post('/api/community/report', authMiddleware, async (req, res) => {
 app.get('/api/community/leaderboard', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const period = String(req.query.period || 'weekly').toLowerCase() === 'monthly' ? 'monthly' : 'weekly';
+  const lbCacheKey = cacheKey(`community:leaderboard:${period}`);
+  const cachedLb = await cacheGetJson(lbCacheKey);
+  if (cachedLb) {
+    res.json(cachedLb);
+    return;
+  }
   const { start } = getPeriodBounds(period);
   const attempts = await AttemptModel.find({ attemptedAt: { $gte: start } }).lean();
   const previousWindowStart = new Date(start);
@@ -8360,7 +8400,9 @@ app.get('/api/community/leaderboard', authMiddleware, async (req, res) => {
     .slice(0, 20)
     .map((item, index) => ({ ...item, rank: index + 1 }));
 
-  res.json({ leaderboard, period });
+  const payloadOut = { leaderboard, period };
+  await cacheSetJson(lbCacheKey, payloadOut, COMMUNITY_LEADERBOARD_CACHE_TTL_SEC);
+  res.json(payloadOut);
 });
 
 app.post('/api/community/quiz-challenges', authMiddleware, async (req, res) => {
@@ -8973,6 +9015,12 @@ app.post('/api/community/quiz-challenges/:id/forfeit', authMiddleware, async (re
 app.get('/api/community/quiz-leaderboard', authMiddleware, async (req, res) => {
   if (await communityGuard(req, res)) return;
   try {
+    const qLbKey = cacheKey('community:quiz-leaderboard');
+    const cached = await cacheGetJson(qLbKey);
+    if (cached) {
+      res.json(cached);
+      return;
+    }
     const profiles = await CommunityProfileModel.find({})
       .select('userId username name avatar quizStats')
       .sort({ 'quizStats.totalWins': -1, 'quizStats.totalMatchesPlayed': -1 })
@@ -8999,7 +9047,9 @@ app.get('/api/community/quiz-leaderboard', authMiddleware, async (req, res) => {
       .slice(0, 30)
       .map((item, index) => ({ ...item, rank: index + 1 }));
 
-    res.json({ leaderboard });
+    const out = { leaderboard };
+    await cacheSetJson(qLbKey, out, QUIZ_LEADERBOARD_CACHE_TTL_SEC);
+    res.json(out);
   } catch (error) {
     console.error('community quiz leaderboard error', error);
     res.status(500).json({ error: 'Failed to load quiz leaderboard.' });
@@ -11355,6 +11405,7 @@ app.post('/api/tests/:sessionId/finish', authMiddleware, async (req, res) => {
     },
   });
 
+  void invalidateCommunityLeaderboardCache();
   await refreshUserProgress(req.user._id);
   broadcastSyncEvent({
     role: 'student',
@@ -13718,7 +13769,27 @@ process.on('uncaughtException', (error) => {
 async function bootstrap() {
   validateCriticalConfiguration();
 
-  const server = app.listen(PORT, '0.0.0.0', () => {
+  const httpServer = http.createServer(app);
+
+  try {
+    await initSocketIo(httpServer, {
+      jwtSecret: JWT_SECRET,
+      UserModel,
+      accessTokenCookieName: ACCESS_TOKEN_COOKIE_NAME,
+      isSocketSessionValid: (user, payload) => {
+        if ((user.role || 'student') !== 'student') return true;
+        const tokenSessionId = String(payload.sessionId || '');
+        const activeSessionId = String(user.activeSession?.sessionId || '');
+        return Boolean(tokenSessionId && activeSessionId && tokenSessionId === activeSessionId);
+      },
+      onStudentPresenceRegister: registerStudentPresence,
+      onStudentPresenceUnregister: unregisterStudentPresence,
+    });
+  } catch (error) {
+    console.error('[socket.io] Initialization failed (HTTP still runs):', error?.message || error);
+  }
+
+  const server = httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`[server] running on 0.0.0.0:${PORT}`);
     if (NODE_ENV) {
       console.log(`[server] NODE_ENV=${NODE_ENV}`);
@@ -13738,6 +13809,12 @@ async function bootstrap() {
   // so deployment health checks are not blocked by Mongo/network latency.
   void (async () => {
     try {
+      if (REDIS_CONFIGURED) {
+        void getRedisMain().then((client) => {
+          if (client) console.log('[startup] Redis cache client warmed up');
+        }).catch(() => undefined);
+      }
+
       try {
         const openAiProbe = await runOpenAiConnectionProbe('startup');
         logOpenAiProbeStatus(openAiProbe);
