@@ -5,6 +5,10 @@ def keystorePropertiesFile = rootProject.file('keystore.properties')
 if (keystorePropertiesFile.exists()) {
     keystoreProperties.load(new FileInputStream(keystorePropertiesFile))
 }
+def isReleaseTaskRequested = gradle.startParameter.taskNames.any { taskName ->
+    def normalized = String.valueOf(taskName).toLowerCase()
+    normalized.contains('release') || normalized.contains('bundle')
+}
 
 android {
     namespace = "com.net360.preparation"
@@ -36,10 +40,21 @@ android {
         }
     }
     buildTypes {
-        release {
-            signingConfig signingConfigs.release
+        debug {
             minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            shrinkResources false
+        }
+        release {
+            if (!keystorePropertiesFile.exists() && isReleaseTaskRequested) {
+                throw new GradleException(
+                    "Missing android/keystore.properties for release signing. " +
+                    "Create it before running assembleRelease or bundleRelease."
+                )
+            }
+            signingConfig signingConfigs.release
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
     }
 }

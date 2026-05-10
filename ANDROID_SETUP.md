@@ -94,26 +94,51 @@ Recommended production hardening (manual/next step):
 2. Add centralized frontend error telemetry (Sentry/Crashlytics)
 3. Configure retry/backoff for critical read endpoints
 
-## 8) Release build (manual)
+## 8) Release build (signed APK + AAB)
 
-From Android Studio:
+Create signing material first:
 
-1. Build > Generate Signed Bundle / APK
-2. Choose Android App Bundle (AAB) for Play Store
-3. Use your keystore and secure passwords
-4. Upload to Play Console
+```bash
+set ANDROID_KEYSTORE_PASSWORD=your-strong-store-password
+set ANDROID_KEY_PASSWORD=your-strong-key-password
+npm run android:keystore
+```
 
-## 9) Firebase setup for push notifications (manual, optional)
+Then build release artifacts:
+
+```bash
+npm run android:release
+```
+
+Artifacts:
+
+- APK: `android/app/build/outputs/apk/release/app-release.apk`
+- AAB: `android/app/build/outputs/bundle/release/app-release.aab`
+
+Android Studio alternative:
+
+1. Open `android/` via `npm run android:open`
+2. Build > Generate Signed Bundle / APK
+3. Select the same keystore at `android/app/net360-release.jks`
+4. Build both APK and AAB profiles
+
+## 9) Firebase setup for auth + push (manual)
 
 Do this only if you want app push notifications:
 
 1. Create/select Firebase project.
 2. Add Android app with package id: `com.net360.preparation`.
-3. Download `google-services.json`.
-4. Place it at `android/app/google-services.json`.
-5. In Firebase Console, enable Cloud Messaging.
-6. Set `VITE_ENABLE_PUSH_NOTIFICATIONS=true` before building web assets.
-7. Run:
+3. Add SHA-1/SHA-256 certificate fingerprints from your release/debug keystore in Firebase project settings.
+4. Download `google-services.json`.
+5. Place it at `android/app/google-services.json`.
+6. In Firebase Console, enable Authentication providers and Cloud Messaging.
+7. Set Android-mode env values in `.env.android`:
+   - `VITE_FIREBASE_API_KEY`
+   - `VITE_FIREBASE_AUTH_DOMAIN`
+   - `VITE_FIREBASE_PROJECT_ID`
+   - `VITE_FIREBASE_APP_ID`
+   - Optional: `VITE_ENABLE_PUSH_NOTIFICATIONS=true`
+8. Run:
 
 ```bash
 npm run mobile:build
@@ -121,11 +146,20 @@ npm run mobile:build
 
 `mobile:build` runs `vite build --mode android`, so values should live in `.env.android` (or injected as Android-mode build env in CI).
 
-8. Open Android Studio and rebuild app.
+9. Open Android Studio and rebuild app.
 
 Note:
 
 - Plugin currently logs push token/events to console; connect token upload to your backend endpoint when ready.
+
+## 10) Keystore backup and recovery
+
+Back up both files securely (password manager + encrypted vault):
+
+- `android/app/net360-release.jks`
+- `android/keystore.properties` (or at least alias/password values)
+
+If keystore is lost, Play Store updates for the same package cannot be signed by that key.
 
 ## 10) If backend is HTTP (not recommended)
 

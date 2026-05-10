@@ -15,6 +15,7 @@ import { apiRequest, buildSseStreamUrl, API_BASE } from '../lib/api';
 import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl, shouldPersistAuthTokens } from '../lib/authSession';
 import { io, type Socket } from 'socket.io-client';
+import { App as CapacitorApp } from '@capacitor/app';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import { PremiumLockScreen } from './subscription/PremiumLockScreen';
@@ -1153,10 +1154,39 @@ function CommunityInner() {
       applyCommunityPayload(parsed);
     });
 
+    const handleConnectivityResume = () => {
+      if (closed) return;
+      if (socket.disconnected) {
+        socket.connect();
+      }
+      openSse();
+      startTransition(() => void loadPresenceRef.current());
+    };
+    const onOnline = () => {
+      handleConnectivityResume();
+    };
+    const onVisibilityChange = () => {
+      if (!document.hidden) {
+        handleConnectivityResume();
+      }
+    };
+    window.addEventListener('online', onOnline);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    const appStateListenerPromise = CapacitorApp
+      .addListener('appStateChange', ({ isActive }) => {
+        if (isActive) {
+          handleConnectivityResume();
+        }
+      })
+      .catch(() => null);
+
     openSse();
 
     return () => {
       closed = true;
+      window.removeEventListener('online', onOnline);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      void appStateListenerPromise.then((listener) => listener?.remove());
       closeSse();
       socket.removeAllListeners();
       socket.close();

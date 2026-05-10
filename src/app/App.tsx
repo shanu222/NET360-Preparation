@@ -467,6 +467,28 @@ export default function App() {
   }, [activeTab, navigate]);
 
   useEffect(() => {
+    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+    if (!isNativeRuntime) return;
+
+    const listenerPromise = CapacitorApp.addListener('appUrlOpen', ({ url }) => {
+      const incoming = String(url || '').trim();
+      if (!incoming) return;
+      try {
+        const parsed = new URL(incoming);
+        const path = parsed.pathname || '/';
+        const target = `${path}${parsed.search || ''}${parsed.hash || ''}`;
+        navigateWithTransition(target);
+      } catch {
+        // Ignore malformed deep-link payloads.
+      }
+    });
+
+    return () => {
+      void listenerPromise.then((listener) => listener.remove());
+    };
+  }, [navigateWithTransition]);
+
+  useEffect(() => {
     const rows = Array.from(document.querySelectorAll<HTMLElement>('.net360-swipe-row'));
     if (!rows.length) return;
 

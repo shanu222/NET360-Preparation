@@ -12,6 +12,12 @@
 #   public *;
 #}
 
+# Keep Capacitor/Cordova bridge classes required by plugins in release builds.
+-keep class com.getcapacitor.** { *; }
+-keep class org.apache.cordova.** { *; }
+-dontwarn com.getcapacitor.**
+-dontwarn org.apache.cordova.**
+
 # Uncomment this to preserve the line number information for
 # debugging stack traces.
 #-keepattributes SourceFile,LineNumberTable

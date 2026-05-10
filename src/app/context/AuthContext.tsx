@@ -2,13 +2,16 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, 
 import { apiRequest } from '../lib/api';
 import {
   createUserWithEmailAndPassword,
+  getRedirectResult,
   deleteUser,
   GoogleAuthProvider,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
+  signInWithRedirect,
   signOut,
 } from 'firebase/auth';
+import { Capacitor } from '@capacitor/core';
 import {
   COOKIE_SESSION_API_MARKER,
   clearPersistedStudentTokens,
@@ -82,6 +85,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [deviceId] = useState<string>(() => getOrCreateDeviceId());
+  const isNativeRuntime = Capacitor.isNativePlatform();
 
   const applyAuthPayload = useCallback((payload: { token?: string; refreshToken?: string; user: AuthUser }) => {
     setUser(payload.user);
@@ -313,6 +317,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     provider.addScope('profile');
     provider.addScope('email');
     provider.setCustomParameters({ prompt: 'select_account' });
+    if (isNativeRuntime) {
+      await signInWithRedirect(firebaseAuth, provider);
+      return;
+    }
     const credential = await signInWithPopup(firebaseAuth, provider);
     const firebaseIdToken = await credential.user.getIdToken();
     const [firstName = '', ...rest] = String(credential.user.displayName || '').trim().split(/\s+/);
@@ -328,7 +336,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       lastName,
       forceLogoutOtherDevice: opts?.forceLogoutOtherDevice,
     });
-  }, [upsertSocialAuthSession]);
+  }, [isNativeRuntime, upsertSocialAuthSession]);
+
+  useEffect(() => {
+    if (!isNativeRuntime || !isFirebaseConfigured() || !firebaseAuth) return;
+    let cancelled = false;
+
+    void (async () => {
+      try {
+        const result = await getRedirectResult(firebaseAuth);
+        if (!result?.user || cancelled) return;
+        const firebaseIdToken = await result.user.getIdToken();
+        const [firstName = '', ...rest] = String(result.user.displayName || '').trim().split(/\s+/);
+        const lastName = rest.join(' ').trim();
+        const email = String(result.user.email || '').trim().toLowerCase();
+        if (!email) {
+          throw new Error('Google login did not return an email address.');
+        }
+        await upsertSocialAuthSession({ email, firebaseIdToken, firstName, lastName });
+      } catch (error) {
+        if (!cancelled) {
+          showWarningToast((error as Error)?.message || 'Google login could not be completed on this device.');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isNativeRuntime, upsertSocialAuthSession]);
 
   const registerWithToken = useCallback<AuthContextValue['registerWithToken']>(async ({
     email,

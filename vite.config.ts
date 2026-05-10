@@ -43,6 +43,7 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const devApiOrigin = String(env.VITE_API_URL || env.VITE_API_BASE_URL || '').trim()
   const analyzeBundle = mode === 'analyze'
+  const isAndroidMode = mode === 'android'
 
   return {
     plugins: [
@@ -63,16 +64,20 @@ export default defineConfig(({ mode }) => {
             }),
           ]
         : []),
-      viteCompression({
-        threshold: 1024,
-        algorithm: 'gzip',
-        ext: '.gz',
-      }),
-      viteCompression({
-        threshold: 1024,
-        algorithm: 'brotliCompress',
-        ext: '.br',
-      }),
+      ...(!isAndroidMode
+        ? [
+            viteCompression({
+              threshold: 1024,
+              algorithm: 'gzip',
+              ext: '.gz',
+            }),
+            viteCompression({
+              threshold: 1024,
+              algorithm: 'brotliCompress',
+              ext: '.br',
+            }),
+          ]
+        : []),
     ],
     resolve: {
       alias: {

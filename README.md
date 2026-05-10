@@ -34,6 +34,12 @@ This command builds using Vite Android mode (`--mode android`) and reads Android
 3. Optional sync after frontend updates:
 `npm run android:sync`
 
+4. Generate production keystore (once):
+`npm run android:keystore`
+
+5. Build signed release APK + AAB:
+`npm run android:release`
+
 Full manual setup and release steps are documented in `ANDROID_SETUP.md`.
 
 Optional native plugin support is included for splash screen, status bar styling, haptics, and push notifications.
