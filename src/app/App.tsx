@@ -492,6 +492,29 @@ export default function App() {
   }, [navigateWithTransition]);
 
   useEffect(() => {
+    if (!document.documentElement.classList.contains('native-android')) return;
+    const header = document.querySelector<HTMLElement>('.net360-header');
+    if (!header) return;
+
+    const applyHeaderHeight = () => {
+      const height = Math.max(0, Math.round(header.getBoundingClientRect().height));
+      document.documentElement.style.setProperty('--net360-header-height', `${height}px`);
+    };
+
+    applyHeaderHeight();
+    const observer = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(applyHeaderHeight) : null;
+    observer?.observe(header);
+    window.addEventListener('orientationchange', applyHeaderHeight, { passive: true });
+    window.addEventListener('resize', applyHeaderHeight, { passive: true });
+
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener('orientationchange', applyHeaderHeight);
+      window.removeEventListener('resize', applyHeaderHeight);
+    };
+  }, [activeTab]);
+
+  useEffect(() => {
     const rows = Array.from(document.querySelectorAll<HTMLElement>('.net360-swipe-row'));
     if (!rows.length) return;
 
@@ -528,6 +551,8 @@ export default function App() {
       };
 
       const onPointerDown = (event: PointerEvent) => {
+        const isNativeAndroid = document.documentElement.classList.contains('native-android');
+        if (isNativeAndroid && event.pointerType !== 'mouse') return;
         if (event.pointerType === 'mouse' && event.button !== 0) return;
         if (shouldSkipTarget(event.target)) return;
         isPointerDown = true;

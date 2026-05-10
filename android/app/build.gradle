@@ -46,7 +46,7 @@ android {
         }
         release {
             if (!keystorePropertiesFile.exists() && isReleaseTaskRequested) {
-                throw new GradleException(
+                throw new org.gradle.api.GradleException(
                     "Missing android/keystore.properties for release signing. " +
                     "Create it before running assembleRelease or bundleRelease."
                 )

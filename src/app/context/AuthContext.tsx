@@ -1,4 +1,4 @@
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { apiRequest } from '../lib/api';
 import {
   createUserWithEmailAndPassword,
@@ -77,6 +77,28 @@ function redirectToLoginScreen() {
 
 let authSessionLoadGeneration = 0;
 
+function delay(ms: number) {
+  return new Promise<void>((resolve) => {
+    window.setTimeout(resolve, Math.max(0, Math.floor(ms)));
+  });
+}
+
+function isLikelyTransientAuthFailure(error: unknown): boolean {
+  const err = error as Error & { code?: string; status?: number };
+  const message = String(err?.message || '').toLowerCase();
+  const code = String(err?.code || '').toLowerCase();
+  const status = Number(err?.status);
+  return (
+    code === 'request_timeout'
+    || code === 'auth/network-request-failed'
+    || message.includes('network')
+    || message.includes('timed out')
+    || message.includes('failed to fetch')
+    || message.includes('request timeout')
+    || (Number.isFinite(status) && [408, 425, 429, 500, 502, 503, 504].includes(status))
+  );
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() =>
     shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null,
@@ -88,6 +110,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [deviceId] = useState<string>(() => getOrCreateDeviceId());
   const isNativeRuntime = Capacitor.isNativePlatform() && isNativeRuntimePlatform();
+  const runSessionRestoreRef = useRef<(reason?: string) => Promise<void>>(async () => undefined);
 
   const applyAuthPayload = useCallback((payload: { token?: string; refreshToken?: string; user: AuthUser }) => {
     setUser(payload.user);
@@ -105,7 +128,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
-    async function loadSession() {
+    const loadSession = async (reason = 'mount') => {
       if (typeof window === 'undefined') return;
 
       const loadId = ++authSessionLoadGeneration;
@@ -129,7 +152,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       try {
         try {
-          const me = await apiRequest<{ user: AuthUser }>('/api/auth/me', {}, bearer);
+          const me = await apiRequest<{ user: AuthUser }>(
+            '/api/auth/me',
+            { retryCount: isNativeRuntime ? 2 : 1, retryDelayMs: 900, timeoutMs: 45_000 },
+            bearer,
+          );
           if (cancelled || loadId !== authSessionLoadGeneration) return;
           logNativeEvent('auth', 'restore-from-me-success', { hasBearer: Boolean(bearer) });
           setUser(me.user);
@@ -150,7 +177,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           try {
             const refreshed = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
               '/api/auth/refresh',
-              { method: 'POST', body: JSON.stringify({ refreshToken: rt }) },
+              { method: 'POST', body: JSON.stringify({ refreshToken: rt }), retryCount: 2, retryDelayMs: 900, timeoutMs: 50_000 },
             );
             if (cancelled || loadId !== authSessionLoadGeneration) return;
             logNativeEvent('auth', 'restore-from-refresh-success');
@@ -174,7 +201,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           try {
             const refreshed = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
               '/api/auth/refresh',
-              { method: 'POST', body: JSON.stringify({}) },
+              { method: 'POST', body: JSON.stringify({}), retryCount: 2, retryDelayMs: 900, timeoutMs: 50_000 },
             );
             if (cancelled || loadId !== authSessionLoadGeneration) return;
             logNativeEvent('auth', 'restore-from-cookie-refresh-success');
@@ -208,14 +235,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setLoading(false);
         }
       }
-    }
+    };
 
-    void loadSession();
+    runSessionRestoreRef.current = async (reason = 'resume') => {
+      const attempts = isNativeRuntime ? 3 : 1;
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        try {
+          await loadSession(reason);
+          return;
+        } catch (error) {
+          if (attempt >= attempts - 1 || !isLikelyTransientAuthFailure(error)) {
+            throw error;
+          }
+          logNativeEvent('auth', 'restore-retry', { reason, attempt: attempt + 1 }, 'warn');
+          await delay(600 * (2 ** attempt));
+        }
+      }
+    };
+
+    void runSessionRestoreRef.current('mount');
 
     return () => {
       cancelled = true;
+      runSessionRestoreRef.current = async () => undefined;
     };
-  }, []); // Run only on mount to prevent instant logout cycles
+  }, [isNativeRuntime]); // Run only on mount to prevent instant logout cycles
 
   // Mobile / multi-tab: keep React token in sync with localStorage after resume, refresh, or writes in another tab.
   useEffect(() => {
@@ -232,7 +276,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const onVisibility = () => {
-      if (!document.hidden) syncFromStorage();
+      if (!document.hidden) {
+        syncFromStorage();
+        if (isNativeRuntime) {
+          void runSessionRestoreRef.current('visibility');
+        }
+      }
     };
 
     const onStorage = (event: StorageEvent) => {
@@ -241,45 +290,81 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    window.addEventListener('focus', syncFromStorage);
+    const onFocus = () => {
+      syncFromStorage();
+      if (isNativeRuntime) {
+        void runSessionRestoreRef.current('focus');
+      }
+    };
+
+    window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('storage', onStorage);
     const appStateListenerPromise = CapacitorApp
       .addListener('appStateChange', ({ isActive }) => {
-        if (isActive) syncFromStorage();
+        if (isActive) {
+          syncFromStorage();
+          if (isNativeRuntime) {
+            void runSessionRestoreRef.current('app-resume');
+          }
+        }
       })
       .catch(() => null);
+    const onOnline = () => {
+      syncFromStorage();
+      if (isNativeRuntime) {
+        void runSessionRestoreRef.current('online');
+      }
+    };
+    window.addEventListener('online', onOnline);
     return () => {
-      window.removeEventListener('focus', syncFromStorage);
+      window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('storage', onStorage);
+      window.removeEventListener('online', onOnline);
       void appStateListenerPromise.then((listener) => listener?.remove());
     };
-  }, []);
+  }, [isNativeRuntime]);
 
   const login = useCallback<AuthContextValue['login']>(async (email, password, opts) => {
     if (!isFirebaseConfigured() || !firebaseAuth) {
       throw new Error('Firebase auth is not configured.');
     }
-    const credential = await signInWithEmailAndPassword(firebaseAuth, email, password);
-    const firebaseIdToken = await credential.user.getIdToken();
-    const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
-      '/api/auth/login',
-      {
-        method: 'POST',
-        retryCount: 1,
-        timeoutMs: 45_000,
-        body: JSON.stringify({
-          email,
-          deviceId,
-          firebaseIdToken,
-          forceLogoutOtherDevice: Boolean(opts?.forceLogoutOtherDevice),
-        }),
-      },
-    );
-    logNativeEvent('auth', 'login-success', { email: email.toLowerCase() });
-    applyAuthPayload(payload);
-  }, [applyAuthPayload, deviceId]);
+    const attempts = isNativeRuntime ? 3 : 1;
+    let lastError: unknown = null;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        const credential = await signInWithEmailAndPassword(firebaseAuth, email, password);
+        const firebaseIdToken = await credential.user.getIdToken();
+        const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+          '/api/auth/login',
+          {
+            method: 'POST',
+            retryCount: isNativeRuntime ? 2 : 1,
+            retryDelayMs: 900,
+            timeoutMs: 50_000,
+            body: JSON.stringify({
+              email,
+              deviceId,
+              firebaseIdToken,
+              forceLogoutOtherDevice: Boolean(opts?.forceLogoutOtherDevice),
+            }),
+          },
+        );
+        logNativeEvent('auth', 'login-success', { email: email.toLowerCase() });
+        applyAuthPayload(payload);
+        return;
+      } catch (error) {
+        lastError = error;
+        if (!isNativeRuntime || attempt >= attempts - 1 || !isLikelyTransientAuthFailure(error)) {
+          break;
+        }
+        logNativeEvent('auth', 'login-retry', { attempt: attempt + 1, email: email.toLowerCase() }, 'warn');
+        await delay(650 * (2 ** attempt));
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error(String(lastError || 'Unable to sign in.'));
+  }, [applyAuthPayload, deviceId, isNativeRuntime]);
 
   const upsertSocialAuthSession = useCallback(async (params: {
     email: string;
@@ -293,8 +378,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         '/api/auth/login',
         {
           method: 'POST',
-          retryCount: 1,
-          timeoutMs: 45_000,
+          retryCount: isNativeRuntime ? 2 : 1,
+          retryDelayMs: 900,
+          timeoutMs: 50_000,
           body: JSON.stringify({
             email: params.email,
             firebaseIdToken: params.firebaseIdToken,
@@ -316,8 +402,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       '/api/auth/register',
       {
         method: 'POST',
-        retryCount: 1,
-        timeoutMs: 45_000,
+        retryCount: isNativeRuntime ? 2 : 1,
+        retryDelayMs: 900,
+        timeoutMs: 50_000,
         body: JSON.stringify({
           email: params.email,
           firstName: params.firstName || '',
@@ -328,7 +415,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
     );
     applyAuthPayload(registerPayload);
-  }, [applyAuthPayload, deviceId]);
+  }, [applyAuthPayload, deviceId, isNativeRuntime]);
 
   const loginWithGoogle = useCallback<AuthContextValue['loginWithGoogle']>(async (opts) => {
     if (!isFirebaseConfigured() || !firebaseAuth) {
@@ -383,7 +470,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           logNativeEvent('auth', 'google-redirect-failed', {
             message: (error as Error)?.message || String(error),
           }, 'warn');
-          showWarningToast((error as Error)?.message || 'Google login could not be completed on this device.');
+          if (!isLikelyTransientAuthFailure(error)) {
+            showWarningToast((error as Error)?.message || 'Google login could not be completed on this device.');
+          }
         }
       }
     })();

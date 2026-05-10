@@ -14,10 +14,12 @@ export const ImageWithFallback = memo(function ImageWithFallback(props: ImageWit
   const { fallbackSrc, src, alt, style, className, loading, decoding, onError, ...rest } = props
   const [phase, setPhase] = useState<'primary' | 'fallback' | 'error'>('primary')
   const [retryCount, setRetryCount] = useState(0)
+  const [isLoaded, setIsLoaded] = useState(false)
 
   useEffect(() => {
     setPhase('primary')
     setRetryCount(0)
+    setIsLoaded(false)
   }, [src, fallbackSrc])
 
   const handleError: ReactEventHandler<HTMLImageElement> = (e) => {
@@ -48,6 +50,13 @@ export const ImageWithFallback = memo(function ImageWithFallback(props: ImageWit
     return `${activeSrcBase}${sep}android_retry=${retryCount}`
   })()
 
+  useEffect(() => {
+    if (!isNativeRuntime() || !activeSrc || !/^https?:\/\//i.test(activeSrc)) return;
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = activeSrc;
+  }, [activeSrc]);
+
   return phase === 'error' ? (
     <div
       className={`inline-block bg-gray-100 text-center align-middle ${className ?? ''}`}
@@ -70,11 +79,15 @@ export const ImageWithFallback = memo(function ImageWithFallback(props: ImageWit
     <img
       src={activeSrc}
       alt={alt}
-      className={className}
+      className={`${className ?? ''} transition-opacity duration-200 ${isLoaded ? 'opacity-100' : 'opacity-0'}`}
       style={style}
       loading={loading ?? 'lazy'}
       decoding={decoding ?? 'async'}
       {...rest}
+      onLoad={() => {
+        setIsLoaded(true)
+        logNativeEvent('media', 'image-load-success', { src: activeSrc, phase, retryCount })
+      }}
       onError={handleError}
     />
   )

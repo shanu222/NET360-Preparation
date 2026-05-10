@@ -490,6 +490,43 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     return headers;
   };
 
+  const fetchRefreshWithRetry = async (body: Record<string, unknown>) => {
+    const maxAttempts = isNativeCapacitorRuntime() ? 3 : 1;
+    let lastError: unknown = null;
+    for (let attemptIndex = 0; attemptIndex < maxAttempts; attemptIndex += 1) {
+      try {
+        const refreshResponse = await fetchWithTimeout(resolveApiPath('/api/auth/refresh'), {
+          method: 'POST',
+          headers: new Headers({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify(body),
+        }, Math.min(timeoutMs, 20_000));
+
+        if (
+          refreshResponse.ok
+          || refreshResponse.status === 401
+          || refreshResponse.status === 403
+          || !shouldRetryHttpStatus(refreshResponse.status, { method: 'POST', retryOnStatuses: [408, 425, 429, 500, 502, 503, 504] })
+          || attemptIndex >= maxAttempts - 1
+        ) {
+          return refreshResponse;
+        }
+      } catch (error) {
+        lastError = error;
+        const mapped = mapTransportError('/api/auth/refresh', resolveApiPath('/api/auth/refresh'), error);
+        if (!shouldRetryTransportError(mapped) || attemptIndex >= maxAttempts - 1) {
+          throw mapped;
+        }
+      }
+
+      await delayMs(computeRetryDelayMs(attemptIndex, 700));
+    }
+
+    if (lastError) {
+      throw lastError;
+    }
+    throw new Error('Refresh request failed.');
+  };
+
   const tryRefreshAccessToken = async () => {
     if (path.startsWith('/api/auth/refresh')) return null;
 
@@ -504,11 +541,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     refreshInFlight = (async () => {
       const refreshCandidates = readStoredRefreshCandidates();
       const tryCookieRefresh = async () => {
-        const response = await fetchWithTimeout(resolveApiPath('/api/auth/refresh'), {
-          method: 'POST',
-          headers: new Headers({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({}),
-        }, Math.min(timeoutMs, 20_000));
+        const response = await fetchRefreshWithRetry({});
 
         if (!response.ok) {
           return null;
@@ -560,11 +593,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 
       for (const candidate of refreshCandidates) {
         try {
-          const response = await fetchWithTimeout(resolveApiPath('/api/auth/refresh'), {
-            method: 'POST',
-            headers: new Headers({ 'Content-Type': 'application/json' }),
-            body: JSON.stringify({ refreshToken: candidate.value }),
-          }, Math.min(timeoutMs, 20_000));
+          const response = await fetchRefreshWithRetry({ refreshToken: candidate.value });
 
           if (!response.ok) {
             if (response.status === 401 || response.status === 403) {

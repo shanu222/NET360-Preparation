@@ -1275,13 +1275,30 @@ canvas {
 
 .native-android .net360-main {
   -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
   overscroll-behavior-y: contain;
+  scroll-padding-top: calc(var(--net360-header-height, 56px) + 8px);
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px), var(--net360-keyboard-offset, 0px));
+}
+
+.native-android {
+  --net360-header-height: 56px;
+}
+
+.native-android .net360-viewport {
+  padding-top: max(2px, env(safe-area-inset-top, 0px));
+}
+
+.native-android .net360-header {
+  top: 0;
+  z-index: 60;
+  padding-top: max(2px, env(safe-area-inset-top, 0px));
 }
 
 .native-android .net360-page {
   padding-left: max(14px, env(safe-area-inset-left, 0px));
   padding-right: max(14px, env(safe-area-inset-right, 0px));
+  overflow-x: clip;
 }
 
 .native-android .net360-page [data-slot='dialog-content'],
@@ -1299,6 +1316,19 @@ canvas {
 .native-android .net360-page button,
 .native-android .net360-page a[role='button'] {
   touch-action: manipulation;
+}
+
+.native-android .net360-page .overflow-auto,
+.native-android .net360-page .overflow-y-auto,
+.native-android .net360-page [data-slot='scroll-area'],
+.native-android .net360-page [data-slot='card-content'] {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
+.native-android .net360-page [data-slot='tabs-list'],
+.native-android .net360-swipe-row {
+  scrollbar-gutter: stable;
 }
 
 .native-android .net360-page [data-slot='tabs-trigger'],

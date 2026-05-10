@@ -93,6 +93,7 @@ export async function fetchAndApplyPublicMediaConfig(): Promise<void> {
 
   fetchInFlight = (async () => {
     const endpoint = buildUrl('/api/public/media-config');
+    let resolved = false;
     const attemptFetch = async (attempt: number) => {
       const res = await fetch(endpoint, {
         method: 'GET',
@@ -109,6 +110,7 @@ export async function fetchAndApplyPublicMediaConfig(): Promise<void> {
         endpoint,
         hasS3Base: Boolean(runtimeS3Base),
       });
+      resolved = true;
       return;
     };
 
@@ -137,6 +139,7 @@ export async function fetchAndApplyPublicMediaConfig(): Promise<void> {
               endpoint,
               hasS3Base: Boolean(runtimeS3Base),
             }, 'warn');
+            resolved = true;
             return;
           }
         } catch {
@@ -151,7 +154,9 @@ export async function fetchAndApplyPublicMediaConfig(): Promise<void> {
         message: (err as Error)?.message || String(err),
       }, 'error');
     } finally {
-      mediaConfigFetchFinished = true;
+      if (resolved) {
+        mediaConfigFetchFinished = true;
+      }
     }
   })();
 

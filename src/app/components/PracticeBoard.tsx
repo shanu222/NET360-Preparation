@@ -44,6 +44,47 @@ interface BoardQuestion {
   } | null;
 }
 
+const RANDOM_QUESTION_CACHE_KEY = 'net360-practice-board-random-v1';
+const QUESTION_BANK_CACHE_KEY = 'net360-practice-board-bank-v1';
+
+function readCachedQuestion(): BoardQuestion | null {
+  try {
+    const raw = localStorage.getItem(RANDOM_QUESTION_CACHE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as BoardQuestion;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedQuestion(question: BoardQuestion | null) {
+  try {
+    if (!question) return;
+    localStorage.setItem(RANDOM_QUESTION_CACHE_KEY, JSON.stringify(question));
+  } catch {
+    // Ignore localStorage restrictions.
+  }
+}
+
+function readCachedQuestionBank(): BoardQuestion[] {
+  try {
+    const raw = localStorage.getItem(QUESTION_BANK_CACHE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed as BoardQuestion[] : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeCachedQuestionBank(questions: BoardQuestion[]) {
+  try {
+    localStorage.setItem(QUESTION_BANK_CACHE_KEY, JSON.stringify(questions || []));
+  } catch {
+    // Ignore localStorage restrictions.
+  }
+}
+
 function isImageMimeType(mimeType?: string | null) {
   return /^image\/(png|jpeg)$/i.test(String(mimeType || ''));
 }
@@ -275,18 +316,27 @@ export function PracticeBoard() {
       const query = excludeId ? `?excludeId=${encodeURIComponent(excludeId)}` : '';
       const payload = await apiRequest<{ question: BoardQuestion }>(
         `/api/practice-board/questions/random${query}`,
-        { retryCount: 2, timeoutMs: 45_000 },
+        { retryCount: 3, retryDelayMs: 900, timeoutMs: 50_000 },
       );
       setActiveQuestion(payload?.question || null);
+      writeCachedQuestion(payload?.question || null);
       logNativeEvent('practice-board', 'random-question-loaded', {
         hasQuestion: Boolean(payload?.question),
         subject: payload?.question?.subject || '',
       });
       setShowAnswer(false);
     } catch (error) {
+      const cached = readCachedQuestion();
       logNativeEvent('practice-board', 'random-question-failed', {
         message: (error as Error)?.message || String(error),
+        fallbackToCache: Boolean(cached),
       }, 'error');
+      if (cached) {
+        setActiveQuestion(cached);
+        setShowAnswer(false);
+        showWarningToast('Network is slow. Showing your last available practice board question.');
+        return;
+      }
       setActiveQuestion(null);
       showErrorToast('Could not load a practice board question from the database.');
     } finally {
@@ -299,16 +349,25 @@ export function PracticeBoard() {
     try {
       const payload = await apiRequest<{ questions: BoardQuestion[] }>(
         '/api/practice-board/questions?limit=500',
-        { retryCount: 2, timeoutMs: 45_000 },
+        { retryCount: 3, retryDelayMs: 900, timeoutMs: 50_000 },
       );
-      setQuestionBankQuestions(payload?.questions || []);
+      const questions = payload?.questions || [];
+      setQuestionBankQuestions(questions);
+      writeCachedQuestionBank(questions);
       logNativeEvent('practice-board', 'question-bank-loaded', {
         count: Array.isArray(payload?.questions) ? payload.questions.length : 0,
       });
     } catch (error) {
+      const cached = readCachedQuestionBank();
       logNativeEvent('practice-board', 'question-bank-failed', {
         message: (error as Error)?.message || String(error),
+        fallbackToCache: cached.length,
       }, 'error');
+      if (cached.length) {
+        setQuestionBankQuestions(cached);
+        showWarningToast('Network is slow. Showing cached practice board questions.');
+        return;
+      }
       setQuestionBankQuestions([]);
       showErrorToast('Could not load practice board question bank.');
     } finally {
