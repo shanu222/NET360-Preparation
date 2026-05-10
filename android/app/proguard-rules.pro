@@ -18,6 +18,13 @@
 -dontwarn com.getcapacitor.**
 -dontwarn org.apache.cordova.**
 
+# Keep Firebase + Google Sign-In auth classes used by WebView/native auth flows.
+-keep class com.google.firebase.** { *; }
+-keep class com.google.android.gms.auth.api.signin.** { *; }
+-keep class com.google.android.gms.common.api.** { *; }
+-dontwarn com.google.firebase.**
+-dontwarn com.google.android.gms.**
+
 # Uncomment this to preserve the line number information for
 # debugging stack traces.
 #-keepattributes SourceFile,LineNumberTable

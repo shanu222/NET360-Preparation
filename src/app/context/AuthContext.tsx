@@ -113,6 +113,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const runSessionRestoreRef = useRef<(reason?: string) => Promise<void>>(async () => undefined);
   const authBootstrapInFlightRef = useRef<Promise<boolean> | null>(null);
 
+  const detectNativeWebViewCapabilities = useCallback(() => {
+    return {
+      online: navigator.onLine,
+      cookieEnabled: navigator.cookieEnabled,
+      hasLocalStorage: (() => {
+        try {
+          const key = '__net360_local_storage_probe__';
+          localStorage.setItem(key, '1');
+          localStorage.removeItem(key);
+          return true;
+        } catch {
+          return false;
+        }
+      })(),
+      hasSessionStorage: (() => {
+        try {
+          const key = '__net360_session_storage_probe__';
+          sessionStorage.setItem(key, '1');
+          sessionStorage.removeItem(key);
+          return true;
+        } catch {
+          return false;
+        }
+      })(),
+      platform: (() => {
+        try {
+          return Capacitor.getPlatform();
+        } catch {
+          return 'unknown';
+        }
+      })(),
+    };
+  }, []);
+
+  const waitForCapacitorReady = useCallback(async () => {
+    if (!isNativeRuntime) return;
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      try {
+        const platform = Capacitor.getPlatform();
+        if (platform && platform !== 'web') return;
+      } catch {
+        // keep retrying
+      }
+      await delay(150 * (attempt + 1));
+    }
+  }, [isNativeRuntime]);
+
   const waitForNetworkReady = useCallback(async () => {
     if (typeof window === 'undefined') return;
     if (navigator.onLine) return;
@@ -155,17 +202,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     authBootstrapInFlightRef.current = (async () => {
       for (let attempt = 1; attempt <= 4; attempt += 1) {
         try {
+          await waitForCapacitorReady();
           await waitForNetworkReady();
           await waitForStorageReady();
           const auth = await ensureFirebaseAuthReady();
           const ok = Boolean(auth);
-          logNativeEvent('auth', 'native-bootstrap', { reason, attempt, ok });
+          logNativeEvent('auth', 'native-bootstrap', { reason, attempt, ok, ...detectNativeWebViewCapabilities() });
           if (ok) return true;
         } catch (error) {
           logNativeEvent('auth', 'native-bootstrap-error', {
             reason,
             attempt,
             message: (error as Error)?.message || String(error),
+            ...detectNativeWebViewCapabilities(),
           }, 'warn');
         }
         if (attempt < 4) {
@@ -180,7 +229,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       authBootstrapInFlightRef.current = null;
     }
-  }, [isNativeRuntime, waitForNetworkReady, waitForStorageReady]);
+  }, [detectNativeWebViewCapabilities, isNativeRuntime, waitForCapacitorReady, waitForNetworkReady, waitForStorageReady]);
 
   const applyAuthPayload = useCallback((payload: { token?: string; refreshToken?: string; user: AuthUser }) => {
     setUser(payload.user);
@@ -537,8 +586,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     provider.setCustomParameters({ prompt: 'select_account' });
     if (isNativeRuntime) {
       logNativeEvent('auth', 'google-redirect-start', { providerReady: true });
-      await signInWithRedirect(activeAuth, provider);
-      return;
+      try {
+        await signInWithRedirect(activeAuth, provider);
+        return;
+      } catch (error) {
+        logNativeEvent('auth', 'google-redirect-start-failed', {
+          message: (error as Error)?.message || String(error),
+        }, 'warn');
+      }
     }
     const credential = await signInWithPopup(activeAuth, provider);
     const firebaseIdToken = await credential.user.getIdToken();
@@ -567,7 +622,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const auth = await ensureFirebaseAuthReady();
         if (!auth) return;
         logNativeEvent('auth', 'google-redirect-init', { ready: true });
-        const result = await getRedirectResult(auth);
+        let result = await getRedirectResult(auth);
+        if (!result?.user) {
+          await delay(220);
+          result = await getRedirectResult(auth);
+        }
         if (!result?.user || cancelled) return;
         const firebaseIdToken = await result.user.getIdToken();
         const [firstName = '', ...rest] = String(result.user.displayName || '').trim().split(/\s+/);

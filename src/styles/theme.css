@@ -1289,6 +1289,23 @@ canvas {
   height: 0;
 }
 
+html.native-android,
+html.native-android body,
+html.native-android #root {
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+html.native-android::-webkit-scrollbar,
+html.native-android body::-webkit-scrollbar,
+html.native-android #root::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .native-android {
   --net360-header-height: 56px;
 }
@@ -1347,8 +1364,16 @@ canvas {
 
 .native-android .net360-page [data-slot='tabs-list'],
 .native-android .net360-swipe-row {
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
   -webkit-overflow-scrolling: touch;
+}
+
+.native-android .net360-page [data-slot='tabs-list']::-webkit-scrollbar,
+.native-android .net360-swipe-row::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .native-android .net360-page [data-slot='tabs-trigger'],

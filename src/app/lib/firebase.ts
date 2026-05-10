@@ -48,6 +48,17 @@ function shouldUseNativeBootstrap(): boolean {
   }
 }
 
+function capacitorBridgeReady(): boolean {
+  try {
+    const bridge = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } }).Capacitor;
+    if (!bridge?.isNativePlatform?.()) return false;
+    const platform = String(bridge.getPlatform?.() || '').toLowerCase();
+    return platform === 'android' || platform === 'ios';
+  } catch {
+    return false;
+  }
+}
+
 function storageReady(): boolean {
   try {
     const key = '__net360_firebase_probe__';
@@ -74,6 +85,10 @@ async function initializeFirebaseAuthWithRetry(): Promise<Auth | null> {
     const attempts = shouldUseNativeBootstrap() ? 4 : 2;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
+        if (shouldUseNativeBootstrap() && !capacitorBridgeReady()) {
+          logNativeEvent('auth', 'firebase-capacitor-not-ready', { attempt }, 'warn');
+          await delay(180 * attempt);
+        }
         if (shouldUseNativeBootstrap() && !storageReady()) {
           logNativeEvent('auth', 'firebase-storage-not-ready', { attempt }, 'warn');
           await delay(220 * attempt);
