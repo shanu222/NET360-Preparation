@@ -1,5 +1,6 @@
 import { useEffect, useState, memo, type ImgHTMLAttributes, type ReactEventHandler } from 'react';
 import { logMediaLoadFailure } from '../../lib/publicMediaRuntime';
+import { isNativeRuntime, logNativeEvent } from '../../lib/nativeDiagnostics';
 
 const ERROR_IMG_SRC =
   'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iODgiIGhlaWdodD0iODgiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgc3Ryb2tlPSIjMDAwIiBzdHJva2UtbGluZWpvaW49InJvdW5kIiBvcGFjaXR5PSIuMyIgZmlsbD0ibm9uZSIgc3Ryb2tlLXdpZHRoPSIzLjciPjxyZWN0IHg9IjE2IiB5PSIxNiIgd2lkdGg9IjU2IiBoZWlnaHQ9IjU2IiByeD0iNiIvPjxwYXRoIGQ9Im0xNiA1OCAxNi0xOCAzMiAzMiIvPjxjaXJjbGUgY3g9IjUzIiBjeT0iMzUiIHI9IjciLz48L3N2Zz4KCg=='
@@ -12,14 +13,25 @@ export type ImageWithFallbackProps = ImgHTMLAttributes<HTMLImageElement> & {
 export const ImageWithFallback = memo(function ImageWithFallback(props: ImageWithFallbackProps) {
   const { fallbackSrc, src, alt, style, className, loading, decoding, onError, ...rest } = props
   const [phase, setPhase] = useState<'primary' | 'fallback' | 'error'>('primary')
+  const [retryCount, setRetryCount] = useState(0)
 
   useEffect(() => {
     setPhase('primary')
+    setRetryCount(0)
   }, [src, fallbackSrc])
 
   const handleError: ReactEventHandler<HTMLImageElement> = (e) => {
     logMediaLoadFailure('img', { url: String(src || '') })
+    logNativeEvent('media', 'image-load-failed', {
+      src: String(src || ''),
+      phase,
+      retryCount,
+    }, 'warn')
     onError?.(e)
+    if (isNativeRuntime() && phase === 'primary' && retryCount < 2) {
+      setRetryCount((current) => current + 1)
+      return
+    }
     if (phase === 'primary' && fallbackSrc) {
       setPhase('fallback')
       return
@@ -27,8 +39,14 @@ export const ImageWithFallback = memo(function ImageWithFallback(props: ImageWit
     setPhase('error')
   }
 
-  const activeSrc =
-    phase === 'fallback' && fallbackSrc ? fallbackSrc : String(src || '')
+  const activeSrcBase = phase === 'fallback' && fallbackSrc ? fallbackSrc : String(src || '')
+  const activeSrc = (() => {
+    if (!activeSrcBase) return ''
+    if (!isNativeRuntime() || retryCount <= 0) return activeSrcBase
+    if (!/^https?:\/\//i.test(activeSrcBase)) return activeSrcBase
+    const sep = activeSrcBase.includes('?') ? '&' : '?'
+    return `${activeSrcBase}${sep}android_retry=${retryCount}`
+  })()
 
   return phase === 'error' ? (
     <div

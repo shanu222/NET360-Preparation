@@ -8,6 +8,7 @@ import {
   resolveSnapshotStudentAuthToken,
 } from '../lib/authSession';
 import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTiming';
+import { logNativeEvent } from '../lib/nativeDiagnostics';
 import { useAuth } from './AuthContext';
 
 interface TestAttempt {
@@ -359,6 +360,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       source = new EventSource(buildSseStreamUrl(authToken), { withCredentials: true });
 
       source.onopen = () => {
+        logNativeEvent('socket', 'appdata-stream-open');
         reconnectDelay = 1500;
       };
 
@@ -382,6 +384,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       });
 
       source.onerror = () => {
+        logNativeEvent('socket', 'appdata-stream-error', { reconnectDelay }, 'warn');
         closeCurrent();
         if (closed) return;
         reconnectTimer = window.setTimeout(() => {
@@ -417,6 +420,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     };
 
     const onOnline = () => {
+      logNativeEvent('socket', 'appdata-online-resync');
       scheduleDebouncedForegroundSync(authToken);
     };
 
@@ -555,6 +559,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           '/api/tests/start',
           {
             method: 'POST',
+            retryCount: 1,
+            timeoutMs: 50_000,
             body: JSON.stringify(normalizedPayload),
           },
           authToken,
@@ -568,8 +574,25 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
           });
         }
+        logNativeEvent('practice-board', 'test-session-start-success', {
+          attempt,
+          subject: normalizedPayload.subject,
+          chapter: normalizedPayload.chapter,
+          topic: normalizedPayload.topic,
+          mode: normalizedPayload.mode,
+          questionCount: normalizedPayload.questionCount,
+          returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
+        });
         return startPayload.session;
       } catch (error) {
+        logNativeEvent('practice-board', 'test-session-start-failed', {
+          attempt,
+          subject: normalizedPayload.subject,
+          chapter: normalizedPayload.chapter,
+          topic: normalizedPayload.topic,
+          mode: normalizedPayload.mode,
+          message: (error as Error)?.message || String(error),
+        }, attempt === 1 ? 'error' : 'warn');
         if (attempt === 1) {
           throw error;
         }

@@ -5,6 +5,7 @@ import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { Camera } from '@capacitor/camera';
 import { Filesystem } from '@capacitor/filesystem';
+import { logNativeEvent } from './nativeDiagnostics';
 
 const isNative = () => Capacitor.isNativePlatform();
 const isPushEnabled = () => String((import.meta as any).env?.VITE_ENABLE_PUSH_NOTIFICATIONS || '').toLowerCase() === 'true';
@@ -22,6 +23,8 @@ export async function initializeNativeExperience() {
 
   const platform = Capacitor.getPlatform();
   document.documentElement.classList.add('native-runtime', `native-${platform}`);
+  initializeNativeViewportHandling();
+  logNativeEvent('runtime', 'native-experience-init', { platform });
 
   await Promise.allSettled([
     configureStatusBar(),
@@ -41,10 +44,40 @@ async function configureStatusBar() {
 
 async function configureSplashScreen() {
   try {
-    await SplashScreen.hide();
+    // Avoid early hide white flash: wait for first frame and short settle.
+    const waitForFirstPaint = () =>
+      new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const waitForLoadEvent = () =>
+      new Promise<void>((resolve) => {
+        if (document.readyState === 'complete') {
+          resolve();
+          return;
+        }
+        window.addEventListener('load', () => resolve(), { once: true });
+      });
+    await Promise.race([
+      Promise.all([waitForFirstPaint(), waitForLoadEvent()]),
+      new Promise<void>((resolve) => window.setTimeout(resolve, 900)),
+    ]);
+    await SplashScreen.hide({ fadeOutDuration: 180 });
+    logNativeEvent('runtime', 'splash-hidden');
   } catch (error) {
     console.warn('SplashScreen hide skipped:', error);
   }
+}
+
+function initializeNativeViewportHandling() {
+  const applyKeyboardInset = () => {
+    const vv = window.visualViewport;
+    const offset = vv ? Math.max(0, window.innerHeight - vv.height - vv.offsetTop) : 0;
+    document.documentElement.style.setProperty('--net360-keyboard-offset', `${Math.round(offset)}px`);
+  };
+  applyKeyboardInset();
+  window.visualViewport?.addEventListener('resize', applyKeyboardInset);
+  window.visualViewport?.addEventListener('scroll', applyKeyboardInset);
+  window.addEventListener('orientationchange', () => {
+    window.setTimeout(applyKeyboardInset, 140);
+  }, { passive: true });
 }
 
 async function registerPushNotificationsIfEnabled() {

@@ -5,6 +5,7 @@ import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { apiRequest } from '../lib/api';
+import { logNativeEvent } from '../lib/nativeDiagnostics';
 import {
   downloadDataUrlFile as downloadDataUrlFileSafe,
   openDataUrlPreview,
@@ -272,10 +273,20 @@ export function PracticeBoard() {
     setLoadingQuestion(true);
     try {
       const query = excludeId ? `?excludeId=${encodeURIComponent(excludeId)}` : '';
-      const payload = await apiRequest<{ question: BoardQuestion }>(`/api/practice-board/questions/random${query}`);
+      const payload = await apiRequest<{ question: BoardQuestion }>(
+        `/api/practice-board/questions/random${query}`,
+        { retryCount: 2, timeoutMs: 45_000 },
+      );
       setActiveQuestion(payload?.question || null);
+      logNativeEvent('practice-board', 'random-question-loaded', {
+        hasQuestion: Boolean(payload?.question),
+        subject: payload?.question?.subject || '',
+      });
       setShowAnswer(false);
-    } catch {
+    } catch (error) {
+      logNativeEvent('practice-board', 'random-question-failed', {
+        message: (error as Error)?.message || String(error),
+      }, 'error');
       setActiveQuestion(null);
       showErrorToast('Could not load a practice board question from the database.');
     } finally {
@@ -286,9 +297,18 @@ export function PracticeBoard() {
   const fetchQuestionBank = useCallback(async () => {
     setQuestionBankLoading(true);
     try {
-      const payload = await apiRequest<{ questions: BoardQuestion[] }>('/api/practice-board/questions?limit=500');
+      const payload = await apiRequest<{ questions: BoardQuestion[] }>(
+        '/api/practice-board/questions?limit=500',
+        { retryCount: 2, timeoutMs: 45_000 },
+      );
       setQuestionBankQuestions(payload?.questions || []);
-    } catch {
+      logNativeEvent('practice-board', 'question-bank-loaded', {
+        count: Array.isArray(payload?.questions) ? payload.questions.length : 0,
+      });
+    } catch (error) {
+      logNativeEvent('practice-board', 'question-bank-failed', {
+        message: (error as Error)?.message || String(error),
+      }, 'error');
       setQuestionBankQuestions([]);
       showErrorToast('Could not load practice board question bank.');
     } finally {

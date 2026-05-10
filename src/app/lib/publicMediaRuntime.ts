@@ -1,4 +1,5 @@
 import { buildUrl } from './api';
+import { isNativeRuntime, logNativeEvent } from './nativeDiagnostics';
 
 export type PublicMediaConfigApi = {
   mediaBaseUrl?: string;
@@ -25,6 +26,7 @@ let runtimeMediaAssetVersion = '';
 let overrides: RuntimeOverrides = {};
 let fetchInFlight: Promise<void> | null = null;
 let mediaConfigFetchFinished = false;
+const MEDIA_CONFIG_CACHE_KEY = 'net360-media-config-cache-v1';
 
 function trimSlash(input: string): string {
   return input.replace(/\/+$/, '');
@@ -52,6 +54,18 @@ export function applyPublicMediaConfigFromApi(data: PublicMediaConfigApi | null 
     appPromoImageUrl: promo || undefined,
     schoolsPathPrefix: schools || undefined,
   };
+  try {
+    localStorage.setItem(
+      MEDIA_CONFIG_CACHE_KEY,
+      JSON.stringify({
+        s3BaseUrl: runtimeS3Base || '',
+        mediaAssetVersion: runtimeMediaAssetVersion || '',
+        ...overrides,
+      }),
+    );
+  } catch {
+    // Ignore storage failures in private mode / quota limits.
+  }
 }
 
 export function getRuntimeS3BaseOverride(): string {
@@ -78,24 +92,64 @@ export async function fetchAndApplyPublicMediaConfig(): Promise<void> {
   if (mediaConfigFetchFinished) return;
 
   fetchInFlight = (async () => {
-    try {
-      const res = await fetch(buildUrl('/api/public/media-config'), {
+    const endpoint = buildUrl('/api/public/media-config');
+    const attemptFetch = async (attempt: number) => {
+      const res = await fetch(endpoint, {
         method: 'GET',
-        credentials: 'omit',
+        credentials: 'include',
         cache: 'no-store',
       });
       if (!res.ok) {
-        if (import.meta.env.DEV) {
-          console.warn('[net360/media-config] HTTP', res.status);
-        }
-        return;
+        throw new Error(`media-config HTTP ${res.status}`);
       }
       const data = (await res.json()) as PublicMediaConfigApi;
       applyPublicMediaConfigFromApi(data);
+      logNativeEvent('media', 'config-loaded', {
+        attempt,
+        endpoint,
+        hasS3Base: Boolean(runtimeS3Base),
+      });
+      return;
+    };
+
+    try {
+      let lastError: unknown = null;
+      for (let attempt = 1; attempt <= 3; attempt += 1) {
+        try {
+          await attemptFetch(attempt);
+          return;
+        } catch (error) {
+          lastError = error;
+          if (attempt < 3) {
+            await new Promise<void>((resolve) => window.setTimeout(resolve, attempt * 700));
+          }
+        }
+      }
+      throw lastError || new Error('media-config unknown fetch failure');
     } catch (err) {
+      if (isNativeRuntime()) {
+        try {
+          const cachedRaw = localStorage.getItem(MEDIA_CONFIG_CACHE_KEY);
+          if (cachedRaw) {
+            const cached = JSON.parse(cachedRaw) as PublicMediaConfigApi;
+            applyPublicMediaConfigFromApi(cached);
+            logNativeEvent('media', 'config-cache-fallback', {
+              endpoint,
+              hasS3Base: Boolean(runtimeS3Base),
+            }, 'warn');
+            return;
+          }
+        } catch {
+          // No valid cache fallback.
+        }
+      }
       if (import.meta.env.DEV) {
         console.warn('[net360/media-config] fetch failed', err);
       }
+      logNativeEvent('media', 'config-fetch-failed', {
+        endpoint,
+        message: (err as Error)?.message || String(err),
+      }, 'error');
     } finally {
       mediaConfigFetchFinished = true;
     }

@@ -1272,3 +1272,51 @@ canvas {
   max-width: 100%;
   height: auto;
 }
+
+.native-android .net360-main {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px), var(--net360-keyboard-offset, 0px));
+}
+
+.native-android .net360-page {
+  padding-left: max(14px, env(safe-area-inset-left, 0px));
+  padding-right: max(14px, env(safe-area-inset-right, 0px));
+}
+
+.native-android .net360-page [data-slot='dialog-content'],
+.native-android .net360-page [data-slot='sheet-content'],
+.native-android [role='dialog'] {
+  max-height: min(90dvh, 90vh);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.native-android .net360-page [data-slot='card'],
+.native-android .net360-page [data-slot='tabs-list'],
+.native-android .net360-page [data-slot='tabs-trigger'],
+.native-android .net360-page [data-slot='button'],
+.native-android .net360-page button,
+.native-android .net360-page a[role='button'] {
+  touch-action: manipulation;
+}
+
+.native-android .net360-page [data-slot='tabs-trigger'],
+.native-android .net360-page [data-slot='button'],
+.native-android .net360-page button {
+  min-height: 42px;
+}
+
+.native-android .net360-page [class*='w-['],
+.native-android .net360-page [class*='min-w-['],
+.native-android .net360-page [class*='max-w-['] {
+  max-width: 100%;
+}
+
+@media (max-width: 640px) {
+  .native-android .net360-page [data-slot='tabs-trigger'] {
+    min-height: 44px;
+    padding-left: 0.75rem;
+    padding-right: 0.75rem;
+  }
+}

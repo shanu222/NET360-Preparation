@@ -12,6 +12,7 @@ import {
   signOut,
 } from 'firebase/auth';
 import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 import {
   COOKIE_SESSION_API_MARKER,
   clearPersistedStudentTokens,
@@ -24,6 +25,7 @@ import {
 } from '../lib/authSession';
 import { firebaseAuth, isFirebaseConfigured } from '../lib/firebase';
 import { showWarningToast } from '../lib/userToast';
+import { isNativeRuntime as isNativeRuntimePlatform, logNativeEvent } from '../lib/nativeDiagnostics';
 
 interface AuthUser {
   id: string;
@@ -85,7 +87,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [deviceId] = useState<string>(() => getOrCreateDeviceId());
-  const isNativeRuntime = Capacitor.isNativePlatform();
+  const isNativeRuntime = Capacitor.isNativePlatform() && isNativeRuntimePlatform();
 
   const applyAuthPayload = useCallback((payload: { token?: string; refreshToken?: string; user: AuthUser }) => {
     setUser(payload.user);
@@ -115,6 +117,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (!hasStoredAuthCredentials()) {
+        logNativeEvent('auth', 'restore-skipped-no-credentials');
         if (!cancelled && loadId === authSessionLoadGeneration) setLoading(false);
         return;
       }
@@ -128,6 +131,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           const me = await apiRequest<{ user: AuthUser }>('/api/auth/me', {}, bearer);
           if (cancelled || loadId !== authSessionLoadGeneration) return;
+          logNativeEvent('auth', 'restore-from-me-success', { hasBearer: Boolean(bearer) });
           setUser(me.user);
           if (!bearer) {
             setToken(COOKIE_SESSION_API_MARKER);
@@ -149,6 +153,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               { method: 'POST', body: JSON.stringify({ refreshToken: rt }) },
             );
             if (cancelled || loadId !== authSessionLoadGeneration) return;
+            logNativeEvent('auth', 'restore-from-refresh-success');
             setUser(refreshed.user);
             if (refreshed.token && shouldPersistAuthTokens()) {
               setToken(refreshed.token);
@@ -172,6 +177,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               { method: 'POST', body: JSON.stringify({}) },
             );
             if (cancelled || loadId !== authSessionLoadGeneration) return;
+            logNativeEvent('auth', 'restore-from-cookie-refresh-success');
             setUser(refreshed.user);
             if (refreshed.token && shouldPersistAuthTokens()) {
               setToken(refreshed.token);
@@ -192,6 +198,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setToken(null);
         setRefreshToken(null);
         setUser(null);
+        logNativeEvent('auth', 'restore-failed-cleared-session', { hadBearer: Boolean(bearer) }, 'warn');
         clearPersistedStudentTokens();
         if (bearer) {
           redirectToLoginScreen();
@@ -218,6 +225,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         setToken(localStorage.getItem(TOKEN_STORAGE_KEY));
         setRefreshToken(localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY));
+        logNativeEvent('auth', 'sync-from-storage');
       } catch {
         /* ignore */
       }
@@ -236,10 +244,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     window.addEventListener('focus', syncFromStorage);
     document.addEventListener('visibilitychange', onVisibility);
     window.addEventListener('storage', onStorage);
+    const appStateListenerPromise = CapacitorApp
+      .addListener('appStateChange', ({ isActive }) => {
+        if (isActive) syncFromStorage();
+      })
+      .catch(() => null);
     return () => {
       window.removeEventListener('focus', syncFromStorage);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('storage', onStorage);
+      void appStateListenerPromise.then((listener) => listener?.remove());
     };
   }, []);
 
@@ -253,6 +267,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       '/api/auth/login',
       {
         method: 'POST',
+        retryCount: 1,
+        timeoutMs: 45_000,
         body: JSON.stringify({
           email,
           deviceId,
@@ -261,6 +277,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }),
       },
     );
+    logNativeEvent('auth', 'login-success', { email: email.toLowerCase() });
     applyAuthPayload(payload);
   }, [applyAuthPayload, deviceId]);
 
@@ -276,6 +293,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         '/api/auth/login',
         {
           method: 'POST',
+          retryCount: 1,
+          timeoutMs: 45_000,
           body: JSON.stringify({
             email: params.email,
             firebaseIdToken: params.firebaseIdToken,
@@ -297,6 +316,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       '/api/auth/register',
       {
         method: 'POST',
+        retryCount: 1,
+        timeoutMs: 45_000,
         body: JSON.stringify({
           email: params.email,
           firstName: params.firstName || '',
@@ -318,6 +339,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     provider.addScope('email');
     provider.setCustomParameters({ prompt: 'select_account' });
     if (isNativeRuntime) {
+      logNativeEvent('auth', 'google-redirect-start');
       await signInWithRedirect(firebaseAuth, provider);
       return;
     }
@@ -336,6 +358,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       lastName,
       forceLogoutOtherDevice: opts?.forceLogoutOtherDevice,
     });
+    logNativeEvent('auth', 'google-popup-success');
   }, [isNativeRuntime, upsertSocialAuthSession]);
 
   useEffect(() => {
@@ -354,8 +377,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw new Error('Google login did not return an email address.');
         }
         await upsertSocialAuthSession({ email, firebaseIdToken, firstName, lastName });
+        logNativeEvent('auth', 'google-redirect-complete', { email });
       } catch (error) {
         if (!cancelled) {
+          logNativeEvent('auth', 'google-redirect-failed', {
+            message: (error as Error)?.message || String(error),
+          }, 'warn');
           showWarningToast((error as Error)?.message || 'Google login could not be completed on this device.');
         }
       }
@@ -383,6 +410,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         '/api/auth/register',
         {
           method: 'POST',
+          retryCount: 1,
+          timeoutMs: 45_000,
           body: JSON.stringify({
             email,
             firstName,

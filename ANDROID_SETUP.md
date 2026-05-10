@@ -34,6 +34,7 @@ Install on your machine:
 Use `.env.android.example` as reference and create your own `.env.android` (or CI env vars with Android mode):
 
 - `VITE_API_URL=https://api.net360preparation.com`
+- `VITE_S3_BASE_URL=https://net360-media.s3.ap-south-1.amazonaws.com`
 - `VITE_ENABLE_PUSH_NOTIFICATIONS=false` (set `true` only after Firebase setup)
 
 Important:

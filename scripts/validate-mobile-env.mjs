@@ -36,9 +36,11 @@ if (/^http:\/\//i.test(apiBaseUrl)) {
 
 const mediaBase = String(process.env.VITE_S3_BASE_URL || process.env.VITE_PUBLIC_MEDIA_BASE_URL || '').trim();
 if (!mediaBase) {
-  console.warn(
-    '[mobile:build] VITE_S3_BASE_URL is unset. Schools/profile/guide media are stripped from the app bundle — set it in .env.android.',
+  console.error(
+    '[mobile:build] Missing VITE_S3_BASE_URL (or VITE_PUBLIC_MEDIA_BASE_URL). ' +
+      'Android builds strip bundled media and require a CDN/S3 media base URL.',
   );
+  process.exit(1);
 } else {
   console.log('[mobile:build] Media base URL:', mediaBase.replace(/\/+$/, ''));
 }

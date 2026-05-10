@@ -24,6 +24,7 @@ import {
   getRuntimeMediaOverrides,
   getRuntimeS3BaseOverride,
 } from './publicMediaRuntime';
+import { isNativeRuntime, logNativeEvent } from './nativeDiagnostics';
 
 function trimSlash(input: string): string {
   return input.replace(/\/+$/, '');
@@ -99,7 +100,12 @@ export function getMediaUrl(path: string | null | undefined): string {
   const schools = resolveSchoolsUrl(key);
   if (schools) return appendGlobalMediaVersion(schools);
   const base = getS3BaseUrl();
-  if (!base) return appendGlobalMediaVersion(`/${encodeS3KeySegments(key)}`);
+  if (!base) {
+    if (isNativeRuntime()) {
+      logNativeEvent('media', 'missing-s3-base', { key }, 'warn');
+    }
+    return appendGlobalMediaVersion(`/${encodeS3KeySegments(key)}`);
+  }
   return appendGlobalMediaVersion(`${trimSlash(base)}/${encodeS3KeySegments(key)}`);
 }
 

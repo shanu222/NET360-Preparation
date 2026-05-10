@@ -51,6 +51,7 @@ import { Helmet } from 'react-helmet-async';
 import { brandLogoUrl } from './lib/publicMedia';
 import { fetchAndApplyPublicMediaConfig } from './lib/publicMediaRuntime';
 import { PremiumCountdownBadge } from './components/subscription/PremiumCountdownBadge';
+import { logNativeEvent } from './lib/nativeDiagnostics';
 
 const SubscriptionPageLazy = lazyWithRetry(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
 const Dashboard = lazyWithRetry(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
@@ -473,6 +474,7 @@ export default function App() {
     const listenerPromise = CapacitorApp.addListener('appUrlOpen', ({ url }) => {
       const incoming = String(url || '').trim();
       if (!incoming) return;
+      logNativeEvent('runtime', 'deep-link-open', { url: incoming });
       try {
         const parsed = new URL(incoming);
         const path = parsed.pathname || '/';
@@ -480,6 +482,7 @@ export default function App() {
         navigateWithTransition(target);
       } catch {
         // Ignore malformed deep-link payloads.
+        logNativeEvent('runtime', 'deep-link-malformed', { url: incoming }, 'warn');
       }
     });
 

@@ -5,12 +5,24 @@ import process from 'node:process';
 const root = process.cwd();
 const androidDir = resolve(root, 'android');
 
+const quoteWinArg = (value) => {
+  const text = String(value);
+  if (!/[\s"]/g.test(text)) return text;
+  return `"${text.replace(/"/g, '\\"')}"`;
+};
+
 const run = (command, args, cwd = root) => {
-  const result = spawnSync(command, args, {
-    cwd,
-    stdio: 'inherit',
-    shell: false,
-  });
+  const result = process.platform === 'win32'
+    ? spawnSync(
+      'cmd.exe',
+      ['/d', '/s', '/c', [command, ...args].map((part) => quoteWinArg(part)).join(' ')],
+      { cwd, stdio: 'inherit', shell: false },
+    )
+    : spawnSync(command, args, { cwd, stdio: 'inherit', shell: false });
+  if (result.error) {
+    console.error(`[android:release] Failed to run ${command}:`, result.error.message);
+    process.exit(1);
+  }
   if (result.status !== 0) {
     process.exit(result.status || 1);
   }

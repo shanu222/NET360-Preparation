@@ -16,6 +16,7 @@ import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl, shouldPersistAuthTokens } from '../lib/authSession';
 import { io, type Socket } from 'socket.io-client';
 import { App as CapacitorApp } from '@capacitor/app';
+import { logNativeEvent } from '../lib/nativeDiagnostics';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import { PremiumLockScreen } from './subscription/PremiumLockScreen';
@@ -1128,11 +1129,13 @@ function CommunityInner() {
     communitySocketRef.current = socket;
 
     socket.on('connect', () => {
+      logNativeEvent('socket', 'community-connect', { transport: socket.io.engine?.transport?.name || 'unknown' });
       closeSse();
       setSseDropped(false);
     });
 
     socket.on('disconnect', () => {
+      logNativeEvent('socket', 'community-disconnect', { reason: 'socket-disconnect' }, 'warn');
       setSseDropped(true);
       if (!disconnectToastShown) {
         disconnectToastShown = true;
@@ -1156,6 +1159,7 @@ function CommunityInner() {
 
     const handleConnectivityResume = () => {
       if (closed) return;
+      logNativeEvent('socket', 'community-resume-reconnect');
       if (socket.disconnected) {
         socket.connect();
       }

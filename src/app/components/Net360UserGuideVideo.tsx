@@ -1,4 +1,6 @@
+import { useMemo, useState } from 'react';
 import { shouldUseLocalMediaFallback, userGuideVideoUrl } from '../lib/publicMedia';
+import { isNativeRuntime, logNativeEvent } from '../lib/nativeDiagnostics';
 
 /**
  * User guide video: primary URL from `userGuideVideoUrl()` (S3). Optional local `<source>` in dev or when
@@ -7,6 +9,12 @@ import { shouldUseLocalMediaFallback, userGuideVideoUrl } from '../lib/publicMed
 export function Net360UserGuideVideoSection() {
   const remote = userGuideVideoUrl();
   const localFallback = shouldUseLocalMediaFallback() ? '/assets/videos/net360-guide.mp4' : null;
+  const [retryCount, setRetryCount] = useState(0);
+  const remoteWithRetry = useMemo(() => {
+    if (!remote || retryCount <= 0 || !/^https?:\/\//i.test(remote)) return remote;
+    const sep = remote.includes('?') ? '&' : '?';
+    return `${remote}${sep}android_retry=${retryCount}`;
+  }, [remote, retryCount]);
 
   return (
     <div className="mx-auto mb-6 w-full max-w-[900px] px-1 text-center sm:mb-8">
@@ -21,8 +29,17 @@ export function Net360UserGuideVideoSection() {
           controls
           preload="metadata"
           playsInline
+          onError={() => {
+            logNativeEvent('media', 'guide-video-error', {
+              remote,
+              retryCount,
+            }, 'warn');
+            if (isNativeRuntime() && retryCount < 2) {
+              setRetryCount((current) => current + 1);
+            }
+          }}
         >
-          <source src={remote} type="video/mp4" />
+          <source src={remoteWithRetry} type="video/mp4" />
           {localFallback ? <source src={localFallback} type="video/mp4" /> : null}
           Your browser does not support the video tag.
         </video>

@@ -5,6 +5,7 @@ import {
   persistStudentTokens,
   shouldPersistAuthTokens,
 } from './authSession';
+import { isNativeRuntime, logNativeEvent } from './nativeDiagnostics';
 
 type RuntimeEnv = {
   VITE_ADMIN_ONLY?: string;
@@ -127,8 +128,7 @@ let refreshInFlight: Promise<string | null> | null = null;
 let refreshBlockedUntil = 0;
 
 function isNativeCapacitorRuntime() {
-  const runtime = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor;
-  return Boolean(runtime?.isNativePlatform?.());
+  return isNativeRuntime();
 }
 
 function logApiConfigurationIssue(level: 'warn' | 'error', message: string, details: Record<string, unknown> = {}) {
@@ -662,6 +662,12 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
         error: mappedError.message,
         phase: 'network-failure',
       });
+      logNativeEvent('api', 'request-failed', {
+        path,
+        method,
+        attempt,
+        message: mappedError.message,
+      }, 'error');
       throw mappedError;
     }
 
@@ -689,6 +695,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
         }, timeoutMs);
 
         if (retryResponse.ok) {
+          logNativeEvent('auth', 'token-refresh-success', { path, method });
           try {
             return await retryResponse.json() as T;
           } catch {
@@ -751,11 +758,24 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       error.payload = payload;
     }
 
+    logNativeEvent('api', 'response-error', {
+      path,
+      method,
+      status: response.status,
+      code: error.code || '',
+    }, response.status >= 500 ? 'error' : 'warn');
+
     throw error;
   }
 
   try {
-    return await response.json() as T;
+    const parsed = await response.json() as T;
+    logNativeEvent('api', 'response-ok', {
+      path,
+      method,
+      status: response.status,
+    });
+    return parsed;
   } catch {
     const bodyText = await response.text().catch(() => '');
     const looksHtml = isLikelyHtmlResponse(response, bodyText);
