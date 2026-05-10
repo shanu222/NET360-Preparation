@@ -23,7 +23,7 @@ import {
   readSessionIdFromAccessToken,
   shouldPersistAuthTokens,
 } from '../lib/authSession';
-import { firebaseAuth, isFirebaseConfigured } from '../lib/firebase';
+import { ensureFirebaseAuthReady, firebaseAuth, isFirebaseConfigured } from '../lib/firebase';
 import { showWarningToast } from '../lib/userToast';
 import { isNativeRuntime as isNativeRuntimePlatform, logNativeEvent } from '../lib/nativeDiagnostics';
 
@@ -111,6 +111,76 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [deviceId] = useState<string>(() => getOrCreateDeviceId());
   const isNativeRuntime = Capacitor.isNativePlatform() && isNativeRuntimePlatform();
   const runSessionRestoreRef = useRef<(reason?: string) => Promise<void>>(async () => undefined);
+  const authBootstrapInFlightRef = useRef<Promise<boolean> | null>(null);
+
+  const waitForNetworkReady = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+    if (navigator.onLine) return;
+    await new Promise<void>((resolve) => {
+      const timeout = window.setTimeout(() => {
+        window.removeEventListener('online', onOnline);
+        resolve();
+      }, 6_000);
+      const onOnline = () => {
+        window.clearTimeout(timeout);
+        window.removeEventListener('online', onOnline);
+        resolve();
+      };
+      window.addEventListener('online', onOnline, { once: true });
+    });
+  }, []);
+
+  const waitForStorageReady = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+    const key = '__net360_auth_bootstrap_probe__';
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try {
+        localStorage.setItem(key, '1');
+        localStorage.removeItem(key);
+        return;
+      } catch {
+        await delay(220 * (attempt + 1));
+      }
+    }
+  }, []);
+
+  const ensureNativeAuthBootstrap = useCallback(async (reason: string): Promise<boolean> => {
+    if (!isNativeRuntime) {
+      return Boolean(firebaseAuth || (await ensureFirebaseAuthReady()));
+    }
+    if (authBootstrapInFlightRef.current) {
+      return authBootstrapInFlightRef.current;
+    }
+
+    authBootstrapInFlightRef.current = (async () => {
+      for (let attempt = 1; attempt <= 4; attempt += 1) {
+        try {
+          await waitForNetworkReady();
+          await waitForStorageReady();
+          const auth = await ensureFirebaseAuthReady();
+          const ok = Boolean(auth);
+          logNativeEvent('auth', 'native-bootstrap', { reason, attempt, ok });
+          if (ok) return true;
+        } catch (error) {
+          logNativeEvent('auth', 'native-bootstrap-error', {
+            reason,
+            attempt,
+            message: (error as Error)?.message || String(error),
+          }, 'warn');
+        }
+        if (attempt < 4) {
+          await delay(260 * (2 ** (attempt - 1)));
+        }
+      }
+      return false;
+    })();
+
+    try {
+      return await authBootstrapInFlightRef.current;
+    } finally {
+      authBootstrapInFlightRef.current = null;
+    }
+  }, [isNativeRuntime, waitForNetworkReady, waitForStorageReady]);
 
   const applyAuthPayload = useCallback((payload: { token?: string; refreshToken?: string; user: AuthUser }) => {
     setUser(payload.user);
@@ -261,6 +331,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, [isNativeRuntime]); // Run only on mount to prevent instant logout cycles
 
+  useEffect(() => {
+    if (!isNativeRuntime) return;
+    void ensureNativeAuthBootstrap('mount');
+    const listenerPromise = CapacitorApp
+      .addListener('appStateChange', ({ isActive }) => {
+        if (isActive) void ensureNativeAuthBootstrap('app-resume');
+      })
+      .catch(() => null);
+    const onOnline = () => {
+      void ensureNativeAuthBootstrap('online');
+    };
+    window.addEventListener('online', onOnline);
+    return () => {
+      window.removeEventListener('online', onOnline);
+      void listenerPromise.then((listener) => listener?.remove());
+    };
+  }, [ensureNativeAuthBootstrap, isNativeRuntime]);
+
   // Mobile / multi-tab: keep React token in sync with localStorage after resume, refresh, or writes in another tab.
   useEffect(() => {
     if (typeof window === 'undefined' || !shouldPersistAuthTokens()) return;
@@ -327,14 +415,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [isNativeRuntime]);
 
   const login = useCallback<AuthContextValue['login']>(async (email, password, opts) => {
-    if (!isFirebaseConfigured() || !firebaseAuth) {
+    if (!isFirebaseConfigured()) {
       throw new Error('Firebase auth is not configured.');
+    }
+    const auth = await ensureFirebaseAuthReady();
+    if (!auth) {
+      const bootstrapped = await ensureNativeAuthBootstrap('email-login');
+      if (!bootstrapped) {
+        throw new Error('Sign-in could not be started on this device. Please retry.');
+      }
+    }
+    const activeAuth = auth || firebaseAuth;
+    if (!activeAuth) {
+      throw new Error('Sign-in could not be started on this device. Please retry.');
     }
     const attempts = isNativeRuntime ? 3 : 1;
     let lastError: unknown = null;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
-        const credential = await signInWithEmailAndPassword(firebaseAuth, email, password);
+        const credential = await signInWithEmailAndPassword(activeAuth, email, password);
         const firebaseIdToken = await credential.user.getIdToken();
         const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
           '/api/auth/login',
@@ -364,7 +463,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     throw lastError instanceof Error ? lastError : new Error(String(lastError || 'Unable to sign in.'));
-  }, [applyAuthPayload, deviceId, isNativeRuntime]);
+  }, [applyAuthPayload, deviceId, ensureNativeAuthBootstrap, isNativeRuntime]);
 
   const upsertSocialAuthSession = useCallback(async (params: {
     email: string;
@@ -418,19 +517,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [applyAuthPayload, deviceId, isNativeRuntime]);
 
   const loginWithGoogle = useCallback<AuthContextValue['loginWithGoogle']>(async (opts) => {
-    if (!isFirebaseConfigured() || !firebaseAuth) {
+    if (!isFirebaseConfigured()) {
       throw new Error('Firebase auth is not configured.');
+    }
+    const auth = await ensureFirebaseAuthReady();
+    if (!auth) {
+      const bootstrapped = await ensureNativeAuthBootstrap('google-login');
+      if (!bootstrapped) {
+        throw new Error('Google sign-in could not start on this device. Please retry.');
+      }
+    }
+    const activeAuth = auth || firebaseAuth;
+    if (!activeAuth) {
+      throw new Error('Google sign-in could not start on this device. Please retry.');
     }
     const provider = new GoogleAuthProvider();
     provider.addScope('profile');
     provider.addScope('email');
     provider.setCustomParameters({ prompt: 'select_account' });
     if (isNativeRuntime) {
-      logNativeEvent('auth', 'google-redirect-start');
-      await signInWithRedirect(firebaseAuth, provider);
+      logNativeEvent('auth', 'google-redirect-start', { providerReady: true });
+      await signInWithRedirect(activeAuth, provider);
       return;
     }
-    const credential = await signInWithPopup(firebaseAuth, provider);
+    const credential = await signInWithPopup(activeAuth, provider);
     const firebaseIdToken = await credential.user.getIdToken();
     const [firstName = '', ...rest] = String(credential.user.displayName || '').trim().split(/\s+/);
     const lastName = rest.join(' ').trim();
@@ -446,15 +556,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       forceLogoutOtherDevice: opts?.forceLogoutOtherDevice,
     });
     logNativeEvent('auth', 'google-popup-success');
-  }, [isNativeRuntime, upsertSocialAuthSession]);
+  }, [ensureNativeAuthBootstrap, isNativeRuntime, upsertSocialAuthSession]);
 
   useEffect(() => {
-    if (!isNativeRuntime || !isFirebaseConfigured() || !firebaseAuth) return;
+    if (!isNativeRuntime || !isFirebaseConfigured()) return;
     let cancelled = false;
 
     void (async () => {
       try {
-        const result = await getRedirectResult(firebaseAuth);
+        const auth = await ensureFirebaseAuthReady();
+        if (!auth) return;
+        logNativeEvent('auth', 'google-redirect-init', { ready: true });
+        const result = await getRedirectResult(auth);
         if (!result?.user || cancelled) return;
         const firebaseIdToken = await result.user.getIdToken();
         const [firstName = '', ...rest] = String(result.user.displayName || '').trim().split(/\s+/);
@@ -488,10 +601,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     firstName = '',
     lastName = '',
   }) => {
-    if (!isFirebaseConfigured() || !firebaseAuth) {
+    if (!isFirebaseConfigured()) {
       throw new Error('Firebase auth is not configured.');
     }
-    const credential = await createUserWithEmailAndPassword(firebaseAuth, email, password);
+    const auth = await ensureFirebaseAuthReady();
+    if (!auth) {
+      const bootstrapped = await ensureNativeAuthBootstrap('register');
+      if (!bootstrapped) {
+        throw new Error('Account setup could not start on this device. Please retry.');
+      }
+    }
+    const activeAuth = auth || firebaseAuth;
+    if (!activeAuth) {
+      throw new Error('Account setup could not start on this device. Please retry.');
+    }
+    const credential = await createUserWithEmailAndPassword(activeAuth, email, password);
     const firebaseIdToken = await credential.user.getIdToken();
     let payload: { token?: string; refreshToken?: string; user: AuthUser };
     try {
@@ -516,13 +640,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     applyAuthPayload(payload);
-  }, [applyAuthPayload, deviceId]);
+  }, [applyAuthPayload, deviceId, ensureNativeAuthBootstrap]);
 
   const sendRecoveryEmail = useCallback<AuthContextValue['sendRecoveryEmail']>(async (email) => {
-    if (!isFirebaseConfigured() || !firebaseAuth) {
+    if (!isFirebaseConfigured()) {
       throw new Error('Firebase auth is not configured.');
     }
-    await sendPasswordResetEmail(firebaseAuth, email);
+    const auth = await ensureFirebaseAuthReady();
+    const activeAuth = auth || firebaseAuth;
+    if (!activeAuth) {
+      throw new Error('Password recovery could not start on this device. Please retry.');
+    }
+    await sendPasswordResetEmail(activeAuth, email);
   }, []);
 
   const logout = useCallback(() => {

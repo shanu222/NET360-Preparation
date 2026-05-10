@@ -194,7 +194,7 @@ export function audienceFriendlyError(error: unknown, fallback = 'Something went
     return 'The request was cancelled.';
   }
   if (lower.includes('firebase auth is not configured')) {
-    return 'Sign-in could not be initialized on this device. Please retry.';
+    return 'Sign-in service is temporarily unavailable. Please retry in a moment.';
   }
   if (lower.includes('firebase admin sdk is not configured')) {
     return 'Sign-in service is temporarily unavailable. Please try again shortly.';
