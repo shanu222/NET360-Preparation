@@ -30,8 +30,10 @@ import { getMediaUrl, loginBannerImageUrl, shouldUseLocalMediaFallback } from '.
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { apiRequest } from '../lib/api';
+import { getAuthDebugSnapshot, subscribeAuthDebug, type AuthDebugSnapshot } from '../lib/authDebugState';
 import { isNativeRuntime as isNativeRuntimePlatform } from '../lib/nativeDiagnostics';
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
+const DEVICE_STORAGE_KEY = 'net360-device-id';
 
 function GoogleLogo(props: { className?: string }) {
   return (
@@ -59,20 +61,72 @@ interface ProfileProps {
 type AuthPanelMode = 'login' | 'register' | 'recovery';
 type AuthActionState = 'idle' | 'loggingIn' | 'creatingAccount';
 
-function isActiveSessionElsewhere(error: unknown): boolean {
-  const e = error as { code?: string; status?: number };
-  return Number(e?.status) === 409 && (e?.code === 'ACTIVE_SESSION_ELSEWHERE' || e?.code === 'active_session_exists');
+type AuthErrorLike = Error & {
+  code?: string;
+  status?: number;
+  payload?: {
+    code?: string;
+    message?: string;
+    canForceLogin?: boolean;
+    existingDevice?: string;
+    existingPlatform?: string;
+  };
+};
+
+type SessionConflictInfo = {
+  existingDevice?: string;
+  existingPlatform?: string;
+};
+
+function extractSessionConflictInfo(error: unknown): SessionConflictInfo | null {
+  const typed = error as AuthErrorLike;
+  const payload = typed?.payload;
+  if (!payload) return null;
+  if (String(payload.code || typed?.code || '').toUpperCase() !== 'ACTIVE_SESSION_ELSEWHERE') return null;
+  return {
+    existingDevice: String(payload.existingDevice || '').trim() || undefined,
+    existingPlatform: String(payload.existingPlatform || '').trim() || undefined,
+  };
 }
 
-function mobileFriendlyAuthError(error: unknown, fallback: string): string {
+function isActiveSessionElsewhere(error: unknown): boolean {
+  const e = error as AuthErrorLike;
+  const code = String(e?.code || e?.payload?.code || '').toUpperCase();
+  const message = String(e?.message || e?.payload?.message || '').toLowerCase();
+  return code === 'ACTIVE_SESSION_ELSEWHERE'
+    || code === 'ACTIVE_SESSION_EXISTS'
+    || message.includes('active on another device');
+}
+
+function loginFriendlyAuthError(error: unknown, fallback: string): string {
+  const typed = error as AuthErrorLike;
+  const code = String(typed?.code || typed?.payload?.code || '').toUpperCase();
+  const message = String(typed?.message || '').toLowerCase();
+
+  if (code === 'ACTIVE_SESSION_ELSEWHERE') {
+    return 'Active session exists on another device.';
+  }
+  if (code === 'SESSION_NO_LONGER_ACTIVE') {
+    return 'Session restore failed.';
+  }
+  if (message.includes('firebase') && message.includes('token')) {
+    return 'Firebase token exchange failed.';
+  }
+  if (message.includes('session') && message.includes('mismatch')) {
+    return 'Device session mismatch detected.';
+  }
+  if (message.includes('backend') && message.includes('rejected')) {
+    return 'Backend rejected session token.';
+  }
+
   const friendly = audienceFriendlyError(error, fallback);
   if (!isNativeRuntimePlatform()) return friendly;
-  const message = String(friendly || '').toLowerCase();
+  const friendlyMessage = String(friendly || '').toLowerCase();
   if (
-    message.includes('unable to connect')
-    || message.includes('network')
-    || message.includes('timed out')
-    || message.includes('could not start yet')
+    friendlyMessage.includes('unable to connect')
+    || friendlyMessage.includes('network')
+    || friendlyMessage.includes('timed out')
+    || friendlyMessage.includes('could not start yet')
   ) {
     return 'Unable to sign in. Please try again.';
   }
@@ -105,6 +159,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const [authActionState, setAuthActionState] = useState<AuthActionState>('idle');
   const [otherDeviceDialogOpen, setOtherDeviceDialogOpen] = useState(false);
   const [pendingAuthMethod, setPendingAuthMethod] = useState<'password' | 'google' | null>(null);
+  const [sessionConflictInfo, setSessionConflictInfo] = useState<SessionConflictInfo | null>(null);
+  const [authDebugSnapshot, setAuthDebugSnapshot] = useState<AuthDebugSnapshot>(() => getAuthDebugSnapshot());
+  const [showAuthDebugPanel, setShowAuthDebugPanel] = useState(false);
   const [showDeleteAccountPanel, setShowDeleteAccountPanel] = useState(false);
   const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
   const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState('');
@@ -118,6 +175,13 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     targetProgramOptions.find((option) => option.value === localProfile.targetProgram)?.label ||
     LEGACY_TARGET_PROGRAM_LABELS[String(localProfile.targetProgram || '').toLowerCase()] ||
     localProfile.targetProgram;
+  const persistedDeviceId = useMemo(() => {
+    try {
+      return localStorage.getItem(DEVICE_STORAGE_KEY) || '';
+    } catch {
+      return '';
+    }
+  }, []);
 
   useEffect(() => {
     setLocalProfile(profile);
@@ -139,6 +203,19 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     setDeleteAccountConfirmationText('');
     setDeleteAccountPassword('');
   }, [user?.id]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const search = new URLSearchParams(window.location.search);
+    setShowAuthDebugPanel(isNativeRuntimePlatform() && search.get('debugAuth') === '1');
+  }, []);
+
+  useEffect(() => {
+    if (!showAuthDebugPanel) return;
+    return subscribeAuthDebug((next) => {
+      setAuthDebugSnapshot(next);
+    });
+  }, [showAuthDebugPanel]);
 
   useEffect(() => {
     return () => {
@@ -216,6 +293,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
           await login(authForm.email, authForm.password);
         } catch (error) {
           if (isActiveSessionElsewhere(error)) {
+            setSessionConflictInfo(extractSessionConflictInfo(error));
             setPendingAuthMethod('password');
             setOtherDeviceDialogOpen(true);
             setAuthActionState('idle');
@@ -229,7 +307,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     } catch (error) {
       const typed = error as Error & { status?: number };
       setAuthActionState('idle');
-      const friendly = mobileFriendlyAuthError(
+      const friendly = loginFriendlyAuthError(
         error,
         isRegisterMode ? 'Could not create your account. Please try again.' : 'Unable to sign you in. Please check your email and password.',
       );
@@ -266,13 +344,14 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     setOtherDeviceDialogOpen(false);
     const method = pendingAuthMethod;
     setPendingAuthMethod(null);
+    setSessionConflictInfo(null);
     if (method === 'password') {
       setAuthActionState('loggingIn');
       try {
-        await login(authForm.email, authForm.password, { forceLogoutOtherDevice: true });
-        showSuccessToast('Logged in successfully.');
+        await login(authForm.email, authForm.password, { forceLogin: true, forceLogoutOtherDevice: true });
+        showSuccessToast('Previous device was logged out successfully.');
       } catch (error) {
-        showErrorToast(mobileFriendlyAuthError(error, 'Unable to sign you in. Please check your email and password.'));
+        showErrorToast(loginFriendlyAuthError(error, 'Unable to sign you in. Please check your email and password.'));
       } finally {
         setAuthActionState('idle');
       }
@@ -281,10 +360,10 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     if (method === 'google') {
       setAuthActionState('loggingIn');
       try {
-        await loginWithGoogle({ forceLogoutOtherDevice: true });
-        showSuccessToast('Signed in with Google.');
+        await loginWithGoogle({ forceLogin: true, forceLogoutOtherDevice: true });
+        showSuccessToast('Previous device was logged out successfully.');
       } catch (error) {
-        showErrorToast(mobileFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
+        showErrorToast(loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
       } finally {
         setAuthActionState('idle');
       }
@@ -301,11 +380,12 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     } catch (error) {
       setAuthActionState('idle');
       if (isActiveSessionElsewhere(error)) {
+        setSessionConflictInfo(extractSessionConflictInfo(error));
         setPendingAuthMethod('google');
         setOtherDeviceDialogOpen(true);
         return;
       }
-      showErrorToast(mobileFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
+      showErrorToast(loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
     }
   };
 
@@ -739,26 +819,62 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
           </div>
         </div>
         </div>
-        <AlertDialog open={otherDeviceDialogOpen} onOpenChange={setOtherDeviceDialogOpen}>
+        <AlertDialog
+          open={otherDeviceDialogOpen}
+          onOpenChange={(open) => {
+            setOtherDeviceDialogOpen(open);
+            if (!open) {
+              setPendingAuthMethod(null);
+              setSessionConflictInfo(null);
+            }
+          }}
+        >
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Account active elsewhere</AlertDialogTitle>
               <AlertDialogDescription>
-                Your account is already active on another device. Continue here and sign out the other session, or cancel to stay on this screen.
+                Your account is already active on another device. Do you want to log out from the previous device and continue here?
+                {sessionConflictInfo?.existingPlatform
+                  ? ` Previous platform: ${sessionConflictInfo.existingPlatform}.`
+                  : ''}
+                {sessionConflictInfo?.existingDevice
+                  ? ` Device fingerprint: ${sessionConflictInfo.existingDevice}.`
+                  : ''}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel
                 onClick={() => {
                   setPendingAuthMethod(null);
+                  setSessionConflictInfo(null);
                 }}
               >
                 Cancel
               </AlertDialogCancel>
-              <AlertDialogAction onClick={() => void confirmContinueOnOtherDevice()}>Continue &amp; sign out other device</AlertDialogAction>
+              <AlertDialogAction onClick={() => void confirmContinueOnOtherDevice()}>Continue Login</AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+        {showAuthDebugPanel ? (
+          <Card className="border-amber-300 bg-amber-50/85">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base text-amber-900">Android Auth Debug</CardTitle>
+              <CardDescription className="text-amber-800">Temporary panel enabled by <code>?debugAuth=1</code>.</CardDescription>
+            </CardHeader>
+            <CardContent className="grid grid-cols-1 gap-2 text-xs text-amber-900 sm:grid-cols-2">
+              <p><strong>Firebase initialized:</strong> {String(authDebugSnapshot.firebaseInitialized)}</p>
+              <p><strong>User authenticated:</strong> {String(authDebugSnapshot.userAuthenticated)}</p>
+              <p><strong>Firebase token generated:</strong> {String(authDebugSnapshot.firebaseTokenGenerated)}</p>
+              <p><strong>Token audience/project:</strong> {authDebugSnapshot.tokenAudience || '-'}</p>
+              <p><strong>Token issuer:</strong> {authDebugSnapshot.tokenIssuer || '-'}</p>
+              <p><strong>Backend login response:</strong> {authDebugSnapshot.backendLoginStatus || '-'}</p>
+              <p><strong>Backend login code:</strong> {authDebugSnapshot.backendLoginCode || '-'}</p>
+              <p><strong>Session/device ID:</strong> {authDebugSnapshot.sessionDeviceId || persistedDeviceId || '-'}</p>
+              <p><strong>Refresh status:</strong> {authDebugSnapshot.refreshStatus || '-'}</p>
+              <p><strong>Active session status:</strong> {authDebugSnapshot.activeSessionStatus || '-'}</p>
+            </CardContent>
+          </Card>
+        ) : null}
       </>
     );
   }

@@ -25,6 +25,7 @@ import {
 } from '../lib/authSession';
 import { ensureFirebaseAuthReady, firebaseAuth, isFirebaseConfigured } from '../lib/firebase';
 import { showWarningToast } from '../lib/userToast';
+import { updateAuthDebug } from '../lib/authDebugState';
 import { isNativeRuntime as isNativeRuntimePlatform, logNativeEvent } from '../lib/nativeDiagnostics';
 
 interface AuthUser {
@@ -41,8 +42,8 @@ interface AuthContextValue {
   token: string | null;
   user: AuthUser | null;
   loading: boolean;
-  login: (email: string, password: string, opts?: { forceLogoutOtherDevice?: boolean }) => Promise<void>;
-  loginWithGoogle: (opts?: { forceLogoutOtherDevice?: boolean }) => Promise<void>;
+  login: (email: string, password: string, opts?: { forceLogoutOtherDevice?: boolean; forceLogin?: boolean }) => Promise<void>;
+  loginWithGoogle: (opts?: { forceLogoutOtherDevice?: boolean; forceLogin?: boolean }) => Promise<void>;
   registerWithToken: (params: {
     email: string;
     password: string;
@@ -56,13 +57,43 @@ interface AuthContextValue {
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
 const DEVICE_STORAGE_KEY = 'net360-device-id';
+const DEVICE_COOKIE_KEY = 'net360_device_id';
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
+function readCookieValue(name: string): string {
+  if (typeof document === 'undefined') return '';
+  const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+function writeCookieValue(name: string, value: string) {
+  if (typeof document === 'undefined') return;
+  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${60 * 60 * 24 * 365 * 5}; SameSite=Lax`;
+}
+
 function getOrCreateDeviceId() {
-  const existing = localStorage.getItem(DEVICE_STORAGE_KEY);
-  if (existing) return existing;
-  const created = `device-${Date.now()}-${Math.round(Math.random() * 1000000)}`;
-  localStorage.setItem(DEVICE_STORAGE_KEY, created);
+  try {
+    const existing = localStorage.getItem(DEVICE_STORAGE_KEY);
+    if (existing) return existing;
+  } catch {
+    // fallback to cookie
+  }
+  const existingCookie = readCookieValue(DEVICE_COOKIE_KEY);
+  if (existingCookie) {
+    try {
+      localStorage.setItem(DEVICE_STORAGE_KEY, existingCookie);
+    } catch {
+      // Ignore storage sync failures.
+    }
+    return existingCookie;
+  }
+  const created = `device-${Date.now()}-${Math.round(Math.random() * 1000000)}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    localStorage.setItem(DEVICE_STORAGE_KEY, created);
+  } catch {
+    // Ignore storage failure; cookie persists as fallback.
+  }
+  writeCookieValue(DEVICE_COOKIE_KEY, created);
   return created;
 }
 
@@ -116,6 +147,11 @@ function decodeJwtClaims(token: string): { aud?: string; iss?: string; sub?: str
   }
 }
 
+function extractAuthErrorCode(error: unknown): string {
+  const typed = error as Error & { code?: string; payload?: { code?: string } };
+  return String(typed?.code || typed?.payload?.code || '').trim();
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() =>
     shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null,
@@ -129,6 +165,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isNativeRuntime = Capacitor.isNativePlatform() && isNativeRuntimePlatform();
   const runSessionRestoreRef = useRef<(reason?: string) => Promise<void>>(async () => undefined);
   const authBootstrapInFlightRef = useRef<Promise<boolean> | null>(null);
+
+  useEffect(() => {
+    if (!isNativeRuntime) return;
+    updateAuthDebug({ sessionDeviceId: deviceId });
+  }, [deviceId, isNativeRuntime]);
 
   const detectNativeWebViewCapabilities = useCallback(() => {
     return {
@@ -224,6 +265,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await waitForStorageReady();
           const auth = await ensureFirebaseAuthReady();
           const ok = Boolean(auth);
+          updateAuthDebug({ firebaseInitialized: ok });
           logNativeEvent('auth', 'native-bootstrap', { reason, attempt, ok, ...detectNativeWebViewCapabilities() });
           if (ok) return true;
         } catch (error) {
@@ -295,6 +337,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           );
           if (cancelled || loadId !== authSessionLoadGeneration) return;
           logNativeEvent('auth', 'restore-from-me-success', { hasBearer: Boolean(bearer) });
+          updateAuthDebug({
+            activeSessionStatus: 'active',
+            refreshStatus: 'ok',
+          });
           setUser(me.user);
           if (!bearer) {
             setToken(COOKIE_SESSION_API_MARKER);
@@ -317,6 +363,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             );
             if (cancelled || loadId !== authSessionLoadGeneration) return;
             logNativeEvent('auth', 'restore-from-refresh-success');
+            updateAuthDebug({
+              refreshStatus: 'ok',
+              activeSessionStatus: 'active',
+            });
             setUser(refreshed.user);
             if (refreshed.token && shouldPersistAuthTokens()) {
               setToken(refreshed.token);
@@ -341,6 +391,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             );
             if (cancelled || loadId !== authSessionLoadGeneration) return;
             logNativeEvent('auth', 'restore-from-cookie-refresh-success');
+            updateAuthDebug({
+              refreshStatus: 'ok',
+              activeSessionStatus: 'active',
+            });
             setUser(refreshed.user);
             if (refreshed.token && shouldPersistAuthTokens()) {
               setToken(refreshed.token);
@@ -362,6 +416,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setRefreshToken(null);
         setUser(null);
         logNativeEvent('auth', 'restore-failed-cleared-session', { hadBearer: Boolean(bearer) }, 'warn');
+        updateAuthDebug({
+          refreshStatus: 'failed',
+          activeSessionStatus: 'ended',
+        });
         clearPersistedStudentTokens();
         if (bearer) {
           redirectToLoginScreen();
@@ -485,6 +543,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error('Firebase auth is not configured.');
     }
     const auth = await ensureFirebaseAuthReady();
+    updateAuthDebug({ firebaseInitialized: Boolean(auth) });
     if (!auth) {
       const bootstrapped = await ensureNativeAuthBootstrap('email-login');
       if (!bootstrapped) {
@@ -500,6 +559,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
         const credential = await signInWithEmailAndPassword(activeAuth, email, password);
+        updateAuthDebug({ userAuthenticated: true });
         const firebaseIdToken = await credential.user.getIdToken();
         const tokenClaims = decodeJwtClaims(firebaseIdToken);
         logNativeEvent('auth', 'firebase-token-issued', {
@@ -507,6 +567,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           aud: tokenClaims.aud || '',
           iss: tokenClaims.iss || '',
           sub: tokenClaims.sub ? `${String(tokenClaims.sub).slice(0, 8)}...` : '',
+        });
+        updateAuthDebug({
+          firebaseTokenGenerated: true,
+          tokenAudience: tokenClaims.aud || '',
+          tokenIssuer: tokenClaims.iss || '',
+          backendLoginStatus: 'pending',
+          backendLoginCode: '',
         });
         const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
           '/api/auth/login',
@@ -519,15 +586,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               email,
               deviceId,
               firebaseIdToken,
-              forceLogoutOtherDevice: Boolean(opts?.forceLogoutOtherDevice),
+              forceLogoutOtherDevice: Boolean(opts?.forceLogoutOtherDevice || opts?.forceLogin),
+              forceLogin: Boolean(opts?.forceLogin || opts?.forceLogoutOtherDevice),
             }),
           },
         );
         logNativeEvent('auth', 'login-success', { email: email.toLowerCase() });
+        updateAuthDebug({
+          backendLoginStatus: 'success',
+          backendLoginCode: '',
+          activeSessionStatus: 'active',
+        });
         applyAuthPayload(payload);
         return;
       } catch (error) {
         lastError = error;
+        updateAuthDebug({
+          backendLoginStatus: 'failed',
+          backendLoginCode: extractAuthErrorCode(error),
+          activeSessionStatus: extractAuthErrorCode(error) === 'ACTIVE_SESSION_ELSEWHERE' ? 'conflict' : 'unknown',
+        });
         if (!isNativeRuntime || attempt >= attempts - 1 || !isLikelyTransientAuthFailure(error)) {
           break;
         }
@@ -544,6 +622,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     firstName?: string;
     lastName?: string;
     forceLogoutOtherDevice?: boolean;
+    forceLogin?: boolean;
   }) => {
     try {
       const loginPayload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
@@ -557,14 +636,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             email: params.email,
             firebaseIdToken: params.firebaseIdToken,
             deviceId,
-            forceLogoutOtherDevice: Boolean(params.forceLogoutOtherDevice),
+            forceLogoutOtherDevice: Boolean(params.forceLogoutOtherDevice || params.forceLogin),
+            forceLogin: Boolean(params.forceLogin || params.forceLogoutOtherDevice),
           }),
         },
       );
+      updateAuthDebug({
+        backendLoginStatus: 'success',
+        backendLoginCode: '',
+        activeSessionStatus: 'active',
+      });
       applyAuthPayload(loginPayload);
       return;
     } catch (error) {
       const typed = error as Error & { status?: number };
+      updateAuthDebug({
+        backendLoginStatus: 'failed',
+        backendLoginCode: extractAuthErrorCode(error),
+        activeSessionStatus: extractAuthErrorCode(error) === 'ACTIVE_SESSION_ELSEWHERE' ? 'conflict' : 'unknown',
+      });
       if (typed?.status !== 401) {
         throw error;
       }
@@ -594,6 +684,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw new Error('Firebase auth is not configured.');
     }
     const auth = await ensureFirebaseAuthReady();
+    updateAuthDebug({ firebaseInitialized: Boolean(auth) });
     if (!auth) {
       const bootstrapped = await ensureNativeAuthBootstrap('google-login');
       if (!bootstrapped) {
@@ -620,12 +711,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     const credential = await signInWithPopup(activeAuth, provider);
+    updateAuthDebug({ userAuthenticated: true });
     const firebaseIdToken = await credential.user.getIdToken();
     const tokenClaims = decodeJwtClaims(firebaseIdToken);
     logNativeEvent('auth', 'firebase-token-issued-google', {
       aud: tokenClaims.aud || '',
       iss: tokenClaims.iss || '',
       sub: tokenClaims.sub ? `${String(tokenClaims.sub).slice(0, 8)}...` : '',
+    });
+    updateAuthDebug({
+      firebaseTokenGenerated: true,
+      tokenAudience: tokenClaims.aud || '',
+      tokenIssuer: tokenClaims.iss || '',
     });
     const [firstName = '', ...rest] = String(credential.user.displayName || '').trim().split(/\s+/);
     const lastName = rest.join(' ').trim();
@@ -639,6 +736,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       firstName,
       lastName,
       forceLogoutOtherDevice: opts?.forceLogoutOtherDevice,
+      forceLogin: opts?.forceLogin,
     });
     logNativeEvent('auth', 'google-popup-success');
   }, [ensureNativeAuthBootstrap, isNativeRuntime, upsertSocialAuthSession]);

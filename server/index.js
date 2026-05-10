@@ -156,6 +156,7 @@ const loginBodySchema = z.object({
   firebaseIdToken: z.union([z.string().max(5000), z.null(), z.undefined()]).optional(),
   deviceId: z.union([z.string().max(400), z.null(), z.undefined()]).optional(),
   forceLogoutOtherDevice: z.union([z.boolean(), z.null(), z.undefined()]).optional(),
+  forceLogin: z.union([z.boolean(), z.null(), z.undefined()]).optional(),
 });
 
 const NODE_ENV = String(process.env.NODE_ENV || 'development').toLowerCase();
@@ -4229,9 +4230,18 @@ function authDeviceFingerprint(value) {
   return crypto.createHash('sha256').update(s, 'utf8').digest('hex').slice(0, 16);
 }
 
-/** When true, keep 409 ACTIVE_SESSION_ELSEWHERE unless client sends forceLogoutOtherDevice. Default: false (new login replaces prior session). */
+function inferSessionPlatform(deviceId, userAgent) {
+  const src = `${String(deviceId || '')} ${String(userAgent || '')}`.toLowerCase();
+  if (src.includes('android')) return 'android';
+  if (src.includes('iphone') || src.includes('ipad') || src.includes('ios')) return 'ios';
+  return 'web';
+}
+
+/** When true, keep 409 ACTIVE_SESSION_ELSEWHERE unless client sends forceLogin/forceLogoutOtherDevice. Default: true. */
 function shouldRequireDeviceLoginConfirmation() {
-  return String(process.env.REQUIRE_CONFIRM_FOR_DEVICE_LOGIN || '').toLowerCase() === 'true';
+  const raw = String(process.env.REQUIRE_CONFIRM_FOR_DEVICE_LOGIN || '').toLowerCase().trim();
+  if (raw === 'false' || raw === '0' || raw === 'no') return false;
+  return true;
 }
 
 function generateSignupTokenCode() {
@@ -7060,7 +7070,7 @@ app.post('/api/auth/login', async (req, res) => {
     const email = normalizeEmail(parsed.data.email);
     const password = String(parsed.data.password || '');
     const firebaseIdToken = String(parsed.data.firebaseIdToken || '').trim();
-    const forceLogoutOtherDevice = Boolean(parsed.data.forceLogoutOtherDevice);
+    const forceLogin = Boolean(parsed.data.forceLogin || parsed.data.forceLogoutOtherDevice);
     const deviceId = sanitizeDeviceId(parsed.data.deviceId || req.headers['user-agent'] || '');
     if (!email || (!password && !firebaseIdToken)) {
       await logSecurityEvent(req, {
@@ -7163,17 +7173,16 @@ app.post('/api/auth/login', async (req, res) => {
           deviceFp: authDeviceFingerprint(deviceId),
           hadActiveSession: Boolean(activeSession?.sessionId),
           conflictingDevice,
-          forceLogoutOtherDevice,
+          forceLogin,
           strictDeviceConfirm: shouldRequireDeviceLoginConfirmation(),
         });
       }
 
       /*
-       * 409 was returned here when another device had activeSession (single-device UX).
-       * Default now: new login invalidates the previous Mongo session + refresh chain, syncs Redis,
-       * and notifies sockets (OPTION A). Set REQUIRE_CONFIRM_FOR_DEVICE_LOGIN=true to restore 409 + forceLogoutOtherDevice.
+       * Single-session policy: when another device is active, require explicit client confirmation.
+       * Client retries with forceLogin (or legacy forceLogoutOtherDevice) to replace the previous session.
        */
-      if (conflictingDevice && shouldRequireDeviceLoginConfirmation() && !forceLogoutOtherDevice) {
+      if (conflictingDevice && shouldRequireDeviceLoginConfirmation() && !forceLogin) {
         await logSecurityEvent(req, {
           eventType: 'auth.active_session_conflict',
           severity: 'info',
@@ -7191,7 +7200,11 @@ app.post('/api/auth/login', async (req, res) => {
         });
         res.status(409).json({
           error: 'Your account is already active on another device.',
+          message: 'Account already active on another device.',
           code: 'ACTIVE_SESSION_ELSEWHERE',
+          canForceLogin: true,
+          existingDevice: authDeviceFingerprint(activeSession?.deviceId),
+          existingPlatform: inferSessionPlatform(activeSession?.deviceId, activeSession?.userAgent),
         });
         return;
       }
@@ -7203,7 +7216,7 @@ app.post('/api/auth/login', async (req, res) => {
           previousSessionId: String(activeSession.sessionId || ''),
           previousDeviceFp: authDeviceFingerprint(activeSession.deviceId),
           newDeviceFp: authDeviceFingerprint(deviceId),
-          clientAcknowledgedReplace: Boolean(forceLogoutOtherDevice),
+          clientAcknowledgedReplace: Boolean(forceLogin),
         });
         await logSecurityEvent(req, {
           eventType: 'auth.session_takeover',
