@@ -651,6 +651,18 @@ const corsAllowedOriginsList = corsAllowedOriginsListRaw
   ? expandWwwApexCorsOrigins(corsAllowedOriginsListRaw)
   : null;
 
+function isTrustedNativeAppOrigin(origin) {
+  const o = String(origin || '').trim().toLowerCase();
+  if (!o) return false;
+  return o === 'http://localhost'
+    || o === 'https://localhost'
+    || o === 'capacitor://localhost'
+    || o === 'ionic://localhost'
+    || o === 'app://localhost'
+    || o === 'http://127.0.0.1'
+    || o === 'https://127.0.0.1';
+}
+
 if (corsAllowedOriginsList && IS_PRODUCTION) {
   console.log('[cors] Using explicit allowlist with', corsAllowedOriginsList.length, 'origins (www/apex expanded where applicable)');
 }
@@ -658,6 +670,10 @@ if (corsAllowedOriginsList && IS_PRODUCTION) {
 const corsOriginResolver = corsAllowedOriginsList
   ? (origin, callback) => {
       if (!origin) {
+        callback(null, true);
+        return;
+      }
+      if (isTrustedNativeAppOrigin(origin)) {
         callback(null, true);
         return;
       }

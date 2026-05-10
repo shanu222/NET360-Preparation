@@ -152,6 +152,34 @@ function extractAuthErrorCode(error: unknown): string {
   return String(typed?.code || typed?.payload?.code || '').trim();
 }
 
+async function signInWithEmailPasswordRest(email: string, password: string): Promise<{ idToken: string }> {
+  const apiKey = String((import.meta as ImportMeta & { env?: { VITE_FIREBASE_API_KEY?: string } }).env?.VITE_FIREBASE_API_KEY || '').trim();
+  if (!apiKey) {
+    throw new Error('Firebase API key missing for native login fallback.');
+  }
+  const response = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(apiKey)}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      email,
+      password,
+      returnSecureToken: true,
+    }),
+  });
+  const payload = await response.json().catch(() => ({})) as { idToken?: string; error?: { message?: string } };
+  if (!response.ok || !payload?.idToken) {
+    const code = String(payload?.error?.message || '').trim();
+    if (code.includes('INVALID_LOGIN_CREDENTIALS') || code.includes('INVALID_PASSWORD') || code.includes('EMAIL_NOT_FOUND')) {
+      throw new Error('Incorrect email or password.');
+    }
+    throw new Error(code ? `Firebase REST login failed: ${code}` : `Firebase REST login failed (${response.status}).`);
+  }
+  return { idToken: String(payload.idToken) };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() =>
     shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null,
@@ -551,16 +579,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     const activeAuth = auth || firebaseAuth;
-    if (!activeAuth) {
+    if (!activeAuth && !isNativeRuntime) {
       throw new Error('Sign-in could not be started on this device. Please retry.');
     }
     const attempts = isNativeRuntime ? 3 : 1;
     let lastError: unknown = null;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
-        const credential = await signInWithEmailAndPassword(activeAuth, email, password);
-        updateAuthDebug({ userAuthenticated: true });
-        const firebaseIdToken = await credential.user.getIdToken();
+        let firebaseIdToken = '';
+        if (isNativeRuntime) {
+          // Android WebView can intermittently fail Firebase web SDK handshakes; use REST as primary login path.
+          const rest = await signInWithEmailPasswordRest(email, password);
+          firebaseIdToken = rest.idToken;
+          updateAuthDebug({ userAuthenticated: true });
+          logNativeEvent('auth', 'firebase-rest-login-success', { email: email.toLowerCase() });
+        } else {
+          try {
+            const credential = await signInWithEmailAndPassword(activeAuth as NonNullable<typeof activeAuth>, email, password);
+            updateAuthDebug({ userAuthenticated: true });
+            firebaseIdToken = await credential.user.getIdToken();
+          } catch (firebaseError) {
+            throw firebaseError;
+          }
+        }
         const tokenClaims = decodeJwtClaims(firebaseIdToken);
         logNativeEvent('auth', 'firebase-token-issued', {
           email: email.toLowerCase(),
@@ -700,15 +741,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     provider.addScope('email');
     provider.setCustomParameters({ prompt: 'select_account' });
     if (isNativeRuntime) {
-      logNativeEvent('auth', 'google-redirect-start', { providerReady: true });
-      try {
-        await signInWithRedirect(activeAuth, provider);
-        return;
-      } catch (error) {
-        logNativeEvent('auth', 'google-redirect-start-failed', {
-          message: (error as Error)?.message || String(error),
-        }, 'warn');
-      }
+      // Redirect/popup based Google auth is unreliable in Android embedded WebViews (returns to localhost origin).
+      throw new Error('Google sign-in is not available in this Android build yet. Please use email and password.');
     }
     const credential = await signInWithPopup(activeAuth, provider);
     updateAuthDebug({ userAuthenticated: true });

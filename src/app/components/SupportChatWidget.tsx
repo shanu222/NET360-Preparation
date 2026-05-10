@@ -9,6 +9,7 @@ import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
 import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { PushNotifications } from '@capacitor/push-notifications';
+import { Capacitor } from '@capacitor/core';
 
 interface SupportMessage {
   id: string;
@@ -135,7 +136,13 @@ export function SupportChatWidget() {
     }
   };
 
-  const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+  const isNativeRuntime = (() => {
+    try {
+      return Capacitor.isNativePlatform();
+    } catch {
+      return false;
+    }
+  })();
   const canUseWebNotifications = typeof window !== 'undefined' && 'Notification' in window;
   const panelMetrics = useMemo(() => getPanelMetrics(viewport.width, viewport.height), [viewport.height, viewport.width]);
 

@@ -1397,3 +1397,33 @@ html.native-android #root::-webkit-scrollbar {
     padding-right: 0.75rem;
   }
 }
+
+@media (hover: none) and (pointer: coarse) {
+  html,
+  body,
+  #root,
+  .net360-main,
+  .net360-page .overflow-auto,
+  .net360-page .overflow-y-auto,
+  .net360-page [data-slot='scroll-area'],
+  .net360-page [data-slot='tabs-list'],
+  .net360-swipe-row {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar,
+  #root::-webkit-scrollbar,
+  .net360-main::-webkit-scrollbar,
+  .net360-page .overflow-auto::-webkit-scrollbar,
+  .net360-page .overflow-y-auto::-webkit-scrollbar,
+  .net360-page [data-slot='scroll-area']::-webkit-scrollbar,
+  .net360-page [data-slot='tabs-list']::-webkit-scrollbar,
+  .net360-swipe-row::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+}

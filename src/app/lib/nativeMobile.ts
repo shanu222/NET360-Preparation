@@ -17,11 +17,34 @@ export type PermissionResolution = {
 };
 
 export async function initializeNativeExperience() {
-  if (!isNative()) {
+  const resolvePlatformWithRetry = async () => {
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      try {
+        if (Capacitor.isNativePlatform()) {
+          const p = Capacitor.getPlatform();
+          if (p && p !== 'web') return p;
+        }
+      } catch {
+        // keep retrying
+      }
+      try {
+        const bridge = (window as Window & { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } }).Capacitor;
+        if (bridge?.isNativePlatform?.()) {
+          const p = String(bridge.getPlatform?.() || '').toLowerCase();
+          if (p && p !== 'web') return p;
+        }
+      } catch {
+        // ignore bridge access errors during startup
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 120 * (attempt + 1)));
+    }
+    return '';
+  };
+
+  const platform = await resolvePlatformWithRetry();
+  if (!platform) {
     return;
   }
-
-  const platform = Capacitor.getPlatform();
   document.documentElement.classList.add('native-runtime', `native-${platform}`);
   initializeNativeViewportHandling();
   logNativeEvent('runtime', 'native-experience-init', { platform });

@@ -78,6 +78,29 @@ type SessionConflictInfo = {
   existingPlatform?: string;
 };
 
+function developerAuthErrorMessage(error: unknown): string {
+  const typed = error as AuthErrorLike;
+  const code = String(typed?.code || typed?.payload?.code || '').trim() || 'none';
+  const status = Number(typed?.status);
+  const message = String(typed?.message || '').trim() || 'unknown';
+  const payloadMessage = String(typed?.payload?.message || '').trim();
+  const existingPlatform = String(typed?.payload?.existingPlatform || '').trim();
+  const existingDevice = String(typed?.payload?.existingDevice || '').trim();
+
+  const parts = [
+    'DEV LOGIN ERROR',
+    `code=${code}`,
+    `status=${Number.isFinite(status) ? status : 'none'}`,
+    `message=${message}`,
+  ];
+
+  if (payloadMessage) parts.push(`payloadMessage=${payloadMessage}`);
+  if (existingPlatform) parts.push(`existingPlatform=${existingPlatform}`);
+  if (existingDevice) parts.push(`existingDevice=${existingDevice}`);
+
+  return parts.join(' | ');
+}
+
 function extractSessionConflictInfo(error: unknown): SessionConflictInfo | null {
   const typed = error as AuthErrorLike;
   const payload = typed?.payload;
@@ -111,6 +134,12 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
   }
   if (message.includes('firebase') && message.includes('token')) {
     return 'Firebase token exchange failed.';
+  }
+  if (message.includes('missing initial state') || message.includes('sessionstorage')) {
+    return 'Google sign-in redirect failed on this device. Please use email and password.';
+  }
+  if (message.includes('google sign-in is not available in this android build')) {
+    return 'Google sign-in is not available in this Android app yet. Please use email and password.';
   }
   if (message.includes('session') && message.includes('mismatch')) {
     return 'Device session mismatch detected.';
@@ -307,10 +336,12 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     } catch (error) {
       const typed = error as Error & { status?: number };
       setAuthActionState('idle');
-      const friendly = loginFriendlyAuthError(
-        error,
-        isRegisterMode ? 'Could not create your account. Please try again.' : 'Unable to sign you in. Please check your email and password.',
-      );
+      const friendly = isNativeRuntimePlatform() && !isRegisterMode
+        ? developerAuthErrorMessage(error)
+        : loginFriendlyAuthError(
+          error,
+          isRegisterMode ? 'Could not create your account. Please try again.' : 'Unable to sign you in. Please check your email and password.',
+        );
       if (isRegisterMode && typed.status === 409) {
         setRegisterConflictBanner(friendly);
       }
@@ -351,7 +382,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         await login(authForm.email, authForm.password, { forceLogin: true, forceLogoutOtherDevice: true });
         showSuccessToast('Previous device was logged out successfully.');
       } catch (error) {
-        showErrorToast(loginFriendlyAuthError(error, 'Unable to sign you in. Please check your email and password.'));
+        showErrorToast(isNativeRuntimePlatform()
+          ? developerAuthErrorMessage(error)
+          : loginFriendlyAuthError(error, 'Unable to sign you in. Please check your email and password.'));
       } finally {
         setAuthActionState('idle');
       }
@@ -363,7 +396,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         await loginWithGoogle({ forceLogin: true, forceLogoutOtherDevice: true });
         showSuccessToast('Previous device was logged out successfully.');
       } catch (error) {
-        showErrorToast(loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
+        showErrorToast(isNativeRuntimePlatform()
+          ? developerAuthErrorMessage(error)
+          : loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
       } finally {
         setAuthActionState('idle');
       }
@@ -385,7 +420,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         setOtherDeviceDialogOpen(true);
         return;
       }
-      showErrorToast(loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
+      showErrorToast(isNativeRuntimePlatform()
+        ? developerAuthErrorMessage(error)
+        : loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
     }
   };
 
@@ -752,12 +789,15 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                       type="button"
                       variant="outline"
                       className="h-11 rounded-xl border-indigo-200 bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-800"
-                      disabled={isAuthBusy}
+                      disabled={isAuthBusy || isNativeRuntimePlatform()}
                       onClick={() => void handleSocialAuth()}
                     >
                       <GoogleLogo className="mr-2 h-4 w-4" />
                       Google
                     </Button>
+                    {isNativeRuntimePlatform() ? (
+                      <p className="text-xs text-slate-500">Google sign-in is temporarily unavailable in Android app. Use email/password login.</p>
+                    ) : null}
                   </div>
                 </div>
               ) : null}
