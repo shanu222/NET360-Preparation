@@ -65,7 +65,6 @@ import {
   openDataUrlPreview,
 } from '../app/lib/filePreview';
 import { McqMathText, normalizeMcqImageSrc } from '../app/components/McqRender';
-import 'mathlive';
 import '../styles/admin-theme.css';
 
 const FLAT_TOPIC_SUBJECTS = new Set(['quantitative-mathematics', 'design-aptitude']);
@@ -85,6 +84,20 @@ type MathFieldLikeElement = HTMLElement & {
   insert?: (value: string, options?: { insertionMode?: 'replaceSelection' | 'insertBefore' | 'insertAfter' }) => void;
   executeCommand?: (command: unknown) => void;
 };
+
+let mathLiveReadyPromise: Promise<void> | null = null;
+
+function ensureMathLiveLoaded() {
+  if (!mathLiveReadyPromise) {
+    mathLiveReadyPromise = import('mathlive')
+      .then(() => undefined)
+      .catch((error) => {
+        mathLiveReadyPromise = null;
+        throw error;
+      });
+  }
+  return mathLiveReadyPromise;
+}
 
 type ClipboardDataEvent = {
   clipboardData: DataTransfer | null;
@@ -507,8 +520,26 @@ function MathLiveInput({
 }) {
   const fieldRef = useRef<MathFieldLikeElement | null>(null);
   const lastHandledPasteRef = useRef(0);
+  const [mathLiveReady, setMathLiveReady] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+    void ensureMathLiveLoaded()
+      .then(() => {
+        if (!cancelled) setMathLiveReady(true);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          showWarningToast('Advanced math editor is still loading. You can type plain text meanwhile.');
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!mathLiveReady) return;
     const field = fieldRef.current;
     if (!field) return;
 
@@ -597,9 +628,10 @@ function MathLiveInput({
       field.removeEventListener('paste', handlePaste);
       field.removeEventListener('beforeinput', handleBeforeInput);
     };
-  }, [id, insertImageTokenOnPaste, onImagePaste, onPasteIntercept, onValueChange]);
+  }, [id, insertImageTokenOnPaste, mathLiveReady, onImagePaste, onPasteIntercept, onValueChange]);
 
   useEffect(() => {
+    if (!mathLiveReady) return;
     const field = fieldRef.current;
     if (!field) return;
 
@@ -608,7 +640,19 @@ function MathLiveInput({
     if (currentValue !== nextValue) {
       field.setValue(nextValue, { silenceNotifications: true });
     }
-  }, [value]);
+  }, [mathLiveReady, value]);
+
+  if (!mathLiveReady) {
+    return (
+      <Textarea
+        id={id}
+        value={value}
+        placeholder={placeholder || ''}
+        className={className}
+        onChange={(event) => onValueChange(event.target.value)}
+      />
+    );
+  }
 
   return createElement('math-field', {
     id,

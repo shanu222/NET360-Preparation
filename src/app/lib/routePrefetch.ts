@@ -22,8 +22,18 @@ const loaders: Record<string, () => Promise<unknown>> = {
   'nust-entry-test-preparation': () => import('../components/SeoLandingPage'),
 };
 
+function isNativeRuntime() {
+  if (typeof window === 'undefined') return false;
+  try {
+    return Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+  } catch {
+    return false;
+  }
+}
+
 /** @param section Route section id (matches sidebar `SectionId`). */
 export function prefetchStudentSection(section: string): void {
+  if (isNativeRuntime()) return;
   const load = loaders[section];
   if (load) {
     void load().catch(() => undefined);
@@ -61,6 +71,7 @@ export function prefetchNeighborStudentSections(activeSection: string): void {
 
 /** Warm dashboard + neighbors on idle — improves perceived “home” speed without blocking paint. */
 export function scheduleIdleStudentPrefetch(activeSection: string): void {
+  if (isNativeRuntime()) return;
   const run = () => {
     prefetchStudentSection('home');
     prefetchNeighborStudentSections(activeSection);

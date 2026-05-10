@@ -134,6 +134,14 @@ function setAuthCookies(res, accessToken, refreshToken) {
   }
 }
 
+function setAuthTransportDiagnosticsHeaders(req, res, payload) {
+  const hasAccessCookie = Boolean(payload?.token);
+  const hasRefreshCookie = Boolean(payload?.refreshToken);
+  const bodyMode = ISSUE_AUTH_BODY_TOKENS || isNativeAppRequest(req) ? 'body+cookie' : 'cookie-only';
+  res.setHeader('X-Net360-Auth-Transport', bodyMode);
+  res.setHeader('X-Net360-Auth-Cookies-Set', `access=${hasAccessCookie ? '1' : '0'};refresh=${hasRefreshCookie ? '1' : '0'}`);
+}
+
 function clearAuthCookies(res) {
   const expiredOptions = {
     ...buildAuthCookieOptions(1),
@@ -144,9 +152,33 @@ function clearAuthCookies(res) {
   res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, expiredOptions);
 }
 
-function buildAuthJsonBody(payload) {
+function isNativeAppRequest(req) {
+  try {
+    const clientPlatform = String(req.headers['x-net360-client-platform'] || '').trim().toLowerCase();
+    if (clientPlatform === 'android-native' || clientPlatform === 'ios-native') {
+      return true;
+    }
+    const origin = String(req.headers.origin || '').trim().toLowerCase();
+    if (
+      origin === 'capacitor://localhost'
+      || origin === 'ionic://localhost'
+      || origin === 'app://localhost'
+      || origin === 'http://localhost'
+      || origin === 'https://localhost'
+    ) {
+      return true;
+    }
+    const ua = String(req.headers['user-agent'] || '').toLowerCase();
+    return ua.includes(' wv') || ua.includes('android') && ua.includes('version/');
+  } catch {
+    return false;
+  }
+}
+
+function buildAuthJsonBody(req, payload) {
   if (!payload || typeof payload !== 'object') return payload;
-  if (ISSUE_AUTH_BODY_TOKENS) return payload;
+  // Native WebViews can intermittently drop cross-origin cookies. Always include body tokens for native clients.
+  if (ISSUE_AUTH_BODY_TOKENS || isNativeAppRequest(req)) return payload;
   return { user: payload.user };
 }
 
@@ -704,7 +736,7 @@ const corsMiddleware = cors({
     'X-CSRF-Token',
     'Cache-Control',
   ],
-  exposedHeaders: ['Content-Length', 'Content-Type'],
+  exposedHeaders: ['Content-Length', 'Content-Type', 'X-Net360-Auth-Transport', 'X-Net360-Auth-Cookies-Set'],
   maxAge: 86_400,
   optionsSuccessStatus: 204,
 });
@@ -6961,8 +6993,9 @@ async function createDirectStudentAccount(req, res) {
 
     const payload = await issueAuthPayload(user, req);
     setAuthCookies(res, payload.token, payload.refreshToken);
+    setAuthTransportDiagnosticsHeaders(req, res, payload);
     mirrorStudentSessionRedis(user._id, user.activeSession.sessionId, deviceId);
-    res.status(201).json(buildAuthJsonBody(payload));
+    res.status(201).json(buildAuthJsonBody(req, payload));
     return;
   }
 
@@ -6995,8 +7028,9 @@ async function createDirectStudentAccount(req, res) {
 
   const payload = await issueAuthPayload(user, req);
   setAuthCookies(res, payload.token, payload.refreshToken);
+  setAuthTransportDiagnosticsHeaders(req, res, payload);
   mirrorStudentSessionRedis(user._id, user.activeSession.sessionId, deviceId);
-  res.status(201).json(buildAuthJsonBody(payload));
+  res.status(201).json(buildAuthJsonBody(req, payload));
 }
 
 app.post('/api/auth/register-with-token', async (req, res) => {
@@ -7265,6 +7299,7 @@ app.post('/api/auth/login', async (req, res) => {
 
       const payload = await issueAuthPayload(user, req);
       setAuthCookies(res, payload.token, payload.refreshToken);
+      setAuthTransportDiagnosticsHeaders(req, res, payload);
       await logSecurityEvent(req, {
         eventType: 'auth.login_success',
         severity: 'info',
@@ -7290,12 +7325,13 @@ app.post('/api/auth/login', async (req, res) => {
           deviceFp: authDeviceFingerprint(deviceId),
         });
       }
-      res.status(200).json(buildAuthJsonBody(payload));
+      res.status(200).json(buildAuthJsonBody(req, payload));
       return;
     }
 
     const payload = await issueAuthPayload(user, req);
     setAuthCookies(res, payload.token, payload.refreshToken);
+    setAuthTransportDiagnosticsHeaders(req, res, payload);
     await logSecurityEvent(req, {
       eventType: 'auth.login_success',
       severity: 'info',
@@ -7305,7 +7341,7 @@ app.post('/api/auth/login', async (req, res) => {
     if (!IS_PRODUCTION || String(process.env.NET360_AUTH_DEBUG || '').trim() === '1') {
       console.log('[auth/login] success', { email: user.email, role });
     }
-    res.status(200).json(buildAuthJsonBody(payload));
+    res.status(200).json(buildAuthJsonBody(req, payload));
   } catch (error) {
     console.error('LOGIN ERROR:', error?.message || error);
     console.error('[auth/login] server error:', error?.message || error);
@@ -7389,6 +7425,7 @@ app.post('/api/auth/refresh', async (req, res) => {
 
     const newPayload = await issueAuthPayload(user, req);
     setAuthCookies(res, newPayload.token, newPayload.refreshToken);
+    setAuthTransportDiagnosticsHeaders(req, res, newPayload);
     if ((user.role || 'student') === 'student' && user.activeSession?.sessionId) {
       mirrorStudentSessionRedis(user._id, user.activeSession.sessionId, user.activeSession.deviceId || '');
     }
@@ -7398,7 +7435,7 @@ app.post('/api/auth/refresh', async (req, res) => {
       actorUserId: user._id,
       actorEmail: user.email,
     });
-    res.json(buildAuthJsonBody(newPayload));
+    res.json(buildAuthJsonBody(req, newPayload));
   } catch {
     await logSecurityEvent(req, {
       eventType: 'auth.refresh_invalid_token',

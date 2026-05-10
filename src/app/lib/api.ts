@@ -131,6 +131,18 @@ function isNativeCapacitorRuntime() {
   return isNativeRuntime();
 }
 
+function resolveClientPlatformHeaderValue(): string {
+  if (!isNativeCapacitorRuntime()) return 'web';
+  try {
+    const platform = String((window as Window & { Capacitor?: { getPlatform?: () => string } }).Capacitor?.getPlatform?.() || '').toLowerCase();
+    if (platform === 'android') return 'android-native';
+    if (platform === 'ios') return 'ios-native';
+  } catch {
+    // ignore
+  }
+  return 'native';
+}
+
 function logApiConfigurationIssue(level: 'warn' | 'error', message: string, details: Record<string, unknown> = {}) {
   if (!import.meta.env.DEV) return;
   const payload = {
@@ -486,6 +498,12 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
     if (authToken && !isCookieSessionApiMarker(authToken)) {
       headers.set('Authorization', `Bearer ${authToken}`);
     }
+    if (!headers.has('X-Net360-Client-Platform')) {
+      headers.set('X-Net360-Client-Platform', resolveClientPlatformHeaderValue());
+    }
+    if (isNativeCapacitorRuntime() && !headers.has('X-Net360-Auth-Transport-Preference')) {
+      headers.set('X-Net360-Auth-Transport-Preference', 'body-token-preferred');
+    }
     return headers;
   };
 
@@ -672,6 +690,15 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   // Retry transient transport/HTTP failures to absorb slow backend wake-ups.
   for (;;) {
     try {
+      if (isNativeCapacitorRuntime() && (path.startsWith('/api/auth/') || path === '/api/auth/me')) {
+        logNativeEvent('auth', 'request-start', {
+          path,
+          method,
+          requestUrl: resolvedPath,
+          credentialsMode: String(options.credentials || 'include'),
+          hasExplicitBearer: Boolean(initialToken && !isCookieSessionApiMarker(initialToken)),
+        });
+      }
       response = await fetchWithTimeout(resolvedPath, {
         ...options,
         headers: buildHeaders(initialToken),
@@ -798,6 +825,15 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
 
   try {
     const parsed = await response.json() as T;
+    if (isNativeCapacitorRuntime() && (path.startsWith('/api/auth/') || path === '/api/auth/me')) {
+      logNativeEvent('auth', 'response-success', {
+        path,
+        method,
+        status: response.status,
+        authTransport: String(response.headers.get('X-Net360-Auth-Transport') || ''),
+        authCookiesSet: String(response.headers.get('X-Net360-Auth-Cookies-Set') || ''),
+      });
+    }
     logNativeEvent('api', 'response-ok', {
       path,
       method,

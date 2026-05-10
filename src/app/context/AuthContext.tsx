@@ -331,6 +331,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const finalizeNativeAuthTransport = useCallback(async (
+    payload: { token?: string; refreshToken?: string; user: AuthUser },
+    reason: 'login' | 'register' | 'social-login',
+  ) => {
+    if (!isNativeRuntime) return payload;
+    if (payload?.token && String(payload.token || '').trim()) {
+      return payload;
+    }
+    logNativeEvent('auth', 'native-transport-cookie-only', { reason }, 'warn');
+    try {
+      const refreshed = await apiRequest<{ token?: string; refreshToken?: string; user?: AuthUser }>(
+        '/api/auth/refresh',
+        {
+          method: 'POST',
+          body: JSON.stringify({}),
+          retryCount: 2,
+          retryDelayMs: 900,
+          timeoutMs: 50_000,
+        },
+      );
+      if (refreshed?.token) {
+        logNativeEvent('auth', 'native-transport-refresh-token-success', { reason });
+        return {
+          token: refreshed.token,
+          refreshToken: refreshed.refreshToken ?? null,
+          user: refreshed.user || payload.user,
+        };
+      }
+    } catch (error) {
+      logNativeEvent('auth', 'native-transport-refresh-token-failed', {
+        reason,
+        message: (error as Error)?.message || String(error),
+      }, 'warn');
+    }
+    return payload;
+  }, [isNativeRuntime]);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -632,13 +669,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             }),
           },
         );
+        const stabilizedPayload = await finalizeNativeAuthTransport(payload, 'login');
         logNativeEvent('auth', 'login-success', { email: email.toLowerCase() });
         updateAuthDebug({
           backendLoginStatus: 'success',
           backendLoginCode: '',
           activeSessionStatus: 'active',
         });
-        applyAuthPayload(payload);
+        applyAuthPayload(stabilizedPayload);
         return;
       } catch (error) {
         lastError = error;
@@ -655,7 +693,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     }
     throw lastError instanceof Error ? lastError : new Error(String(lastError || 'Unable to sign in.'));
-  }, [applyAuthPayload, deviceId, ensureNativeAuthBootstrap, isNativeRuntime]);
+  }, [applyAuthPayload, deviceId, ensureNativeAuthBootstrap, finalizeNativeAuthTransport, isNativeRuntime]);
 
   const upsertSocialAuthSession = useCallback(async (params: {
     email: string;
@@ -682,12 +720,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }),
         },
       );
+      const stabilizedPayload = await finalizeNativeAuthTransport(loginPayload, 'social-login');
       updateAuthDebug({
         backendLoginStatus: 'success',
         backendLoginCode: '',
         activeSessionStatus: 'active',
       });
-      applyAuthPayload(loginPayload);
+      applyAuthPayload(stabilizedPayload);
       return;
     } catch (error) {
       const typed = error as Error & { status?: number };
@@ -717,8 +756,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }),
       },
     );
-    applyAuthPayload(registerPayload);
-  }, [applyAuthPayload, deviceId, isNativeRuntime]);
+    const stabilizedPayload = await finalizeNativeAuthTransport(registerPayload, 'social-login');
+    applyAuthPayload(stabilizedPayload);
+  }, [applyAuthPayload, deviceId, finalizeNativeAuthTransport, isNativeRuntime]);
 
   const loginWithGoogle = useCallback<AuthContextValue['loginWithGoogle']>(async (opts) => {
     if (!isFirebaseConfigured()) {
@@ -860,8 +900,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw error;
     }
 
-    applyAuthPayload(payload);
-  }, [applyAuthPayload, deviceId, ensureNativeAuthBootstrap]);
+    const stabilizedPayload = await finalizeNativeAuthTransport(payload, 'register');
+    applyAuthPayload(stabilizedPayload);
+  }, [applyAuthPayload, deviceId, ensureNativeAuthBootstrap, finalizeNativeAuthTransport]);
 
   const sendRecoveryEmail = useCallback<AuthContextValue['sendRecoveryEmail']>(async (email) => {
     if (!isFirebaseConfigured()) {
