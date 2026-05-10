@@ -1,6 +1,8 @@
 package com.net360.preparation;
 
 import android.os.Bundle;
+import android.view.View;
+import android.webkit.CookieManager;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 
@@ -17,8 +19,19 @@ public class MainActivity extends BridgeActivity {
     WebSettings settings = webView.getSettings();
     settings.setJavaScriptEnabled(true);
     settings.setDomStorageEnabled(true);
+    settings.setDatabaseEnabled(true);
     settings.setMediaPlaybackRequiresUserGesture(false);
     settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
     settings.setSafeBrowsingEnabled(true);
+
+    CookieManager cookieManager = CookieManager.getInstance();
+    cookieManager.setAcceptCookie(true);
+    cookieManager.setAcceptThirdPartyCookies(webView, true);
+    CookieManager.getInstance().flush();
+
+    webView.setVerticalScrollBarEnabled(false);
+    webView.setHorizontalScrollBarEnabled(false);
+    webView.setScrollbarFadingEnabled(true);
+    webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
   }
 }

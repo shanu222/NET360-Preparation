@@ -30,6 +30,7 @@ import { getMediaUrl, loginBannerImageUrl, shouldUseLocalMediaFallback } from '.
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { apiRequest } from '../lib/api';
+import { isNativeRuntime as isNativeRuntimePlatform } from '../lib/nativeDiagnostics';
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
 
 function GoogleLogo(props: { className?: string }) {
@@ -61,6 +62,21 @@ type AuthActionState = 'idle' | 'loggingIn' | 'creatingAccount';
 function isActiveSessionElsewhere(error: unknown): boolean {
   const e = error as { code?: string; status?: number };
   return Number(e?.status) === 409 && (e?.code === 'ACTIVE_SESSION_ELSEWHERE' || e?.code === 'active_session_exists');
+}
+
+function mobileFriendlyAuthError(error: unknown, fallback: string): string {
+  const friendly = audienceFriendlyError(error, fallback);
+  if (!isNativeRuntimePlatform()) return friendly;
+  const message = String(friendly || '').toLowerCase();
+  if (
+    message.includes('unable to connect')
+    || message.includes('network')
+    || message.includes('timed out')
+    || message.includes('could not start yet')
+  ) {
+    return 'Unable to sign in. Please try again.';
+  }
+  return friendly;
 }
 
 export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
@@ -213,7 +229,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     } catch (error) {
       const typed = error as Error & { status?: number };
       setAuthActionState('idle');
-      const friendly = audienceFriendlyError(
+      const friendly = mobileFriendlyAuthError(
         error,
         isRegisterMode ? 'Could not create your account. Please try again.' : 'Unable to sign you in. Please check your email and password.',
       );
@@ -256,7 +272,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         await login(authForm.email, authForm.password, { forceLogoutOtherDevice: true });
         showSuccessToast('Logged in successfully.');
       } catch (error) {
-        showErrorToast(audienceFriendlyError(error, 'Unable to sign you in. Please check your email and password.'));
+        showErrorToast(mobileFriendlyAuthError(error, 'Unable to sign you in. Please check your email and password.'));
       } finally {
         setAuthActionState('idle');
       }
@@ -268,7 +284,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         await loginWithGoogle({ forceLogoutOtherDevice: true });
         showSuccessToast('Signed in with Google.');
       } catch (error) {
-        handleApiError(error, 'Google sign-in did not finish. Please try again.');
+        showErrorToast(mobileFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
       } finally {
         setAuthActionState('idle');
       }
@@ -289,7 +305,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         setOtherDeviceDialogOpen(true);
         return;
       }
-      handleApiError(error, 'Google sign-in did not finish. Please try again.');
+      showErrorToast(mobileFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
     }
   };
 
@@ -458,9 +474,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               </CardTitle>
               <CardDescription className="text-slate-600">
                 {isRecoveryMode
-                  ? 'Enter your registered email to receive a Firebase password reset email.'
+                  ? 'Enter your registered email to receive a secure password reset link.'
                   : isRegisterMode
-                  ? 'Create your account directly with Firebase authentication.'
+                  ? 'Create your account securely with your email and password.'
                   : 'Users can only stay logged in on one device at a time.'}
               </CardDescription>
             </CardHeader>
@@ -642,7 +658,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               </div>
 
               <div className="text-xs text-slate-500 text-center">
-                Password recovery uses Firebase reset email{forgotCooldownSeconds > 0 ? ` • cooldown ${forgotCooldownSeconds}s` : ''}
+                Recover your password securely through email verification{forgotCooldownSeconds > 0 ? ` • cooldown ${forgotCooldownSeconds}s` : ''}
               </div>
 
               {!isRecoveryMode ? (
