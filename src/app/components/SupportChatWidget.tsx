@@ -555,24 +555,26 @@ export function SupportChatWidget() {
         </Card>
       ) : null}
 
-      <button
-        type="button"
-        className="fixed z-[70] flex h-12 w-12 items-center justify-center rounded-full border border-emerald-300 bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-[0_12px_28px_rgba(13,148,136,0.35)] sm:h-14 sm:w-14"
-        style={{ left: position.x, top: position.y }}
-        onPointerDown={startDrag}
-        onClick={() => setOpen((prev) => !prev)}
-        title="Drag to move. Click to open support chat."
-      >
-        <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6" />
-        {unreadCount > 0 ? (
-          <Badge className="absolute -right-2 -top-2 h-5 min-w-[1.25rem] bg-rose-600 px-1 text-[10px] text-white">
-            {unreadCount > 9 ? '9+' : unreadCount}
-          </Badge>
-        ) : null}
-        <span className="pointer-events-none absolute -bottom-5 hidden items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white sm:inline-flex">
-          <GripHorizontal className="h-3 w-3" /> drag
-        </span>
-      </button>
+      {!isNativeRuntime ? (
+        <button
+          type="button"
+          className="fixed z-[70] flex h-12 w-12 items-center justify-center rounded-full border border-emerald-300 bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-[0_12px_28px_rgba(13,148,136,0.35)] sm:h-14 sm:w-14"
+          style={{ left: position.x, top: position.y }}
+          onPointerDown={startDrag}
+          onClick={() => setOpen((prev) => !prev)}
+          title="Drag to move. Click to open support chat."
+        >
+          <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6" />
+          {unreadCount > 0 ? (
+            <Badge className="absolute -right-2 -top-2 h-5 min-w-[1.25rem] bg-rose-600 px-1 text-[10px] text-white">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </Badge>
+          ) : null}
+          <span className="pointer-events-none absolute -bottom-5 hidden items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white sm:inline-flex">
+            <GripHorizontal className="h-3 w-3" /> drag
+          </span>
+        </button>
+      ) : null}
     </>
   );
 }

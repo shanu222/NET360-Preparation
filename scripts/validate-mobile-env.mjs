@@ -5,10 +5,10 @@ import fs from 'node:fs';
 
 const workspaceRoot = process.cwd();
 const androidEnvPath = path.join(workspaceRoot, '.env.android');
-const defaultEnvPath = path.join(workspaceRoot, '.env');
+const androidLocalEnvPath = path.join(workspaceRoot, '.env.android.local');
 
-dotenv.config({ path: defaultEnvPath, override: false });
 dotenv.config({ path: androidEnvPath, override: true });
+dotenv.config({ path: androidLocalEnvPath, override: true });
 
 const apiBaseUrl = String(process.env.VITE_API_URL || process.env.VITE_API_BASE_URL || '').trim();
 

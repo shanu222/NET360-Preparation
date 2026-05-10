@@ -99,6 +99,23 @@ function isLikelyTransientAuthFailure(error: unknown): boolean {
   );
 }
 
+function decodeJwtClaims(token: string): { aud?: string; iss?: string; sub?: string } {
+  try {
+    const payloadPart = String(token || '').split('.')[1] || '';
+    if (!payloadPart) return {};
+    const normalized = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
+    const parsed = JSON.parse(atob(normalized + pad)) as { aud?: string; iss?: string; sub?: string };
+    return {
+      aud: String(parsed.aud || ''),
+      iss: String(parsed.iss || ''),
+      sub: String(parsed.sub || ''),
+    };
+  } catch {
+    return {};
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setToken] = useState<string | null>(() =>
     shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null,
@@ -484,6 +501,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         const credential = await signInWithEmailAndPassword(activeAuth, email, password);
         const firebaseIdToken = await credential.user.getIdToken();
+        const tokenClaims = decodeJwtClaims(firebaseIdToken);
+        logNativeEvent('auth', 'firebase-token-issued', {
+          email: email.toLowerCase(),
+          aud: tokenClaims.aud || '',
+          iss: tokenClaims.iss || '',
+          sub: tokenClaims.sub ? `${String(tokenClaims.sub).slice(0, 8)}...` : '',
+        });
         const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
           '/api/auth/login',
           {
@@ -597,6 +621,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const credential = await signInWithPopup(activeAuth, provider);
     const firebaseIdToken = await credential.user.getIdToken();
+    const tokenClaims = decodeJwtClaims(firebaseIdToken);
+    logNativeEvent('auth', 'firebase-token-issued-google', {
+      aud: tokenClaims.aud || '',
+      iss: tokenClaims.iss || '',
+      sub: tokenClaims.sub ? `${String(tokenClaims.sub).slice(0, 8)}...` : '',
+    });
     const [firstName = '', ...rest] = String(credential.user.displayName || '').trim().split(/\s+/);
     const lastName = rest.join(' ').trim();
     const email = String(credential.user.email || '').trim().toLowerCase();

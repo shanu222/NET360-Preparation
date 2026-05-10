@@ -19,7 +19,7 @@
     "media:upload-s3": "node scripts/upload-public-media-to-s3.mjs",
     "purge:students": "node scripts/purge-student-accounts.mjs",
     "purge:legacy-local-users": "node scripts/purge-legacy-local-users.mjs",
-    "mobile:build": "node scripts/validate-mobile-env.mjs && vite build --mode android && node scripts/strip-bundled-cdn-media-from-dist.mjs && npx cap sync android",
+    "mobile:build": "node scripts/mobile-build-android.mjs",
     "android:sync": "npx cap sync android",
     "android:open": "npx cap open android",
     "android:run": "npx cap run android",
