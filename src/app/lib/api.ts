@@ -150,8 +150,7 @@ function logApiConfigurationIssue(level: 'warn' | 'error', message: string, deta
 function isSecureNativeApiBaseUrl(apiBaseUrl: string) {
   if (!apiBaseUrl) return false;
   if (/^https:\/\//i.test(apiBaseUrl)) return true;
-  // Allow local cleartext hosts for local debugging only.
-  return /^http:\/\/(localhost|127\.0\.0\.1|10\.0\.2\.2|10\.0\.3\.2)(:\d+)?/i.test(apiBaseUrl);
+  return false;
 }
 
 export function buildUrl(path: string): string {

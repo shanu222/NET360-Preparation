@@ -1277,6 +1277,7 @@ canvas {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
   overscroll-behavior-y: contain;
+  scrollbar-gutter: auto;
   scroll-padding-top: calc(var(--net360-header-height, 56px) + 8px);
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px), var(--net360-keyboard-offset, 0px));
   scrollbar-width: none;
@@ -1349,6 +1350,7 @@ html.native-android #root::-webkit-scrollbar {
 .native-android .net360-page [data-slot='card-content'] {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  scrollbar-gutter: auto;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }

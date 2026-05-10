@@ -194,10 +194,10 @@ export function audienceFriendlyError(error: unknown, fallback = 'Something went
     return 'The request was cancelled.';
   }
   if (lower.includes('firebase auth is not configured')) {
-    return 'Sign-in service is temporarily unavailable. Please retry in a moment.';
+    return 'Sign-in could not start yet. Check your connection and retry.';
   }
   if (lower.includes('firebase admin sdk is not configured')) {
-    return 'Sign-in service is temporarily unavailable. Please try again shortly.';
+    return 'Sign-in could not be completed right now. Please retry.';
   }
   if (lower.includes('invalid firebase token') || lower.includes('firebase token')) {
     return 'Session expired. Please log in again.';

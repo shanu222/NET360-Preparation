@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "87406335066",
+    "project_id": "resilience360-27f15",
+    "storage_bucket": "resilience360-27f15.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:87406335066:android:5ba717371ac206423e7463",
+        "android_client_info": {
+          "package_name": "com.net360.preparation"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "87406335066-doin87utb3ni2q23li17h9281v28t3cg.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.net360.preparation",
+            "certificate_hash": "ab4e1af1e2177c49d01717ddc1ccf010ffc59a5e"
+          }
+        },
+        {
+          "client_id": "87406335066-599uplr6pkiaiknklfmt3uimdqnn0rci.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCuL6S7kOcDB7CA0QlIQ3ymght9v7CRlyM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "87406335066-599uplr6pkiaiknklfmt3uimdqnn0rci.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
