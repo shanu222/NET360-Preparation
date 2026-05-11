@@ -1246,10 +1246,6 @@ const BULK_ANALYZE_MAX_ATTEMPTS = 3;
 const BULK_ANALYZE_RETRY_DELAY_MS = 650;
 const BULK_ANALYZE_REQUEST_TIMEOUT_MS = 120_000;
 const BULK_ANALYZE_PREFLIGHT_TIMEOUT_MS = 30_000;
-const API_PREFIX = `${API_BASE}/api`;
-const AI_PARSE_ENDPOINT = `${API_PREFIX}/ai/parse-mcqs`;
-const AI_GENERATE_ENDPOINT = `${API_PREFIX}/generate-mcqs`;
-const AI_GENERATE_HEALTH_ENDPOINT = `${API_PREFIX}/health`;
 const AI_GENERATE_TARGET_COUNT = 5;
 const AI_GENERATE_RETRY_COUNT = 3;
 const AI_GENERATE_RETRY_DELAY_MS = 2_500;
@@ -1716,9 +1712,9 @@ async function runBackendPreflightCheck(options?: {
   const apiPrefixes = buildApiBaseCandidates().map((base) => toApiPrefix(base));
   const healthCandidates = Array.from(new Set([
     ...apiPrefixes.map((prefix) => `${prefix}/health`),
-    String(AI_GENERATE_HEALTH_ENDPOINT || '').trim(),
+    String(buildUrl('/api/health') || '').trim(),
   ].filter(Boolean)));
-  const healthUrl = healthCandidates[0] || `${API_PREFIX}/health`;
+  const healthUrl = healthCandidates[0] || buildUrl('/api/health');
   let lastError: unknown = null;
 
   await delayMs(1500);
