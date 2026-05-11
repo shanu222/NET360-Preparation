@@ -683,16 +683,33 @@ const corsAllowedOriginsList = corsAllowedOriginsListRaw
   ? expandWwwApexCorsOrigins(corsAllowedOriginsListRaw)
   : null;
 
+/**
+ * Origins always permitted even when `CORS_ALLOWED_ORIGINS` is set (local dev + Capacitor shells).
+ * Capacitor / Ionic use non-http(s) origins; local dev uses localhost with common Vite / dev-server ports.
+ * Fixed strings only (not `*`): the browser only sends these `Origin` values for pages served from
+ * those URLs, so this does not grant access to arbitrary third-party websites.
+ */
 function isTrustedNativeAppOrigin(origin) {
   const o = String(origin || '').trim().toLowerCase();
   if (!o) return false;
-  return o === 'http://localhost'
-    || o === 'https://localhost'
-    || o === 'capacitor://localhost'
-    || o === 'ionic://localhost'
-    || o === 'app://localhost'
-    || o === 'http://127.0.0.1'
-    || o === 'https://127.0.0.1';
+  const trusted = new Set([
+    'http://localhost',
+    'https://localhost',
+    'http://localhost:3000',
+    'https://localhost:3000',
+    'http://localhost:5173',
+    'https://localhost:5173',
+    'http://127.0.0.1',
+    'https://127.0.0.1',
+    'http://127.0.0.1:3000',
+    'https://127.0.0.1:3000',
+    'http://127.0.0.1:5173',
+    'https://127.0.0.1:5173',
+    'capacitor://localhost',
+    'ionic://localhost',
+    'app://localhost',
+  ]);
+  return trusted.has(o);
 }
 
 if (corsAllowedOriginsList && IS_PRODUCTION) {
@@ -722,6 +739,26 @@ const corsOriginResolver = corsAllowedOriginsList
     }
   : true;
 
+/**
+ * CORS / preflight (OPTIONS)
+ * -------------------------
+ * The SPA (`src/app/lib/api.ts`) sets `X-Net360-Client-Platform` on fetch (web vs native). Any
+ * non-simple header triggers a CORS preflight: the browser sends OPTIONS with
+ * `Access-Control-Request-Headers: ...`. If the response omits those names in
+ * `Access-Control-Allow-Headers`, the real POST/GET is never sent → console shows the header
+ * "is not allowed" and `net::ERR_FAILED` for the follow-up request.
+ *
+ * We use an explicit `allowedHeaders` list (not `*`) because credentialed requests require
+ * concrete header names in the preflight response.
+ *
+ * Origins: if `CORS_ALLOWED_ORIGINS` is unset, `origin: true` makes the `cors` package reflect
+ * the request `Origin` (not `Access-Control-Allow-Origin: *`), which preserves cookie auth for
+ * known frontends. When `CORS_ALLOWED_ORIGINS` is set, requests must match the allowlist (with
+ * www/apex expansion) or `isTrustedNativeAppOrigin` — set the env in production to restrict origins.
+ *
+ * `app.options('*', corsMiddleware)` plus `skip` on rate-limiters for OPTIONS avoids 429s on
+ * preflight without CORS headers.
+ */
 const corsMiddleware = cors({
   origin: corsOriginResolver,
   credentials: true,
