@@ -735,6 +735,8 @@ const corsMiddleware = cors({
     'Cookie',
     'X-CSRF-Token',
     'Cache-Control',
+    'X-Net360-Client-Platform',
+    'X-Net360-Auth-Transport-Preference',
   ],
   exposedHeaders: ['Content-Length', 'Content-Type', 'X-Net360-Auth-Transport', 'X-Net360-Auth-Cookies-Set'],
   maxAge: 86_400,
