@@ -684,11 +684,24 @@ const corsAllowedOriginsList = corsAllowedOriginsListRaw
   : null;
 
 /**
- * Origins always permitted even when `CORS_ALLOWED_ORIGINS` is set (local dev + Capacitor shells).
- * Capacitor / Ionic use non-http(s) origins; local dev uses localhost with common Vite / dev-server ports.
- * Fixed strings only (not `*`): the browser only sends these `Origin` values for pages served from
- * those URLs, so this does not grant access to arbitrary third-party websites.
+ * Origins always permitted even when `CORS_ALLOWED_ORIGINS` is set:
+ * - Local dev + Capacitor shells (`isTrustedNativeAppOrigin`): fixed strings only (not `*`).
+ * - Official NET360 HTTPS hosts (`isKnownNet360ProductionWebOrigin`): avoids misconfigured allowlists
+ *   (e.g. only the API origin) that would block the SPA and show missing `Access-Control-Allow-Origin`.
  */
+function isKnownNet360ProductionWebOrigin(origin) {
+  const o = String(origin || '').trim().toLowerCase();
+  if (!o) return false;
+  try {
+    const u = new URL(o);
+    if (u.protocol !== 'https:') return false;
+    const h = u.hostname.toLowerCase();
+    return h === 'www.net360preparation.com' || h === 'net360preparation.com';
+  } catch {
+    return false;
+  }
+}
+
 function isTrustedNativeAppOrigin(origin) {
   const o = String(origin || '').trim().toLowerCase();
   if (!o) return false;
@@ -726,6 +739,10 @@ const corsOriginResolver = corsAllowedOriginsList
         callback(null, true);
         return;
       }
+      if (IS_PRODUCTION && isKnownNet360ProductionWebOrigin(origin)) {
+        callback(null, true);
+        return;
+      }
       if (corsAllowedOriginsList.includes(origin)) {
         callback(null, true);
         return;
@@ -754,7 +771,8 @@ const corsOriginResolver = corsAllowedOriginsList
  * Origins: if `CORS_ALLOWED_ORIGINS` is unset, `origin: true` makes the `cors` package reflect
  * the request `Origin` (not `Access-Control-Allow-Origin: *`), which preserves cookie auth for
  * known frontends. When `CORS_ALLOWED_ORIGINS` is set, requests must match the allowlist (with
- * www/apex expansion) or `isTrustedNativeAppOrigin` — set the env in production to restrict origins.
+ * www/apex expansion), `isTrustedNativeAppOrigin`, or `isKnownNet360ProductionWebOrigin` for the
+ * official NET360 HTTPS hosts — set the env in production to restrict other origins.
  *
  * `app.options('*', corsMiddleware)` plus `skip` on rate-limiters for OPTIONS avoids 429s on
  * preflight without CORS headers.
