@@ -608,7 +608,7 @@ export function TestInterfacePage() {
       loadControllerRef.current?.abort();
       const controller = new AbortController();
       loadControllerRef.current = controller;
-      const timeoutId = window.setTimeout(() => controller.abort(), 10000);
+      const timeoutId = window.setTimeout(() => controller.abort(), 25_000);
 
       let beganLoad = false;
 

@@ -152,6 +152,13 @@ function extractAuthErrorCode(error: unknown): string {
   return String(typed?.code || typed?.payload?.code || '').trim();
 }
 
+/** Backend single-session policy: 409 with this code — safe to retry once with force after Firebase proof. */
+function isActiveSessionElsewhereConflict(error: unknown) {
+  if (extractAuthErrorCode(error) === 'ACTIVE_SESSION_ELSEWHERE') return true;
+  const e = error as Error & { status?: number; payload?: { code?: string } };
+  return e.status === 409 && String(e.payload?.code || '') === 'ACTIVE_SESSION_ELSEWHERE';
+}
+
 async function signInWithEmailPasswordRest(email: string, password: string): Promise<{ idToken: string }> {
   const apiKey = String((import.meta as ImportMeta & { env?: { VITE_FIREBASE_API_KEY?: string } }).env?.VITE_FIREBASE_API_KEY || '').trim();
   if (!apiKey) {
@@ -653,22 +660,48 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           backendLoginStatus: 'pending',
           backendLoginCode: '',
         });
-        const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
-          '/api/auth/login',
-          {
-            method: 'POST',
-            retryCount: isNativeRuntime ? 2 : 1,
-            retryDelayMs: 900,
-            timeoutMs: 50_000,
-            body: JSON.stringify({
-              email,
-              deviceId,
-              firebaseIdToken,
-              forceLogoutOtherDevice: Boolean(opts?.forceLogoutOtherDevice || opts?.forceLogin),
-              forceLogin: Boolean(opts?.forceLogin || opts?.forceLogoutOtherDevice),
-            }),
-          },
-        );
+        const forceFromOpts = Boolean(opts?.forceLogoutOtherDevice || opts?.forceLogin);
+        let payload: { token?: string; refreshToken?: string; user: AuthUser };
+        try {
+          payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+            '/api/auth/login',
+            {
+              method: 'POST',
+              retryCount: isNativeRuntime ? 2 : 1,
+              retryDelayMs: 900,
+              timeoutMs: 50_000,
+              body: JSON.stringify({
+                email,
+                deviceId,
+                firebaseIdToken,
+                forceLogoutOtherDevice: forceFromOpts,
+                forceLogin: forceFromOpts,
+              }),
+            },
+          );
+        } catch (loginErr) {
+          if (!forceFromOpts && isActiveSessionElsewhereConflict(loginErr)) {
+            logNativeEvent('auth', 'login-auto-force-retry', { reason: 'ACTIVE_SESSION_ELSEWHERE' }, 'warn');
+            payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+              '/api/auth/login',
+              {
+                method: 'POST',
+                retryCount: isNativeRuntime ? 2 : 1,
+                retryDelayMs: 900,
+                timeoutMs: 50_000,
+                body: JSON.stringify({
+                  email,
+                  deviceId,
+                  firebaseIdToken,
+                  forceLogoutOtherDevice: true,
+                  forceLogin: true,
+                }),
+              },
+            );
+          } else {
+            throw loginErr;
+          }
+        }
         const stabilizedPayload = await finalizeNativeAuthTransport(payload, 'login');
         logNativeEvent('auth', 'login-success', { email: email.toLowerCase() });
         updateAuthDebug({
@@ -703,8 +736,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     forceLogoutOtherDevice?: boolean;
     forceLogin?: boolean;
   }) => {
-    try {
-      const loginPayload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+    const forceFromParams = Boolean(params.forceLogoutOtherDevice || params.forceLogin);
+    const postLogin = async (force: boolean) =>
+      apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
         '/api/auth/login',
         {
           method: 'POST',
@@ -715,28 +749,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             email: params.email,
             firebaseIdToken: params.firebaseIdToken,
             deviceId,
-            forceLogoutOtherDevice: Boolean(params.forceLogoutOtherDevice || params.forceLogin),
-            forceLogin: Boolean(params.forceLogin || params.forceLogoutOtherDevice),
+            forceLogoutOtherDevice: force || forceFromParams,
+            forceLogin: force || forceFromParams,
           }),
         },
       );
-      const stabilizedPayload = await finalizeNativeAuthTransport(loginPayload, 'social-login');
-      updateAuthDebug({
-        backendLoginStatus: 'success',
-        backendLoginCode: '',
-        activeSessionStatus: 'active',
-      });
-      applyAuthPayload(stabilizedPayload);
-      return;
+
+    let loginPayload: { token?: string; refreshToken?: string; user: AuthUser } | null = null;
+    try {
+      loginPayload = await postLogin(false);
     } catch (error) {
-      const typed = error as Error & { status?: number };
-      updateAuthDebug({
-        backendLoginStatus: 'failed',
-        backendLoginCode: extractAuthErrorCode(error),
-        activeSessionStatus: extractAuthErrorCode(error) === 'ACTIVE_SESSION_ELSEWHERE' ? 'conflict' : 'unknown',
-      });
-      if (typed?.status !== 401) {
-        throw error;
+      if (!forceFromParams && isActiveSessionElsewhereConflict(error)) {
+        logNativeEvent('auth', 'social-login-auto-force-retry', { reason: 'ACTIVE_SESSION_ELSEWHERE' }, 'warn');
+        try {
+          loginPayload = await postLogin(true);
+        } catch (second) {
+          const typed = second as Error & { status?: number };
+          if (typed?.status !== 401) {
+            throw second;
+          }
+        }
+      } else {
+        const typed = error as Error & { status?: number };
+        if (typed?.status !== 401) {
+          throw error;
+        }
+      }
+    }
+
+    if (loginPayload) {
+      try {
+        const stabilizedPayload = await finalizeNativeAuthTransport(loginPayload, 'social-login');
+        updateAuthDebug({
+          backendLoginStatus: 'success',
+          backendLoginCode: '',
+          activeSessionStatus: 'active',
+        });
+        applyAuthPayload(stabilizedPayload);
+        return;
+      } catch (finalizeErr) {
+        updateAuthDebug({
+          backendLoginStatus: 'failed',
+          backendLoginCode: extractAuthErrorCode(finalizeErr),
+          activeSessionStatus: 'unknown',
+        });
+        throw finalizeErr;
       }
     }
 
