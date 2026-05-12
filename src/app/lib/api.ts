@@ -741,6 +741,54 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   }
 
   if (!response.ok) {
+    // Single-session policy: backend returns 409 until client sends forceLogin. Retry once here so
+    // every caller (including edge paths) recovers without leaving popups on about:blank / auth half-broken.
+    if (
+      response.status === 409
+      && method === 'POST'
+      && (path === '/api/auth/login' || path.split('?')[0] === '/api/auth/login')
+      && typeof options.body === 'string'
+    ) {
+      let conflictCode = '';
+      try {
+        const peek = await response.clone().json() as { code?: string };
+        conflictCode = String(peek?.code || '');
+      } catch {
+        /* ignore */
+      }
+      if (conflictCode === 'ACTIVE_SESSION_ELSEWHERE') {
+        try {
+          const parsedBody = JSON.parse(options.body) as Record<string, unknown>;
+          if (!parsedBody.forceLogin && !parsedBody.forceLogoutOtherDevice) {
+            const retried = await fetchWithTimeout(resolvedPath, {
+              ...options,
+              headers: buildHeaders(initialToken),
+              body: JSON.stringify({
+                ...parsedBody,
+                forceLogin: true,
+                forceLogoutOtherDevice: true,
+              }),
+            }, timeoutMs);
+            if (retried.ok) {
+              logNativeEvent('auth', 'login-409-central-retry', { path }, 'warn');
+              try {
+                return await retried.json() as T;
+              } catch {
+                const bodyText = await retried.text().catch(() => '');
+                if (isLikelyHtmlResponse(retried, bodyText)) {
+                  throw buildHtmlInsteadOfJsonError(path);
+                }
+                throw new Error(`Unexpected API response format for ${path}. Expected JSON.`);
+              }
+            }
+            response = retried;
+          }
+        } catch {
+          /* fall through to standard error handling */
+        }
+      }
+    }
+
     if (response.status === 401) {
       const refreshedToken = await tryRefreshAccessToken();
       if (refreshedToken) {
