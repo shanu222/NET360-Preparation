@@ -196,7 +196,7 @@ export function McqMathText({
   return (
     <span
       ref={hostRef}
-      className={`math-content ${asBlock ? 'block' : ''} ${className || ''}`.trim()}
+      className={`math-content min-w-0 max-w-full ${asBlock ? 'block' : 'inline-block'} ${className || ''}`.trim()}
       style={{ whiteSpace: 'pre-wrap' }}
     >
       {segments.map((segment, index) => {

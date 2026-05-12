@@ -42,32 +42,69 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+/** Resolve safe-area insets for notched devices / Capacitor WebView (computed from env()). */
+function readSafeAreaInsets(): { top: number; right: number; bottom: number; left: number } {
+  if (typeof document === 'undefined') {
+    return { top: 0, right: 0, bottom: 0, left: 0 };
+  }
+  const probe = document.createElement('div');
+  probe.setAttribute('aria-hidden', 'true');
+  probe.style.cssText =
+    'position:fixed;left:-9999px;top:0;width:0;height:0;pointer-events:none;visibility:hidden;' +
+    'padding-top:env(safe-area-inset-top,0px);padding-right:env(safe-area-inset-right,0px);' +
+    'padding-bottom:env(safe-area-inset-bottom,0px);padding-left:env(safe-area-inset-left,0px);';
+  document.documentElement.appendChild(probe);
+  const style = getComputedStyle(probe);
+  const top = parseFloat(style.paddingTop) || 0;
+  const right = parseFloat(style.paddingRight) || 0;
+  const bottom = parseFloat(style.paddingBottom) || 0;
+  const left = parseFloat(style.paddingLeft) || 0;
+  probe.remove();
+  return { top, right, bottom, left };
+}
+
+function getViewportSize(): { width: number; height: number } {
+  if (typeof window === 'undefined') return { width: 0, height: 0 };
+  const vv = window.visualViewport;
+  return {
+    width: Math.round(vv?.width ?? window.innerWidth),
+    height: Math.round(vv?.height ?? window.innerHeight),
+  };
+}
+
 function getChatButtonSize(viewportWidth: number): number {
   return viewportWidth < 420 ? 48 : 56;
 }
 
+type DragBounds = { minX: number; minY: number; maxX: number; maxY: number };
+
 function getPanelMetrics(viewportWidth: number, viewportHeight: number): { width: number; maxHeight: number } {
-  const width = Math.min(360, Math.max(280, viewportWidth - CHAT_EDGE_GAP * 2));
-  const maxHeight = Math.max(300, Math.min(560, viewportHeight - CHAT_EDGE_GAP * 2));
+  const safe = readSafeAreaInsets();
+  const innerW = Math.max(0, viewportWidth - safe.left - safe.right - CHAT_EDGE_GAP * 2);
+  const innerH = Math.max(0, viewportHeight - safe.top - safe.bottom - CHAT_EDGE_GAP * 2);
+  const width = Math.min(360, Math.max(280, innerW));
+  const maxHeight = Math.max(300, Math.min(560, innerH));
   return { width, maxHeight };
 }
 
-function getButtonBounds(viewportWidth: number, viewportHeight: number): { min: number; maxX: number; maxY: number } {
+function getButtonBounds(viewportWidth: number, viewportHeight: number): DragBounds {
+  const safe = readSafeAreaInsets();
   const buttonSize = getChatButtonSize(viewportWidth);
-  return {
-    min: CHAT_EDGE_GAP,
-    maxX: Math.max(CHAT_EDGE_GAP, viewportWidth - buttonSize - CHAT_EDGE_GAP),
-    maxY: Math.max(CHAT_EDGE_GAP, viewportHeight - buttonSize - CHAT_EDGE_GAP),
-  };
+  const minX = CHAT_EDGE_GAP + safe.left;
+  const minY = CHAT_EDGE_GAP + safe.top;
+  const maxX = Math.max(minX, viewportWidth - buttonSize - CHAT_EDGE_GAP - safe.right);
+  const maxY = Math.max(minY, viewportHeight - buttonSize - CHAT_EDGE_GAP - safe.bottom);
+  return { minX, minY, maxX, maxY };
 }
 
-function getPanelBounds(viewportWidth: number, viewportHeight: number): { min: number; maxX: number; maxY: number } {
+function getPanelBounds(viewportWidth: number, viewportHeight: number): DragBounds {
+  const safe = readSafeAreaInsets();
   const metrics = getPanelMetrics(viewportWidth, viewportHeight);
-  return {
-    min: CHAT_EDGE_GAP,
-    maxX: Math.max(CHAT_EDGE_GAP, viewportWidth - metrics.width - CHAT_EDGE_GAP),
-    maxY: Math.max(CHAT_EDGE_GAP, viewportHeight - metrics.maxHeight - CHAT_EDGE_GAP),
-  };
+  const minX = CHAT_EDGE_GAP + safe.left;
+  const minY = CHAT_EDGE_GAP + safe.top;
+  const maxX = Math.max(minX, viewportWidth - metrics.width - CHAT_EDGE_GAP - safe.right);
+  const maxY = Math.max(minY, viewportHeight - metrics.maxHeight - CHAT_EDGE_GAP - safe.bottom);
+  return { minX, minY, maxX, maxY };
 }
 
 function readFileAsDataUrl(file: File): Promise<string> {
@@ -95,19 +132,21 @@ export function SupportChatWidget() {
       return false;
     }
   });
-  const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }));
+  const [viewport, setViewport] = useState(() => getViewportSize());
   const [position, setPosition] = useState(() => {
-    const bounds = getButtonBounds(window.innerWidth, window.innerHeight);
+    const { width, height } = getViewportSize();
+    const bounds = getButtonBounds(width, height);
     return {
       x: bounds.maxX,
-      y: clamp(bounds.maxY - 72, bounds.min, bounds.maxY),
+      y: clamp(bounds.maxY - 72, bounds.minY, bounds.maxY),
     };
   });
   const [panelPosition, setPanelPosition] = useState(() => {
-    const bounds = getPanelBounds(window.innerWidth, window.innerHeight);
+    const { width, height } = getViewportSize();
+    const bounds = getPanelBounds(width, height);
     return {
       x: bounds.maxX,
-      y: clamp(bounds.maxY - 140, bounds.min, bounds.maxY),
+      y: clamp(bounds.maxY - 140, bounds.minY, bounds.maxY),
     };
   });
 
@@ -218,15 +257,15 @@ export function SupportChatWidget() {
 
   const canUseChat = Boolean(token && user && user.role !== 'admin');
 
-  const panelStyle = useMemo(
-    () => ({
-      left: clamp(panelPosition.x, getPanelBounds(viewport.width, viewport.height).min, getPanelBounds(viewport.width, viewport.height).maxX),
-      top: clamp(panelPosition.y, getPanelBounds(viewport.width, viewport.height).min, getPanelBounds(viewport.width, viewport.height).maxY),
+  const panelStyle = useMemo(() => {
+    const panelBounds = getPanelBounds(viewport.width, viewport.height);
+    return {
+      left: clamp(panelPosition.x, panelBounds.minX, panelBounds.maxX),
+      top: clamp(panelPosition.y, panelBounds.minY, panelBounds.maxY),
       width: panelMetrics.width,
       maxHeight: panelMetrics.maxHeight,
-    }),
-    [panelMetrics.maxHeight, panelMetrics.width, panelPosition.x, panelPosition.y, viewport.height, viewport.width],
-  );
+    };
+  }, [panelMetrics.maxHeight, panelMetrics.width, panelPosition.x, panelPosition.y, viewport.height, viewport.width]);
 
   const loadMessages = async () => {
     if (!canUseChat || !token) return;
@@ -284,23 +323,28 @@ export function SupportChatWidget() {
 
   useEffect(() => {
     const onResize = () => {
-      const width = window.innerWidth;
-      const height = window.innerHeight;
+      const { width, height } = getViewportSize();
       const buttonBounds = getButtonBounds(width, height);
       const panelBounds = getPanelBounds(width, height);
       setViewport({ width, height });
       setPosition((prev) => ({
-        x: clamp(prev.x, buttonBounds.min, buttonBounds.maxX),
-        y: clamp(prev.y, buttonBounds.min, buttonBounds.maxY),
+        x: clamp(prev.x, buttonBounds.minX, buttonBounds.maxX),
+        y: clamp(prev.y, buttonBounds.minY, buttonBounds.maxY),
       }));
       setPanelPosition((prev) => ({
-        x: clamp(prev.x, panelBounds.min, panelBounds.maxX),
-        y: clamp(prev.y, panelBounds.min, panelBounds.maxY),
+        x: clamp(prev.x, panelBounds.minX, panelBounds.maxX),
+        y: clamp(prev.y, panelBounds.minY, panelBounds.maxY),
       }));
     };
 
     window.addEventListener('resize', onResize);
-    return () => window.removeEventListener('resize', onResize);
+    window.visualViewport?.addEventListener('resize', onResize);
+    window.visualViewport?.addEventListener('scroll', onResize);
+    return () => {
+      window.removeEventListener('resize', onResize);
+      window.visualViewport?.removeEventListener('resize', onResize);
+      window.visualViewport?.removeEventListener('scroll', onResize);
+    };
   }, []);
 
   useEffect(() => {
@@ -309,14 +353,14 @@ export function SupportChatWidget() {
       if (dragStateRef.current.target === 'panel') {
         const panelBounds = getPanelBounds(viewport.width, viewport.height);
         setPanelPosition({
-          x: clamp(event.clientX - dragStateRef.current.offsetX, panelBounds.min, panelBounds.maxX),
-          y: clamp(event.clientY - dragStateRef.current.offsetY, panelBounds.min, panelBounds.maxY),
+          x: clamp(event.clientX - dragStateRef.current.offsetX, panelBounds.minX, panelBounds.maxX),
+          y: clamp(event.clientY - dragStateRef.current.offsetY, panelBounds.minY, panelBounds.maxY),
         });
       } else {
         const buttonBounds = getButtonBounds(viewport.width, viewport.height);
         setPosition({
-          x: clamp(event.clientX - dragStateRef.current.offsetX, buttonBounds.min, buttonBounds.maxX),
-          y: clamp(event.clientY - dragStateRef.current.offsetY, buttonBounds.min, buttonBounds.maxY),
+          x: clamp(event.clientX - dragStateRef.current.offsetX, buttonBounds.minX, buttonBounds.maxX),
+          y: clamp(event.clientY - dragStateRef.current.offsetY, buttonBounds.minY, buttonBounds.maxY),
         });
       }
     };
@@ -338,8 +382,8 @@ export function SupportChatWidget() {
       const panelBounds = getPanelBounds(viewport.width, viewport.height);
       setOpen(true);
       setPanelPosition({
-        x: clamp(position.x - panelMetrics.width + 56, panelBounds.min, panelBounds.maxX),
-        y: clamp(position.y - panelMetrics.maxHeight + 180, panelBounds.min, panelBounds.maxY),
+        x: clamp(position.x - panelMetrics.width + 56, panelBounds.minX, panelBounds.maxX),
+        y: clamp(position.y - panelMetrics.maxHeight + 180, panelBounds.minY, panelBounds.maxY),
       });
     };
 
@@ -519,12 +563,12 @@ export function SupportChatWidget() {
                   </div>
                 </ScrollArea>
 
-                <div className="flex items-end gap-2">
+                <div className="flex min-w-0 items-end gap-2">
                   <Textarea
                     value={messageText}
                     onChange={(event) => setMessageText(event.target.value)}
                     placeholder="Type your message"
-                    className="min-h-[70px] dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-400"
+                    className="min-h-[70px] min-w-0 flex-1 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-400"
                     onKeyDown={(event) => {
                       if (event.key === 'Enter' && !event.shiftKey) {
                         event.preventDefault();

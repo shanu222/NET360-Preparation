@@ -4,7 +4,7 @@
 export function PageRouteFallback() {
   return (
     <div
-      className="net360-page w-full"
+      className="net360-page w-full min-w-0 max-w-full overflow-x-hidden"
       role="status"
       aria-live="polite"
       aria-busy="true"
@@ -34,7 +34,7 @@ export function PageRouteFallback() {
 export function FullViewportRouteFallback() {
   return (
     <div
-      className="flex min-h-dvh items-center justify-center bg-[#eef2f6] p-4 text-[#0d2c5a] dark:bg-[#0f172a] dark:text-slate-100"
+      className="flex min-h-dvh w-full max-w-full items-center justify-center overflow-x-hidden bg-[#eef2f6] p-4 text-[#0d2c5a] dark:bg-[#0f172a] dark:text-slate-100"
       role="status"
       aria-live="polite"
       aria-busy="true"

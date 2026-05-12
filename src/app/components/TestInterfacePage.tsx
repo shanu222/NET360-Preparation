@@ -959,8 +959,8 @@ export function TestInterfacePage() {
 
   if (loading) {
     return (
-      <div className="min-h-dvh bg-[#eef2f6] p-2 text-[#0d2c5a] dark:bg-[#0f172a] dark:text-slate-100 sm:p-3">
-        <div className="mx-auto w-full max-w-[min(100%,1200px)] rounded border border-[#2b5f9f]/40 bg-white/95 px-3 py-6 shadow-sm dark:border-slate-600/50 dark:bg-slate-900/90 sm:px-6">
+      <div className="min-h-dvh w-full max-w-full overflow-x-hidden bg-[#eef2f6] p-2 text-[#0d2c5a] dark:bg-[#0f172a] dark:text-slate-100 sm:p-3">
+        <div className="mx-auto w-full min-w-0 max-w-[min(100%,1200px)] rounded border border-[#2b5f9f]/40 bg-white/95 px-3 py-6 shadow-sm dark:border-slate-600/50 dark:bg-slate-900/90 sm:px-6">
           <p className="text-center text-base font-medium text-[#0d2c5a] dark:text-slate-100">Preparing your test…</p>
           <p className="mt-2 text-center text-sm text-slate-600 dark:text-slate-400">Please wait while we load your session.</p>
         </div>
@@ -970,8 +970,8 @@ export function TestInterfacePage() {
 
   if (error || !session || !question) {
     return (
-      <div className="min-h-dvh bg-[#eef2f6] p-2 text-[#0d2c5a] dark:bg-[#0f172a] dark:text-slate-100 sm:p-3">
-        <div className="mx-auto w-full max-w-[min(100%,1200px)] rounded border border-[#2b5f9f]/40 bg-white/95 px-3 py-4 shadow-sm dark:border-slate-600/50 dark:bg-slate-900/90 sm:px-6 sm:py-6">
+      <div className="min-h-dvh w-full max-w-full overflow-x-hidden bg-[#eef2f6] p-2 text-[#0d2c5a] dark:bg-[#0f172a] dark:text-slate-100 sm:p-3">
+        <div className="mx-auto w-full min-w-0 max-w-[min(100%,1200px)] rounded border border-[#2b5f9f]/40 bg-white/95 px-3 py-4 shadow-sm dark:border-slate-600/50 dark:bg-slate-900/90 sm:px-6 sm:py-6">
           <p className="mb-4 text-red-700">{error || 'Session could not be loaded.'}</p>
           <button
             type="button"
@@ -993,8 +993,8 @@ export function TestInterfacePage() {
   const questionVideoSrc = getMediaUrl(String(question.videoUrl || '').trim());
 
   return (
-    <div className="min-h-screen bg-[#f2f6fb] p-1.5 text-[#0d2c5a] sm:p-2.5">
-      <div className="mx-auto w-full max-w-[min(100%,1200px)] rounded border-2 border-[#2b5f9f] bg-[#eef4fb] shadow-[0_12px_30px_rgba(5,32,71,0.15)]">
+    <div className="min-h-dvh min-h-screen w-full max-w-full overflow-x-hidden bg-[#f2f6fb] p-1.5 text-[#0d2c5a] sm:p-2.5">
+      <div className="mx-auto w-full min-w-0 max-w-[min(100%,1200px)] rounded border-2 border-[#2b5f9f] bg-[#eef4fb] shadow-[0_12px_30px_rgba(5,32,71,0.15)]">
         <header className="grid gap-1.5 border-b border-[#2b5f9f] bg-white px-2 py-2 text-xs sm:gap-1 md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-2 md:py-1 md:text-sm">
           <div className="font-semibold text-[#1f6b1f]">{formatSubject(question.subject)}</div>
           <div className="break-words text-left text-sm leading-snug text-[#a11c12] md:text-center md:text-xl">{session.topic}</div>
@@ -1022,7 +1022,8 @@ export function TestInterfacePage() {
                 <video
                   src={questionVideoSrc}
                   controls
-                  className="mcq-image mt-3 max-h-60 w-full bg-black"
+                  playsInline
+                  className="mcq-image mt-3 max-h-60 w-full max-w-full bg-black object-contain"
                 />
               ) : null}
             </div>
@@ -1111,7 +1112,7 @@ export function TestInterfacePage() {
                     <img
                       src={normalizeMcqImageSrc(option.image?.dataUrl)}
                       alt={`Option ${option.key}`}
-                      className="option-image mt-2 max-h-40 w-full"
+                      className="option-image mt-2 max-h-40 w-full max-w-full object-contain"
                     />
                   ) : null}
                 </div>
@@ -1275,7 +1276,7 @@ export function TestInterfacePage() {
                               <img
                                 src={normalizeMcqImageSrc(option.image?.dataUrl)}
                                 alt={`Review option ${option.key}`}
-                                className="option-image mt-1"
+                                className="option-image mt-1 max-h-40 w-full max-w-full object-contain"
                                 loading="lazy"
                                 decoding="async"
                               />

@@ -145,6 +145,10 @@
     max-width: 100%;
   }
 
+  html {
+    overflow-x: hidden;
+  }
+
   body {
     @apply bg-background text-foreground;
     font-family: var(--font-sans);
@@ -295,7 +299,9 @@
   }
 
   .net360-viewport {
+    box-sizing: border-box;
     min-width: 0;
+    max-width: 100%;
     padding-left: max(0.25rem, env(safe-area-inset-left, 0px));
     padding-right: max(0.25rem, env(safe-area-inset-right, 0px));
   }
@@ -323,7 +329,8 @@
     margin-right: auto;
     padding-left: max(16px, env(safe-area-inset-left, 0px));
     padding-right: max(16px, env(safe-area-inset-right, 0px));
-    overflow-x: visible;
+    /* Contain stray horizontal overflow; intentional row scroll lives in .net360-horizontal-scroll / .net360-swipe-row */
+    overflow-x: clip;
     touch-action: pan-y;
     font-size: clamp(14px, 0.82rem + 0.45vw, 17px);
   }
@@ -999,6 +1006,8 @@
   .math-content {
     color: inherit;
     line-height: 1.55;
+    max-width: 100%;
+    box-sizing: border-box;
   }
 
   .question-content img,
@@ -1253,13 +1262,7 @@
 html {
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
-}
-
-.net360-viewport {
-  /* Notch / home indicator — additive to existing Tailwind padding */
-  padding-left: env(safe-area-inset-left, 0px);
-  padding-right: env(safe-area-inset-right, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  overflow-x: hidden;
 }
 
 #root {
