@@ -202,20 +202,21 @@ export function NUSTSchoolsCampuses() {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {SCHOOL_CARDS.map((school) => {
+        {SCHOOL_CARDS.map((school, index) => {
           const { src, fallbackSrc } = resolveImagePath(school);
           return (
             <Card
               key={school.id}
               className="overflow-hidden rounded-2xl border-indigo-100 bg-white/96 shadow-[0_12px_24px_rgba(98,113,202,0.10)]"
             >
-              <div className="h-44 w-full overflow-hidden border-b border-indigo-100 bg-slate-100">
+              <div className="relative aspect-[5/3] w-full min-h-[11.5rem] overflow-hidden rounded-t-2xl border-b border-indigo-100 bg-slate-100 sm:aspect-[16/9] sm:min-h-[12.5rem]">
                 <ImageWithFallback
                   src={src}
                   {...(fallbackSrc ? { fallbackSrc } : {})}
-                  alt={`${school.shortName} campus`}
-                  className="h-full w-full object-cover"
-                  fetchPriority="low"
+                  alt={`${school.shortName} — ${school.fullName}`}
+                  className="absolute inset-0 h-full w-full object-cover object-center"
+                  sizes="(max-width: 639px) 100vw, (max-width: 1279px) 50vw, 33vw"
+                  fetchPriority={index < 3 ? 'high' : 'low'}
                 />
               </div>
 

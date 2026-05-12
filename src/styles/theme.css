@@ -1269,12 +1269,8 @@ html {
   isolation: isolate;
 }
 
-img,
-video,
-canvas {
-  max-width: 100%;
-  height: auto;
-}
+/* Do not set unlayered `img { height: auto }` here — it overrides Tailwind `h-full` / fill layouts.
+   Fluid defaults live in @layer base; components use utilities for object-cover / fixed heroes. */
 
 .native-android .net360-main {
   -webkit-overflow-scrolling: touch;
