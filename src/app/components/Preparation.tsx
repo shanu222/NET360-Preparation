@@ -16,6 +16,7 @@ import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTimi
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../lib/hierarchyDedup';
 import { formatTestStartFailureToast } from '../lib/testStartToast';
+import { assignExamPopupLocation } from '../lib/examWindowLaunch';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
@@ -667,7 +668,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       return;
     }
 
-    examWindow.location.href = url;
+    assignExamPopupLocation(examWindow, url);
   };
 
   const handleStartSectionTest = async (payload: {

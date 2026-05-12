@@ -17,6 +17,8 @@ interface SessionQuestion {
   subject: SubjectKey;
   topic: string;
   question: string;
+  question_text?: string;
+  stem?: string;
   options: string[];
   optionMedia?: Array<{
     key: string;
@@ -37,6 +39,12 @@ interface SessionQuestion {
   questionImageUrl?: string;
   videoUrl?: string;
   difficulty: Difficulty;
+}
+
+function resolveSessionQuestionStem(
+  q: Pick<SessionQuestion, 'question'> & { question_text?: string; stem?: string },
+): string {
+  return String(q.question || q.question_text || q.stem || '').trim();
 }
 
 interface ReviewRow {
@@ -1010,7 +1018,7 @@ export function TestInterfacePage() {
           <section className="order-2 border-b border-[#2b5f9f] p-2 md:order-1 md:border-b-0 md:border-r">
             <p className="mb-2 font-semibold text-black">Question</p>
             <div className="question-content min-h-[104px] rounded border border-[#1e3f6e] bg-white p-2.5 text-sm text-black sm:min-h-[120px] sm:p-3 sm:text-base">
-              <McqMathText value={question.question} asBlock className="whitespace-pre-wrap" />
+              <McqMathText value={resolveSessionQuestionStem(question)} asBlock className="whitespace-pre-wrap" />
               {questionImageSrc ? (
                 <img
                   src={questionImageSrc}

@@ -12,6 +12,7 @@ import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { apiRequest, buildSseStreamUrl, API_BASE } from '../lib/api';
+import { assignExamPopupLocation } from '../lib/examWindowLaunch';
 import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl, shouldPersistAuthTokens } from '../lib/authSession';
 import { io, type Socket } from 'socket.io-client';
@@ -1781,7 +1782,7 @@ function CommunityInner() {
     }
 
     if (examWindow) {
-      examWindow.location.href = url;
+      assignExamPopupLocation(examWindow, url);
     }
   };
 

@@ -4193,7 +4193,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       chapter: item.chapter,
       section: item.section,
       topic: item.topic,
-      question: item.question,
+      question: String(item.question || (item as { question_text?: string }).question_text || '').trim(),
       questionImageUrl: item.questionImageUrl,
       options: item.options,
       difficulty: item.difficulty,

@@ -32,6 +32,7 @@ import {
 } from '../lib/authSession';
 import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTiming';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
+import { assignExamPopupLocation } from '../lib/examWindowLaunch';
 import { formatTestStartFailureToast } from '../lib/testStartToast';
 
 interface TestsProps {
@@ -279,7 +280,7 @@ export function Tests({ onNavigate }: TestsProps) {
       return;
     }
 
-    examWindow.location.href = url;
+    assignExamPopupLocation(examWindow, url);
   };
 
   const beginTest = async (
