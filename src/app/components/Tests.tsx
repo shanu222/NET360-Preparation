@@ -32,7 +32,7 @@ import {
 } from '../lib/authSession';
 import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTiming';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
-import { assignExamPopupLocation } from '../lib/examWindowLaunch';
+import { assignExamPopupLocation, openExamBlankPopup } from '../lib/examWindowLaunch';
 import { formatTestStartFailureToast } from '../lib/testStartToast';
 
 interface TestsProps {
@@ -340,7 +340,7 @@ export function Tests({ onNavigate }: TestsProps) {
     }
 
     // Open a blank window first so /exam-interface never loads without sessionId (avoids missing-ID flash).
-    const examWindow = isNativeRuntime ? null : window.open('about:blank', '_blank', 'width=1400,height=900');
+    const examWindow = isNativeRuntime ? null : openExamBlankPopup();
     if (!isNativeRuntime && !examWindow) {
       showErrorToast('Popup blocked. Please allow popups and try again.');
       launchingRef.current = false;

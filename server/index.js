@@ -708,6 +708,7 @@ function isTrustedNativeAppOrigin(origin) {
   const trusted = new Set([
     'http://localhost',
     'https://localhost',
+    // Capacitor `androidScheme: "https"` serves from https://localhost (no port in Origin).
     'http://localhost:3000',
     'https://localhost:3000',
     'http://localhost:5173',
@@ -1114,6 +1115,50 @@ function readPagination(query, options = {}) {
   const limit = parsePositiveInt(query?.limit, defaultLimit, 1, maxLimit);
   const skip = (page - 1) * limit;
   return { page, limit, skip };
+}
+
+/** First non-empty trimmed string (query/body alias resolution; does not touch Mongo schema). */
+function firstTruthyTrimmedString(...candidates) {
+  for (let i = 0; i < candidates.length; i += 1) {
+    const s = String(candidates[i] ?? '').trim();
+    if (s) return s;
+  }
+  return '';
+}
+
+/**
+ * Coalesce MCQ filter fields from `req.query` or JSON body (duplicate keys / legacy client names).
+ */
+function normalizeMcqFilterPayload(flat) {
+  const o = flat && typeof flat === 'object' ? flat : {};
+  return {
+    subject: firstTruthyTrimmedString(
+      o.subject,
+      o.subjectKey,
+      o.subjectSlug,
+      o.subject_id,
+    ),
+    part: firstTruthyTrimmedString(o.part, o.part_id, o.academicPart),
+    chapter: firstTruthyTrimmedString(
+      o.chapter,
+      o.chapter_id,
+      o.chapterTitle,
+      o.chapter_name,
+    ),
+    section: firstTruthyTrimmedString(
+      o.section,
+      o.section_id,
+      o.sectionTitle,
+      o.section_name,
+    ),
+    topic: firstTruthyTrimmedString(
+      o.topic,
+      o.topic_id,
+      o.topicTitle,
+      o.topic_name,
+    ),
+    difficulty: firstTruthyTrimmedString(o.difficulty),
+  };
 }
 
 function escapeRegexLiteral(value, maxLen = 80) {
@@ -10418,7 +10463,13 @@ app.post('/api/admin/community/reports/:reportId/review', authMiddleware, requir
 
 app.get('/api/mcqs', authMiddleware, mcqsReadLimiter, async (req, res) => {
   try {
-    const { subject, part, chapter, section, difficulty, topic } = req.query;
+    const aliases = normalizeMcqFilterPayload(req.query);
+    const subject = firstTruthyTrimmedString(req.query?.subject, aliases.subject);
+    const part = firstTruthyTrimmedString(req.query?.part, aliases.part);
+    const chapter = firstTruthyTrimmedString(req.query?.chapter, aliases.chapter);
+    const section = firstTruthyTrimmedString(req.query?.section, aliases.section);
+    const topic = firstTruthyTrimmedString(req.query?.topic, aliases.topic);
+    const difficulty = firstTruthyTrimmedString(req.query?.difficulty, aliases.difficulty);
     console.log('[MCQ FETCH] Incoming filters:', {
       subject,
       part,
@@ -11786,19 +11837,21 @@ app.get('/api/study-plans/latest', ...studentPremiumSurface, async (req, res) =>
 });
 
 app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
+  const body = req.body && typeof req.body === 'object' ? req.body : {};
+  const aliases = normalizeMcqFilterPayload(body);
   const {
-    subject,
-    part,
-    chapter,
-    section,
-    difficulty,
-    topic,
     mode,
     questionCount = 20,
     netType,
     testType,
-    selectedSubject,
-  } = req.body || {};
+  } = body;
+  const subject = firstTruthyTrimmedString(body.subject, aliases.subject);
+  const part = firstTruthyTrimmedString(body.part, aliases.part);
+  const chapter = firstTruthyTrimmedString(body.chapter, aliases.chapter);
+  const section = firstTruthyTrimmedString(body.section, aliases.section);
+  const topic = firstTruthyTrimmedString(body.topic, aliases.topic);
+  const difficulty = firstTruthyTrimmedString(body.difficulty, aliases.difficulty);
+  const selectedSubject = firstTruthyTrimmedString(body.selectedSubject, body.selected_subject);
 
   if (!mode) {
     res.status(400).json({ error: 'mode is required.' });

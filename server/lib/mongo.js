@@ -1,11 +1,19 @@
 import mongoose from 'mongoose';
 
+const serverSelectionTimeoutMS = Math.min(
+  120_000,
+  Math.max(5_000, Number.parseInt(String(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS || '20000'), 10) || 20_000),
+);
+
 const MONGO_CONNECT_OPTIONS = {
-  minPoolSize: 2,
-  maxPoolSize: 20,
+  minPoolSize: Math.min(20, Math.max(1, Number.parseInt(String(process.env.MONGODB_MIN_POOL_SIZE || '2'), 10) || 2)),
+  maxPoolSize: Math.min(100, Math.max(2, Number.parseInt(String(process.env.MONGODB_MAX_POOL_SIZE || '20'), 10) || 20)),
   maxIdleTimeMS: 30_000,
-  socketTimeoutMS: 45_000,
-  serverSelectionTimeoutMS: 15_000,
+  socketTimeoutMS: Math.min(120_000, Math.max(10_000, Number.parseInt(String(process.env.MONGODB_SOCKET_TIMEOUT_MS || '45000'), 10) || 45_000)),
+  serverSelectionTimeoutMS,
+  connectTimeoutMS: Math.min(60_000, Math.max(5_000, Number.parseInt(String(process.env.MONGODB_CONNECT_TIMEOUT_MS || '15000'), 10) || 15_000)),
+  heartbeatFrequencyMS: 10_000,
+  maxConnecting: 5,
   autoIndex: process.env.NODE_ENV !== 'production',
 };
 

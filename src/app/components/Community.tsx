@@ -12,7 +12,7 @@ import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { apiRequest, buildSseStreamUrl, API_BASE } from '../lib/api';
-import { assignExamPopupLocation } from '../lib/examWindowLaunch';
+import { assignExamPopupLocation, openExamBlankPopup } from '../lib/examWindowLaunch';
 import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl, shouldPersistAuthTokens } from '../lib/authSession';
 import { io, type Socket } from 'socket.io-client';
@@ -1758,7 +1758,7 @@ function CommunityInner() {
     }
 
     const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
-    const examWindow = isNativeRuntime ? null : window.open('about:blank', '_blank', 'width=1400,height=900');
+    const examWindow = isNativeRuntime ? null : openExamBlankPopup();
 
     if (!isNativeRuntime && !examWindow) {
       showErrorToast('Popup blocked. Please allow popups and try again.');

@@ -16,7 +16,7 @@ import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTimi
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../lib/hierarchyDedup';
 import { formatTestStartFailureToast } from '../lib/testStartToast';
-import { assignExamPopupLocation } from '../lib/examWindowLaunch';
+import { assignExamPopupLocation, openExamBlankPopup } from '../lib/examWindowLaunch';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
@@ -725,7 +725,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     // Desktop: open blank tab synchronously (popup stays tied to the user gesture). Mobile browser: defer until API succeeds (same-tab) to avoid a white blank tab.
     let examWindow: Window | null = null;
     if (!isNativeRuntime && !mobileBrowser) {
-      examWindow = window.open('about:blank', '_blank', 'width=1400,height=900');
+      examWindow = openExamBlankPopup();
       if (!examWindow) {
         showErrorToast('Popup blocked. Please allow popups and try again.');
         launchingRef.current = false;
@@ -836,7 +836,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
 
     let examWindow: Window | null = null;
     if (!isNativeRuntime && !mobileBrowser) {
-      examWindow = window.open('about:blank', '_blank', 'width=1400,height=900');
+      examWindow = openExamBlankPopup();
       if (!examWindow) {
         showErrorToast('Popup blocked. Please allow popups and try again.');
         launchingRef.current = false;

@@ -397,7 +397,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           const me = await apiRequest<{ user: AuthUser }>(
             '/api/auth/me',
-            { retryCount: isNativeRuntime ? 2 : 1, retryDelayMs: 900, timeoutMs: 45_000 },
+            { retryCount: 2, retryDelayMs: 900, timeoutMs: 45_000 },
             bearer,
           );
           if (cancelled || loadId !== authSessionLoadGeneration) return;

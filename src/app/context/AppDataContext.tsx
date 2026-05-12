@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Difficulty, MCQ, McqImageFile, McqOptionMedia, SubjectKey, SUBJECT_KEYS } from '../lib/mcq';
+import { Difficulty, MCQ, McqImageFile, McqOptionMedia, SubjectKey, SUBJECT_KEYS, normalizeMcqDifficulty, normalizeMcqSubjectKey } from '../lib/mcq';
 import { apiRequest, buildSseStreamUrl, ensureStudentBearerTokenFromRefresh, resolveLaunchAuthToken } from '../lib/api';
 import {
   formatStudentTokenDebugPreview,
@@ -212,8 +212,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const promise = (async () => {
       const refreshTag = Date.now();
       const [payload, countPayload] = await Promise.all([
-        apiRequest<{ mcqs: MCQ[] }>(`/api/mcqs?t=${refreshTag}`, { cache: 'no-store' }),
-        apiRequest<{ counts: Partial<Record<SubjectKey, number>> }>(`/api/mcqs/counts?t=${refreshTag}`, { cache: 'no-store' }),
+        apiRequest<{ mcqs: MCQ[] }>(`/api/mcqs?t=${refreshTag}`, { cache: 'no-store', retryCount: 1 }),
+        apiRequest<{ counts: Partial<Record<SubjectKey, number>> }>(`/api/mcqs/counts?t=${refreshTag}`, { cache: 'no-store', retryCount: 1 }),
       ]);
       setMcqs(payload.mcqs || []);
       setMcqTotalsBySubject(
@@ -448,8 +448,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const grouped = Object.fromEntries(SUBJECT_KEYS.map((subject) => [subject, [] as MCQ[]])) as Record<SubjectKey, MCQ[]>;
 
     mcqs.forEach((question) => {
-      if (!Object.prototype.hasOwnProperty.call(grouped, question.subject)) return;
-      grouped[question.subject].push(question);
+      const subjectKey = normalizeMcqSubjectKey(String(question?.subject || ''));
+      if (!subjectKey || !Object.prototype.hasOwnProperty.call(grouped, subjectKey)) return;
+      grouped[subjectKey].push(question);
     });
 
     return grouped;
@@ -461,9 +462,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     ) as Record<SubjectKey, Record<Difficulty, MCQ[]>>;
 
     mcqs.forEach((question) => {
-      if (!Object.prototype.hasOwnProperty.call(grouped, question.subject)) return;
-      const subjectBuckets = grouped[question.subject];
-      const difficultyKey = String(question.difficulty || '').trim() as Difficulty;
+      const subjectKey = normalizeMcqSubjectKey(String(question?.subject || ''));
+      if (!subjectKey || !Object.prototype.hasOwnProperty.call(grouped, subjectKey)) return;
+      const subjectBuckets = grouped[subjectKey];
+      const difficultyKey = normalizeMcqDifficulty(String(question?.difficulty || ''));
       const targetBucket = subjectBuckets?.[difficultyKey];
       if (!Array.isArray(targetBucket)) return;
       targetBucket.push(question);

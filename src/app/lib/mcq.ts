@@ -130,6 +130,21 @@ function toSubject(value: string | undefined): SubjectKey | null {
 	return subjectAliases[normalized] ?? null;
 }
 
+/** Map API/CSV subject strings onto canonical `SubjectKey` (grouping / filters). */
+export function normalizeMcqSubjectKey(value: string | undefined): SubjectKey | null {
+	return toSubject(value);
+}
+
+export function normalizeMcqDifficulty(value: string | undefined): Difficulty {
+	const t = String(value || '').trim();
+	if (t === 'Easy' || t === 'Medium' || t === 'Hard') return t;
+	const lower = t.toLowerCase();
+	if (lower === 'easy' || lower === 'e') return 'Easy';
+	if (lower === 'hard' || lower === 'h') return 'Hard';
+	if (lower === 'medium' || lower === 'm') return 'Medium';
+	return 'Medium';
+}
+
 function parseCsv(csvText: string): CsvRow[] {
 	const lines = csvText
 		.replace(/^\uFEFF/, '')

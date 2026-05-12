@@ -508,7 +508,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   };
 
   const fetchRefreshWithRetry = async (body: Record<string, unknown>) => {
-    const maxAttempts = isNativeCapacitorRuntime() ? 3 : 1;
+    const maxAttempts = isNativeCapacitorRuntime() ? 3 : 2;
     let lastError: unknown = null;
     for (let attemptIndex = 0; attemptIndex < maxAttempts; attemptIndex += 1) {
       try {
@@ -928,22 +928,38 @@ export async function downloadBinary(path: string, options: RequestInit = {}, to
  * Call POST /api/auth/refresh to obtain JWTs in the JSON body (requires ISSUE_AUTH_BODY_TOKENS on server)
  * and persist them before sensitive POSTs like /api/tests/start.
  */
+let ensureBearerPrimeInFlight: Promise<void> | null = null;
+let ensureBearerPrimeCooldownUntil = 0;
+
 export async function ensureStudentBearerTokenFromRefresh(
   contextToken: string | null | undefined,
 ): Promise<void> {
   const stored = readStoredAccessToken();
   if (stored && !isCookieSessionApiMarker(stored)) return;
 
-  try {
-    const out = await apiRequest<{ token?: string; refreshToken?: string }>(
-      '/api/auth/refresh',
-      { method: 'POST', body: JSON.stringify({}) },
-      contextToken ?? undefined,
-    );
-    if (out?.token && shouldPersistAuthTokens()) {
-      persistStudentTokens(out.token, out.refreshToken ?? null);
-    }
-  } catch {
-    // Cookie-only same-origin sessions may still succeed without a bearer.
+  if (Date.now() < ensureBearerPrimeCooldownUntil) return;
+  if (ensureBearerPrimeInFlight) {
+    await ensureBearerPrimeInFlight.catch(() => undefined);
+    return;
   }
+
+  ensureBearerPrimeInFlight = (async () => {
+    try {
+      const out = await apiRequest<{ token?: string; refreshToken?: string }>(
+        '/api/auth/refresh',
+        { method: 'POST', body: JSON.stringify({}), retryCount: 1, timeoutMs: 25_000 },
+        contextToken ?? undefined,
+      );
+      if (out?.token && shouldPersistAuthTokens()) {
+        persistStudentTokens(out.token, out.refreshToken ?? null);
+      }
+      ensureBearerPrimeCooldownUntil = 0;
+    } catch {
+      ensureBearerPrimeCooldownUntil = Date.now() + 8_000;
+    } finally {
+      ensureBearerPrimeInFlight = null;
+    }
+  })();
+
+  await ensureBearerPrimeInFlight.catch(() => undefined);
 }
