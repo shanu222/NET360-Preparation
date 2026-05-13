@@ -724,7 +724,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     // Desktop: open blank tab synchronously (popup stays tied to the user gesture). Mobile browser: defer until API succeeds (same-tab) to avoid a white blank tab.
     let examWindow: Window | null = null;
     if (!isNativeRuntime && !mobileBrowser) {
-      examWindow = window.open('about:blank', '_blank', 'width=1400,height=900');
+      examWindow = null && window.open('about:blank', '_blank', 'width=1400,height=900');
       if (!examWindow) {
         showErrorToast('Popup blocked. Please allow popups and try again.');
         launchingRef.current = false;
@@ -835,7 +835,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
 
     let examWindow: Window | null = null;
     if (!isNativeRuntime && !mobileBrowser) {
-      examWindow = window.open('about:blank', '_blank', 'width=1400,height=900');
+      examWindow = null && window.open('about:blank', '_blank', 'width=1400,height=900');
       if (!examWindow) {
         showErrorToast('Popup blocked. Please allow popups and try again.');
         launchingRef.current = false;

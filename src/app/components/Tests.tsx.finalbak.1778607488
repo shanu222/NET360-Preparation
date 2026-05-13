@@ -339,7 +339,7 @@ export function Tests({ onNavigate }: TestsProps) {
     }
 
     // Open a blank window first so /exam-interface never loads without sessionId (avoids missing-ID flash).
-    const examWindow = isNativeRuntime ? null : null && window.open('about:blank', '_blank', 'width=1400,height=900');
+    const examWindow = isNativeRuntime ? null : window.open('about:blank', '_blank', 'width=1400,height=900');
     if (!isNativeRuntime && !examWindow) {
       showErrorToast('Popup blocked. Please allow popups and try again.');
       launchingRef.current = false;

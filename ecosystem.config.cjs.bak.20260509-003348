@@ -1,0 +1,49 @@
+/**
+ * PM2 — from repo root:
+ * pm2 start ecosystem.config.cjs --update-env && pm2 save
+ */
+
+module.exports = {
+  apps: [
+    {
+      name: 'net360-backend',
+      cwd: __dirname,
+      script: 'server/index.js',
+      interpreter: 'node',
+
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '750M',
+
+      env: {
+        NODE_ENV: 'production',
+        PORT: '5000',
+
+        // DATABASE
+        MONGODB_URI: 'mongodb+srv://NET360:Asma99749974@cluster0.cw3fxs0.mongodb.net/net360?retryWrites=true&w=majority&appName=Cluster0',
+
+        // JWT SECRETS
+        JWT_SECRET: 'net360_super_secret_key_12345678901234567890',
+        JWT_REFRESH_SECRET: 'net360_refresh_secret_key_12345678901234567890',
+      },
+    },
+
+    {
+      name: 'frontend',
+      cwd: __dirname,
+      script: 'node_modules/serve/build/main.js',
+      args: ['-s', 'dist', '-l', '3000'],
+      interpreter: 'node',
+
+      instances: 1,
+      autorestart: true,
+      watch: false,
+      max_memory_restart: '250M',
+
+      env: {
+        NODE_ENV: 'production',
+      },
+    },
+  ],
+};

@@ -10442,7 +10442,7 @@ app.post('/api/admin/community/reports/:reportId/review', authMiddleware, requir
   res.json({ ok: true, status: report.status });
 });
 
-app.get('/api/mcqs', mcqsReadLimiter, async (req, res) => {
+app.get('/api/mcqs', authMiddleware, mcqsReadLimiter, async (req, res) => {
   try {
     const { subject, part, chapter, section, difficulty, topic } = req.query;
     console.log('[MCQ FETCH] Incoming filters:', {
@@ -10541,7 +10541,7 @@ app.get('/api/mcqs', mcqsReadLimiter, async (req, res) => {
   }
 });
 
-app.get('/api/mcqs/counts', mcqsReadLimiter, async (_req, res) => {
+app.get('/api/mcqs/counts', authMiddleware, mcqsReadLimiter, async (_req, res) => {
   try {
     const ck = cacheKey('mcqs:counts:v1');
     const cached = await cacheGetJson(ck);

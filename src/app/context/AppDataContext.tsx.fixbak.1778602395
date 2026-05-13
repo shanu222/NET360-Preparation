@@ -212,7 +212,16 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const promise = (async () => {
       const refreshTag = Date.now();
       const [payload, countPayload] = await Promise.all([
-
+        if (
+          !selectedSubject ||
+          !selectedPart ||
+          !selectedChapter ||
+          !selectedSection ||
+          !selectedTopic
+        ) {
+          console.warn("MCQ request blocked: missing selected state");
+          return;
+        }
 
         apiRequest<{ mcqs: MCQ[] }>(
           `/api/mcqs?subject=${encodeURIComponent(selectedSubject)}&part=${encodeURIComponent(selectedPart)}&chapter=${encodeURIComponent(selectedChapter)}&section=${encodeURIComponent(selectedSection)}&topic=${encodeURIComponent(selectedTopic)}&limit=20&t=${refreshTag}`,
