@@ -3326,9 +3326,8 @@ function makeAccessToken(user) {
     role: user.role || 'student',
   };
 
-  if ((user.role || 'student') === 'student' && user.activeSession?.sessionId) {
-    payload.sessionId = user.activeSession.sessionId;
-  }
+  const sessionId = String(user.activeSessionId || user.activeSession?.sessionId || '').trim();
+  if (sessionId) payload.sessionId = sessionId;
 
   return jwt.sign(
     payload,
@@ -3344,9 +3343,8 @@ function makeRefreshToken(user) {
     role: user.role || 'student',
   };
 
-  if ((user.role || 'student') === 'student' && user.activeSession?.sessionId) {
-    payload.sessionId = user.activeSession.sessionId;
-  }
+  const sessionId = String(user.activeSessionId || user.activeSession?.sessionId || '').trim();
+  if (sessionId) payload.sessionId = sessionId;
 
   return jwt.sign(
     payload,
@@ -6433,24 +6431,34 @@ async function authMiddleware(req, res, next) {
     }
 
     const role = user.role || 'student';
-
-    if (role === 'student') {
-      const tokenSessionId = String(payload.sessionId || '');
-      const activeSessionId = String(user.activeSession?.sessionId || '');
-      if (!tokenSessionId || !activeSessionId || tokenSessionId !== activeSessionId) {
+    const tokenSessionId = String(payload.sessionId || '').trim();
+    const dbSessionId = String(user.activeSessionId || user.activeSession?.sessionId || '').trim();
+    const shouldEnforceSingleSession = Boolean(dbSessionId);
+    if (shouldEnforceSingleSession) {
+      if (!tokenSessionId || tokenSessionId !== dbSessionId) {
         await logSecurityEvent(req, {
           eventType: 'auth.session_mismatch',
           severity: 'warning',
           actorUserId: user._id,
           actorEmail: user.email,
+          metadata: {
+            role,
+            hasTokenSessionId: Boolean(tokenSessionId),
+            hasDbSessionId: Boolean(dbSessionId),
+          },
         });
         res.status(401).json({
-          error: 'Session is no longer active. Please log in again.',
-          code: 'SESSION_NO_LONGER_ACTIVE',
+          success: false,
+          code: 'SESSION_REVOKED',
+          error: 'Session expired because account was logged in elsewhere.',
+          message: 'Session expired because account was logged in elsewhere.',
         });
         return;
       }
+    }
 
+    // Best-effort lastSeen updates (students only, legacy activeSession subdoc).
+    if (role === 'student' && user.activeSession?.sessionId) {
       const nowMs = Date.now();
       const lastSeenMs = user.activeSession?.lastSeenAt
         ? new Date(user.activeSession.lastSeenAt).getTime()
@@ -7394,6 +7402,8 @@ app.post('/api/auth/login', async (req, res) => {
         lastIp,
       };
       const newSessionId = user.activeSession.sessionId;
+      user.activeSessionId = String(newSessionId);
+      user.lastLoginAt = new Date();
 
       if (conflictingDevice) {
         user.refreshTokens = [];
@@ -7430,6 +7440,21 @@ app.post('/api/auth/login', async (req, res) => {
       res.status(200).json(buildAuthJsonBody(req, payload));
       return;
     }
+
+    // Admin logins also get a single-device session id for JWT checks (no socket disconnect required).
+    const ua = String(req.headers['user-agent'] || '').slice(0, 250);
+    const lastIp = String(req.ip || req.headers['x-forwarded-for'] || '').split(',')[0].trim().slice(0, 45);
+    user.activeSessionId = crypto.randomUUID();
+    user.lastLoginAt = new Date();
+    // Keep legacy shape for diagnostics; admin session doesn't require `activeSession` for policy but storing it is harmless.
+    user.activeSession = {
+      sessionId: String(user.activeSessionId),
+      deviceId,
+      startedAt: new Date(),
+      lastSeenAt: new Date(),
+      userAgent: ua,
+      lastIp,
+    };
 
     const payload = await issueAuthPayload(user, req);
     setAuthCookies(res, payload.token, payload.refreshToken);
@@ -7506,8 +7531,8 @@ app.post('/api/auth/refresh', async (req, res) => {
 
     if ((user.role || 'student') === 'student') {
       const tokenSessionId = String(payload.sessionId || '');
-      const activeSessionId = String(user.activeSession?.sessionId || '');
-      if (!tokenSessionId || !activeSessionId || tokenSessionId !== activeSessionId) {
+      const activeSessionId = String(user.activeSessionId || user.activeSession?.sessionId || '');
+      if (activeSessionId && (!tokenSessionId || tokenSessionId !== activeSessionId)) {
         user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
         await user.save();
         await logSecurityEvent(req, {
@@ -7517,7 +7542,12 @@ app.post('/api/auth/refresh', async (req, res) => {
           actorEmail: user.email,
         });
         clearAuthCookies(res);
-        res.status(401).json({ error: 'Session ended. Please log in again.', code: 'SESSION_NO_LONGER_ACTIVE' });
+        res.status(401).json({
+          success: false,
+          code: 'SESSION_REVOKED',
+          error: 'Session expired because account was logged in elsewhere.',
+          message: 'Session expired because account was logged in elsewhere.',
+        });
         return;
       }
     }
@@ -7564,24 +7594,23 @@ app.post('/api/auth/logout', async (req, res) => {
       const tokenHash = hashToken(refreshToken);
       user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
 
-      if ((user.role || 'student') === 'student') {
-        const tokenSessionId = String(payload.sessionId || '');
-        const activeId = String(user.activeSession?.sessionId || '');
-        if (tokenSessionId && activeId === tokenSessionId) {
-          user.activeSession = null;
-          console.log('[auth/logout] cleared_active_session', {
-            userId: String(user._id),
-            sessionId: tokenSessionId,
-            email: redactEmailForLog(user.email || ''),
-          });
-        } else if (tokenSessionId) {
-          console.log('[auth/logout] refresh_session_mismatch_skip_clear', {
-            userId: String(user._id),
-            tokenSessionId,
-            activeId: activeId || '(none)',
-            email: redactEmailForLog(user.email || ''),
-          });
-        }
+      const tokenSessionId = String(payload.sessionId || '');
+      const activeId = String(user.activeSessionId || user.activeSession?.sessionId || '');
+      if (tokenSessionId && activeId === tokenSessionId) {
+        user.activeSession = null;
+        user.activeSessionId = '';
+        console.log('[auth/logout] cleared_active_session', {
+          userId: String(user._id),
+          sessionId: tokenSessionId,
+          email: redactEmailForLog(user.email || ''),
+        });
+      } else if (tokenSessionId) {
+        console.log('[auth/logout] refresh_session_mismatch_skip_clear', {
+          userId: String(user._id),
+          tokenSessionId,
+          activeId: activeId || '(none)',
+          email: redactEmailForLog(user.email || ''),
+        });
       }
 
       await user.save();
@@ -7863,9 +7892,8 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   const u = userPublic(req.user);
-  if ((req.user.role || 'student') === 'student' && req.user.activeSession?.sessionId) {
-    u.activeSessionId = String(req.user.activeSession.sessionId);
-  }
+  const sessionId = String(req.user.activeSessionId || req.user.activeSession?.sessionId || '').trim();
+  if (sessionId) u.activeSessionId = sessionId;
   res.json({ user: u });
 });
 

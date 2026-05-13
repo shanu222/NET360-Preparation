@@ -90,6 +90,13 @@ const userSchema = new mongoose.Schema(
     preferences: { type: preferencesSchema, default: () => ({}) },
     progress: { type: progressSchema, default: () => ({}) },
     subscription: { type: subscriptionSchema, default: () => ({}) },
+    /**
+     * Single-device login session id. Preferred over `activeSession.sessionId` for auth checks.
+     * Backwards compatible: legacy accounts may only have `activeSession`.
+     */
+    activeSessionId: { type: String, default: '', index: true },
+    /** Last successful login timestamp (any provider). */
+    lastLoginAt: { type: Date, default: null },
     activeSession: { type: activeSessionSchema, default: null },
     refreshTokens: { type: [refreshTokenSchema], default: [] },
     resetPasswordTokenHash: { type: String, default: null },

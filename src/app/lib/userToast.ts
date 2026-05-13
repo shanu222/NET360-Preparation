@@ -155,6 +155,9 @@ export function audienceFriendlyError(error: unknown, fallback = 'Something went
   if (code === 'SESSION_NO_LONGER_ACTIVE') {
     return 'You were signed out. Please log in again.';
   }
+  if (code === 'SESSION_REVOKED') {
+    return 'You were logged out because your account was signed in on another device.';
+  }
 
   const status = Number(err?.status);
   if (Number.isFinite(status) && status > 0) {

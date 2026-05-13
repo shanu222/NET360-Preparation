@@ -995,7 +995,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!prev) return;
       const mine = readSessionIdFromAccessToken();
       if (mine && mine === prev) {
-        showWarningToast('You were signed out because your account was opened on another device.');
+        showWarningToast('You were logged out because your account was signed in on another device.');
         logout();
       }
     };

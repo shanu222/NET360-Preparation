@@ -6,6 +6,7 @@ import {
   shouldPersistAuthTokens,
 } from './authSession';
 import { isNativeRuntime, logNativeEvent } from './nativeDiagnostics';
+import { showWarningToast } from './userToast';
 
 type RuntimeEnv = {
   VITE_ADMIN_ONLY?: string;
@@ -126,6 +127,36 @@ const REFRESH_FAILURE_BACKOFF_MS = 15_000;
 
 let refreshInFlight: Promise<string | null> | null = null;
 let refreshBlockedUntil = 0;
+
+function redirectToLoginScreen() {
+  if (typeof window === 'undefined') return;
+  const target = String(window.location.pathname || '').toLowerCase().startsWith('/admin')
+    ? '/admin'
+    : '/?tab=profile';
+  if (window.location.pathname + window.location.search === target) return;
+  window.location.assign(target);
+}
+
+function clearAllAuthStorage() {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.clear();
+  } catch {
+    // ignore
+  }
+  try {
+    sessionStorage.clear();
+  } catch {
+    // ignore
+  }
+}
+
+function handleSessionRevoked(payload: unknown) {
+  void payload;
+  showWarningToast('You were logged out because your account was signed in on another device.');
+  clearAllAuthStorage();
+  redirectToLoginScreen();
+}
 
 function isNativeCapacitorRuntime() {
   return isNativeRuntime();
@@ -760,6 +791,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
         try {
           const parsedBody = JSON.parse(options.body) as Record<string, unknown>;
           if (!parsedBody.forceLogin && !parsedBody.forceLogoutOtherDevice) {
+            showWarningToast('Logging in here will log out your previous device.');
             const retried = await fetchWithTimeout(resolvedPath, {
               ...options,
               headers: buildHeaders(initialToken),
@@ -859,6 +891,10 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
         error.activeSession = payload.activeSession;
       }
       error.payload = payload;
+    }
+
+    if (error.code === 'SESSION_REVOKED') {
+      handleSessionRevoked(payload);
     }
 
     logNativeEvent('api', 'response-error', {
