@@ -1,3 +1,13 @@
+﻿const allowedOrigins = [
+  "https://net360preparation.com",
+  "https://www.net360preparation.com",
+  "capacitor://localhost",
+  "http://localhost",
+  "https://localhost",
+  "http://10.0.2.2",
+  "http://127.0.0.1"
+];
+
 import dotenv from 'dotenv';
 import express from 'express';
 import compression from 'compression';
@@ -406,13 +416,51 @@ const PAYFAST_WALLET_ACCOUNT_TYPE_ID = String(process.env.PAYFAST_WALLET_ACCOUNT
 
 const app = express();
 
+
+
+app.use(cors({
+  origin: function(origin, callback) {
+
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.log("Blocked by CORS:", origin);
+
+    return callback(null, true);
+  },
+
+  credentials: true,
+
+  methods: [
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "OPTIONS"
+  ],
+
+  allowedHeaders: [
+    "Origin",
+    "X-Requested-With",
+    "Content-Type",
+    "Accept",
+    "Authorization",
+    "x-net360-client-platform",
+    "x-net360-client-version"
+  ]
+}));
+
+app.options("*", cors());
+
+
 app.use((req, res, next) => {
-  const allowedOrigins = [
-    'https://net360preparation.com',
-    'https://www.net360preparation.com',
-    'https://api.net360preparation.com',
-    'https://localhost'
-  ];
+  
 
   const origin = req.headers.origin;
 
@@ -440,13 +488,7 @@ app.use((req, res, next) => {
 
 
 
-const allowedOrigins = [
-  'https://net360preparation.com',
-  'https://www.net360preparation.com',
-  'https://api.net360preparation.com',
-  'http://localhost:5173',
-  'http://localhost:3000'
-];
+
 
 
 
@@ -791,7 +833,7 @@ const corsOriginResolver = corsAllowedOriginsList
  * The SPA (`src/app/lib/api.ts`) sets `X-Net360-Client-Platform` on fetch (web vs native). Any
  * non-simple header triggers a CORS preflight: the browser sends OPTIONS with
  * `Access-Control-Request-Headers: ...`. If the response omits those names in
- * `Access-Control-Allow-Headers`, the real POST/GET is never sent → console shows the header
+ * `Access-Control-Allow-Headers`, the real POST/GET is never sent â†’ console shows the header
  * "is not allowed" and `net::ERR_FAILED` for the follow-up request.
  *
  * We use an explicit `allowedHeaders` list (not `*`) because credentialed requests require
@@ -800,7 +842,7 @@ const corsOriginResolver = corsAllowedOriginsList
  * Origins: if `CORS_ALLOWED_ORIGINS` is unset, `origin: true` makes the `cors` package reflect
  * the request `Origin` (not `Access-Control-Allow-Origin: *`), which preserves cookie auth for
  * known frontends. When `CORS_ALLOWED_ORIGINS` is set, requests must match the allowlist (with
- * www/apex expansion) or `isTrustedNativeAppOrigin` — set the env in production to restrict origins.
+ * www/apex expansion) or `isTrustedNativeAppOrigin` â€” set the env in production to restrict origins.
  *
  * `app.options('*', corsMiddleware)` plus `skip` on rate-limiters for OPTIONS avoids 429s on
  * preflight without CORS headers.
@@ -3577,7 +3619,7 @@ function duplicateAccountErrorMessage(matchedBy, hasActiveSubscription) {
   return `An account already exists with this ${fieldLabel}. Please log in using your existing account, or use a different email address or mobile number.`;
 }
 
-/** Token-based / bcrypt users without a Firebase UID — safe to link when they complete Firebase signup. */
+/** Token-based / bcrypt users without a Firebase UID â€” safe to link when they complete Firebase signup. */
 function isLegacyStudentForFirebaseMigration(userLike) {
   if (!userLike) return false;
   if (String(userLike.role || 'student') === 'admin') return false;
@@ -4186,7 +4228,7 @@ async function buildAdminConfigurationListPayload(rows, liveVerify) {
       } else {
         status = 'neutral';
         statusLabel = 'Active (unverified)';
-        statusDetail = 'Click “Refresh List” to run a live OpenAI probe.';
+        statusDetail = 'Click â€œRefresh Listâ€ to run a live OpenAI probe.';
       }
     } else if (key === 'OPENAI_MODEL' || key === 'MODEL_PROVIDER_MODEL') {
       if (eff.source === 'none') {
@@ -6477,7 +6519,7 @@ const studentPremiumSurface = [
   requireTrialOrPremiumContent(UserModel),
 ];
 
-/** Legacy token-based signup, admin premium proof queues, and recovery lists — fully retired (410). */
+/** Legacy token-based signup, admin premium proof queues, and recovery lists â€” fully retired (410). */
 function respondLegacyAdminWorkflowGone(_req, res) {
   res.status(410).json({
     error:
@@ -9909,12 +9951,12 @@ app.get('/api/community/achievements', ...studentPremiumSurface, async (req, res
   const answerStats = myAnswers[0] || { totalUpvotes: 0, answersCount: 0 };
 
   const badges = [
-    { id: 'practice-master', label: 'Practice Master', icon: '📘', earned: solved >= 1000, progress: solved, target: 1000 },
-    { id: 'accuracy-king', label: 'Accuracy King', icon: '🎯', earned: avg >= 90, progress: Number(avg.toFixed(1)), target: 90 },
-    { id: 'physics-expert', label: 'Physics Expert', icon: '🧠', earned: physicsAttempts.length >= 5 && physicsAverage >= 85, progress: Number(physicsAverage.toFixed(1)), target: 85 },
-    { id: 'study-streak-7', label: '7-Day Study Streak', icon: '🔥', earned: streak >= 7, progress: streak, target: 7 },
-    { id: 'leaderboard-top10', label: 'Top 10 Leaderboard', icon: '🏆', earned: top10Ids.has(String(req.user._id)), progress: top10Ids.has(String(req.user._id)) ? 10 : 0, target: 10 },
-    { id: 'doubt-contributor', label: 'Contributor Badge', icon: '🏅', earned: Number(answerStats.totalUpvotes || 0) >= 10, progress: Number(answerStats.totalUpvotes || 0), target: 10 },
+    { id: 'practice-master', label: 'Practice Master', icon: 'ðŸ“˜', earned: solved >= 1000, progress: solved, target: 1000 },
+    { id: 'accuracy-king', label: 'Accuracy King', icon: 'ðŸŽ¯', earned: avg >= 90, progress: Number(avg.toFixed(1)), target: 90 },
+    { id: 'physics-expert', label: 'Physics Expert', icon: 'ðŸ§ ', earned: physicsAttempts.length >= 5 && physicsAverage >= 85, progress: Number(physicsAverage.toFixed(1)), target: 85 },
+    { id: 'study-streak-7', label: '7-Day Study Streak', icon: 'ðŸ”¥', earned: streak >= 7, progress: streak, target: 7 },
+    { id: 'leaderboard-top10', label: 'Top 10 Leaderboard', icon: 'ðŸ†', earned: top10Ids.has(String(req.user._id)), progress: top10Ids.has(String(req.user._id)) ? 10 : 0, target: 10 },
+    { id: 'doubt-contributor', label: 'Contributor Badge', icon: 'ðŸ…', earned: Number(answerStats.totalUpvotes || 0) >= 10, progress: Number(answerStats.totalUpvotes || 0), target: 10 },
   ];
 
   res.json({
@@ -11091,7 +11133,7 @@ async function handlePremiumStartTrial(req, res) {
 }
 
 app.post('/api/subscriptions/start-trial', authMiddleware, subscriptionExpiryRefresh(UserModel), handlePremiumStartTrial);
-/** Shorter alias — identical behavior (some proxies cache or map paths inconsistently). */
+/** Shorter alias â€” identical behavior (some proxies cache or map paths inconsistently). */
 app.post('/api/trial/start', authMiddleware, subscriptionExpiryRefresh(UserModel), handlePremiumStartTrial);
 
 app.post('/api/payments/order', authMiddleware, subscriptionExpiryRefresh(UserModel), async (req, res) => {
@@ -14800,3 +14842,5 @@ bootstrap().catch((error) => {
   }
   process.exit(1);
 });
+
+
