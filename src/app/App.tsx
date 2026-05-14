@@ -52,6 +52,7 @@ import { brandLogoUrl } from './lib/publicMedia';
 import { fetchAndApplyPublicMediaConfig } from './lib/publicMediaRuntime';
 import { PremiumCountdownBadge } from './components/subscription/PremiumCountdownBadge';
 import { logNativeEvent } from './lib/nativeDiagnostics';
+import { resolveCapacitorAndroidWebViewUrl } from './lib/nativeDeepLink';
 
 const SubscriptionPageLazy = lazyWithRetry(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
 const Dashboard = lazyWithRetry(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
@@ -476,6 +477,12 @@ export default function App() {
       if (!incoming) return;
       logNativeEvent('runtime', 'deep-link-open', { url: incoming });
       try {
+        const capacitorLocal = resolveCapacitorAndroidWebViewUrl(incoming);
+        if (capacitorLocal) {
+          logNativeEvent('runtime', 'deep-link-webview-location', { incoming, capacitorLocal });
+          window.location.replace(capacitorLocal);
+          return;
+        }
         const parsed = new URL(incoming);
         const path = parsed.pathname || '/';
         const target = `${path}${parsed.search || ''}${parsed.hash || ''}`;

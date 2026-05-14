@@ -1350,7 +1350,8 @@ html.native-android .net360-shell {
 .native-android .net360-page {
   padding-left: max(14px, env(safe-area-inset-left, 0px));
   padding-right: max(14px, env(safe-area-inset-right, 0px));
-  overflow-x: clip;
+  /* `clip` can swallow horizontally scrollable tab rows; outer shell already hides page-wide overflow */
+  overflow-x: visible;
 }
 
 .native-android .net360-page [data-slot='dialog-content'],
@@ -1399,6 +1400,69 @@ html.native-android .net360-shell {
 
 .native-android .net360-swipe-row {
   touch-action: pan-x;
+}
+
+/* Horizontal tab / segmented rows: isolate pan-x from vertical page scroll (Android WebView). */
+html.native-android .net360-swipe-row,
+html.native-android .net360-horizontal-scroll {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x;
+  overscroll-behavior-x: contain;
+  overscroll-behavior-y: contain;
+  scroll-behavior: auto;
+  gap: 0;
+}
+
+html.native-android .net360-swipe-row > *,
+html.native-android .net360-horizontal-scroll > * {
+  flex: 0 0 auto;
+  min-width: max-content;
+  max-width: none;
+}
+
+html.native-android .net360-swipe-row [data-slot='tabs-list'],
+html.native-android .net360-horizontal-scroll [data-slot='tabs-list'] {
+  flex-wrap: nowrap !important;
+  min-width: max-content !important;
+  width: max-content !important;
+  max-width: none !important;
+  touch-action: pan-x;
+}
+
+html.native-android .net360-page [data-slot='card'],
+html.native-android .net360-page [data-slot='card-header'],
+html.native-android .net360-page [data-slot='card-content'],
+html.native-android .net360-page [data-slot='card-footer'] {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+html.native-android .net360-page [data-slot='card'] .flex,
+html.native-android .net360-page [data-slot='card-header'] .flex,
+html.native-android .net360-page [data-slot='card-content'] .flex {
+  min-width: 0;
+}
+
+html.native-android .net360-native-adaptive-cta {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  white-space: normal;
+  text-align: center;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
 }
 
 .native-android .net360-page [data-slot='tabs-list']::-webkit-scrollbar,

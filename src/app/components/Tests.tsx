@@ -686,7 +686,7 @@ export function Tests({ onNavigate }: TestsProps) {
                   </div>
 
                   <Button
-                    className="bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
+                    className="net360-native-adaptive-cta bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
                     onClick={() => {
                       const topSubject = recommendedSubjectBreakdown[0]?.subject || selectedSubject;
                       void beginTest(
