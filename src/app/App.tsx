@@ -69,6 +69,11 @@ const Community = lazyWithRetry(() => import('./components/Community').then((m) 
 const ProgramExplorer = lazyWithRetry(() => import('./components/ProgramExplorer').then((m) => ({ default: m.ProgramExplorer })));
 const NETTypes = lazyWithRetry(() => import('./components/NETTypes').then((m) => ({ default: m.NETTypes })));
 const SeoLandingPage = lazyWithRetry(() => import('./components/SeoLandingPage').then((m) => ({ default: m.SeoLandingPage })));
+const PrivacyPolicyPage = lazyWithRetry(() => import('./components/LegalPages').then((m) => ({ default: m.PrivacyPolicyPage })));
+const TermsPage = lazyWithRetry(() => import('./components/LegalPages').then((m) => ({ default: m.TermsPage })));
+const DeleteAccountHelpPage = lazyWithRetry(() =>
+  import('./components/LegalPages').then((m) => ({ default: m.DeleteAccountHelpPage })),
+);
 const SupportChatWidgetLazy = lazyWithRetry(() =>
   import('./components/SupportChatWidget').then((m) => ({ default: m.SupportChatWidget })),
 );
@@ -141,6 +146,9 @@ type SectionId =
   | 'community'
   | 'profile'
   | 'subscription'
+  | 'privacy-policy'
+  | 'terms'
+  | 'delete-account'
   | 'physics-mcqs-net'
   | 'math-mcqs-net'
   | 'net-preparation-pakistan'
@@ -162,6 +170,9 @@ const PATH_BY_SECTION: Record<SectionId, string> = {
   community: '/community',
   profile: '/profile',
   subscription: '/subscription',
+  'privacy-policy': '/privacy-policy',
+  terms: '/terms',
+  'delete-account': '/delete-account',
   'physics-mcqs-net': '/physics-mcqs-net',
   'math-mcqs-net': '/math-mcqs-net',
   'net-preparation-pakistan': '/net-preparation-pakistan',
@@ -819,6 +830,24 @@ export default function App() {
         return (
           <div className="mt-0 net360-page net360-page-enter">
             <SubscriptionPageLazy />
+          </div>
+        );
+      case 'privacy-policy':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <PrivacyPolicyPage />
+          </div>
+        );
+      case 'terms':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <TermsPage />
+          </div>
+        );
+      case 'delete-account':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <DeleteAccountHelpPage />
           </div>
         );
       case 'community':

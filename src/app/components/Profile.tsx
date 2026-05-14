@@ -825,6 +825,18 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 </div>
               ) : null}
 
+              <p className="text-center text-xs leading-relaxed text-slate-500">
+                By continuing, you agree to the{' '}
+                <a href="/terms" className="text-indigo-700 underline underline-offset-2 hover:text-indigo-800">
+                  Terms & Conditions
+                </a>{' '}
+                and{' '}
+                <a href="/privacy-policy" className="text-indigo-700 underline underline-offset-2 hover:text-indigo-800">
+                  Privacy Policy
+                </a>
+                .
+              </p>
+
               {authMode === 'login' ? (
                 <>
                   <div className="flex flex-wrap justify-center gap-3">
@@ -1006,6 +1018,23 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 <a href={NET360_ADMIN_WHATSAPP_LINK} target="_blank" rel="noreferrer" className="mt-1 inline-block text-emerald-700 underline underline-offset-2">
                   Open WhatsApp Chat
                 </a>
+              </div>
+              <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-2.5 text-xs">
+                <p className="font-medium text-indigo-900">Legal & Support</p>
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-indigo-800">
+                  <a href="/privacy-policy" className="underline underline-offset-2 hover:text-indigo-900">
+                    Privacy Policy
+                  </a>
+                  <a href="/terms" className="underline underline-offset-2 hover:text-indigo-900">
+                    Terms & Conditions
+                  </a>
+                  <a href="/delete-account" className="underline underline-offset-2 hover:text-indigo-900">
+                    Delete Account
+                  </a>
+                  <a href="mailto:support@net360preparation.com" className="underline underline-offset-2 hover:text-indigo-900">
+                    Contact Support
+                  </a>
+                </div>
               </div>
               <div className="flex items-center justify-between">
                 <span className="text-sm text-muted-foreground">Member Since</span>
