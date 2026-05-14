@@ -1,20 +1,22 @@
 import path from 'node:path';
 import process from 'node:process';
-import dotenv from 'dotenv';
 import fs from 'node:fs';
+import { buildAndroidViteEnv } from './merge-android-vite-env.mjs';
 
 const workspaceRoot = process.cwd();
-const androidEnvPath = path.join(workspaceRoot, '.env.android');
-const androidLocalEnvPath = path.join(workspaceRoot, '.env.android.local');
 
-dotenv.config({ path: androidEnvPath, override: true });
-dotenv.config({ path: androidLocalEnvPath, override: true });
+const merged = buildAndroidViteEnv(workspaceRoot);
+for (const [key, value] of Object.entries(merged)) {
+  if (value !== undefined && value !== null && value !== '') {
+    process.env[key] = String(value);
+  }
+}
 
 const apiBaseUrl = String(process.env.VITE_API_URL || process.env.VITE_API_BASE_URL || '').trim();
 
 if (!apiBaseUrl) {
   console.error(
-    '[mobile:build] Missing API base URL. Set VITE_API_URL (or VITE_API_BASE_URL) in .env.android before building Android.',
+    '[mobile:build] Missing API base URL. Set VITE_API_URL (or VITE_API_BASE_URL) in .env.production or .env.android before building Android.',
   );
   process.exit(1);
 }
@@ -63,7 +65,7 @@ const missingFirebaseVars = [
 if (missingFirebaseVars.length) {
   console.error(
     `[mobile:build] Missing Firebase Android runtime env values: ${missingFirebaseVars.join(', ')}. ` +
-      'These are required for Android login/session/google auth.',
+      'Set them in .env.android (or .env.production), or ensure android/app/google-services.json is valid so values can be inferred.',
   );
   process.exit(1);
 }

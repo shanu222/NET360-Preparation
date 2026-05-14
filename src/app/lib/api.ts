@@ -221,6 +221,28 @@ function resolveRetryDelayMs(explicitRetryDelayMs?: number) {
   return Math.max(250, Math.min(15_000, Math.floor(Number(explicitRetryDelayMs))));
 }
 
+/** Android WebView often breaks `credentials: 'include'` on cross-origin API calls; native uses bearer tokens. Web keeps cookies for cookie-session mode. */
+function resolveApiFetchCredentials(explicit: RequestCredentials | undefined): RequestCredentials {
+  if (isNativeCapacitorRuntime()) {
+    if (explicit === 'omit' || explicit === 'same-origin') {
+      return explicit;
+    }
+    return 'omit';
+  }
+  if (explicit !== undefined) {
+    return explicit;
+  }
+  let crossOrigin = false;
+  try {
+    if (typeof window !== 'undefined' && API_BASE) {
+      crossOrigin = new URL(API_BASE).origin !== window.location.origin;
+    }
+  } catch {
+    crossOrigin = true;
+  }
+  return crossOrigin ? 'include' : 'same-origin';
+}
+
 function shouldRetryTransportError(error: Error) {
   const code = String((error as Error & { code?: string }).code || '').toUpperCase();
   const message = String(error.message || '').toLowerCase();
@@ -278,7 +300,7 @@ async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: num
   try {
     return await fetch(input, {
       ...init,
-      credentials: init.credentials || 'include',
+      
       signal: controller.signal,
     });
   } catch (error) {
@@ -516,6 +538,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
           method: 'POST',
           headers: new Headers({ 'Content-Type': 'application/json' }),
           body: JSON.stringify(body),
+          credentials: resolveApiFetchCredentials(undefined),
         }, Math.min(timeoutMs, 20_000));
 
         if (
@@ -685,6 +708,9 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   const explicitToken = token && String(token).trim() ? token : null;
   const initialToken = explicitToken || readStoredAccessToken();
 
+  const { credentials: explicitCredentials, ...optionsWithoutCredentials } = options;
+  const resolvedCredentials = resolveApiFetchCredentials(explicitCredentials);
+
   let response: Response;
   let attempt = 0;
   // Retry transient transport/HTTP failures to absorb slow backend wake-ups.
@@ -695,13 +721,14 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
           path,
           method,
           requestUrl: resolvedPath,
-          credentialsMode: String(options.credentials || 'include'),
+          credentialsMode: String(resolvedCredentials),
           hasExplicitBearer: Boolean(initialToken && !isCookieSessionApiMarker(initialToken)),
         });
       }
       response = await fetchWithTimeout(resolvedPath, {
-        ...options,
+        ...optionsWithoutCredentials,
         headers: buildHeaders(initialToken),
+        credentials: resolvedCredentials,
       }, timeoutMs);
     } catch (error) {
       const mappedError = mapTransportError(path, resolvedPath, error);
@@ -745,8 +772,9 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       const refreshedToken = await tryRefreshAccessToken();
       if (refreshedToken) {
         const retryResponse = await fetchWithTimeout(resolvedPath, {
-          ...options,
+          ...optionsWithoutCredentials,
           headers: buildHeaders(refreshedToken),
+          credentials: resolvedCredentials,
         }, timeoutMs);
 
         if (retryResponse.ok) {
@@ -866,7 +894,7 @@ export async function downloadReport(path: string, token?: string | null): Promi
     const requestUrl = resolveApiPath(path);
     response = await fetch(requestUrl, {
       headers,
-      credentials: 'include',
+      credentials: resolveApiFetchCredentials(undefined),
     });
   } catch {
     throw new Error('Unable to reach report service. Check network and VITE_API_URL.');
@@ -898,10 +926,11 @@ export async function downloadBinary(path: string, options: RequestInit = {}, to
   }
 
   const requestUrl = resolveApiPath(path);
+  const { credentials: downloadCred, ...downloadOpts } = options;
   const response = await fetch(requestUrl, {
-    ...options,
+    ...downloadOpts,
     headers,
-    credentials: options.credentials || 'include',
+    credentials: resolveApiFetchCredentials(downloadCred),
   });
 
   if (!response.ok) {
@@ -947,3 +976,4 @@ export async function ensureStudentBearerTokenFromRefresh(
     // Cookie-only same-origin sessions may still succeed without a bearer.
   }
 }
+

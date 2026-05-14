@@ -781,8 +781,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     provider.addScope('email');
     provider.setCustomParameters({ prompt: 'select_account' });
     if (isNativeRuntime) {
-      // Redirect/popup based Google auth is unreliable in Android embedded WebViews (returns to localhost origin).
-      throw new Error('Google sign-in is not available in this Android build yet. Please use email and password.');
+      await signInWithRedirect(activeAuth, provider);
+      logNativeEvent('auth', 'google-redirect-started', {});
+      return;
     }
     const credential = await signInWithPopup(activeAuth, provider);
     updateAuthDebug({ userAuthenticated: true });
