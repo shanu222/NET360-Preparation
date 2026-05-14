@@ -394,7 +394,11 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       setAuthActionState('loggingIn');
       try {
         await loginWithGoogle({ forceLogin: true, forceLogoutOtherDevice: true });
-        showSuccessToast('Previous device was logged out successfully.');
+        if (!isNativeRuntimePlatform()) {
+          showSuccessToast('Previous device was logged out successfully.');
+        } else {
+          showNeutralToast('Complete Google sign-in to switch to this device.');
+        }
       } catch (error) {
         showErrorToast(isNativeRuntimePlatform()
           ? developerAuthErrorMessage(error)
@@ -411,7 +415,10 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       setAuthActionState('loggingIn');
       await loginWithGoogle();
       setAuthActionState('idle');
-      showSuccessToast('Signed in with Google.');
+      if (!isNativeRuntimePlatform()) {
+        showSuccessToast('Signed in with Google.');
+      }
+      /* Native: signInWithRedirect — success toast fires after return in AuthContext getRedirectResult */
     } catch (error) {
       setAuthActionState('idle');
       if (isActiveSessionElsewhere(error)) {
@@ -789,14 +796,16 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                       type="button"
                       variant="outline"
                       className="h-11 rounded-xl border-indigo-200 bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-800"
-                      disabled={isAuthBusy || isNativeRuntimePlatform()}
+                      disabled={isAuthBusy}
                       onClick={() => void handleSocialAuth()}
                     >
                       <GoogleLogo className="mr-2 h-4 w-4" />
                       Google
                     </Button>
                     {isNativeRuntimePlatform() ? (
-                      <p className="text-xs text-slate-500">Google sign-in is temporarily unavailable in Android app. Use email/password login.</p>
+                      <p className="text-xs text-slate-500">
+                        On Android, Google opens in the same window. Finish signing in, then you return here automatically.
+                      </p>
                     ) : null}
                   </div>
                 </div>

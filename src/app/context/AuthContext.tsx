@@ -24,7 +24,7 @@ import {
   shouldPersistAuthTokens,
 } from '../lib/authSession';
 import { ensureFirebaseAuthReady, firebaseAuth, isFirebaseConfigured } from '../lib/firebase';
-import { showWarningToast } from '../lib/userToast';
+import { showNeutralToast, showSuccessToast, showWarningToast } from '../lib/userToast';
 import { updateAuthDebug } from '../lib/authDebugState';
 import { isNativeRuntime as isNativeRuntimePlatform, logNativeEvent } from '../lib/nativeDiagnostics';
 
@@ -781,8 +781,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     provider.addScope('email');
     provider.setCustomParameters({ prompt: 'select_account' });
     if (isNativeRuntime) {
-      await signInWithRedirect(activeAuth, provider);
-      logNativeEvent('auth', 'google-redirect-started', {});
+      try {
+        showNeutralToast('Opening Google sign-in…');
+        await signInWithRedirect(activeAuth, provider);
+        logNativeEvent('auth', 'google-redirect-started', {});
+      } catch (error) {
+        const message = (error as Error)?.message || String(error);
+        logNativeEvent('auth', 'google-redirect-start-failed', { message }, 'error');
+        throw new Error(
+          message.includes('auth/')
+            ? message
+            : 'Google sign-in could not start on this device. Try again or use email and password.',
+        );
+      }
       return;
     }
     const credential = await signInWithPopup(activeAuth, provider);
@@ -840,6 +851,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         await upsertSocialAuthSession({ email, firebaseIdToken, firstName, lastName });
         logNativeEvent('auth', 'google-redirect-complete', { email });
+        showSuccessToast('Signed in with Google.');
       } catch (error) {
         if (!cancelled) {
           logNativeEvent('auth', 'google-redirect-failed', {
