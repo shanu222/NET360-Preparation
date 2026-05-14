@@ -452,7 +452,9 @@ app.use(cors({
     "Accept",
     "Authorization",
     "x-net360-client-platform",
-    "x-net360-client-version"
+    "x-net360-client-version",
+    "X-Net360-Auth-Transport-Preference",
+    "x-net360-auth-transport-preference",
   ]
 }));
 
@@ -470,7 +472,7 @@ app.use((req, res, next) => {
 
   res.header(
     'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-net360-client-platform, x-net360-client-version'
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-net360-client-platform, x-net360-client-version, X-Net360-Auth-Transport-Preference, x-net360-auth-transport-preference',
   );
   res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   res.header('Access-Control-Allow-Credentials', 'true');
@@ -859,7 +861,9 @@ const corsMiddleware = cors({
       'Authorization',
       'x-net360-client-platform',
       'x-net360-client-version',
-      'x-requested-with'
+      'x-requested-with',
+      'X-Net360-Auth-Transport-Preference',
+      'x-net360-auth-transport-preference',
     ],
   exposedHeaders: ['Content-Length', 'Content-Type', 'X-Net360-Auth-Transport', 'X-Net360-Auth-Cookies-Set'],
   maxAge: 86_400,
