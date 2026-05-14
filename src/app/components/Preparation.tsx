@@ -3,6 +3,7 @@ import { ChevronRight } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { resolveLaunchAuthToken } from '../lib/api';
 import {
@@ -963,7 +964,24 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       </div>
 
       <Tabs value={selectedSubject} onValueChange={(value) => setSelectedSubject(value as TabKey)}>
-        <div className="net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1">
+        <div className="net360-android-tabs-select px-1">
+          <Select value={selectedSubject} onValueChange={(value) => setSelectedSubject(value as TabKey)}>
+            <SelectTrigger
+              className="h-11 rounded-xl border-indigo-200 bg-white/92 text-slate-800"
+              aria-label="Select preparation subject"
+            >
+              <SelectValue placeholder="Select subject" />
+            </SelectTrigger>
+            <SelectContent>
+              {tabItems.map((tab) => (
+                <SelectItem key={tab.key} value={tab.key}>
+                  {tab.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="net360-horizontal-scroll net360-swipe-row net360-android-tabs-row -mx-1 px-1 pb-1">
           <TabsList className="inline-flex h-auto min-w-max flex-nowrap gap-1.5 rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-[#eef2ff] via-[#f1ecff] to-[#f5f8ff] p-1.5 shadow-[0_8px_18px_rgba(79,70,229,0.14)] lg:min-w-0 lg:flex-wrap lg:justify-center">
             {tabItems.map((tab) => (
               <TabsTrigger

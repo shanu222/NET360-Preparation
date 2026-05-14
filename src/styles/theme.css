@@ -1394,6 +1394,11 @@ html.native-android .net360-horizontal-scroll [data-slot='tabs-list'] {
   touch-action: pan-x pan-y;
 }
 
+/* Android-native compact mode: swap overflowing swipe rows with dropdown controls on small screens. */
+.net360-android-tabs-select {
+  display: none;
+}
+
 .native-android .net360-page .overflow-auto,
 .native-android .net360-page .overflow-y-auto,
 .native-android .net360-page [data-slot='scroll-area'],
@@ -1545,6 +1550,16 @@ html.native-android .net360-native-adaptive-cta {
     min-height: 46px;
     padding-left: 0.875rem;
     padding-right: 0.875rem;
+  }
+}
+
+@media (max-width: 860px) {
+  html.native-android .net360-android-tabs-select {
+    display: block;
+  }
+
+  html.native-android .net360-android-tabs-row {
+    display: none;
   }
 }
 

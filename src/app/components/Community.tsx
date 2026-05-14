@@ -1882,6 +1882,15 @@ function CommunityInner() {
 
   const sectionTabTriggerClassName =
     'shrink-0 whitespace-nowrap rounded-xl border border-slate-200/90 bg-white/90 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:scale-[1.02] hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 hover:shadow-[0_10px_20px_rgba(34,211,238,0.2)] active:scale-[0.98] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!via-violet-500 data-[state=active]:!to-fuchsia-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_14px_26px_rgba(109,40,217,0.34)]';
+  const sectionTabs: Array<{ value: string; label: string }> = [
+    { value: 'online-students', label: 'Online' },
+    { value: 'discover-students', label: 'Discover Students' },
+    { value: 'study-partners', label: 'Study Partners' },
+    { value: 'discussion-rooms', label: 'Discussion Rooms' },
+    { value: 'quiz-battles', label: 'Quiz Battles' },
+    { value: 'leaderboard', label: 'Leaderboard' },
+    { value: 'messages', label: 'Messages' },
+  ];
   const viewProfileButtonClassName =
     'border-cyan-300 bg-gradient-to-r from-white to-cyan-50 text-cyan-700 transition-all duration-250 ease-out hover:-translate-y-0.5 hover:scale-[1.03] hover:border-cyan-400 hover:from-cyan-50 hover:to-blue-50 hover:text-cyan-800 hover:shadow-[0_10px_16px_rgba(34,211,238,0.22)] active:scale-[0.98]';
 
@@ -1889,15 +1898,30 @@ function CommunityInner() {
     <div className="community-page min-w-0 space-y-4">
       <h1 className="sr-only">Community — students, discussions, quiz battles, and messages</h1>
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-4" aria-label="Community sections">
-        <div className="net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1 [scrollbar-gutter:stable]">
+        <div className="net360-android-tabs-select px-1">
+          <Select value={activeTab} onValueChange={setActiveTab}>
+            <SelectTrigger
+              className="h-11 rounded-xl border-slate-300 bg-white/92 text-slate-800"
+              aria-label="Select community section"
+            >
+              <SelectValue placeholder="Select section" />
+            </SelectTrigger>
+            <SelectContent>
+              {sectionTabs.map((tab) => (
+                <SelectItem key={tab.value} value={tab.value}>
+                  {tab.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="net360-horizontal-scroll net360-swipe-row net360-android-tabs-row -mx-1 px-1 pb-1 [scrollbar-gutter:stable]">
           <TabsList className="inline-flex h-auto w-max min-w-max flex-nowrap gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 via-indigo-50 to-fuchsia-50 p-1.5 shadow-[0_10px_20px_rgba(99,102,241,0.12)]">
-            <TabsTrigger value="online-students" className={sectionTabTriggerClassName}>Online</TabsTrigger>
-            <TabsTrigger value="discover-students" className={sectionTabTriggerClassName}>Discover Students</TabsTrigger>
-            <TabsTrigger value="study-partners" className={sectionTabTriggerClassName}>Study Partners</TabsTrigger>
-            <TabsTrigger value="discussion-rooms" className={sectionTabTriggerClassName}>Discussion Rooms</TabsTrigger>
-            <TabsTrigger value="quiz-battles" className={sectionTabTriggerClassName}>Quiz Battles</TabsTrigger>
-            <TabsTrigger value="leaderboard" className={sectionTabTriggerClassName}>Leaderboard</TabsTrigger>
-            <TabsTrigger value="messages" className={sectionTabTriggerClassName}>Messages</TabsTrigger>
+            {sectionTabs.map((tab) => (
+              <TabsTrigger key={tab.value} value={tab.value} className={sectionTabTriggerClassName}>
+                {tab.label}
+              </TabsTrigger>
+            ))}
           </TabsList>
         </div>
 

@@ -1,6 +1,7 @@
-import { type ComponentType } from 'react';
+import { type ComponentType, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Badge } from './ui/badge';
 import {
   Atom,
@@ -62,6 +63,7 @@ const PROGRAM_TAB_TRIGGER_CLASS =
   'max-w-[min(100%,200px)] shrink-0 whitespace-normal break-words rounded-xl border border-indigo-200/90 bg-white/88 px-2.5 py-2 text-center text-[12px] font-semibold leading-tight tracking-[0.01em] text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!via-violet-500 data-[state=active]:!to-blue-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)] sm:min-w-[120px] sm:max-w-none sm:px-3 sm:text-[13px]';
 
 export function ProgramExplorer() {
+  const [activeCategory, setActiveCategory] = useState<CategoryKey>('engineering');
   const programs: Record<CategoryKey, ProgramCategory> = {
     engineering: { ...NET_PROGRAMS_BY_CATEGORY.engineering, icon: CATEGORY_ICON_MAP.engineering },
     computing: { ...NET_PROGRAMS_BY_CATEGORY.computing, icon: CATEGORY_ICON_MAP.computing },
@@ -73,6 +75,14 @@ export function ProgramExplorer() {
 
   const totalInstitutions = 18;
   const majorLocations = ['Islamabad (Main Campus)', 'Rawalpindi', 'Risalpur', 'Karachi', 'Quetta'];
+  const categoryTabs: Array<{ key: CategoryKey; label: string }> = [
+    { key: 'engineering', label: programs.engineering.tag },
+    { key: 'computing', label: programs.computing.tag },
+    { key: 'business', label: programs.business.tag },
+    { key: 'architecture', label: programs.architecture.tag },
+    { key: 'sciences', label: programs.sciences.tag },
+    { key: 'applied', label: programs.applied.tag },
+  ];
 
   return (
     <div className="space-y-5">
@@ -84,16 +94,33 @@ export function ProgramExplorer() {
         </div>
       </section>
 
-      <Tabs defaultValue="engineering" className="space-y-4">
-        <div className="net360-swipe-row pb-1">
+      <Tabs value={activeCategory} onValueChange={(value) => setActiveCategory(value as CategoryKey)} className="space-y-4">
+        <div className="net360-android-tabs-select">
+          <Select value={activeCategory} onValueChange={(value) => setActiveCategory(value as CategoryKey)}>
+            <SelectTrigger
+              className="h-11 rounded-xl border-indigo-200 bg-white/92 text-slate-800"
+              aria-label="Select program category"
+            >
+              <SelectValue placeholder="Select category" />
+            </SelectTrigger>
+            <SelectContent>
+              {categoryTabs.map((tab) => (
+                <SelectItem key={tab.key} value={tab.key}>
+                  {tab.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="net360-swipe-row net360-android-tabs-row pb-1">
           <TabsList className="inline-flex h-auto min-w-max gap-1.5 rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-[#eef2ff] via-[#f1ecff] to-[#f5f8ff] p-1.5 shadow-[0_8px_18px_rgba(79,70,229,0.14)]">
-            {(['engineering', 'computing', 'business', 'architecture', 'sciences', 'applied'] as CategoryKey[]).map((key) => (
+            {categoryTabs.map((tab) => (
               <TabsTrigger
-                key={key}
-                value={key}
+                key={tab.key}
+                value={tab.key}
                 className={PROGRAM_TAB_TRIGGER_CLASS}
               >
-                {programs[key].tag}
+                {tab.label}
               </TabsTrigger>
             ))}
           </TabsList>
