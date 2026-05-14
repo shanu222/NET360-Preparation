@@ -31,6 +31,7 @@ import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { apiRequest } from '../lib/api';
 import { getAuthDebugSnapshot, subscribeAuthDebug, type AuthDebugSnapshot } from '../lib/authDebugState';
+import { Capacitor } from '@capacitor/core';
 import { isNativeRuntime as isNativeRuntimePlatform } from '../lib/nativeDiagnostics';
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
 const DEVICE_STORAGE_KEY = 'net360-device-id';
@@ -394,15 +395,19 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       setAuthActionState('loggingIn');
       try {
         await loginWithGoogle({ forceLogin: true, forceLogoutOtherDevice: true });
-        if (!isNativeRuntimePlatform()) {
+        if (!isNativeRuntimePlatform() || Capacitor.getPlatform() === 'android') {
           showSuccessToast('Previous device was logged out successfully.');
         } else {
           showNeutralToast('Complete Google sign-in to switch to this device.');
         }
       } catch (error) {
-        showErrorToast(isNativeRuntimePlatform()
-          ? developerAuthErrorMessage(error)
-          : loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
+        if (String((error as { code?: string })?.code || '').trim() === 'USER_CANCELLED') {
+          showNeutralToast('Google sign-in was cancelled.');
+        } else {
+          showErrorToast(isNativeRuntimePlatform()
+            ? developerAuthErrorMessage(error)
+            : loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
+        }
       } finally {
         setAuthActionState('idle');
       }
@@ -418,9 +423,13 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       if (!isNativeRuntimePlatform()) {
         showSuccessToast('Signed in with Google.');
       }
-      /* Native: signInWithRedirect — success toast fires after return in AuthContext getRedirectResult */
+      /* Android: AuthContext shows success. iOS: getRedirectResult shows success after return. */
     } catch (error) {
       setAuthActionState('idle');
+      if (String((error as { code?: string })?.code || '').trim() === 'USER_CANCELLED') {
+        showNeutralToast('Google sign-in was cancelled.');
+        return;
+      }
       if (isActiveSessionElsewhere(error)) {
         setSessionConflictInfo(extractSessionConflictInfo(error));
         setPendingAuthMethod('google');
@@ -804,7 +813,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                     </Button>
                     {isNativeRuntimePlatform() ? (
                       <p className="text-xs text-slate-500">
-                        On Android, Google opens in the same window. Finish signing in, then you return here automatically.
+                        {Capacitor.getPlatform() === 'android'
+                          ? 'Uses the system Google account picker (not the in-app browser). You stay in NET360 when sign-in completes.'
+                          : 'Finish signing in with Google, then you return here automatically.'}
                       </p>
                     ) : null}
                   </div>

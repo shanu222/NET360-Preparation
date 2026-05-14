@@ -6,6 +6,7 @@ import {
   deleteUser,
   GoogleAuthProvider,
   sendPasswordResetEmail,
+  signInWithCredential,
   signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
@@ -27,6 +28,7 @@ import { ensureFirebaseAuthReady, firebaseAuth, isFirebaseConfigured } from '../
 import { showNeutralToast, showSuccessToast, showWarningToast } from '../lib/userToast';
 import { updateAuthDebug } from '../lib/authDebugState';
 import { isNativeRuntime as isNativeRuntimePlatform, logNativeEvent } from '../lib/nativeDiagnostics';
+import { signInWithGoogleAndroidNative } from '../lib/nativeGoogleAuth';
 
 interface AuthUser {
   id: string;
@@ -191,6 +193,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [deviceId] = useState<string>(() => getOrCreateDeviceId());
   const isNativeRuntime = Capacitor.isNativePlatform() && isNativeRuntimePlatform();
+  const isAndroidNative = isNativeRuntime && Capacitor.getPlatform() === 'android';
   const runSessionRestoreRef = useRef<(reason?: string) => Promise<void>>(async () => undefined);
   const authBootstrapInFlightRef = useRef<Promise<boolean> | null>(null);
 
@@ -780,6 +783,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     provider.addScope('profile');
     provider.addScope('email');
     provider.setCustomParameters({ prompt: 'select_account' });
+    if (isAndroidNative) {
+      try {
+        showNeutralToast('Opening Google sign-in…');
+        const { idToken } = await signInWithGoogleAndroidNative();
+        const credential = GoogleAuthProvider.credential(idToken);
+        const userCred = await signInWithCredential(activeAuth, credential);
+        updateAuthDebug({ userAuthenticated: true });
+        const firebaseIdToken = await userCred.user.getIdToken();
+        const tokenClaims = decodeJwtClaims(firebaseIdToken);
+        logNativeEvent('auth', 'firebase-token-issued-google-native', {
+          aud: tokenClaims.aud || '',
+          iss: tokenClaims.iss || '',
+          sub: tokenClaims.sub ? `${String(tokenClaims.sub).slice(0, 8)}...` : '',
+        });
+        updateAuthDebug({
+          firebaseTokenGenerated: true,
+          tokenAudience: tokenClaims.aud || '',
+          tokenIssuer: tokenClaims.iss || '',
+        });
+        const [firstName = '', ...rest] = String(userCred.user.displayName || '').trim().split(/\s+/);
+        const lastName = rest.join(' ').trim();
+        const email = String(userCred.user.email || '').trim().toLowerCase();
+        if (!email) {
+          throw new Error('Google login did not return an email address.');
+        }
+        await upsertSocialAuthSession({
+          email,
+          firebaseIdToken,
+          firstName,
+          lastName,
+          forceLogoutOtherDevice: opts?.forceLogoutOtherDevice,
+          forceLogin: opts?.forceLogin,
+        });
+        logNativeEvent('auth', 'google-native-success', { email });
+        showSuccessToast('Signed in with Google.');
+      } catch (error) {
+        const code = String((error as { code?: string })?.code || '').trim();
+        if (code === 'USER_CANCELLED') {
+          logNativeEvent('auth', 'google-native-cancelled', {});
+          throw error;
+        }
+        const message = (error as Error)?.message || String(error);
+        logNativeEvent('auth', 'google-native-failed', { message }, 'error');
+        throw new Error(
+          message.includes('auth/')
+            ? message
+            : 'Google sign-in could not complete on this device. Try again or use email and password.',
+        );
+      }
+      return;
+    }
     if (isNativeRuntime) {
       try {
         showNeutralToast('Opening Google sign-in…');
@@ -825,10 +879,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       forceLogin: opts?.forceLogin,
     });
     logNativeEvent('auth', 'google-popup-success');
-  }, [ensureNativeAuthBootstrap, isNativeRuntime, upsertSocialAuthSession]);
+  }, [ensureNativeAuthBootstrap, isAndroidNative, isNativeRuntime, upsertSocialAuthSession]);
 
   useEffect(() => {
-    if (!isNativeRuntime || !isFirebaseConfigured()) return;
+    if (!isNativeRuntime || !isFirebaseConfigured() || isAndroidNative) return;
     let cancelled = false;
 
     void (async () => {
@@ -867,7 +921,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [isNativeRuntime, upsertSocialAuthSession]);
+  }, [isAndroidNative, isNativeRuntime, upsertSocialAuthSession]);
 
   const registerWithToken = useCallback<AuthContextValue['registerWithToken']>(async ({
     email,

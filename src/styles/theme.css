@@ -1279,14 +1279,15 @@ html {
   scrollbar-gutter: auto;
   scroll-padding-top: calc(var(--net360-header-height, 56px) + 8px);
   /* Extra bottom inset: gesture nav + cutout; keyboard offset when IME open */
-  scroll-padding-bottom: max(1rem, calc(env(safe-area-inset-bottom, 0px) + 18px));
+  scroll-padding-bottom: max(1.25rem, calc(env(safe-area-inset-bottom, 0px) + 28px));
   padding-bottom: max(
-    1.25rem,
-    calc(env(safe-area-inset-bottom, 0px) + 20px),
+    1.5rem,
+    calc(env(safe-area-inset-bottom, 0px) + 28px),
     var(--net360-keyboard-offset, 0px)
   );
   scrollbar-width: none;
   -ms-overflow-style: none;
+  touch-action: pan-y;
 }
 
 .native-android .net360-main::-webkit-scrollbar {
@@ -1358,6 +1359,7 @@ html.native-android .net360-shell {
   padding-right: max(14px, env(safe-area-inset-right, 0px));
   /* `clip` can swallow horizontally scrollable tab rows; outer shell already hides page-wide overflow */
   overflow-x: visible;
+  touch-action: auto;
 }
 
 .native-android .net360-page [data-slot='dialog-content'],
@@ -1377,12 +1379,12 @@ html.native-android .net360-shell {
   touch-action: manipulation;
 }
 
-/* Swipe rows need both axes so vertical scroll still starts from the tab strip (WebView pan-y alone is edge-only). */
+/* Swipe rows: default browser touch routing so vertical scroll can start from center of tab strip */
 html.native-android .net360-swipe-row,
 html.native-android .net360-horizontal-scroll,
 html.native-android .net360-swipe-row [data-slot='tabs-list'],
 html.native-android .net360-horizontal-scroll [data-slot='tabs-list'] {
-  touch-action: pan-x pan-y;
+  touch-action: auto;
 }
 
 .native-android .net360-page .overflow-auto,
@@ -1426,7 +1428,7 @@ html.native-android .net360-horizontal-scroll {
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-x pan-y;
+  touch-action: auto;
   overscroll-behavior-x: contain;
   overscroll-behavior-y: auto;
   scroll-behavior: auto;
@@ -1517,6 +1519,20 @@ html.native-android .net360-native-adaptive-cta {
     padding-left: 0.875rem;
     padding-right: 0.875rem;
   }
+}
+
+/* NET-style exam shell (Android app): keep finish CTA above gesture bar */
+html.native-android .net360-native-exam-chrome {
+  box-sizing: border-box;
+  padding-bottom: max(1rem, calc(env(safe-area-inset-bottom, 0px) + 24px));
+}
+
+html.native-android .net360-native-exam-chrome footer {
+  padding-bottom: max(0.75rem, calc(env(safe-area-inset-bottom, 0px) + 10px));
+}
+
+html.native-android .net360-native-exam-chrome footer button {
+  min-height: 48px;
 }
 
 /* Last section breathing room above gesture bar (scroll surface is .net360-main). */

@@ -10,6 +10,8 @@ interface ImportMetaEnv {
   readonly VITE_FIREBASE_STORAGE_BUCKET?: string;
   readonly VITE_FIREBASE_MESSAGING_SENDER_ID?: string;
   readonly VITE_FIREBASE_APP_ID?: string;
+  /** Web OAuth client ID (Google/Firebase type 3). Used for Android native Google Sign-In ID tokens. */
+  readonly VITE_GOOGLE_WEB_CLIENT_ID?: string;
   readonly VITE_ENABLE_PUSH_NOTIFICATIONS?: string;
   readonly VITE_ADMIN_ONLY?: string;
   /** S3 or CloudFront base for object keys (no trailing slash). Prefer over VITE_PUBLIC_MEDIA_BASE_URL. */

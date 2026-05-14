@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Bookmark, CircleHelp, FastForward, Rewind, Save, Send, SkipBack, SkipForward } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest, probeAuthenticatedSession } from '../lib/api';
@@ -986,6 +987,7 @@ export function TestInterfacePage() {
   }
 
   const questionNumber = currentIndex + 1;
+  const androidNativeExamChrome = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
   const optionRows = buildOptionMedia(question);
   const questionImageSrc = normalizeMcqImageSrc(
     question.questionImage?.dataUrl || String(question.questionImageUrl || ''),
@@ -993,7 +995,9 @@ export function TestInterfacePage() {
   const questionVideoSrc = getMediaUrl(String(question.videoUrl || '').trim());
 
   return (
-    <div className="min-h-dvh min-h-screen w-full max-w-full overflow-x-hidden bg-[#f2f6fb] p-1.5 text-[#0d2c5a] sm:p-2.5">
+    <div
+      className={`min-h-dvh min-h-screen w-full max-w-full overflow-x-hidden bg-[#f2f6fb] p-1.5 text-[#0d2c5a] sm:p-2.5${androidNativeExamChrome ? ' net360-native-exam-chrome' : ''}`}
+    >
       <div className="mx-auto w-full min-w-0 max-w-[min(100%,1200px)] rounded border-2 border-[#2b5f9f] bg-[#eef4fb] shadow-[0_12px_30px_rgba(5,32,71,0.15)]">
         <header className="grid gap-1.5 border-b border-[#2b5f9f] bg-white px-2 py-2 text-xs sm:gap-1 md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-2 md:py-1 md:text-sm">
           <div className="font-semibold text-[#1f6b1f]">{formatSubject(question.subject)}</div>
