@@ -1380,18 +1380,18 @@ html.native-android .net360-shell {
 /* Tab strips use pan-x (see html.native-android .net360-swipe-row); do not force manipulation on triggers. */
 html.native-android .net360-swipe-row [data-slot='tabs-trigger'],
 html.native-android .net360-horizontal-scroll [data-slot='tabs-trigger'] {
-  touch-action: pan-x;
+  touch-action: pan-x pan-y;
 }
 
 /* Swipe rows: explicit horizontal pan on the strip; tab list inherits (center drag + vertical page scroll). */
 html.native-android .net360-swipe-row,
 html.native-android .net360-horizontal-scroll {
-  touch-action: pan-x;
+  touch-action: pan-x pan-y;
 }
 
 html.native-android .net360-swipe-row [data-slot='tabs-list'],
 html.native-android .net360-horizontal-scroll [data-slot='tabs-list'] {
-  touch-action: pan-x;
+  touch-action: pan-x pan-y;
 }
 
 .native-android .net360-page .overflow-auto,
@@ -1435,10 +1435,13 @@ html.native-android .net360-horizontal-scroll {
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-x;
-  overscroll-behavior-x: contain;
+  touch-action: pan-x pan-y;
+  overscroll-behavior-x: auto;
   overscroll-behavior-y: auto;
   scroll-behavior: auto;
+  scroll-snap-type: x proximity;
+  scroll-padding-inline: 0.35rem;
+  will-change: scroll-position;
   gap: 0;
 }
 
@@ -1462,6 +1465,16 @@ html.native-android .net360-horizontal-scroll [data-slot='tabs-list'] {
   min-width: max-content !important;
   width: max-content !important;
   max-width: none !important;
+  scroll-snap-type: x proximity;
+}
+
+html.native-android .net360-swipe-row [data-slot='tabs-trigger'],
+html.native-android .net360-horizontal-scroll [data-slot='tabs-trigger'] {
+  scroll-snap-align: start;
+  scroll-snap-stop: normal;
+  /* Reduce repaint-heavy shadow animation while finger is moving across long rows. */
+  transition-property: color, background-color, border-color;
+  box-shadow: none;
 }
 
 html.native-android .net360-page [data-slot='card'],

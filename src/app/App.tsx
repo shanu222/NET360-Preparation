@@ -527,34 +527,55 @@ export default function App() {
 
     const cleanupFns: Array<() => void> = [];
     const preferNativeHorizontalScroll = document.documentElement.classList.contains('native-android');
+    const maxScrollCache = new WeakMap<HTMLElement, number>();
 
-    const updateRowScrollState = (row: HTMLElement) => {
-      const maxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
-      const canScroll = maxScrollLeft > 1;
-      const current = Math.max(0, Math.min(row.scrollLeft, maxScrollLeft));
+    const updateRowScrollState = (row: HTMLElement, maxScrollLeft?: number) => {
+      const cachedMax = maxScrollCache.get(row);
+      const max =
+        typeof maxScrollLeft === 'number'
+          ? maxScrollLeft
+          : typeof cachedMax === 'number'
+            ? cachedMax
+            : Math.max(0, row.scrollWidth - row.clientWidth);
+      maxScrollCache.set(row, max);
+      const maxBounded = Math.max(0, max);
+      const canScroll = maxBounded > 1;
+      const current = Math.max(0, Math.min(row.scrollLeft, maxBounded));
       row.dataset.scrollable = canScroll ? 'true' : 'false';
       row.dataset.scrollLeftActive = canScroll && current > 2 ? 'true' : 'false';
-      row.dataset.scrollRightActive = canScroll && current < maxScrollLeft - 2 ? 'true' : 'false';
+      row.dataset.scrollRightActive = canScroll && current < maxBounded - 2 ? 'true' : 'false';
+    };
+
+    const measureRow = (row: HTMLElement) => {
+      const maxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
+      maxScrollCache.set(row, maxScrollLeft);
+      return maxScrollLeft;
     };
 
     const syncRowLayout = () => {
       rows.forEach((row) => {
-        const maxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
+        const maxScrollLeft = measureRow(row);
         if (row.scrollLeft > maxScrollLeft) {
           row.scrollLeft = maxScrollLeft;
         }
-        updateRowScrollState(row);
+        updateRowScrollState(row, maxScrollLeft);
       });
     };
 
     const attachRowChrome = (row: HTMLElement) => {
       if (preferNativeHorizontalScroll) {
+        let frame = 0;
         const onScroll = () => {
-          updateRowScrollState(row);
+          if (frame) return;
+          frame = window.requestAnimationFrame(() => {
+            frame = 0;
+            updateRowScrollState(row);
+          });
         };
         row.addEventListener('scroll', onScroll, { passive: true });
-        updateRowScrollState(row);
+        updateRowScrollState(row, measureRow(row));
         return () => {
+          if (frame) window.cancelAnimationFrame(frame);
           row.removeEventListener('scroll', onScroll);
         };
       }
@@ -623,7 +644,7 @@ export default function App() {
       row.addEventListener('pointercancel', onPointerUp, { passive: true });
       row.addEventListener('scroll', onScroll, { passive: true });
       row.addEventListener('click', onClickCapture, true);
-      updateRowScrollState(row);
+      updateRowScrollState(row, measureRow(row));
 
       return () => {
         row.removeEventListener('pointerdown', onPointerDown);
