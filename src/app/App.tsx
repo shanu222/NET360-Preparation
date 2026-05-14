@@ -554,12 +554,14 @@ export default function App() {
 
       const shouldSkipTarget = (target: EventTarget | null) => {
         if (!(target instanceof Element)) return false;
+        /* Tab triggers are <button>; allow horizontal drag from the strip (small movement still fires tap). */
+        if (target.closest('[data-slot="tabs-list"]')) {
+          return Boolean(target.closest('input, textarea, select, [data-no-drag-scroll]'));
+        }
         return Boolean(target.closest('button, a, input, textarea, select, [role="button"], [data-no-drag-scroll]'));
       };
 
       const onPointerDown = (event: PointerEvent) => {
-        const isNativeAndroid = document.documentElement.classList.contains('native-android');
-        if (isNativeAndroid && event.pointerType !== 'mouse') return;
         if (event.pointerType === 'mouse' && event.button !== 0) return;
         if (shouldSkipTarget(event.target)) return;
         isPointerDown = true;

@@ -1133,7 +1133,7 @@ export function TestInterfacePage() {
             <p className="mt-1 text-lg text-blue-700">{formatTime(remainingSeconds)}</p>
           </div>
 
-          <div className="min-w-0 max-lg:overflow-x-auto max-lg:pb-1 max-lg:[-webkit-overflow-scrolling:touch]">
+          <div className="net360-exam-controls-row min-w-0 max-lg:overflow-x-auto max-lg:pb-1 max-lg:[-webkit-overflow-scrolling:touch] max-lg:touch-pan-x">
             <div className="grid min-w-0 grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9">
               <ExamButton label="Save" icon={Save} onClick={() => showSuccessToast('Answer saved for this question.')} />
               <ExamButton label="Next" icon={ArrowRight} onClick={() => setCurrentIndex((prev) => Math.min(session.questionCount - 1, prev + 1))} />
@@ -1148,7 +1148,7 @@ export function TestInterfacePage() {
           </div>
         </section>
 
-        <footer className="flex flex-col items-stretch gap-2 border-t border-[#2b5f9f] px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+        <footer className="net360-native-exam-footer flex flex-col items-stretch gap-2 border-t border-[#2b5f9f] bg-[#eef4fb] px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-wrap items-center gap-3 text-xs">
             <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded bg-[#10b981]" />Answered {answeredCount}</span>
             <span className="inline-flex items-center gap-1"><span className="h-3 w-3 rounded bg-[#ef4444]" />Unanswered {session.questionCount - answeredCount}</span>

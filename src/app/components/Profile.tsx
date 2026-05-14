@@ -80,6 +80,9 @@ type SessionConflictInfo = {
 };
 
 function developerAuthErrorMessage(error: unknown): string {
+  if (String((error as { code?: string })?.code || '').trim() === 'USER_CANCELLED') {
+    return 'Sign-in was cancelled.';
+  }
   const typed = error as AuthErrorLike;
   const code = String(typed?.code || typed?.payload?.code || '').trim() || 'none';
   const status = Number(typed?.status);

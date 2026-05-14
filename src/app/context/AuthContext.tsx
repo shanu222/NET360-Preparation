@@ -786,9 +786,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (isAndroidNative) {
       try {
         showNeutralToast('Opening Google sign-in…');
-        const { idToken } = await signInWithGoogleAndroidNative();
-        const credential = GoogleAuthProvider.credential(idToken);
-        const userCred = await signInWithCredential(activeAuth, credential);
+        const { idToken, accessToken } = await signInWithGoogleAndroidNative();
+        const credential = GoogleAuthProvider.credential(idToken, accessToken || undefined);
+        let userCred;
+        try {
+          userCred = await signInWithCredential(activeAuth, credential);
+        } catch (fe) {
+          const feCode = String((fe as { code?: string })?.code || '').trim();
+          const feMsg = (fe as Error)?.message || String(fe);
+          if (typeof console !== 'undefined' && console.error) {
+            console.error('[net360/google-native]', JSON.stringify({
+              ts: new Date().toISOString(),
+              event: 'firebase-signInWithCredential-failed',
+              code: feCode || undefined,
+              message: feMsg,
+            }));
+          }
+          logNativeEvent('auth', 'firebase-signInWithCredential-failed', { code: feCode, message: feMsg }, 'error');
+          throw fe;
+        }
         updateAuthDebug({ userAuthenticated: true });
         const firebaseIdToken = await userCred.user.getIdToken();
         const tokenClaims = decodeJwtClaims(firebaseIdToken);
