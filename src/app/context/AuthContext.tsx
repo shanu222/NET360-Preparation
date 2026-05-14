@@ -787,6 +787,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         showNeutralToast('Opening Google sign-in…');
         const { idToken, accessToken } = await signInWithGoogleAndroidNative();
+        const googleClaims = decodeJwtClaims(idToken);
+        if (typeof console !== 'undefined' && console.error) {
+          console.error('[net360/google-native]', JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'pre-firebase-credential',
+            googleIdAud: googleClaims.aud || undefined,
+            googleIdIss: googleClaims.iss || undefined,
+            hasAccessToken: Boolean(accessToken),
+          }));
+        }
         const credential = GoogleAuthProvider.credential(idToken, accessToken || undefined);
         let userCred;
         try {
@@ -800,10 +810,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               event: 'firebase-signInWithCredential-failed',
               code: feCode || undefined,
               message: feMsg,
+              googleIdAud: googleClaims.aud || undefined,
             }));
           }
           logNativeEvent('auth', 'firebase-signInWithCredential-failed', { code: feCode, message: feMsg }, 'error');
           throw fe;
+        }
+        if (typeof console !== 'undefined' && console.error) {
+          console.error('[net360/google-native]', JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'firebase-signInWithCredential-ok',
+            uidPrefix: userCred.user.uid ? `${userCred.user.uid.slice(0, 8)}…` : '',
+            hasEmail: Boolean(userCred.user.email),
+          }));
         }
         updateAuthDebug({ userAuthenticated: true });
         const firebaseIdToken = await userCred.user.getIdToken();
@@ -841,6 +860,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw error;
         }
         const message = (error as Error)?.message || String(error);
+        if (typeof console !== 'undefined' && console.error) {
+          console.error('[net360/google-native]', JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'google-native-outer-catch',
+            code: code || undefined,
+            message,
+          }));
+        }
         logNativeEvent('auth', 'google-native-failed', { message }, 'error');
         throw new Error(
           message.includes('auth/')

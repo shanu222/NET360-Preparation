@@ -526,6 +526,7 @@ export default function App() {
     if (!rows.length) return;
 
     const cleanupFns: Array<() => void> = [];
+    const preferNativeHorizontalScroll = document.documentElement.classList.contains('native-android');
 
     const updateRowScrollState = (row: HTMLElement) => {
       const maxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
@@ -546,7 +547,18 @@ export default function App() {
       });
     };
 
-    const enableDragFallback = (row: HTMLElement) => {
+    const attachRowChrome = (row: HTMLElement) => {
+      if (preferNativeHorizontalScroll) {
+        const onScroll = () => {
+          updateRowScrollState(row);
+        };
+        row.addEventListener('scroll', onScroll, { passive: true });
+        updateRowScrollState(row);
+        return () => {
+          row.removeEventListener('scroll', onScroll);
+        };
+      }
+
       let isPointerDown = false;
       let isDragging = false;
       let startX = 0;
@@ -624,7 +636,7 @@ export default function App() {
     };
 
     rows.forEach((row) => {
-      cleanupFns.push(enableDragFallback(row));
+      cleanupFns.push(attachRowChrome(row));
     });
 
     const onResize = () => syncRowLayout();

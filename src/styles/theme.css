@@ -1442,6 +1442,13 @@ html.native-android .net360-horizontal-scroll {
   gap: 0;
 }
 
+/* Native horizontal overflow: no grab cursor / selection lock from the old JS-drag fallback. */
+html.native-android .net360-swipe-row[data-scrollable='true'],
+html.native-android .net360-swipe-row[data-dragging='true'] {
+  cursor: auto;
+  user-select: auto;
+}
+
 html.native-android .net360-swipe-row > *,
 html.native-android .net360-horizontal-scroll > * {
   flex: 0 0 auto;

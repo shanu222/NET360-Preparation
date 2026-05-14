@@ -20,6 +20,38 @@ function maskClientId(id: string): string {
   return `${s.slice(0, 12)}…${s.slice(-10)}`;
 }
 
+/** Decode JWT payload for logs only (no signature verification). */
+function peekJwtPayload(token: string): { aud?: string; iss?: string; exp?: number; email?: string } {
+  try {
+    const payloadPart = String(token || '').split('.')[1] || '';
+    if (!payloadPart) return {};
+    const normalized = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
+    const parsed = JSON.parse(atob(normalized + pad)) as { aud?: string; iss?: string; exp?: number; email?: string };
+    return {
+      aud: parsed.aud != null ? String(parsed.aud) : undefined,
+      iss: parsed.iss != null ? String(parsed.iss) : undefined,
+      exp: typeof parsed.exp === 'number' ? parsed.exp : undefined,
+      email: parsed.email != null ? String(parsed.email) : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function serializeNativeError(e: unknown): Record<string, unknown> {
+  if (e == null) return { kind: 'nullish' };
+  if (typeof e === 'string') return { message: e };
+  const err = e as Error & { code?: string; data?: unknown };
+  const out: Record<string, unknown> = {
+    name: err.name,
+    message: err.message,
+    code: err.code,
+  };
+  if (typeof err.stack === 'string') out.stackHead = err.stack.slice(0, 500);
+  return out;
+}
+
 /**
  * Web OAuth client ID (Google Cloud / Firebase type 3). Required for Android native Google Sign-In
  * so the returned ID token is accepted by Firebase `GoogleAuthProvider.credential`.
@@ -57,7 +89,7 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
   try {
     ({ SocialLogin } = await import('@capgo/capacitor-social-login'));
   } catch (e) {
-    androidNativeLog('plugin-import-failed', { message: (e as Error)?.message || String(e) });
+    androidNativeLog('plugin-import-failed', { error: serializeNativeError(e) });
     throw e;
   }
 
@@ -73,7 +105,7 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
         });
         androidNativeLog('social-login-initialize-ok', {});
       } catch (e) {
-        androidNativeLog('social-login-initialize-failed', { message: (e as Error)?.message || String(e) });
+        androidNativeLog('social-login-initialize-failed', { error: serializeNativeError(e) });
         socialLoginInit = null;
         throw e;
       }
@@ -83,16 +115,21 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
   try {
     await socialLoginInit;
   } catch (e) {
-    androidNativeLog('social-login-init-await-failed', { message: (e as Error)?.message || String(e) });
+    androidNativeLog('social-login-init-await-failed', { error: serializeNativeError(e) });
     throw e;
   }
 
   let res: Awaited<ReturnType<typeof SocialLogin.login>>;
   try {
+    /*
+     * Do NOT pass `options.scopes` on Android: @capgo GoogleProvider rejects login when scopes are set
+     * unless MainActivity implements ModifiedMainActivityForSocialLoginPlugin (OAuth consent activity).
+     * Defaults already include userinfo email/profile + openid.
+     */
+    androidNativeLog('social-login-login-call', { style: 'standard', scopesOmitted: true });
     res = await SocialLogin.login({
       provider: 'google',
       options: {
-        scopes: ['email', 'profile'],
         style: 'standard',
       },
     });
@@ -100,7 +137,7 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
     const code = String((e as { code?: string })?.code || '').trim();
     androidNativeLog('social-login-login-failed', {
       code: code || undefined,
-      message: (e as Error)?.message || String(e),
+      error: serializeNativeError(e),
     });
     throw e;
   }
@@ -117,11 +154,14 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
 
   const idToken = res.result.idToken;
   const accessToken = res.result.accessToken?.token ?? null;
+  const profileEmail = res.result.profile?.email ?? null;
 
   androidNativeLog('social-login-login-ok', {
     hasIdToken: Boolean(idToken),
     hasAccessToken: Boolean(accessToken),
     idTokenLen: idToken ? idToken.length : 0,
+    profileEmailPresent: Boolean(profileEmail),
+    googleIdJwt: idToken ? peekJwtPayload(idToken) : {},
   });
 
   if (!idToken) {
