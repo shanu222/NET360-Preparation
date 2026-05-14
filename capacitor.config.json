@@ -4,7 +4,23 @@
   "webDir": "dist",
   "bundledWebRuntime": false,
   "server": {
-    "androidScheme": "https"
+    "androidScheme": "https",
+    "allowNavigation": [
+      "localhost",
+      "127.0.0.1",
+      "accounts.google.com",
+      "oauth2.googleapis.com",
+      "www.googleapis.com",
+      "apis.google.com",
+      "play.google.com",
+      "google.com",
+      "*.google.com",
+      "*.googleapis.com",
+      "*.gstatic.com",
+      "*.googleusercontent.com",
+      "*.firebaseapp.com",
+      "*.web.app"
+    ]
   },
   "plugins": {
     "SplashScreen": {

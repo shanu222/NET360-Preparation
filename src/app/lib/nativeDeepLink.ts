@@ -7,6 +7,9 @@
  * handoff, normalize to `https://localhost` and force a document navigation.
  *
  * Production web / Vercel hosts are left to the caller (return null → SPA routing).
+ *
+ * Also configure `server.allowNavigation` in `capacitor.config.json` (Google / Firebase hosts
+ * plus `localhost`) so `Bridge.launchIntent` does not send OAuth to the external browser.
  */
 export function resolveCapacitorAndroidWebViewUrl(incoming: string): string | null {
   const raw = String(incoming || '').trim();

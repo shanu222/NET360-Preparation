@@ -1278,7 +1278,13 @@ html {
   overscroll-behavior-y: auto;
   scrollbar-gutter: auto;
   scroll-padding-top: calc(var(--net360-header-height, 56px) + 8px);
-  padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px), var(--net360-keyboard-offset, 0px));
+  /* Extra bottom inset: gesture nav + cutout; keyboard offset when IME open */
+  scroll-padding-bottom: max(1rem, calc(env(safe-area-inset-bottom, 0px) + 18px));
+  padding-bottom: max(
+    1.25rem,
+    calc(env(safe-area-inset-bottom, 0px) + 20px),
+    var(--net360-keyboard-offset, 0px)
+  );
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -1371,6 +1377,14 @@ html.native-android .net360-shell {
   touch-action: manipulation;
 }
 
+/* Swipe rows need both axes so vertical scroll still starts from the tab strip (WebView pan-y alone is edge-only). */
+html.native-android .net360-swipe-row,
+html.native-android .net360-horizontal-scroll,
+html.native-android .net360-swipe-row [data-slot='tabs-list'],
+html.native-android .net360-horizontal-scroll [data-slot='tabs-list'] {
+  touch-action: pan-x pan-y;
+}
+
 .native-android .net360-page .overflow-auto,
 .native-android .net360-page .overflow-y-auto,
 .native-android .net360-page [data-slot='scroll-area'],
@@ -1398,11 +1412,7 @@ html.native-android .net360-shell {
   -webkit-overflow-scrolling: touch;
 }
 
-.native-android .net360-swipe-row {
-  touch-action: pan-x;
-}
-
-/* Horizontal tab / segmented rows: isolate pan-x from vertical page scroll (Android WebView). */
+/* Horizontal tab / segmented rows: momentum scroll + both-axis touch so parent .net360-main keeps vertical pan. */
 html.native-android .net360-swipe-row,
 html.native-android .net360-horizontal-scroll {
   display: flex;
@@ -1416,9 +1426,9 @@ html.native-android .net360-horizontal-scroll {
   overflow-x: auto;
   overflow-y: hidden;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-x;
+  touch-action: pan-x pan-y;
   overscroll-behavior-x: contain;
-  overscroll-behavior-y: contain;
+  overscroll-behavior-y: auto;
   scroll-behavior: auto;
   gap: 0;
 }
@@ -1436,7 +1446,6 @@ html.native-android .net360-horizontal-scroll [data-slot='tabs-list'] {
   min-width: max-content !important;
   width: max-content !important;
   max-width: none !important;
-  touch-action: pan-x;
 }
 
 html.native-android .net360-page [data-slot='card'],
@@ -1499,6 +1508,20 @@ html.native-android .net360-native-adaptive-cta {
     padding-left: 0.75rem;
     padding-right: 0.75rem;
   }
+}
+
+@media (max-width: 420px) {
+  html.native-android .net360-swipe-row [data-slot='tabs-trigger'],
+  html.native-android .net360-horizontal-scroll [data-slot='tabs-trigger'] {
+    min-height: 46px;
+    padding-left: 0.875rem;
+    padding-right: 0.875rem;
+  }
+}
+
+/* Last section breathing room above gesture bar (scroll surface is .net360-main). */
+html.native-android .net360-page > *:last-child {
+  margin-bottom: max(0.25rem, env(safe-area-inset-bottom, 0px));
 }
 
 @media (hover: none) and (pointer: coarse) {
