@@ -1274,8 +1274,8 @@ html {
 
 .native-android .net360-main {
   -webkit-overflow-scrolling: touch;
-  overscroll-behavior: contain;
-  overscroll-behavior-y: contain;
+  overscroll-behavior: auto;
+  overscroll-behavior-y: auto;
   scrollbar-gutter: auto;
   scroll-padding-top: calc(var(--net360-header-height, 56px) + 8px);
   padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px), var(--net360-keyboard-offset, 0px));
@@ -1289,11 +1289,31 @@ html {
   height: 0;
 }
 
+/**
+ * Single vertical scroll surface: `#root` / `body` must NOT compete with `main.net360-main`
+ * (nested scroll causes edge-only scrolling and sticky WebView gestures on Capacitor Android).
+ */
 html.native-android,
-html.native-android body,
-html.native-android #root {
-  overflow-y: auto;
+html.native-android body {
+  height: 100%;
+  max-height: 100dvh;
   overflow-x: hidden;
+  overflow-y: hidden;
+  overscroll-behavior: none;
+}
+
+html.native-android body {
+  /* `fixed` backgrounds repaint on every scroll frame in Android WebView */
+  background-attachment: scroll;
+}
+
+html.native-android #root {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: hidden;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -1311,7 +1331,14 @@ html.native-android #root::-webkit-scrollbar {
 }
 
 .native-android .net360-viewport {
+  flex: 1 1 auto;
+  min-height: 0;
   padding-top: max(2px, env(safe-area-inset-top, 0px));
+}
+
+html.native-android .net360-shell {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .native-android .net360-header {
@@ -1370,6 +1397,10 @@ html.native-android #root::-webkit-scrollbar {
   -webkit-overflow-scrolling: touch;
 }
 
+.native-android .net360-swipe-row {
+  touch-action: pan-x;
+}
+
 .native-android .net360-page [data-slot='tabs-list']::-webkit-scrollbar,
 .native-android .net360-swipe-row::-webkit-scrollbar {
   display: none;
@@ -1377,7 +1408,16 @@ html.native-android #root::-webkit-scrollbar {
   height: 0;
 }
 
-.native-android .net360-page [data-slot='tabs-trigger'],
+.native-android .net360-page-enter {
+  will-change: auto;
+}
+
+.native-android .net360-page [data-slot='tabs-trigger'] {
+  min-height: 42px;
+  transition-duration: 140ms;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
 .native-android .net360-page [data-slot='button'],
 .native-android .net360-page button {
   min-height: 42px;

@@ -7,11 +7,27 @@ import { Toaster } from "sonner";
 import { ErrorBoundary } from "./app/components/ErrorBoundary.tsx";
 import { FullViewportRouteFallback } from "./app/components/PageRouteFallback.tsx";
 import { checkAppVersionFromServer, installChunkLoadRecovery, lazyWithRetry } from "./app/lib/chunkLoadRecovery.ts";
+import { Capacitor } from "@capacitor/core";
 import { initializeNativeExperience } from "./app/lib/nativeMobile.ts";
 import { BrowserRouter } from "react-router-dom";
 import { HelmetProvider } from "react-helmet-async";
 import "./styles/tailwind.css";
 import "./styles/theme.css";
+
+/** Apply before first paint so `.native-android` scroll/touch CSS runs immediately (async init alone was too late). */
+function syncNativeHtmlClassForLayout() {
+  try {
+    if (!Capacitor.isNativePlatform()) return;
+    const platform = Capacitor.getPlatform();
+    if (platform && platform !== "web") {
+      document.documentElement.classList.add("native-runtime", `native-${platform}`);
+    }
+  } catch {
+    /* web build without Capacitor */
+  }
+}
+
+syncNativeHtmlClassForLayout();
 
 installChunkLoadRecovery();
 checkAppVersionFromServer();
