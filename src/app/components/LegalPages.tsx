@@ -1,6 +1,10 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 
-const SUPPORT_EMAIL = 'support@net360preparation.com';
+const SUPPORT_EMAILS = [
+  'shahnawaz@sustainablesolution360.com',
+  'shanu1998end@gmail.com',
+] as const;
+const SUPPORT_PHONE = '+92 340 3318127';
 
 function LegalShell({
   title,
@@ -84,13 +88,17 @@ export function PrivacyPolicyPage() {
 
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">6. Contact</h2>
-        <p>
-          For privacy or data requests, contact:{' '}
-          <a className="text-indigo-700 underline underline-offset-2" href={`mailto:${SUPPORT_EMAIL}`}>
-            {SUPPORT_EMAIL}
-          </a>
-          .
-        </p>
+        <p>For privacy or data requests, contact:</p>
+        <ul className="list-disc space-y-1 pl-5">
+          {SUPPORT_EMAILS.map((email) => (
+            <li key={email}>
+              <a className="text-indigo-700 underline underline-offset-2" href={`mailto:${email}`}>
+                {email}
+              </a>
+            </li>
+          ))}
+          <li>Phone support (if needed): {SUPPORT_PHONE}</li>
+        </ul>
       </section>
     </LegalShell>
   );
@@ -154,13 +162,16 @@ export function TermsPage() {
 
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">7. Contact</h2>
-        <p>
-          For terms questions, contact{' '}
-          <a className="text-indigo-700 underline underline-offset-2" href={`mailto:${SUPPORT_EMAIL}`}>
-            {SUPPORT_EMAIL}
-          </a>
-          .
-        </p>
+        <p>For terms/compliance questions, contact:</p>
+        <ul className="list-disc space-y-1 pl-5">
+          {SUPPORT_EMAILS.map((email) => (
+            <li key={email}>
+              <a className="text-indigo-700 underline underline-offset-2" href={`mailto:${email}`}>
+                {email}
+              </a>
+            </li>
+          ))}
+        </ul>
       </section>
     </LegalShell>
   );
@@ -179,10 +190,15 @@ export function DeleteAccountHelpPage() {
           <li>Use the Delete Account section and follow confirmation steps.</li>
           <li>
             If you cannot access your account, email support at{' '}
-            <a className="text-indigo-700 underline underline-offset-2" href={`mailto:${SUPPORT_EMAIL}`}>
-              {SUPPORT_EMAIL}
-            </a>
-            .
+            {SUPPORT_EMAILS.map((email, idx) => (
+              <span key={email}>
+                {idx > 0 ? ' or ' : ''}
+                <a className="text-indigo-700 underline underline-offset-2" href={`mailto:${email}`}>
+                  {email}
+                </a>
+              </span>
+            ))}
+            {' '}for verification and assistance.
           </li>
         </ul>
       </section>
@@ -210,13 +226,16 @@ export function DeleteAccountHelpPage() {
 
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">5. Support Contact</h2>
-        <p>
-          Contact support at{' '}
-          <a className="text-indigo-700 underline underline-offset-2" href={`mailto:${SUPPORT_EMAIL}`}>
-            {SUPPORT_EMAIL}
-          </a>
-          .
-        </p>
+        <ul className="list-disc space-y-1 pl-5">
+          {SUPPORT_EMAILS.map((email) => (
+            <li key={email}>
+              <a className="text-indigo-700 underline underline-offset-2" href={`mailto:${email}`}>
+                {email}
+              </a>
+            </li>
+          ))}
+          <li>Phone (escalation/help): {SUPPORT_PHONE}</li>
+        </ul>
       </section>
     </LegalShell>
   );
