@@ -196,7 +196,8 @@ const TEST_TYPE_CARDS: Array<{
 export function Tests({ onNavigate }: TestsProps) {
   const { attempts, startTestSession } = useAppData();
   const { token, user, loading: authLoading } = useAuth();
-  const { surface, loading: subLoading } = useSubscription();
+  const { surface, me, loading: subLoading } = useSubscription();
+  const testsAccessAllowed = me?.paidServices?.tests?.allowed ?? surface.allowed;
 
   const authLoadingRef = useRef(authLoading);
   authLoadingRef.current = authLoading;
@@ -502,7 +503,7 @@ export function Tests({ onNavigate }: TestsProps) {
     );
   }
 
-  if (!surface.allowed) {
+  if (!testsAccessAllowed) {
     return (
       <div className="min-w-0 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">

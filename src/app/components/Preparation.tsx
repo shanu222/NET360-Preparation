@@ -569,7 +569,8 @@ interface PreparationProps {
 export function Preparation({ showStartTestButton = true, onSelectSection, onSelectFlatTopic }: PreparationProps = {}) {
   const { attempts, startTestSession } = useAppData();
   const { token: authContextToken, user, loading: authLoading } = useAuth();
-  const { surface, loading: subLoading } = useSubscription();
+  const { surface, me, loading: subLoading } = useSubscription();
+  const preparationAccessAllowed = me?.paidServices?.preparation?.allowed ?? surface.allowed;
   const authLoadingRef = useRef(authLoading);
   authLoadingRef.current = authLoading;
   const tokenRef = useRef(authContextToken);
@@ -923,7 +924,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     );
   }
 
-  if (!surface.allowed) {
+  if (!preparationAccessAllowed) {
     return (
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
