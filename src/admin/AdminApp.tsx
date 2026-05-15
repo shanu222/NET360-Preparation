@@ -1170,6 +1170,76 @@ interface AdminAccessState {
   isLegacy?: boolean;
 }
 
+type SubscriptionBadgeStatus = 'active' | 'expired' | 'free_trial' | 'inactive';
+
+interface AdminSubscriptionManagementListUser {
+  id: string;
+  fullName: string;
+  email: string;
+  profileImageUrl?: string;
+  accountStatus: string;
+  firebaseUid: string;
+  joinedAt: string | null;
+  badges: {
+    tests: SubscriptionBadgeStatus;
+    preparation: SubscriptionBadgeStatus;
+    community: SubscriptionBadgeStatus;
+    mentor: SubscriptionBadgeStatus;
+  };
+}
+
+interface AdminManagedServiceDetail {
+  key: 'tests' | 'preparation' | 'community' | 'mentor';
+  label: string;
+  active: boolean;
+  status: SubscriptionBadgeStatus;
+  source: string;
+  freeTrialUsed: boolean;
+  freeTrialActive: boolean;
+  paidPlanActive: boolean;
+  activatedBy: string;
+  startedAt: string | null;
+  expiresAt: string | null;
+  remainingDays: number;
+}
+
+interface AdminSubscriptionManagementUserDetailPayload {
+  user: {
+    id: string;
+    fullName: string;
+    firstName: string;
+    lastName: string;
+    email: string;
+    firebaseUid: string;
+    joinedAt: string | null;
+    profileImageUrl?: string;
+    syncStatus: {
+      firebaseLinked: boolean;
+      android: 'active' | 'not_detected';
+      web: 'active' | 'not_detected';
+      lastLoginAt: string | null;
+    };
+    mentorPlan: {
+      status: string;
+      planId: string;
+      planName: string;
+      billingCycle: string;
+      expiresAt: string | null;
+    };
+  };
+  services: {
+    tests: AdminManagedServiceDetail;
+    preparation: AdminManagedServiceDetail;
+    community: AdminManagedServiceDetail;
+    mentor: AdminManagedServiceDetail & {
+      subscriptionStatus: string;
+      planId: string;
+      billingCycle: string;
+    };
+  };
+  availableMentorPlans: AdminSubscriptionPlan[];
+}
+
 interface AdminCommunityReport {
   id: string;
   connectionId: string;
@@ -1234,6 +1304,27 @@ interface AdminSupportThreadPayload {
 interface LoginUser {
   id: string;
   role?: 'student' | 'admin';
+}
+
+function normalizeSubscriptionBadgeLabel(status: SubscriptionBadgeStatus | string) {
+  const key = String(status || '').trim().toLowerCase();
+  if (key === 'active') return 'Active';
+  if (key === 'expired') return 'Expired';
+  if (key === 'free_trial') return 'Free Trial';
+  return 'Inactive';
+}
+
+function subscriptionBadgeTone(status: SubscriptionBadgeStatus | string): 'default' | 'outline' {
+  const key = String(status || '').trim().toLowerCase();
+  if (key === 'active' || key === 'free_trial') return 'default';
+  return 'outline';
+}
+
+function formatNullableDate(value?: string | null) {
+  if (!value) return 'N/A';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'N/A';
+  return date.toLocaleString();
 }
 
 interface ParsedBulkMcq {
@@ -2307,6 +2398,17 @@ export default function AdminApp() {
   const [isGrantingAccess, setIsGrantingAccess] = useState(false);
   const [isRevokingAccess, setIsRevokingAccess] = useState<Record<string, boolean>>({});
   const [isApplyingGlobalAccess, setIsApplyingGlobalAccess] = useState(false);
+  const [subscriptionManagementQuery, setSubscriptionManagementQuery] = useState('');
+  const [subscriptionManagementShowAll, setSubscriptionManagementShowAll] = useState(false);
+  const [subscriptionManagementUsers, setSubscriptionManagementUsers] = useState<AdminSubscriptionManagementListUser[]>([]);
+  const [selectedSubscriptionUserId, setSelectedSubscriptionUserId] = useState('');
+  const [selectedSubscriptionUserDetail, setSelectedSubscriptionUserDetail] = useState<AdminSubscriptionManagementUserDetailPayload | null>(null);
+  const [isLoadingSubscriptionUserDetail, setIsLoadingSubscriptionUserDetail] = useState(false);
+  const [isUpdatingSubscriptionManagement, setIsUpdatingSubscriptionManagement] = useState(false);
+  const [serviceDurationValue, setServiceDurationValue] = useState('7');
+  const [serviceDurationUnit, setServiceDurationUnit] = useState<'days' | 'weeks' | 'months'>('days');
+  const [serviceCustomExpiry, setServiceCustomExpiry] = useState('');
+  const [mentorAssignPlanId, setMentorAssignPlanId] = useState('basic_monthly');
   const [isAssigningPlan, setIsAssigningPlan] = useState(false);
   const [isAssignPlanConfirmOpen, setIsAssignPlanConfirmOpen] = useState(false);
   const [premiumRequests, setPremiumRequests] = useState<PremiumSubscriptionRequest[]>([]);
@@ -3191,6 +3293,7 @@ export default function AdminApp() {
       subscriptionUsersPayload,
       paidServicesOverviewPayload,
       paidServicesUsersPayload,
+      subscriptionManagementUsersPayload,
       premiumRequestsPayload,
       passwordRecoveryPayload,
       communityReportsPayload,
@@ -3239,6 +3342,11 @@ export default function AdminApp() {
         {},
         activeToken,
       ).catch(() => ({ users: [] })),
+      apiRequest<{ users: AdminSubscriptionManagementListUser[] }>(
+        `/api/admin/subscriptions/management/users?q=${encodeURIComponent(subscriptionManagementQuery.trim())}&showAll=${subscriptionManagementShowAll ? 'true' : 'false'}`,
+        {},
+        activeToken,
+      ).catch(() => ({ users: [] })),
       apiRequest<{ requests: PremiumSubscriptionRequest[] }>(
         `/api/admin/subscriptions/requests?status=${premiumRequestStatusFilter}&q=${encodeURIComponent(premiumRequestQuery.trim())}`,
         {},
@@ -3282,6 +3390,7 @@ export default function AdminApp() {
     setSubscriptionUsers(subscriptionUsersPayload.users || []);
     setPaidServicesOverview(paidServicesOverviewPayload);
     setPaidServicesUsers(paidServicesUsersPayload.users || []);
+    setSubscriptionManagementUsers(subscriptionManagementUsersPayload.users || []);
     setPremiumRequests(premiumRequestsPayload.requests || []);
     setPasswordRecoveryRequests(passwordRecoveryPayload.requests || []);
     setCommunityReports(communityReportsPayload.reports || []);
@@ -3514,6 +3623,8 @@ export default function AdminApp() {
     refreshToken,
     subscriptionFilter,
     accessTypeFilter,
+    subscriptionManagementQuery,
+    subscriptionManagementShowAll,
     paidServicesQuery,
     paidServicesStatusFilter,
     paidServiceTypeFilter,
@@ -6387,6 +6498,139 @@ export default function AdminApp() {
       handleApiError(error, 'Could not revoke global access.');
     } finally {
       setIsApplyingGlobalAccess(false);
+    }
+  };
+
+  const loadSubscriptionManagedUserDetail = useCallback(async (userId: string, activeToken?: string) => {
+    const token = activeToken || authToken;
+    if (!token || !userId) return;
+    try {
+      setIsLoadingSubscriptionUserDetail(true);
+      const payload = await apiRequest<AdminSubscriptionManagementUserDetailPayload>(
+        `/api/admin/subscriptions/management/users/${encodeURIComponent(userId)}`,
+        {},
+        token,
+      );
+      setSelectedSubscriptionUserDetail(payload);
+      setMentorAssignPlanId(payload.user.mentorPlan.planId || 'basic_monthly');
+    } catch (error) {
+      handleApiError(error, 'Could not load user subscription details.');
+    } finally {
+      setIsLoadingSubscriptionUserDetail(false);
+    }
+  }, [authToken]);
+
+  useEffect(() => {
+    if (!selectedSubscriptionUserId || !authToken) {
+      setSelectedSubscriptionUserDetail(null);
+      return;
+    }
+    void loadSubscriptionManagedUserDetail(selectedSubscriptionUserId, authToken);
+  }, [selectedSubscriptionUserId, authToken, loadSubscriptionManagedUserDetail]);
+
+  const applyServiceAccessUpdate = async (
+    userId: string,
+    mode: 'activate' | 'deactivate',
+    serviceKey: 'tests' | 'preparation' | 'community',
+  ) => {
+    if (!authToken) return;
+    try {
+      setIsUpdatingSubscriptionManagement(true);
+      if (mode === 'activate') {
+        const durationValue = Number(serviceDurationValue || 0);
+        if (!Number.isFinite(durationValue) || durationValue <= 0) {
+          showErrorToast('Enter a valid duration value.');
+          return;
+        }
+        await apiRequest(
+          `/api/admin/paid-services/${encodeURIComponent(userId)}/grant`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              services: {
+                tests: serviceKey === 'tests',
+                preparation: serviceKey === 'preparation',
+                community: serviceKey === 'community',
+              },
+              durationValue,
+              durationUnit: serviceDurationUnit,
+              customExpiry: serviceCustomExpiry ? new Date(serviceCustomExpiry).toISOString() : '',
+            }),
+          },
+          authToken,
+        );
+        showSuccessToast(`${serviceKey} access updated.`);
+      } else {
+        await apiRequest(
+          `/api/admin/paid-services/${encodeURIComponent(userId)}/deactivate`,
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              services: {
+                tests: serviceKey === 'tests',
+                preparation: serviceKey === 'preparation',
+                community: serviceKey === 'community',
+              },
+            }),
+          },
+          authToken,
+        );
+        showSuccessToast(`${serviceKey} access deactivated.`);
+      }
+      await loadAdminData(authToken);
+      await loadSubscriptionManagedUserDetail(userId, authToken);
+    } catch (error) {
+      handleApiError(error, `Could not ${mode === 'activate' ? 'update' : 'deactivate'} ${serviceKey} access.`);
+    } finally {
+      setIsUpdatingSubscriptionManagement(false);
+    }
+  };
+
+  const assignMentorPlanForManagedUser = async (userId: string) => {
+    if (!authToken) return;
+    try {
+      setIsUpdatingSubscriptionManagement(true);
+      await apiRequest(
+        `/api/admin/subscriptions/${encodeURIComponent(userId)}/update`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            planId: mentorAssignPlanId,
+            status: 'active',
+            paymentReference: `admin-managed-${Date.now()}`,
+          }),
+        },
+        authToken,
+      );
+      showSuccessToast('Mentor plan updated.');
+      await loadAdminData(authToken);
+      await loadSubscriptionManagedUserDetail(userId, authToken);
+    } catch (error) {
+      handleApiError(error, 'Could not update mentor plan.');
+    } finally {
+      setIsUpdatingSubscriptionManagement(false);
+    }
+  };
+
+  const revokeMentorManualAccessForManagedUser = async (userId: string) => {
+    if (!authToken) return;
+    try {
+      setIsUpdatingSubscriptionManagement(true);
+      await apiRequest(
+        `/api/admin/subscriptions/access/${encodeURIComponent(userId)}/revoke`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ accessType: 'mentor' }),
+        },
+        authToken,
+      );
+      showSuccessToast('Mentor manual access revoked.');
+      await loadAdminData(authToken);
+      await loadSubscriptionManagedUserDetail(userId, authToken);
+    } catch (error) {
+      handleApiError(error, 'Could not revoke mentor access.');
+    } finally {
+      setIsUpdatingSubscriptionManagement(false);
     }
   };
 
@@ -10115,182 +10359,72 @@ export default function AdminApp() {
         <TabsContent value="subscriptions" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Users Paid Services Plans</CardTitle>
+              <CardTitle>User Search & Management</CardTitle>
               <CardDescription>
-                Separate access control for Tests, Preparation Materials, and Community across web and Android.
+                Search by name or email and open a professional per-user subscription dashboard.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-3">
-                <div className="rounded-lg border p-3 text-sm">
-                  <p className="font-medium">Tests Access</p>
-                  <p className="text-xs text-muted-foreground">
-                    Active: {paidServicesOverview?.testsAccess?.activeUsers || 0} / {paidServicesOverview?.totalUsers || 0}
-                  </p>
+              <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+                <div className="space-y-1">
+                  <Label htmlFor="subscription-management-search">Search users</Label>
+                  <Input
+                    id="subscription-management-search"
+                    value={subscriptionManagementQuery}
+                    onChange={(e) => setSubscriptionManagementQuery(e.target.value)}
+                    placeholder="Search by full/partial name or email (e.g., shan, gmail)"
+                  />
                 </div>
-                <div className="rounded-lg border p-3 text-sm">
-                  <p className="font-medium">Preparation Materials</p>
-                  <p className="text-xs text-muted-foreground">
-                    Active: {paidServicesOverview?.preparationAccess?.activeUsers || 0} / {paidServicesOverview?.totalUsers || 0}
-                  </p>
-                </div>
-                <div className="rounded-lg border p-3 text-sm">
-                  <p className="font-medium">Community Access</p>
-                  <p className="text-xs text-muted-foreground">
-                    Active: {paidServicesOverview?.communityAccess?.activeUsers || 0} / {paidServicesOverview?.totalUsers || 0}
-                  </p>
+                <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                  <input
+                    id="subscription-show-all"
+                    type="checkbox"
+                    checked={subscriptionManagementShowAll}
+                    onChange={(e) => setSubscriptionManagementShowAll(e.target.checked)}
+                  />
+                  <Label htmlFor="subscription-show-all" className="cursor-pointer">Show All Users</Label>
                 </div>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-[1.2fr_220px_220px]">
-                <div className="space-y-1">
-                  <Label htmlFor="paid-services-search">User search</Label>
-                  <Input
-                    id="paid-services-search"
-                    value={paidServicesQuery}
-                    onChange={(e) => setPaidServicesQuery(e.target.value)}
-                    placeholder="Search by email or name"
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="paid-services-status">Status</Label>
-                  <Select value={paidServicesStatusFilter} onValueChange={(value: 'all' | 'active' | 'inactive' | 'expired') => setPaidServicesStatusFilter(value)}>
-                    <SelectTrigger id="paid-services-status">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All</SelectItem>
-                      <SelectItem value="active">Active</SelectItem>
-                      <SelectItem value="inactive">Inactive</SelectItem>
-                      <SelectItem value="expired">Expired</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="paid-services-type">Service filter</Label>
-                  <Select value={paidServiceTypeFilter} onValueChange={(value: 'tests' | 'preparation' | 'community') => setPaidServiceTypeFilter(value)}>
-                    <SelectTrigger id="paid-services-type">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="tests">Tests</SelectItem>
-                      <SelectItem value="preparation">Preparation Materials</SelectItem>
-                      <SelectItem value="community">Community</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="grid gap-3 md:grid-cols-[1fr_140px_160px_1fr]">
-                <div className="space-y-1">
-                  <Label>Services to apply</Label>
-                  <div className="flex flex-wrap items-center gap-3 rounded-md border px-3 py-2">
-                    <label className="inline-flex items-center gap-1.5 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={paidServicesSelection.tests}
-                        onChange={(e) => setPaidServicesSelection((prev) => ({ ...prev, tests: e.target.checked }))}
-                      />
-                      Tests
-                    </label>
-                    <label className="inline-flex items-center gap-1.5 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={paidServicesSelection.preparation}
-                        onChange={(e) => setPaidServicesSelection((prev) => ({ ...prev, preparation: e.target.checked }))}
-                      />
-                      Preparation
-                    </label>
-                    <label className="inline-flex items-center gap-1.5 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={paidServicesSelection.community}
-                        onChange={(e) => setPaidServicesSelection((prev) => ({ ...prev, community: e.target.checked }))}
-                      />
-                      Community
-                    </label>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <Label>Duration value</Label>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={paidServicesDurationValue}
-                    onChange={(e) => setPaidServicesDurationValue(e.target.value)}
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label>Duration unit</Label>
-                  <Select value={paidServicesDurationUnit} onValueChange={(value: 'days' | 'weeks' | 'months') => setPaidServicesDurationUnit(value)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="days">Days</SelectItem>
-                      <SelectItem value="weeks">Weeks</SelectItem>
-                      <SelectItem value="months">Months</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label>Custom expiry (optional)</Label>
-                  <Input
-                    type="datetime-local"
-                    value={paidServicesCustomExpiry}
-                    onChange={(e) => setPaidServicesCustomExpiry(e.target.value)}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-2 max-h-[520px] overflow-auto">
-                {paidServicesUsers.map((entry) => (
-                  <div key={entry.id} className="rounded-lg border p-3 space-y-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="text-sm">{entry.email}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {[entry.firstName, entry.lastName].filter(Boolean).join(' ') || 'No name'}
-                        </p>
+              <div className="space-y-2 max-h-[460px] overflow-auto">
+                {subscriptionManagementUsers.map((entry) => (
+                  <div key={entry.id} className="rounded-lg border p-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="flex items-center gap-3">
+                        {entry.profileImageUrl ? (
+                          <img
+                            src={entry.profileImageUrl}
+                            alt={entry.fullName}
+                            className="h-10 w-10 rounded-full object-cover border"
+                          />
+                        ) : (
+                          <div className="h-10 w-10 rounded-full border flex items-center justify-center text-xs text-muted-foreground">
+                            {entry.fullName.slice(0, 1).toUpperCase() || 'U'}
+                          </div>
+                        )}
+                        <div>
+                          <p className="text-sm font-medium">{entry.fullName}</p>
+                          <p className="text-xs text-muted-foreground">{entry.email}</p>
+                        </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant={entry.paidServices.tests.allowed ? 'default' : 'outline'}>
-                          Tests: {entry.paidServices.tests.allowed ? 'Active' : 'Locked'}
-                        </Badge>
-                        <Badge variant={entry.paidServices.preparation.allowed ? 'default' : 'outline'}>
-                          Prep: {entry.paidServices.preparation.allowed ? 'Active' : 'Locked'}
-                        </Badge>
-                        <Badge variant={entry.paidServices.community.allowed ? 'default' : 'outline'}>
-                          Community: {entry.paidServices.community.allowed ? 'Active' : 'Locked'}
-                        </Badge>
+                        <Badge variant="outline">Account: {entry.accountStatus || 'inactive'}</Badge>
+                        <Badge variant={subscriptionBadgeTone(entry.badges.tests)}>Tests: {normalizeSubscriptionBadgeLabel(entry.badges.tests)}</Badge>
+                        <Badge variant={subscriptionBadgeTone(entry.badges.preparation)}>Preparation: {normalizeSubscriptionBadgeLabel(entry.badges.preparation)}</Badge>
+                        <Badge variant={subscriptionBadgeTone(entry.badges.community)}>Community: {normalizeSubscriptionBadgeLabel(entry.badges.community)}</Badge>
+                        <Badge variant={subscriptionBadgeTone(entry.badges.mentor)}>Mentor: {normalizeSubscriptionBadgeLabel(entry.badges.mentor)}</Badge>
+                        <Button
+                          size="sm"
+                          onClick={() => setSelectedSubscriptionUserId(entry.id)}
+                        >
+                          View Details
+                        </Button>
                       </div>
-                    </div>
-                    <div className="text-xs text-muted-foreground">
-                      Tests expiry: {entry.paidServices.tests.expiresAt ? new Date(entry.paidServices.tests.expiresAt).toLocaleString() : 'N/A'}
-                      {' '}| Prep expiry: {entry.paidServices.preparation.expiresAt ? new Date(entry.paidServices.preparation.expiresAt).toLocaleString() : 'N/A'}
-                      {' '}| Community expiry: {entry.paidServices.community.expiresAt ? new Date(entry.paidServices.community.expiresAt).toLocaleString() : 'N/A'}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        size="sm"
-                        disabled={isApplyingPaidServices}
-                        onClick={() => void grantPaidServicesForUser(entry.id)}
-                      >
-                        {isApplyingPaidServices ? 'Applying…' : 'Grant / Extend Selected'}
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={isApplyingPaidServices}
-                        onClick={() => void deactivatePaidServicesForUser(entry.id)}
-                      >
-                        Deactivate Selected
-                      </Button>
                     </div>
                   </div>
                 ))}
-                {!paidServicesUsers.length ? (
-                  <p className="text-sm text-muted-foreground">No users matched the current paid services filters.</p>
+                {!subscriptionManagementUsers.length ? (
+                  <p className="text-sm text-muted-foreground">No managed users matched your search.</p>
                 ) : null}
               </div>
             </CardContent>
@@ -10298,326 +10432,169 @@ export default function AdminApp() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Assign Plan Directly (Admin)</CardTitle>
-              <CardDescription>Activate or update a subscription by user email without token or user-side request.</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3 md:grid-cols-[1.3fr_1fr_1fr_auto] md:items-end">
-              <div className="space-y-1">
-                <Label htmlFor="assign-plan-email">User Email</Label>
-                <Input
-                  id="assign-plan-email"
-                  type="email"
-                  value={assignPlanForm.email}
-                  onChange={(e) => setAssignPlanForm((prev) => ({ ...prev, email: e.target.value }))}
-                  placeholder="student@example.com"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="assign-plan-id">Plan</Label>
-                <Select
-                  value={assignPlanForm.planId}
-                  onValueChange={(value) => setAssignPlanForm((prev) => ({ ...prev, planId: value }))}
-                >
-                  <SelectTrigger id="assign-plan-id">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {(subscriptionOverview?.plans || []).map((plan) => (
-                      <SelectItem key={plan.id} value={plan.id}>{plan.name}</SelectItem>
-                    ))}
-                    {!(subscriptionOverview?.plans || []).length ? <SelectItem value="basic_monthly">Basic Plan</SelectItem> : null}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1">
-                <Label htmlFor="assign-plan-status">Status</Label>
-                <Select
-                  value={assignPlanForm.status}
-                  onValueChange={(value) => setAssignPlanForm((prev) => ({ ...prev, status: value }))}
-                >
-                  <SelectTrigger id="assign-plan-status">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="inactive">Inactive</SelectItem>
-                    <SelectItem value="expired">Expired</SelectItem>
-                    <SelectItem value="cancelled">Cancelled</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <AlertDialog open={isAssignPlanConfirmOpen} onOpenChange={setIsAssignPlanConfirmOpen}>
-                <AlertDialogTrigger asChild>
-                  <Button
-                    disabled={
-                      isAssigningPlan
-                      || !assignPlanForm.email.trim()
-                      || !assignPlanForm.planId.trim()
-                    }
-                  >
-                    {isAssigningPlan ? 'Assigning...' : 'Assign Plan'}
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>Confirm Subscription Assignment</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      This will overwrite the current subscription for {assignPlanForm.email.trim() || 'this user'}.
-                      New plan: {selectedDirectAssignPlanName} ({assignPlanForm.status}).
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel disabled={isAssigningPlan}>Cancel</AlertDialogCancel>
-                    <AlertDialogAction
-                      disabled={isAssigningPlan}
-                      onClick={() => {
-                        setIsAssignPlanConfirmOpen(false);
-                        void assignSubscriptionByEmail();
-                      }}
-                    >
-                      Confirm Assign
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Global Access Control</CardTitle>
+              <CardTitle>Selected User Subscription Details</CardTitle>
               <CardDescription>
-                Activate time-limited access for all users. Access auto-expires based on the configured duration.
+                Manage Tests, Preparation, Community, and Mentor with full backend-validated controls.
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="grid gap-3 md:grid-cols-[1fr_180px_auto] md:items-end">
-                <div className="space-y-1">
-                  <Label htmlFor="global-access-type">Access Type</Label>
-                  <Select value={selectedAccessType} onValueChange={(value: 'mentor' | 'preparation') => setSelectedAccessType(value)}>
-                    <SelectTrigger id="global-access-type">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="mentor">Smart Study Mentor</SelectItem>
-                      <SelectItem value="preparation">Preparation Access Plan</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="global-access-duration">Duration (days)</Label>
-                  <Input
-                    id="global-access-duration"
-                    type="number"
-                    min={1}
-                    value={globalGrantDurationDays}
-                    onChange={(e) => setGlobalGrantDurationDays(e.target.value)}
-                  />
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <Button
-                    disabled={isApplyingGlobalAccess}
-                    onClick={() => void grantGlobalAccess(selectedAccessType)}
-                  >
-                    Activate For All
-                  </Button>
-                  <Button
-                    variant="outline"
-                    disabled={isApplyingGlobalAccess}
-                    onClick={() => void revokeGlobalAccess(selectedAccessType)}
-                  >
-                    Revoke Global
-                  </Button>
-                </div>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div className="rounded-lg border p-3 text-sm">
-                  <p className="font-medium">Smart Study Mentor</p>
-                  <p className="text-xs text-muted-foreground">
-                    Active users: {subscriptionOverview?.mentorAccess?.activeUsers || 0}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Global status: {subscriptionOverview?.mentorAccess?.global?.allowed ? 'Active' : 'Inactive'}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Expires: {subscriptionOverview?.mentorAccess?.global?.expiresAt ? new Date(subscriptionOverview.mentorAccess.global.expiresAt).toLocaleString() : 'N/A'}
-                  </p>
-                </div>
-                <div className="rounded-lg border p-3 text-sm">
-                  <p className="font-medium">Preparation Access Plan</p>
-                  <p className="text-xs text-muted-foreground">
-                    Active users: {subscriptionOverview?.preparationAccess?.activeUsers || 0}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Global status: {subscriptionOverview?.preparationAccess?.global?.allowed ? 'Active' : 'Inactive'}
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Expires: {subscriptionOverview?.preparationAccess?.global?.expiresAt ? new Date(subscriptionOverview.preparationAccess.global.expiresAt).toLocaleString() : 'N/A'}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Subscription Plans</CardTitle>
-              <CardDescription>Current plan catalog and daily limits</CardDescription>
-            </CardHeader>
-            <CardContent className="grid gap-3 md:grid-cols-2">
-              {(subscriptionOverview?.plans || []).map((plan) => (
-                <div key={plan.id} className="rounded-lg border p-3">
-                  <p className="text-sm">{plan.name}</p>
-                  <p className="text-xs text-muted-foreground">{plan.tier} - {plan.billingCycle}</p>
-                  <p className="text-xs text-muted-foreground">PKR {plan.pricePkr} | Daily limit: {plan.dailyAiLimit}</p>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>User Subscriptions</CardTitle>
-              <CardDescription>Filter and update user subscription status</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex flex-wrap items-center gap-2">
-                <Label htmlFor="subscription-status-filter">Status</Label>
-                <Select value={subscriptionFilter} onValueChange={setSubscriptionFilter}>
-                  <SelectTrigger id="subscription-status-filter" className="w-full sm:w-[220px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All</SelectItem>
-                    <SelectItem value="active">Active</SelectItem>
-                    <SelectItem value="inactive">Inactive</SelectItem>
-                    <SelectItem value="expired">Expired</SelectItem>
-                    <SelectItem value="cancelled">Cancelled</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Label htmlFor="access-type-filter" className="sm:ml-2">Access Type</Label>
-                <Select value={accessTypeFilter} onValueChange={(value: 'mentor' | 'preparation') => setAccessTypeFilter(value)}>
-                  <SelectTrigger id="access-type-filter" className="w-full sm:w-[230px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="mentor">Smart Study Mentor</SelectItem>
-                    <SelectItem value="preparation">Preparation Access Plan</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2 max-h-[500px] overflow-auto">
-                {subscriptionUsers.map((entry) => (
-                  <div key={entry.id} className="rounded-lg border p-3 space-y-2">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardContent className="space-y-4">
+              {!selectedSubscriptionUserId ? (
+                <p className="text-sm text-muted-foreground">Select a user from the management list to view full subscription controls.</p>
+              ) : isLoadingSubscriptionUserDetail || !selectedSubscriptionUserDetail ? (
+                <p className="text-sm text-muted-foreground">Loading user subscription dashboard...</p>
+              ) : (
+                <>
+                  <div className="rounded-lg border p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <p className="text-sm">{entry.email}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {[entry.firstName, entry.lastName].filter(Boolean).join(' ') || 'No name'}
-                        </p>
+                        <p className="text-base font-semibold">{selectedSubscriptionUserDetail.user.fullName}</p>
+                        <p className="text-sm text-muted-foreground">{selectedSubscriptionUserDetail.user.email}</p>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Badge variant={entry.subscription.isActive ? 'default' : 'outline'}>
-                          {entry.subscription.status || 'inactive'}
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant={selectedSubscriptionUserDetail.user.syncStatus.firebaseLinked ? 'default' : 'outline'}>
+                          Firebase: {selectedSubscriptionUserDetail.user.syncStatus.firebaseLinked ? 'Linked' : 'Not linked'}
                         </Badge>
-                        <Badge variant="outline">{entry.subscription.planName || entry.subscription.planId || 'No plan'}</Badge>
-                        <Badge variant={entry.access?.mentor?.allowed ? 'default' : 'outline'}>
-                          Mentor: {entry.access?.mentor?.allowed ? 'Active' : 'Locked'}
+                        <Badge variant={selectedSubscriptionUserDetail.user.syncStatus.android === 'active' ? 'default' : 'outline'}>
+                          Android: {selectedSubscriptionUserDetail.user.syncStatus.android === 'active' ? 'Synced' : 'Not detected'}
                         </Badge>
-                        <Badge variant={entry.access?.preparation?.allowed ? 'default' : 'outline'}>
-                          Prep: {entry.access?.preparation?.allowed ? 'Active' : 'Locked'}
+                        <Badge variant={selectedSubscriptionUserDetail.user.syncStatus.web === 'active' ? 'default' : 'outline'}>
+                          Web: {selectedSubscriptionUserDetail.user.syncStatus.web === 'active' ? 'Synced' : 'Not detected'}
                         </Badge>
                       </div>
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      Mentor expiry: {entry.access?.mentor?.expiresAt ? new Date(entry.access.mentor.expiresAt).toLocaleString() : 'N/A'} | Prep expiry:{' '}
-                      {entry.access?.preparation?.expiresAt ? new Date(entry.access.preparation.expiresAt).toLocaleString() : 'N/A'}
+                    <div className="mt-3 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
+                      <p>Joined: {formatNullableDate(selectedSubscriptionUserDetail.user.joinedAt)}</p>
+                      <p>Firebase UID: {selectedSubscriptionUserDetail.user.firebaseUid || 'N/A'}</p>
                     </div>
+                  </div>
 
-                    <div className="grid gap-2 md:grid-cols-3">
-                      <Button
-                        size="sm"
-                        onClick={() => void updateUserSubscription(entry.id, 'basic_monthly', 'active')}
-                      >
-                        Activate Basic
-                      </Button>
-                      <Button
-                        size="sm"
-                        onClick={() => void updateUserSubscription(entry.id, 'pro_monthly', 'active')}
-                      >
-                        Activate Pro
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => void updateUserSubscription(entry.id, entry.subscription.planId || 'basic_monthly', 'inactive')}
-                      >
-                        Set Inactive
-                      </Button>
+                  <div className="grid gap-3 md:grid-cols-[160px_180px_1fr] md:items-end">
+                    <div className="space-y-1">
+                      <Label>Duration value</Label>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={serviceDurationValue}
+                        onChange={(e) => setServiceDurationValue(e.target.value)}
+                      />
                     </div>
+                    <div className="space-y-1">
+                      <Label>Duration unit</Label>
+                      <Select value={serviceDurationUnit} onValueChange={(value: 'days' | 'weeks' | 'months') => setServiceDurationUnit(value)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="days">Days</SelectItem>
+                          <SelectItem value="weeks">Weeks</SelectItem>
+                          <SelectItem value="months">Months</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-1">
+                      <Label>Custom expiry (optional)</Label>
+                      <Input
+                        type="datetime-local"
+                        value={serviceCustomExpiry}
+                        onChange={(e) => setServiceCustomExpiry(e.target.value)}
+                      />
+                    </div>
+                  </div>
 
-                    <div className="grid gap-2 md:grid-cols-[1fr_140px_auto_auto] md:items-end">
+                  {(['tests', 'preparation', 'community'] as const).map((serviceKey) => {
+                    const service = selectedSubscriptionUserDetail.services[serviceKey];
+                    return (
+                      <div key={service.key} className="rounded-lg border p-4 space-y-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <p className="font-medium">{service.label}</p>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant={subscriptionBadgeTone(service.status)}>{normalizeSubscriptionBadgeLabel(service.status)}</Badge>
+                            <Badge variant="outline">Source: {service.source || 'none'}</Badge>
+                            <Badge variant="outline">Activated by: {service.activatedBy || 'system'}</Badge>
+                          </div>
+                        </div>
+                        <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
+                          <p>Free 7-day active: {service.freeTrialActive ? 'Yes' : 'No'} | Used: {service.freeTrialUsed ? 'Yes' : 'No'}</p>
+                          <p>Paid active: {service.paidPlanActive ? 'Yes' : 'No'}</p>
+                          <p>Started: {formatNullableDate(service.startedAt)}</p>
+                          <p>Expiry: {formatNullableDate(service.expiresAt)} | Remaining: {service.remainingDays} day(s)</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <Button
+                            size="sm"
+                            disabled={isUpdatingSubscriptionManagement}
+                            onClick={() => void applyServiceAccessUpdate(selectedSubscriptionUserId, 'activate', serviceKey)}
+                          >
+                            Activate Paid Access
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={isUpdatingSubscriptionManagement}
+                            onClick={() => void applyServiceAccessUpdate(selectedSubscriptionUserId, 'activate', serviceKey)}
+                          >
+                            Extend Access
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            disabled={isUpdatingSubscriptionManagement}
+                            onClick={() => void applyServiceAccessUpdate(selectedSubscriptionUserId, 'deactivate', serviceKey)}
+                          >
+                            Deactivate Access
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  <div className="rounded-lg border p-4 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="font-medium">Smart Study Mentor</p>
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant={subscriptionBadgeTone(selectedSubscriptionUserDetail.services.mentor.status)}>
+                          {normalizeSubscriptionBadgeLabel(selectedSubscriptionUserDetail.services.mentor.status)}
+                        </Badge>
+                        <Badge variant="outline">Plan: {selectedSubscriptionUserDetail.user.mentorPlan.planName || selectedSubscriptionUserDetail.user.mentorPlan.planId || 'None'}</Badge>
+                      </div>
+                    </div>
+                    <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
+                      <p>Status: {selectedSubscriptionUserDetail.user.mentorPlan.status || 'inactive'}</p>
+                      <p>Expiry: {formatNullableDate(selectedSubscriptionUserDetail.user.mentorPlan.expiresAt)}</p>
+                    </div>
+                    <div className="grid gap-2 md:grid-cols-[1fr_auto_auto] md:items-end">
                       <div className="space-y-1">
-                        <Label>Grant Access Type</Label>
-                        <Select
-                          value={selectedAccessType}
-                          onValueChange={(value: 'mentor' | 'preparation') => setSelectedAccessType(value)}
-                        >
+                        <Label>Assign existing mentor plan</Label>
+                        <Select value={mentorAssignPlanId} onValueChange={setMentorAssignPlanId}>
                           <SelectTrigger>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="mentor">Smart Study Mentor</SelectItem>
-                            <SelectItem value="preparation">Preparation Access Plan</SelectItem>
+                            {(selectedSubscriptionUserDetail.availableMentorPlans || []).map((plan) => (
+                              <SelectItem key={plan.id} value={plan.id}>{plan.name}</SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       </div>
-                      <div className="space-y-1">
-                        <Label>Days</Label>
-                        <Input
-                          type="number"
-                          min={1}
-                          value={grantDurationDays}
-                          onChange={(e) => setGrantDurationDays(e.target.value)}
-                        />
-                      </div>
                       <Button
                         size="sm"
-                        disabled={isGrantingAccess}
-                        onClick={() => void grantUserAccess(entry.id, selectedAccessType)}
+                        disabled={isUpdatingSubscriptionManagement}
+                        onClick={() => void assignMentorPlanForManagedUser(selectedSubscriptionUserId)}
                       >
-                        {isGrantingAccess ? 'Granting...' : 'Grant / Extend'}
+                        Activate / Assign Mentor Plan
                       </Button>
                       <Button
                         size="sm"
                         variant="outline"
-                        disabled={Boolean(isRevokingAccess[`${entry.id}:${selectedAccessType}`])}
-                        onClick={() => void revokeUserAccess(entry.id, selectedAccessType)}
+                        disabled={isUpdatingSubscriptionManagement}
+                        onClick={() => void revokeMentorManualAccessForManagedUser(selectedSubscriptionUserId)}
                       >
-                        {isRevokingAccess[`${entry.id}:${selectedAccessType}`] ? 'Revoking...' : 'Revoke'}
+                        Deactivate Mentor Access
                       </Button>
                     </div>
                   </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Mentor Usage (14 Days)</CardTitle>
-              <CardDescription>Combined chat and solver activity</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-2 max-h-[360px] overflow-auto">
-              {(subscriptionOverview?.dailyUsage || []).map((item) => (
-                <div key={item.day} className="rounded-lg border p-3 text-sm">
-                  <p>{item.day}</p>
-                  <p className="text-xs text-muted-foreground">
-                    Chat: {item.chatCount} | Solver: {item.solverCount} | Tokens: {item.tokenConsumed}
-                  </p>
-                </div>
-              ))}
+                </>
+              )}
             </CardContent>
           </Card>
         </TabsContent>
