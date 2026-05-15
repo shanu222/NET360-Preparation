@@ -7721,6 +7721,12 @@ app.post('/api/auth/refresh', async (req, res) => {
     }
 
     user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
+    if ((user.role || 'student') === 'student') {
+      const refreshPlatform = inferPlatformFromRequest(req);
+      const now = new Date();
+      user.lastLoginAt = now;
+      user.platformUsage = buildNextPlatformUsage(user.platformUsage, refreshPlatform, now);
+    }
     await user.save();
 
     const newPayload = await issueAuthPayload(user, req);
@@ -12621,7 +12627,7 @@ app.get('/api/reports/export', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) => {
-  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+  const managedUserFilter = { role: { $ne: 'admin' } };
   const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingQuestionSubmissions] = await Promise.all([
     UserModel.countDocuments(managedUserFilter),
     MCQModel.countDocuments(),
@@ -13054,87 +13060,50 @@ async function syncMissingFirebaseUsersToBackend() {
   return { synced, scanned };
 }
 
-function calculateRemainingDays(expiresAt, nowMs = Date.now()) {
-  if (!expiresAt) return 0;
-  const endMs = new Date(expiresAt).getTime();
-  if (!Number.isFinite(endMs) || endMs <= nowMs) return 0;
-  return Math.max(0, Math.ceil((endMs - nowMs) / (24 * 60 * 60 * 1000)));
+const ADMIN_USER_SYNC_MAX_AGE_MS = 5 * 60 * 1000;
+const adminUserSyncState = {
+  lastSyncedAt: 0,
+  inFlight: null,
+};
+
+async function ensureCentralizedAppUsersSync(options = {}) {
+  const force = Boolean(options?.force);
+  if (!firebaseAdminAuth) return { synced: 0, scanned: 0, skipped: true };
+  const now = Date.now();
+  if (!force && adminUserSyncState.lastSyncedAt > 0 && (now - adminUserSyncState.lastSyncedAt) < ADMIN_USER_SYNC_MAX_AGE_MS) {
+    return { synced: 0, scanned: 0, skipped: true };
+  }
+  if (adminUserSyncState.inFlight) {
+    return adminUserSyncState.inFlight;
+  }
+  adminUserSyncState.inFlight = syncMissingFirebaseUsersToBackend()
+    .then((result) => {
+      adminUserSyncState.lastSyncedAt = Date.now();
+      return result;
+    })
+    .finally(() => {
+      adminUserSyncState.inFlight = null;
+    });
+  return adminUserSyncState.inFlight;
 }
 
-function inferServiceLifecycleStatus(detail, nowMs = Date.now()) {
-  const access = detail || {};
-  if (access.allowed) {
-    if (access.source === 'legacy' && access.freeTrialActive) return 'free_trial';
-    return 'active';
-  }
-  if (String(access.status || '').toLowerCase() === 'expired') return 'expired';
-  if (access.expiresAt && new Date(access.expiresAt).getTime() <= nowMs) return 'expired';
-  return 'inactive';
-}
-
-function inferActivatedBy(access, manualGrant, subscription, serviceKey) {
-  const source = String(access?.source || '').toLowerCase();
-  if (source === 'global') return 'admin';
-  if (source === 'legacy') {
-    const sub = mergedSubscription({ subscription });
-    if (trialIsActive(sub)) return 'user';
-    if (isSubscriptionActive(sub)) return 'user';
-    return 'system';
-  }
-  if (source === 'manual') {
-    const grant = normalizeManualGrant(manualGrant);
-    const grantSource = String(grant?.source || '').toLowerCase();
-    if (grantSource.includes('admin') || grant?.grantedByEmail) return 'admin';
-    if (serviceKey === 'mentor' && grantSource === 'manual') return 'admin';
-    return 'user';
-  }
-  return 'system';
-}
-
-function buildManagedServiceDetail({
-  key,
-  label,
-  access,
-  manualGrant,
-  subscription,
-  nowMs,
+async function fetchAdminManagedUsers({
+  q,
+  page,
+  pageSize,
+  showAll,
+  forceSync = false,
 }) {
-  const sub = mergedSubscription({ subscription });
-  const trialActive = trialIsActive(sub);
-  const freeTrialActive = Boolean(access?.allowed && access?.source === 'legacy' && trialActive);
-  const active = Boolean(access?.allowed);
-  const lifecycleStatus = inferServiceLifecycleStatus({ ...access, freeTrialActive }, nowMs);
-  return {
-    key,
-    label,
-    active,
-    status: lifecycleStatus,
-    source: String(access?.source || 'none'),
-    freeTrialUsed: Boolean(sub?.hasUsedTrial),
-    freeTrialActive,
-    paidPlanActive: active && !freeTrialActive,
-    activatedBy: inferActivatedBy(access, manualGrant, sub, key),
-    startedAt: toIsoOrNull(access?.startsAt || manualGrant?.startsAt),
-    expiresAt: toIsoOrNull(access?.expiresAt || manualGrant?.expiresAt),
-    remainingDays: calculateRemainingDays(access?.expiresAt || manualGrant?.expiresAt, nowMs),
-  };
-}
-
-app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmin, async (req, res) => {
-  const q = normalizeSubscriptionSearch(req.query?.q);
-  const showAll = String(req.query?.showAll || '').trim().toLowerCase() === 'true';
-  const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || (showAll ? 100 : 25)) || (showAll ? 100 : 25)));
-  const page = Math.max(1, Number(req.query?.page || 1) || 1);
-  const skip = Math.max(0, (page - 1) * pageSize);
-  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+  const normalizedQuery = normalizeSubscriptionSearch(q);
+  const managedUserFilter = { role: { $ne: 'admin' } };
   const nowMs = Date.now();
   const globalGrants = await getGlobalAccessGrantSnapshot();
-  if (String(req.query?.sync || '').trim().toLowerCase() === 'true') {
-    await syncMissingFirebaseUsersToBackend();
+  if (showAll || forceSync || !normalizedQuery) {
+    await ensureCentralizedAppUsersSync({ force: forceSync });
   }
-  const searchFilter = buildSubscriptionManagementSearchFilter(q);
+  const searchFilter = buildSubscriptionManagementSearchFilter(normalizedQuery);
   if (searchFilter.blocked) {
-    res.json({
+    return {
       users: [],
       totalMatched: 0,
       page,
@@ -13142,10 +13111,10 @@ app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmi
       totalPages: 0,
       hasMore: false,
       showAll,
-    });
-    return;
+    };
   }
 
+  const skip = Math.max(0, (page - 1) * pageSize);
   const combinedFilter = {
     ...managedUserFilter,
     ...(searchFilter.filter || {}),
@@ -13170,7 +13139,7 @@ app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmi
         paidServices: 1,
       },
     )
-      .sort({ lastLoginAt: -1, updatedAt: -1 })
+      .sort({ lastLoginAt: -1, updatedAt: -1, createdAt: -1 })
       .skip(skip)
       .limit(pageSize)
       .lean(),
@@ -13255,7 +13224,7 @@ app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmi
     })
     .filter(Boolean);
 
-  res.json({
+  return {
     users: mapped,
     totalMatched,
     page,
@@ -13263,7 +13232,116 @@ app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmi
     totalPages: Math.max(1, Math.ceil(totalMatched / pageSize)),
     hasMore: skip + mapped.length < totalMatched,
     showAll,
+  };
+}
+
+function calculateRemainingDays(expiresAt, nowMs = Date.now()) {
+  if (!expiresAt) return 0;
+  const endMs = new Date(expiresAt).getTime();
+  if (!Number.isFinite(endMs) || endMs <= nowMs) return 0;
+  return Math.max(0, Math.ceil((endMs - nowMs) / (24 * 60 * 60 * 1000)));
+}
+
+function inferServiceLifecycleStatus(detail, nowMs = Date.now()) {
+  const access = detail || {};
+  if (access.allowed) {
+    if (access.source === 'legacy' && access.freeTrialActive) return 'free_trial';
+    return 'active';
+  }
+  if (String(access.status || '').toLowerCase() === 'expired') return 'expired';
+  if (access.expiresAt && new Date(access.expiresAt).getTime() <= nowMs) return 'expired';
+  return 'inactive';
+}
+
+function inferActivatedBy(access, manualGrant, subscription, serviceKey) {
+  const source = String(access?.source || '').toLowerCase();
+  if (source === 'global') return 'admin';
+  if (source === 'legacy') {
+    const sub = mergedSubscription({ subscription });
+    if (trialIsActive(sub)) return 'user';
+    if (isSubscriptionActive(sub)) return 'user';
+    return 'system';
+  }
+  if (source === 'manual') {
+    const grant = normalizeManualGrant(manualGrant);
+    const grantSource = String(grant?.source || '').toLowerCase();
+    if (grantSource.includes('admin') || grant?.grantedByEmail) return 'admin';
+    if (serviceKey === 'mentor' && grantSource === 'manual') return 'admin';
+    return 'user';
+  }
+  return 'system';
+}
+
+function buildManagedServiceDetail({
+  key,
+  label,
+  access,
+  manualGrant,
+  subscription,
+  nowMs,
+}) {
+  const sub = mergedSubscription({ subscription });
+  const trialActive = trialIsActive(sub);
+  const freeTrialActive = Boolean(access?.allowed && access?.source === 'legacy' && trialActive);
+  const active = Boolean(access?.allowed);
+  const lifecycleStatus = inferServiceLifecycleStatus({ ...access, freeTrialActive }, nowMs);
+  return {
+    key,
+    label,
+    active,
+    status: lifecycleStatus,
+    source: String(access?.source || 'none'),
+    freeTrialUsed: Boolean(sub?.hasUsedTrial),
+    freeTrialActive,
+    paidPlanActive: active && !freeTrialActive,
+    activatedBy: inferActivatedBy(access, manualGrant, sub, key),
+    startedAt: toIsoOrNull(access?.startsAt || manualGrant?.startsAt),
+    expiresAt: toIsoOrNull(access?.expiresAt || manualGrant?.expiresAt),
+    remainingDays: calculateRemainingDays(access?.expiresAt || manualGrant?.expiresAt, nowMs),
+  };
+}
+
+app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmin, async (req, res) => {
+  const q = normalizeSubscriptionSearch(req.query?.q);
+  const showAll = String(req.query?.showAll || '').trim().toLowerCase() === 'true';
+  const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || (showAll ? 100 : 25)) || (showAll ? 100 : 25)));
+  const page = Math.max(1, Number(req.query?.page || 1) || 1);
+  const syncRequested = String(req.query?.sync || '').trim().toLowerCase() === 'true';
+  const payload = await fetchAdminManagedUsers({
+    q,
+    page,
+    pageSize,
+    showAll,
+    forceSync: syncRequested,
   });
+  res.json(payload);
+});
+
+app.get('/api/admin/users/search', authMiddleware, requireAdmin, async (req, res) => {
+  const q = normalizeSubscriptionSearch(req.query?.q);
+  const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || 25) || 25));
+  const page = Math.max(1, Number(req.query?.page || 1) || 1);
+  const payload = await fetchAdminManagedUsers({
+    q,
+    page,
+    pageSize,
+    showAll: false,
+    forceSync: false,
+  });
+  res.json(payload);
+});
+
+app.get('/api/admin/users/all', authMiddleware, requireAdmin, async (req, res) => {
+  const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || 100) || 100));
+  const page = Math.max(1, Number(req.query?.page || 1) || 1);
+  const payload = await fetchAdminManagedUsers({
+    q: '',
+    page,
+    pageSize,
+    showAll: true,
+    forceSync: false,
+  });
+  res.json(payload);
 });
 
 app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, requireAdmin, async (req, res) => {
@@ -13273,7 +13351,7 @@ app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, req
     return;
   }
   const user = await UserModel.findById(userId).lean();
-  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+  if (!user || user.role === 'admin') {
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
@@ -13372,7 +13450,7 @@ app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, req
 
 app.post('/api/admin/subscriptions/management/sync-firebase-users', authMiddleware, requireAdmin, async (_req, res) => {
   try {
-    const result = await syncMissingFirebaseUsersToBackend();
+    const result = await ensureCentralizedAppUsersSync({ force: true });
     res.json({ ok: true, ...result });
   } catch (error) {
     res.status(500).json({
@@ -13384,7 +13462,7 @@ app.post('/api/admin/subscriptions/management/sync-firebase-users', authMiddlewa
 
 app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async (_req, res) => {
   const now = new Date();
-  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+  const managedUserFilter = { role: { $ne: 'admin' } };
   await finalizeExpiredGlobalAccess(GlobalAccessGrantModel);
   const globalGrants = await getGlobalAccessGrantSnapshot();
   const mentorGlobalActive = isGrantActive(globalGrants.mentor, now.getTime());
@@ -13460,7 +13538,7 @@ app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async
 app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (req, res) => {
   const status = String(req.query?.status || 'all').toLowerCase();
   const accessType = String(req.query?.accessType || '').trim().toLowerCase();
-  const filter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+  const filter = { role: { $ne: 'admin' } };
   if (status !== 'all' && (!accessType || accessType === 'mentor')) {
     filter['subscription.status'] = status;
   }
@@ -13517,7 +13595,7 @@ app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (r
 
 app.get('/api/admin/paid-services/overview', authMiddleware, requireAdmin, async (_req, res) => {
   const now = new Date();
-  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+  const managedUserFilter = { role: { $ne: 'admin' } };
   const [totalUsers, testsManualActive, prepManualActive, communityManualActive, legacyPaidEligible] = await Promise.all([
     UserModel.countDocuments(managedUserFilter),
     UserModel.countDocuments({ ...managedUserFilter, 'paidServices.tests.status': 'active', 'paidServices.tests.expiresAt': { $gt: now } }),
@@ -13546,7 +13624,7 @@ app.get('/api/admin/paid-services/users', authMiddleware, requireAdmin, async (r
   const q = String(req.query?.q || '').trim().toLowerCase();
   const status = String(req.query?.status || 'all').trim().toLowerCase();
   const serviceType = parsePaidServiceType(req.query?.serviceType) || PAID_SERVICE_TYPES.tests;
-  const filter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+  const filter = { role: { $ne: 'admin' } };
   const users = await UserModel.find(filter, {
     email: 1,
     firstName: 1,
@@ -13607,7 +13685,7 @@ app.post('/api/admin/paid-services/:userId/grant', authMiddleware, requireAdmin,
     return;
   }
   const user = await UserModel.findById(userId).select('role authProvider paidServices');
-  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+  if (!user || user.role === 'admin') {
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
@@ -13675,7 +13753,7 @@ app.post('/api/admin/paid-services/:userId/deactivate', authMiddleware, requireA
     return;
   }
   const user = await UserModel.findById(userId).select('role authProvider paidServices');
-  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+  if (!user || user.role === 'admin') {
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
@@ -13744,7 +13822,7 @@ app.post('/api/admin/subscriptions/access/:userId/grant', authMiddleware, requir
   }
 
   const user = await UserModel.findById(userId).select('subscription accessControls role authProvider email firstName lastName');
-  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+  if (!user || user.role === 'admin') {
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
@@ -13796,7 +13874,7 @@ app.post('/api/admin/subscriptions/access/:userId/revoke', authMiddleware, requi
     return;
   }
   const user = await UserModel.findById(userId).select('accessControls role authProvider');
-  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+  if (!user || user.role === 'admin') {
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
@@ -13908,7 +13986,7 @@ app.post('/api/admin/signup-requests/:requestId/reject', authMiddleware, require
 app.get('/api/admin/subscriptions/requests/:requestId/payment-proof', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
 app.get('/api/admin/users', authMiddleware, requireAdmin, async (req, res) => {
-  const users = await UserModel.find({ role: { $ne: 'admin' }, authProvider: 'firebase' }, {
+  const users = await UserModel.find({ role: { $ne: 'admin' } }, {
     email: 1,
     firstName: 1,
     lastName: 1,

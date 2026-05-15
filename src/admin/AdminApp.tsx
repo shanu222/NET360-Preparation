@@ -3288,13 +3288,10 @@ export default function AdminApp() {
     }
   }, []);
 
-  useEffect(() => {
-    const id = window.setTimeout(() => {
-      setSubscriptionManagementDebouncedQuery(subscriptionManagementQuery.trim());
-      setSubscriptionManagementPage(1);
-    }, 300);
-    return () => window.clearTimeout(id);
-  }, [subscriptionManagementQuery]);
+  const runSubscriptionManagementSearch = () => {
+    setSubscriptionManagementDebouncedQuery(subscriptionManagementQuery.trim());
+    setSubscriptionManagementPage(1);
+  };
 
   const openQuestionBankWindow = () => {
     const url = new URL(window.location.href);
@@ -3389,7 +3386,9 @@ export default function AdminApp() {
         activeToken,
       ).catch(() => ({ users: [] })),
       apiRequest<AdminSubscriptionManagementUsersPayload>(
-        `/api/admin/subscriptions/management/users?q=${encodeURIComponent(subscriptionManagementDebouncedQuery.trim())}&showAll=${subscriptionManagementShowAll ? 'true' : 'false'}&page=${subscriptionManagementPage}&pageSize=${subscriptionManagementPageSize}`,
+        subscriptionManagementShowAll
+          ? `/api/admin/users/all?page=${subscriptionManagementPage}&pageSize=${subscriptionManagementPageSize}`
+          : `/api/admin/users/search?q=${encodeURIComponent(subscriptionManagementDebouncedQuery.trim())}&page=${subscriptionManagementPage}&pageSize=${subscriptionManagementPageSize}`,
         {},
         activeToken,
       ).catch(() => ({ users: [] })),
@@ -10434,7 +10433,7 @@ export default function AdminApp() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
+              <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
                 <div className="space-y-1">
                   <Label htmlFor="subscription-management-search">Search users</Label>
                   <div className="relative">
@@ -10444,6 +10443,12 @@ export default function AdminApp() {
                       onFocus={() => setIsSubscriptionSuggestionsOpen(true)}
                       onBlur={() => window.setTimeout(() => setIsSubscriptionSuggestionsOpen(false), 160)}
                       onChange={(e) => setSubscriptionManagementQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          runSubscriptionManagementSearch();
+                        }
+                      }}
                       placeholder="Search name (partial) or strict email/username start"
                     />
                     {isSubscriptionSuggestionsOpen && subscriptionManagementQuery.trim().length >= 2 && subscriptionSearchSuggestions.length > 0 ? (
@@ -10457,6 +10462,7 @@ export default function AdminApp() {
                             onClick={() => {
                               setSelectedSubscriptionUserId(entry.id);
                               setSubscriptionManagementQuery(entry.email);
+                              setSubscriptionManagementDebouncedQuery(entry.email);
                               setIsSubscriptionSuggestionsOpen(false);
                             }}
                           >
@@ -10499,6 +10505,13 @@ export default function AdminApp() {
                   />
                   <Label htmlFor="subscription-show-all" className="cursor-pointer">Show All Users</Label>
                 </div>
+                <Button
+                  type="button"
+                  onClick={runSubscriptionManagementSearch}
+                  className="md:justify-self-start"
+                >
+                  Search
+                </Button>
               </div>
 
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
