@@ -69,6 +69,39 @@ const subscriptionSchema = new mongoose.Schema(
   { _id: false },
 );
 
+const manualAccessGrantSchema = new mongoose.Schema(
+  {
+    status: { type: String, enum: ['inactive', 'active', 'expired', 'revoked'], default: 'inactive', index: true },
+    startsAt: { type: Date, default: null },
+    expiresAt: { type: Date, default: null },
+    durationDays: { type: Number, default: 0 },
+    source: { type: String, default: '' },
+    grantedAt: { type: Date, default: null },
+    grantedByUserId: { type: String, default: '' },
+    grantedByEmail: { type: String, default: '' },
+    lastUpdatedAt: { type: Date, default: null },
+    notes: { type: String, default: '' },
+  },
+  { _id: false },
+);
+
+const accessControlsSchema = new mongoose.Schema(
+  {
+    mentorManual: { type: manualAccessGrantSchema, default: () => ({}) },
+    preparationManual: { type: manualAccessGrantSchema, default: () => ({}) },
+  },
+  { _id: false },
+);
+
+const paidServicesSchema = new mongoose.Schema(
+  {
+    tests: { type: manualAccessGrantSchema, default: () => ({}) },
+    preparation: { type: manualAccessGrantSchema, default: () => ({}) },
+    community: { type: manualAccessGrantSchema, default: () => ({}) },
+  },
+  { _id: false },
+);
+
 const userSchema = new mongoose.Schema(
   {
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
@@ -90,6 +123,8 @@ const userSchema = new mongoose.Schema(
     preferences: { type: preferencesSchema, default: () => ({}) },
     progress: { type: progressSchema, default: () => ({}) },
     subscription: { type: subscriptionSchema, default: () => ({}) },
+    accessControls: { type: accessControlsSchema, default: () => ({}) },
+    paidServices: { type: paidServicesSchema, default: () => ({}) },
     activeSession: { type: activeSessionSchema, default: null },
     refreshTokens: { type: [refreshTokenSchema], default: [] },
     resetPasswordTokenHash: { type: String, default: null },

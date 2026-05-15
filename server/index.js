@@ -71,6 +71,7 @@ import { createUploadRouter } from './routes/upload.js';
 import { buildMcqContentFingerprint } from './lib/mcqIdentity.js';
 import { encryptSecurityAnswerPlaintext, decryptSecurityAnswerCiphertext } from './lib/securityAnswerCrypto.js';
 import { UserModel } from './models/User.js';
+import { GlobalAccessGrantModel } from './models/GlobalAccessGrant.js';
 import { PaymentTransactionModel } from './models/PaymentTransaction.js';
 import { MCQModel } from './models/MCQ.js';
 import { TestSessionModel } from './models/TestSession.js';
@@ -96,6 +97,21 @@ import { PasswordRecoveryRequestModel } from './models/PasswordRecoveryRequest.j
 import { SupportChatMessageModel } from './models/SupportChatMessage.js';
 import { SecurityAuditEventModel } from './models/SecurityAuditEvent.js';
 import { RuntimeConfigModel } from './models/RuntimeConfig.js';
+import {
+  ACCESS_TYPES,
+  buildGlobalGrantMap,
+  buildPreparationSurfaceForClient,
+  defaultManualGrant,
+  finalizeExpiredGlobalAccess,
+  finalizeExpiredManualAccess,
+  finalizeExpiredPaidServices,
+  isGrantActive,
+  normalizeManualGrant,
+  PAID_SERVICE_TYPES,
+  resolvePaidServices,
+  resolveRequestedServiceAccess,
+  resolveUserEntitlements,
+} from './lib/subscriptionEntitlements.js';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
@@ -4528,29 +4544,95 @@ function isSubscriptionActive(subscription) {
   return new Date(subscription.expiresAt).getTime() > Date.now();
 }
 
-function ensurePremiumAccess(user, res) {
+async function getGlobalAccessGrantSnapshot() {
+  const key = cacheKey('global-access-grants:all');
+  const cached = await cacheGetJson(key);
+  if (cached && typeof cached === 'object') {
+    return buildGlobalGrantMap([cached.mentor, cached.preparation]);
+  }
+  await finalizeExpiredGlobalAccess(GlobalAccessGrantModel);
+  const rows = await GlobalAccessGrantModel.find({
+    accessType: { $in: [ACCESS_TYPES.mentor, ACCESS_TYPES.preparation] },
+  }).lean();
+  const map = buildGlobalGrantMap(rows);
+  await cacheSetJson(key, map, 30);
+  return map;
+}
+
+async function invalidateGlobalAccessGrantSnapshot() {
+  await cacheDel(cacheKey('global-access-grants:all'));
+}
+
+function toIsoOrNull(value) {
+  if (!value) return null;
+  try {
+    return new Date(value).toISOString();
+  } catch {
+    return null;
+  }
+}
+
+function accessStatusPayload(detail) {
+  const normalized = detail || { allowed: false, source: 'none', status: 'inactive' };
+  return {
+    allowed: Boolean(normalized.allowed),
+    source: String(normalized.source || 'none'),
+    status: String(normalized.status || (normalized.allowed ? 'active' : 'inactive')),
+    startsAt: toIsoOrNull(normalized.startsAt),
+    expiresAt: toIsoOrNull(normalized.expiresAt),
+    durationDays: Number(normalized.durationDays || 0),
+    durationValue: Number(normalized.durationValue || 0),
+    durationUnit: String(normalized.durationUnit || 'days'),
+    isGlobal: normalized.source === 'global',
+    isManual: normalized.source === 'manual',
+    isLegacy: normalized.source === 'legacy',
+    legacyAllowed: Boolean(normalized.legacyAllowed),
+  };
+}
+
+async function resolveEntitlementsForUser(userLike) {
+  const userId = String(userLike?._id || '').trim();
+  if (userId) {
+    await finalizeExpiredManualAccess(UserModel, userId);
+    await finalizeExpiredPaidServices(UserModel, userId);
+  }
+  const globalMap = await getGlobalAccessGrantSnapshot();
+  const now = Date.now();
+  return {
+    ...resolveUserEntitlements(userLike, globalMap, now),
+    paidServices: resolvePaidServices(userLike, now),
+  };
+}
+
+async function ensurePremiumAccess(user, res) {
+  const entitlements = await resolveEntitlementsForUser(user);
+  const mentorAccess = entitlements?.mentor;
   const subscription = normalizeSubscription(user);
-  if (!isSubscriptionActive(subscription)) {
+  if (!mentorAccess?.allowed) {
     res.status(402).json({
       error: 'Premium subscription required to access Smart Study Mentor features.',
       code: 'SUBSCRIPTION_REQUIRED',
       subscription,
+      mentorAccess: accessStatusPayload(mentorAccess),
       plans: Object.values(SUBSCRIPTION_PLANS),
     });
     return null;
   }
 
   const plan = resolveSubscriptionPlan(subscription.planId);
-  if (!plan) {
+  const fallbackPlan = SUBSCRIPTION_PLANS[PREMIUM_CHECKOUT_PLAN_ID];
+  const activePlan = plan || fallbackPlan;
+  if (!activePlan) {
     res.status(402).json({
       error: 'Your subscription plan is invalid. Please contact support.',
       code: 'PLAN_NOT_FOUND',
       subscription,
+      mentorAccess: accessStatusPayload(mentorAccess),
     });
     return null;
   }
 
-  return { subscription, plan };
+  return { subscription, plan: activePlan, mentorAccess: accessStatusPayload(mentorAccess) };
 }
 
 function estimateTokenUsage(text) {
@@ -6520,7 +6602,7 @@ async function requireAdmin(req, res, next) {
 const studentPremiumSurface = [
   authMiddleware,
   subscriptionExpiryRefresh(UserModel),
-  requireTrialOrPremiumContent(UserModel),
+  requireTrialOrPremiumContent(UserModel, resolveEntitlementsForUser),
 ];
 
 /** Legacy token-based signup, admin premium proof queues, and recovery lists â€” fully retired (410). */
@@ -10971,7 +11053,7 @@ app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
     return;
   }
 
-  const premium = ensurePremiumAccess(req.user, res);
+  const premium = await ensurePremiumAccess(req.user, res);
   if (!premium) return;
 
   const day = new Date().toISOString().slice(0, 10);
@@ -11066,7 +11148,7 @@ app.post('/api/ai/mentor/chat', authMiddleware, async (req, res) => {
 });
 
 app.post('/api/ai/mentor/export', authMiddleware, async (req, res) => {
-  const premium = ensurePremiumAccess(req.user, res);
+  const premium = await ensurePremiumAccess(req.user, res);
   if (!premium) return;
 
   const format = normalizeMentorExportFormat(req.body?.format);
@@ -11422,6 +11504,8 @@ app.get('/api/payments/history', authMiddleware, async (req, res) => {
 app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
   if (req.user.role !== 'admin') {
     await finalizeStaleSubscription(UserModel, req.user._id);
+    await finalizeExpiredManualAccess(UserModel, req.user._id);
+    await finalizeExpiredPaidServices(UserModel, req.user._id);
   }
 
   const fresh = await UserModel.findById(req.user._id).lean();
@@ -11429,15 +11513,13 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
   const subscription = normalizeSubscription(fresh || req.user);
   const plan = resolveSubscriptionPlan(subscription.planId);
   const serverNow = Date.now();
+  const entitlements = await resolveEntitlementsForUser(fresh || req.user);
+  const mentorPlan = plan || (entitlements?.mentor?.allowed ? SUBSCRIPTION_PLANS[PREMIUM_CHECKOUT_PLAN_ID] : null);
   const cachedKey = cacheKey(`substate:${req.user._id}`);
   let premiumSurface = await cacheGetJson(cachedKey);
   if (!premiumSurface) {
-    premiumSurface = {
-      ...surfaceAccessDetail(subPlain, serverNow),
-      badge: buildPremiumBadgeState(subPlain, serverNow),
-      hasSurfaceAccess: hasPremiumSurfaceAccess(subPlain),
-    };
-    await cacheSetJson(cachedKey, premiumSurface, 45);
+    premiumSurface = buildPreparationSurfaceForClient(entitlements, subPlain, serverNow);
+    await cacheSetJson(cachedKey, premiumSurface, 8);
   }
 
   const day = new Date().toISOString().slice(0, 10);
@@ -11456,13 +11538,20 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
     ).trim(),
     subscription: {
       ...subscription,
-      isActive: isSubscriptionActive(subscription),
+      isActive: isSubscriptionActive(subscription) || Boolean(entitlements?.mentor?.allowed),
       trialActive: trialIsActive(subPlain),
-      planName: plan?.name || '',
-      dailyAiLimit: plan?.dailyAiLimit || 0,
+      planName: mentorPlan?.name || '',
+      dailyAiLimit: mentorPlan?.dailyAiLimit || 0,
+    },
+    mentorAccess: accessStatusPayload(entitlements?.mentor),
+    preparationAccess: accessStatusPayload(entitlements?.preparation),
+    paidServices: {
+      tests: accessStatusPayload(entitlements?.paidServices?.tests),
+      preparation: accessStatusPayload(entitlements?.paidServices?.preparation),
+      community: accessStatusPayload(entitlements?.paidServices?.community),
     },
     premiumSurface,
-    subscriptionBadge: buildPremiumBadgeState(subPlain, serverNow),
+    subscriptionBadge: premiumSurface?.badge || buildPremiumBadgeState(subPlain, serverNow),
     activationRequest: latestActivationRequest
       ? serializePremiumSubscriptionRequest(latestActivationRequest, requestPlan?.name || '')
       : null,
@@ -11471,7 +11560,7 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
       chatCount: usage?.chatCount || 0,
       solverCount: usage?.solverCount || 0,
       tokenConsumed: usage?.tokenConsumed || 0,
-      remainingToday: Math.max(0, (plan?.dailyAiLimit || 0) - ((usage?.chatCount || 0) + (usage?.solverCount || 0))),
+      remainingToday: Math.max(0, (mentorPlan?.dailyAiLimit || 0) - ((usage?.chatCount || 0) + (usage?.solverCount || 0))),
     },
   });
 });
@@ -11698,7 +11787,7 @@ app.post('/api/subscriptions/activate-with-token', authMiddleware, async (req, r
 });
 
 app.post('/api/ai/mentor/solve-image', authMiddleware, async (req, res) => {
-  const premium = ensurePremiumAccess(req.user, res);
+  const premium = await ensurePremiumAccess(req.user, res);
   if (!premium) return;
 
   const openAiContext = await getOpenAiClientContext();
@@ -12646,10 +12735,97 @@ app.post('/api/admin/question-submissions/:submissionId/review', authMiddleware,
   res.json({ submission: serializeQuestionSubmission(submission) });
 });
 
+function parseAccessType(input) {
+  const raw = String(input || '').trim().toLowerCase();
+  if (raw === ACCESS_TYPES.mentor || raw === ACCESS_TYPES.preparation) return raw;
+  return '';
+}
+
+function buildManualGrantPayload(existing, { durationDays, adminUser, source, notes }) {
+  const now = new Date();
+  const days = Math.max(1, Math.min(3650, Number(durationDays || 0)));
+  const fromMs = isGrantActive(existing, now.getTime())
+    ? new Date(existing.expiresAt).getTime()
+    : now.getTime();
+  const expiresAt = new Date(fromMs + (days * 24 * 60 * 60 * 1000));
+  return {
+    ...(normalizeManualGrant(existing) || defaultManualGrant()),
+    status: 'active',
+    startsAt: isGrantActive(existing, now.getTime()) ? existing.startsAt || now : now,
+    expiresAt,
+    durationDays: days,
+    source: String(source || 'manual'),
+    grantedAt: now,
+    grantedByUserId: String(adminUser?._id || ''),
+    grantedByEmail: String(adminUser?.email || ''),
+    lastUpdatedAt: now,
+    notes: String(notes || '').slice(0, 300),
+  };
+}
+
+function buildRevokedManualGrant(existing, adminUser, notes = '') {
+  const now = new Date();
+  return {
+    ...(normalizeManualGrant(existing) || defaultManualGrant()),
+    status: 'revoked',
+    source: 'manual',
+    lastUpdatedAt: now,
+    grantedByUserId: String(adminUser?._id || ''),
+    grantedByEmail: String(adminUser?.email || ''),
+    notes: String(notes || '').slice(0, 300),
+  };
+}
+
+function parsePaidServiceType(input) {
+  const raw = String(input || '').trim().toLowerCase();
+  if (raw === PAID_SERVICE_TYPES.tests || raw === PAID_SERVICE_TYPES.preparation || raw === PAID_SERVICE_TYPES.community) {
+    return raw;
+  }
+  return '';
+}
+
+function parseDurationUnit(input) {
+  const raw = String(input || '').trim().toLowerCase();
+  if (raw === 'days' || raw === 'weeks' || raw === 'months') return raw;
+  return 'days';
+}
+
+function durationToDays(durationValue, durationUnit) {
+  const value = Math.max(1, Math.min(3650, Number(durationValue || 0)));
+  if (durationUnit === 'weeks') return value * 7;
+  if (durationUnit === 'months') return value * 30;
+  return value;
+}
+
+function computeExpiryFromDuration(baseDate, durationValue, durationUnit) {
+  const base = new Date(baseDate);
+  const value = Math.max(1, Math.min(3650, Number(durationValue || 0)));
+  if (durationUnit === 'months') {
+    const d = new Date(base);
+    d.setMonth(d.getMonth() + value);
+    return d;
+  }
+  const days = durationUnit === 'weeks' ? value * 7 : value;
+  return new Date(base.getTime() + (days * 24 * 60 * 60 * 1000));
+}
+
+function normalizeSelectedPaidServices(payload) {
+  const selected = payload && typeof payload === 'object' ? payload : {};
+  const tests = Boolean(selected.tests);
+  const preparation = Boolean(selected.preparation);
+  const community = Boolean(selected.community);
+  return { tests, preparation, community };
+}
+
 app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async (_req, res) => {
   const now = new Date();
   const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
-  const [activeUsers, expiredUsers, totalUsers, dailyUsage] = await Promise.all([
+  await finalizeExpiredGlobalAccess(GlobalAccessGrantModel);
+  const globalGrants = await getGlobalAccessGrantSnapshot();
+  const mentorGlobalActive = isGrantActive(globalGrants.mentor, now.getTime());
+  const preparationGlobalActive = isGrantActive(globalGrants.preparation, now.getTime());
+
+  const [activeUsers, expiredUsers, totalUsers, dailyUsage, mentorManualUsers, prepManualUsers, prepLegacyUsers] = await Promise.all([
     UserModel.countDocuments({ ...managedUserFilter, 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } }),
     UserModel.countDocuments({ ...managedUserFilter, 'subscription.status': { $in: ['expired', 'cancelled'] } }),
     UserModel.countDocuments(managedUserFilter),
@@ -12658,12 +12834,54 @@ app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async
       { $sort: { _id: -1 } },
       { $limit: 14 },
     ]),
+    UserModel.countDocuments({
+      ...managedUserFilter,
+      'accessControls.mentorManual.status': 'active',
+      'accessControls.mentorManual.expiresAt': { $gt: now },
+    }),
+    UserModel.countDocuments({
+      ...managedUserFilter,
+      'accessControls.preparationManual.status': 'active',
+      'accessControls.preparationManual.expiresAt': { $gt: now },
+    }),
+    UserModel.countDocuments({
+      ...managedUserFilter,
+      $or: [
+        { 'subscription.status': 'trial', 'subscription.trialEndsAt': { $gt: now } },
+        { 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } },
+      ],
+    }),
   ]);
+
+  const mentorActiveUsers = mentorGlobalActive ? totalUsers : Math.min(totalUsers, activeUsers + mentorManualUsers);
+  const preparationActiveUsers = preparationGlobalActive
+    ? totalUsers
+    : Math.min(totalUsers, prepLegacyUsers + prepManualUsers);
+  const mentorInactiveUsers = Math.max(0, totalUsers - mentorActiveUsers);
+  const preparationInactiveUsers = Math.max(0, totalUsers - preparationActiveUsers);
 
   res.json({
     totalUsers,
     activeUsers,
     expiredUsers,
+    mentorAccess: {
+      activeUsers: mentorActiveUsers,
+      inactiveUsers: mentorInactiveUsers,
+      global: accessStatusPayload({
+        ...globalGrants.mentor,
+        allowed: mentorGlobalActive,
+        source: mentorGlobalActive ? 'global' : 'none',
+      }),
+    },
+    preparationAccess: {
+      activeUsers: preparationActiveUsers,
+      inactiveUsers: preparationInactiveUsers,
+      global: accessStatusPayload({
+        ...globalGrants.preparation,
+        allowed: preparationGlobalActive,
+        source: preparationGlobalActive ? 'global' : 'none',
+      }),
+    },
     plans: Object.values(SUBSCRIPTION_PLANS),
     dailyUsage: dailyUsage.map((item) => ({
       day: item._id,
@@ -12676,8 +12894,9 @@ app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async
 
 app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (req, res) => {
   const status = String(req.query?.status || 'all').toLowerCase();
+  const accessType = String(req.query?.accessType || '').trim().toLowerCase();
   const filter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
-  if (status !== 'all') {
+  if (status !== 'all' && (!accessType || accessType === 'mentor')) {
     filter['subscription.status'] = status;
   }
 
@@ -12686,10 +12905,29 @@ app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (r
     firstName: 1,
     lastName: 1,
     subscription: 1,
+    accessControls: 1,
   }).sort({ updatedAt: -1 }).limit(500).lean();
+  const globalGrants = await getGlobalAccessGrantSnapshot();
+  const now = Date.now();
+
+  const rows = users.map((item) => {
+    const entitlement = resolveUserEntitlements(item, globalGrants, now);
+    const mentor = accessStatusPayload(entitlement.mentor);
+    const preparation = accessStatusPayload(entitlement.preparation);
+    return { item, entitlement, mentor, preparation };
+  }).filter(({ mentor, preparation }) => {
+    if (status === 'all') return true;
+    const target = accessType === 'preparation' ? preparation : mentor;
+    if (status === 'active') return target.allowed;
+    if (status === 'inactive') return !target.allowed;
+    if (status === 'expired' || status === 'cancelled') {
+      return !target.allowed && ['expired', 'inactive', 'revoked', 'cancelled'].includes(target.status);
+    }
+    return true;
+  });
 
   res.json({
-    users: users.map((item) => {
+    users: rows.map(({ item, mentor, preparation }) => {
       const subscription = normalizeSubscription(item);
       const plan = resolveSubscriptionPlan(subscription.planId);
       return {
@@ -12703,9 +12941,197 @@ app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (r
           planName: plan?.name || '',
           dailyAiLimit: plan?.dailyAiLimit || 0,
         },
+        access: {
+          mentor,
+          preparation,
+        },
       };
     }),
   });
+});
+
+app.get('/api/admin/paid-services/overview', authMiddleware, requireAdmin, async (_req, res) => {
+  const now = new Date();
+  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+  const [totalUsers, testsManualActive, prepManualActive, communityManualActive, legacyPaidEligible] = await Promise.all([
+    UserModel.countDocuments(managedUserFilter),
+    UserModel.countDocuments({ ...managedUserFilter, 'paidServices.tests.status': 'active', 'paidServices.tests.expiresAt': { $gt: now } }),
+    UserModel.countDocuments({ ...managedUserFilter, 'paidServices.preparation.status': 'active', 'paidServices.preparation.expiresAt': { $gt: now } }),
+    UserModel.countDocuments({ ...managedUserFilter, 'paidServices.community.status': 'active', 'paidServices.community.expiresAt': { $gt: now } }),
+    UserModel.countDocuments({
+      ...managedUserFilter,
+      $or: [
+        { 'subscription.status': 'trial', 'subscription.trialEndsAt': { $gt: now } },
+        { 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } },
+      ],
+    }),
+  ]);
+  const testsActiveUsers = Math.min(totalUsers, testsManualActive + legacyPaidEligible);
+  const preparationActiveUsers = Math.min(totalUsers, prepManualActive + legacyPaidEligible);
+  const communityActiveUsers = Math.min(totalUsers, communityManualActive + legacyPaidEligible);
+  res.json({
+    totalUsers,
+    testsAccess: { activeUsers: testsActiveUsers, inactiveUsers: Math.max(0, totalUsers - testsActiveUsers) },
+    preparationAccess: { activeUsers: preparationActiveUsers, inactiveUsers: Math.max(0, totalUsers - preparationActiveUsers) },
+    communityAccess: { activeUsers: communityActiveUsers, inactiveUsers: Math.max(0, totalUsers - communityActiveUsers) },
+  });
+});
+
+app.get('/api/admin/paid-services/users', authMiddleware, requireAdmin, async (req, res) => {
+  const q = String(req.query?.q || '').trim().toLowerCase();
+  const status = String(req.query?.status || 'all').trim().toLowerCase();
+  const serviceType = parsePaidServiceType(req.query?.serviceType) || PAID_SERVICE_TYPES.tests;
+  const filter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+  const users = await UserModel.find(filter, {
+    email: 1,
+    firstName: 1,
+    lastName: 1,
+    subscription: 1,
+    paidServices: 1,
+  }).sort({ updatedAt: -1 }).limit(700).lean();
+  const now = Date.now();
+  const rows = users
+    .map((item) => {
+      const paidServices = resolvePaidServices(item, now);
+      const current = resolveRequestedServiceAccess(paidServices, serviceType);
+      return {
+        item,
+        paidServices,
+        current,
+      };
+    })
+    .filter(({ item, current }) => {
+      const haystack = `${item.email || ''} ${item.firstName || ''} ${item.lastName || ''}`.toLowerCase();
+      if (q && !haystack.includes(q)) return false;
+      if (status === 'all') return true;
+      if (status === 'active') return Boolean(current?.allowed);
+      if (status === 'inactive') return !current?.allowed;
+      if (status === 'expired') return !current?.allowed && current?.status === 'expired';
+      return true;
+    });
+
+  res.json({
+    users: rows.map(({ item, paidServices }) => ({
+      id: String(item._id),
+      email: item.email,
+      firstName: item.firstName || '',
+      lastName: item.lastName || '',
+      paidServices: {
+        tests: accessStatusPayload(paidServices.tests),
+        preparation: accessStatusPayload(paidServices.preparation),
+        community: accessStatusPayload(paidServices.community),
+      },
+    })),
+  });
+});
+
+app.post('/api/admin/paid-services/:userId/grant', authMiddleware, requireAdmin, async (req, res) => {
+  const userId = String(req.params.userId || '').trim();
+  const selected = normalizeSelectedPaidServices(req.body?.services);
+  const durationValue = Math.max(1, Number(req.body?.durationValue || 0));
+  const durationUnit = parseDurationUnit(req.body?.durationUnit);
+  const customExpiryRaw = String(req.body?.customExpiry || '').trim();
+  const notes = String(req.body?.notes || '').trim();
+  const selectedKeys = Object.entries(selected).filter(([, enabled]) => enabled).map(([k]) => k);
+  if (!userId || !selectedKeys.length) {
+    res.status(400).json({ error: 'userId and at least one selected service are required.' });
+    return;
+  }
+  if (!customExpiryRaw && (!Number.isFinite(durationValue) || durationValue <= 0)) {
+    res.status(400).json({ error: 'durationValue must be greater than 0 when customExpiry is not provided.' });
+    return;
+  }
+  const user = await UserModel.findById(userId).select('role authProvider paidServices');
+  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+    res.status(404).json({ error: 'Managed user not found.' });
+    return;
+  }
+
+  const now = new Date();
+  const updates = {};
+  for (const key of selectedKeys) {
+    const current = normalizeManualGrant(user.paidServices?.[key]);
+    const activeCurrent = isGrantActive(current, now.getTime());
+    const baseDate = activeCurrent && current.expiresAt ? new Date(current.expiresAt) : now;
+    const expiresAt = customExpiryRaw
+      ? new Date(customExpiryRaw)
+      : computeExpiryFromDuration(baseDate, durationValue, durationUnit);
+    if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= now.getTime()) {
+      res.status(400).json({ error: `Invalid expiry for service ${key}.` });
+      return;
+    }
+    const durationDays = customExpiryRaw
+      ? Math.max(1, Math.ceil((expiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)))
+      : durationToDays(durationValue, durationUnit);
+    updates[`paidServices.${key}`] = {
+      ...current,
+      status: 'active',
+      startsAt: activeCurrent ? (current.startsAt || now) : now,
+      expiresAt,
+      durationDays,
+      durationValue: customExpiryRaw ? durationDays : durationValue,
+      durationUnit: customExpiryRaw ? 'days' : durationUnit,
+      source: 'admin_paid_services',
+      grantedAt: now,
+      grantedByUserId: String(req.user?._id || ''),
+      grantedByEmail: String(req.user?.email || ''),
+      lastUpdatedAt: now,
+      notes: notes.slice(0, 300),
+    };
+  }
+  await UserModel.updateOne({ _id: userId }, { $set: updates }, { runValidators: true });
+  await invalidateUserSubscriptionCache(userId);
+  emitSubscriptionRefresh(String(userId), { reason: 'admin_paid_services_grant' });
+  const fresh = await UserModel.findById(userId).select('email firstName lastName paidServices subscription').lean();
+  const paidServices = resolvePaidServices(fresh, Date.now());
+  res.json({
+    ok: true,
+    user: {
+      id: String(userId),
+      email: fresh?.email || '',
+      firstName: fresh?.firstName || '',
+      lastName: fresh?.lastName || '',
+      paidServices: {
+        tests: accessStatusPayload(paidServices.tests),
+        preparation: accessStatusPayload(paidServices.preparation),
+        community: accessStatusPayload(paidServices.community),
+      },
+    },
+  });
+});
+
+app.post('/api/admin/paid-services/:userId/deactivate', authMiddleware, requireAdmin, async (req, res) => {
+  const userId = String(req.params.userId || '').trim();
+  const selected = normalizeSelectedPaidServices(req.body?.services);
+  const selectedKeys = Object.entries(selected).filter(([, enabled]) => enabled).map(([k]) => k);
+  const notes = String(req.body?.notes || '').trim();
+  if (!userId || !selectedKeys.length) {
+    res.status(400).json({ error: 'userId and at least one selected service are required.' });
+    return;
+  }
+  const user = await UserModel.findById(userId).select('role authProvider paidServices');
+  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+    res.status(404).json({ error: 'Managed user not found.' });
+    return;
+  }
+  const now = new Date();
+  const updates = {};
+  for (const key of selectedKeys) {
+    const current = normalizeManualGrant(user.paidServices?.[key]);
+    updates[`paidServices.${key}`] = {
+      ...current,
+      status: 'inactive',
+      source: 'admin_paid_services',
+      lastUpdatedAt: now,
+      grantedByUserId: String(req.user?._id || ''),
+      grantedByEmail: String(req.user?.email || ''),
+      notes: notes.slice(0, 300),
+    };
+  }
+  await UserModel.updateOne({ _id: userId }, { $set: updates }, { runValidators: true });
+  await invalidateUserSubscriptionCache(userId);
+  emitSubscriptionRefresh(String(userId), { reason: 'admin_paid_services_deactivate' });
+  res.json({ ok: true, userId });
 });
 
 app.post('/api/admin/subscriptions/:userId/update', authMiddleware, requireAdmin, async (req, res) => {
@@ -12740,6 +13166,160 @@ app.post('/api/admin/subscriptions/:userId/update', authMiddleware, requireAdmin
   await user.save();
 
   res.json({ ok: true, userId, subscription: normalizeSubscription(user) });
+});
+
+app.post('/api/admin/subscriptions/access/:userId/grant', authMiddleware, requireAdmin, async (req, res) => {
+  const userId = String(req.params.userId || '').trim();
+  const accessType = parseAccessType(req.body?.accessType);
+  const durationDays = Number(req.body?.durationDays || 0);
+  const notes = String(req.body?.notes || '').trim();
+  if (!userId || !accessType || !Number.isFinite(durationDays) || durationDays <= 0) {
+    res.status(400).json({ error: 'userId, accessType, and durationDays are required.' });
+    return;
+  }
+
+  const user = await UserModel.findById(userId).select('subscription accessControls role authProvider email firstName lastName');
+  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+    res.status(404).json({ error: 'Managed user not found.' });
+    return;
+  }
+
+  const path = accessType === ACCESS_TYPES.mentor
+    ? 'accessControls.mentorManual'
+    : 'accessControls.preparationManual';
+  const existing = normalizeManualGrant(accessType === ACCESS_TYPES.mentor
+    ? user.accessControls?.mentorManual
+    : user.accessControls?.preparationManual);
+  const nextGrant = buildManualGrantPayload(existing, {
+    durationDays,
+    adminUser: req.user,
+    source: 'manual',
+    notes,
+  });
+
+  await UserModel.updateOne(
+    { _id: userId },
+    { $set: { [path]: nextGrant } },
+    { runValidators: true },
+  );
+  await invalidateUserSubscriptionCache(userId);
+  emitSubscriptionRefresh(String(userId), { reason: `admin_${accessType}_manual_grant` });
+
+  const fresh = await UserModel.findById(userId).select('email firstName lastName subscription accessControls').lean();
+  const entitlements = await resolveEntitlementsForUser(fresh);
+  res.json({
+    ok: true,
+    user: {
+      id: String(userId),
+      email: fresh?.email || '',
+      firstName: fresh?.firstName || '',
+      lastName: fresh?.lastName || '',
+      access: {
+        mentor: accessStatusPayload(entitlements?.mentor),
+        preparation: accessStatusPayload(entitlements?.preparation),
+      },
+    },
+  });
+});
+
+app.post('/api/admin/subscriptions/access/:userId/revoke', authMiddleware, requireAdmin, async (req, res) => {
+  const userId = String(req.params.userId || '').trim();
+  const accessType = parseAccessType(req.body?.accessType);
+  const notes = String(req.body?.notes || '').trim();
+  if (!userId || !accessType) {
+    res.status(400).json({ error: 'userId and accessType are required.' });
+    return;
+  }
+  const user = await UserModel.findById(userId).select('accessControls role authProvider');
+  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+    res.status(404).json({ error: 'Managed user not found.' });
+    return;
+  }
+  const path = accessType === ACCESS_TYPES.mentor
+    ? 'accessControls.mentorManual'
+    : 'accessControls.preparationManual';
+  const existing = normalizeManualGrant(accessType === ACCESS_TYPES.mentor
+    ? user.accessControls?.mentorManual
+    : user.accessControls?.preparationManual);
+  const nextGrant = buildRevokedManualGrant(existing, req.user, notes);
+  await UserModel.updateOne({ _id: userId }, { $set: { [path]: nextGrant } }, { runValidators: true });
+  await invalidateUserSubscriptionCache(userId);
+  emitSubscriptionRefresh(String(userId), { reason: `admin_${accessType}_manual_revoke` });
+  res.json({ ok: true, userId, accessType, access: accessStatusPayload(nextGrant) });
+});
+
+app.post('/api/admin/subscriptions/access/global/grant', authMiddleware, requireAdmin, async (req, res) => {
+  const accessType = parseAccessType(req.body?.accessType);
+  const durationDays = Number(req.body?.durationDays || 0);
+  const notes = String(req.body?.notes || '').trim();
+  if (!accessType || !Number.isFinite(durationDays) || durationDays <= 0) {
+    res.status(400).json({ error: 'accessType and durationDays are required.' });
+    return;
+  }
+  const now = new Date();
+  const days = Math.max(1, Math.min(3650, durationDays));
+  const existing = await GlobalAccessGrantModel.findOne({ accessType });
+  const activeExisting = existing && existing.status === 'active' && existing.expiresAt && new Date(existing.expiresAt).getTime() > now.getTime();
+  const startMs = activeExisting ? new Date(existing.expiresAt).getTime() : now.getTime();
+  const startsAt = activeExisting ? existing.startsAt || now : now;
+  const expiresAt = new Date(startMs + (days * 24 * 60 * 60 * 1000));
+  await GlobalAccessGrantModel.updateOne(
+    { accessType },
+    {
+      $set: {
+        accessType,
+        status: 'active',
+        startsAt,
+        expiresAt,
+        durationDays: days,
+        grantedByUserId: String(req.user?._id || ''),
+        grantedByEmail: String(req.user?.email || ''),
+        lastActionByUserId: String(req.user?._id || ''),
+        lastActionByEmail: String(req.user?.email || ''),
+        lastActionAt: now,
+        notes: notes.slice(0, 300),
+      },
+    },
+    { upsert: true, runValidators: true },
+  );
+  await invalidateGlobalAccessGrantSnapshot();
+  res.json({
+    ok: true,
+    globalAccess: accessStatusPayload({
+      allowed: true,
+      status: 'active',
+      source: 'global',
+      startsAt,
+      expiresAt,
+      durationDays: days,
+    }),
+  });
+});
+
+app.post('/api/admin/subscriptions/access/global/revoke', authMiddleware, requireAdmin, async (req, res) => {
+  const accessType = parseAccessType(req.body?.accessType);
+  const notes = String(req.body?.notes || '').trim();
+  if (!accessType) {
+    res.status(400).json({ error: 'accessType is required.' });
+    return;
+  }
+  const now = new Date();
+  await GlobalAccessGrantModel.updateOne(
+    { accessType },
+    {
+      $set: {
+        accessType,
+        status: 'revoked',
+        lastActionByUserId: String(req.user?._id || ''),
+        lastActionByEmail: String(req.user?.email || ''),
+        lastActionAt: now,
+        notes: notes.slice(0, 300),
+      },
+    },
+    { upsert: true, runValidators: true },
+  );
+  await invalidateGlobalAccessGrantSnapshot();
+  res.json({ ok: true, accessType, globalAccess: accessStatusPayload({ allowed: false, status: 'revoked', source: 'none' }) });
 });
 
 app.get('/api/admin/subscriptions/requests', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);

@@ -28,7 +28,7 @@ export function subscriptionExpiryRefresh(UserModel) {
   };
 }
 
-export function requireTrialOrPremiumContent(UserModel) {
+export function requireTrialOrPremiumContent(UserModel, resolveEntitlements) {
   return async (req, res, next) => {
     try {
       if (req.user?.role === 'admin') {
@@ -39,17 +39,37 @@ export function requireTrialOrPremiumContent(UserModel) {
         next();
         return;
       }
-      const fresh = await UserModel.findById(req.user._id).select('subscription role').lean();
+      const fresh = await UserModel.findById(req.user._id).select('subscription accessControls paidServices role').lean();
       const sub = mergedSubscription(fresh);
-      if (!hasPremiumSurfaceAccess(sub)) {
+      const entitlementSnapshot = typeof resolveEntitlements === 'function'
+        ? await resolveEntitlements(fresh || req.user)
+        : null;
+      const fullPath = String(req.originalUrl || req.path || '').toLowerCase();
+      const serviceType = fullPath.startsWith('/api/community')
+        ? 'community'
+        : fullPath.startsWith('/api/tests')
+          ? 'tests'
+          : 'preparation';
+      const serviceAccess = serviceType === 'community'
+        ? entitlementSnapshot?.paidServices?.community
+        : serviceType === 'tests'
+          ? entitlementSnapshot?.paidServices?.tests
+          : entitlementSnapshot?.paidServices?.preparation;
+      const allowed = Boolean(serviceAccess?.allowed) || hasPremiumSurfaceAccess(sub);
+      if (!allowed) {
         res.status(403).json({
           code: 'PREMIUM_CONTENT_LOCKED',
           error: 'Subscribe or start your free trial to unlock this area.',
           subscription: sub,
+          serviceType,
+          serviceAccess: serviceAccess || null,
         });
         return;
       }
       req.studentSubscription = sub;
+      req.studentPreparationAccess = entitlementSnapshot?.paidServices?.preparation || null;
+      req.studentTestsAccess = entitlementSnapshot?.paidServices?.tests || null;
+      req.studentCommunityAccess = entitlementSnapshot?.paidServices?.community || null;
       next();
     } catch {
       res.status(500).json({ error: 'Could not verify subscription.', code: 'SUBSCRIPTION_CHECK_FAILED' });
