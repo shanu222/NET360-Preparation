@@ -1188,6 +1188,15 @@ interface AdminSubscriptionManagementListUser {
   };
 }
 
+interface AdminSubscriptionManagementUsersPayload {
+  users: AdminSubscriptionManagementListUser[];
+  totalMatched?: number;
+  page?: number;
+  pageSize?: number;
+  totalPages?: number;
+  hasMore?: boolean;
+}
+
 interface AdminManagedServiceDetail {
   key: 'tests' | 'preparation' | 'community' | 'mentor';
   label: string;
@@ -2399,8 +2408,15 @@ export default function AdminApp() {
   const [isRevokingAccess, setIsRevokingAccess] = useState<Record<string, boolean>>({});
   const [isApplyingGlobalAccess, setIsApplyingGlobalAccess] = useState(false);
   const [subscriptionManagementQuery, setSubscriptionManagementQuery] = useState('');
+  const [subscriptionManagementDebouncedQuery, setSubscriptionManagementDebouncedQuery] = useState('');
   const [subscriptionManagementShowAll, setSubscriptionManagementShowAll] = useState(false);
   const [subscriptionManagementUsers, setSubscriptionManagementUsers] = useState<AdminSubscriptionManagementListUser[]>([]);
+  const [subscriptionManagementTotal, setSubscriptionManagementTotal] = useState(0);
+  const [subscriptionManagementPage, setSubscriptionManagementPage] = useState(1);
+  const [subscriptionManagementPageSize, setSubscriptionManagementPageSize] = useState(25);
+  const [subscriptionManagementHasMore, setSubscriptionManagementHasMore] = useState(false);
+  const [subscriptionSearchSuggestions, setSubscriptionSearchSuggestions] = useState<AdminSubscriptionManagementListUser[]>([]);
+  const [isSubscriptionSuggestionsOpen, setIsSubscriptionSuggestionsOpen] = useState(false);
   const [selectedSubscriptionUserId, setSelectedSubscriptionUserId] = useState('');
   const [selectedSubscriptionUserDetail, setSelectedSubscriptionUserDetail] = useState<AdminSubscriptionManagementUserDetailPayload | null>(null);
   const [isLoadingSubscriptionUserDetail, setIsLoadingSubscriptionUserDetail] = useState(false);
@@ -3250,6 +3266,14 @@ export default function AdminApp() {
     }
   }, []);
 
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setSubscriptionManagementDebouncedQuery(subscriptionManagementQuery.trim());
+      setSubscriptionManagementPage(1);
+    }, 300);
+    return () => window.clearTimeout(id);
+  }, [subscriptionManagementQuery]);
+
   const openQuestionBankWindow = () => {
     const url = new URL(window.location.href);
     url.searchParams.set('view', 'question-bank');
@@ -3342,8 +3366,8 @@ export default function AdminApp() {
         {},
         activeToken,
       ).catch(() => ({ users: [] })),
-      apiRequest<{ users: AdminSubscriptionManagementListUser[] }>(
-        `/api/admin/subscriptions/management/users?q=${encodeURIComponent(subscriptionManagementQuery.trim())}&showAll=${subscriptionManagementShowAll ? 'true' : 'false'}`,
+      apiRequest<AdminSubscriptionManagementUsersPayload>(
+        `/api/admin/subscriptions/management/users?q=${encodeURIComponent(subscriptionManagementDebouncedQuery.trim())}&showAll=${subscriptionManagementShowAll ? 'true' : 'false'}&page=${subscriptionManagementPage}&pageSize=${subscriptionManagementPageSize}`,
         {},
         activeToken,
       ).catch(() => ({ users: [] })),
@@ -3391,6 +3415,9 @@ export default function AdminApp() {
     setPaidServicesOverview(paidServicesOverviewPayload);
     setPaidServicesUsers(paidServicesUsersPayload.users || []);
     setSubscriptionManagementUsers(subscriptionManagementUsersPayload.users || []);
+    setSubscriptionManagementTotal(Number(subscriptionManagementUsersPayload.totalMatched || 0));
+    setSubscriptionManagementHasMore(Boolean(subscriptionManagementUsersPayload.hasMore));
+    setSubscriptionSearchSuggestions((subscriptionManagementUsersPayload.users || []).slice(0, 8));
     setPremiumRequests(premiumRequestsPayload.requests || []);
     setPasswordRecoveryRequests(passwordRecoveryPayload.requests || []);
     setCommunityReports(communityReportsPayload.reports || []);
@@ -3623,8 +3650,10 @@ export default function AdminApp() {
     refreshToken,
     subscriptionFilter,
     accessTypeFilter,
-    subscriptionManagementQuery,
+    subscriptionManagementDebouncedQuery,
     subscriptionManagementShowAll,
+    subscriptionManagementPage,
+    subscriptionManagementPageSize,
     paidServicesQuery,
     paidServicesStatusFilter,
     paidServiceTypeFilter,
@@ -10368,21 +10397,91 @@ export default function AdminApp() {
               <div className="grid gap-3 md:grid-cols-[1fr_auto] md:items-end">
                 <div className="space-y-1">
                   <Label htmlFor="subscription-management-search">Search users</Label>
-                  <Input
-                    id="subscription-management-search"
-                    value={subscriptionManagementQuery}
-                    onChange={(e) => setSubscriptionManagementQuery(e.target.value)}
-                    placeholder="Search by full/partial name or email (e.g., shan, gmail)"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="subscription-management-search"
+                      value={subscriptionManagementQuery}
+                      onFocus={() => setIsSubscriptionSuggestionsOpen(true)}
+                      onBlur={() => window.setTimeout(() => setIsSubscriptionSuggestionsOpen(false), 160)}
+                      onChange={(e) => setSubscriptionManagementQuery(e.target.value)}
+                      placeholder="Search name (partial) or strict email/username start"
+                    />
+                    {isSubscriptionSuggestionsOpen && subscriptionManagementQuery.trim().length >= 2 && subscriptionSearchSuggestions.length > 0 ? (
+                      <div className="absolute z-20 mt-1 w-full rounded-md border bg-background shadow-lg max-h-72 overflow-auto">
+                        {subscriptionSearchSuggestions.map((entry) => (
+                          <button
+                            key={`suggestion-${entry.id}`}
+                            type="button"
+                            className="w-full text-left px-3 py-2 hover:bg-muted/60 border-b last:border-b-0"
+                            onMouseDown={(e) => e.preventDefault()}
+                            onClick={() => {
+                              setSelectedSubscriptionUserId(entry.id);
+                              setSubscriptionManagementQuery(entry.email);
+                              setIsSubscriptionSuggestionsOpen(false);
+                            }}
+                          >
+                            <div className="flex items-center justify-between gap-2">
+                              <div className="flex items-center gap-2 min-w-0">
+                                {entry.profileImageUrl ? (
+                                  <img src={entry.profileImageUrl} alt={entry.fullName} className="h-7 w-7 rounded-full object-cover border" />
+                                ) : (
+                                  <div className="h-7 w-7 rounded-full border flex items-center justify-center text-[10px] text-muted-foreground">
+                                    {entry.fullName.slice(0, 1).toUpperCase() || 'U'}
+                                  </div>
+                                )}
+                                <div className="min-w-0">
+                                  <p className="text-xs font-medium truncate">{entry.fullName}</p>
+                                  <p className="text-[11px] text-muted-foreground truncate">{entry.email}</p>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Badge variant={subscriptionBadgeTone(entry.badges.tests)}>T</Badge>
+                                <Badge variant={subscriptionBadgeTone(entry.badges.preparation)}>P</Badge>
+                                <Badge variant={subscriptionBadgeTone(entry.badges.community)}>C</Badge>
+                                <Badge variant={subscriptionBadgeTone(entry.badges.mentor)}>M</Badge>
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 rounded-md border px-3 py-2">
                   <input
                     id="subscription-show-all"
                     type="checkbox"
                     checked={subscriptionManagementShowAll}
-                    onChange={(e) => setSubscriptionManagementShowAll(e.target.checked)}
+                    onChange={(e) => {
+                      setSubscriptionManagementShowAll(e.target.checked);
+                      setSubscriptionManagementPage(1);
+                    }}
                   />
                   <Label htmlFor="subscription-show-all" className="cursor-pointer">Show All Users</Label>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+                <p>Matched users: {subscriptionManagementTotal}</p>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="subscription-page-size">Page size</Label>
+                  <Select
+                    value={String(subscriptionManagementPageSize)}
+                    onValueChange={(value) => {
+                      const parsed = Number(value || 25);
+                      setSubscriptionManagementPageSize(Number.isFinite(parsed) ? parsed : 25);
+                      setSubscriptionManagementPage(1);
+                    }}
+                  >
+                    <SelectTrigger id="subscription-page-size" className="w-[92px] h-8">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="25">25</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
               </div>
 
@@ -10426,6 +10525,26 @@ export default function AdminApp() {
                 {!subscriptionManagementUsers.length ? (
                   <p className="text-sm text-muted-foreground">No managed users matched your search.</p>
                 ) : null}
+              </div>
+
+              <div className="flex items-center justify-end gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={subscriptionManagementPage <= 1}
+                  onClick={() => setSubscriptionManagementPage((prev) => Math.max(1, prev - 1))}
+                >
+                  Previous
+                </Button>
+                <span className="text-xs text-muted-foreground">Page {subscriptionManagementPage}</span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!subscriptionManagementHasMore}
+                  onClick={() => setSubscriptionManagementPage((prev) => prev + 1)}
+                >
+                  Next
+                </Button>
               </div>
             </CardContent>
           </Card>

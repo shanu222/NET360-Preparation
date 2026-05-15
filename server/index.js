@@ -12831,6 +12831,56 @@ function normalizeSubscriptionSearch(input) {
   return String(input || '').trim().toLowerCase();
 }
 
+function isStrictEmail(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
+}
+
+function isBlockedEmailFragmentSearch(value) {
+  const normalized = normalizeSubscriptionSearch(value);
+  if (!normalized) return false;
+  if (normalized.startsWith('@') || normalized.startsWith('.')) return true;
+  if (normalized.includes('@') && !isStrictEmail(normalized)) return true;
+  if (normalized.includes('.com') && !isStrictEmail(normalized)) return true;
+  if (normalized === 'gmail' || normalized === '@gmail' || normalized === '@gmail.com' || normalized === '.com') {
+    return true;
+  }
+  return false;
+}
+
+function buildSubscriptionManagementSearchFilter(value) {
+  const normalized = normalizeSubscriptionSearch(value);
+  if (!normalized) return { blocked: false, filter: {} };
+  if (isBlockedEmailFragmentSearch(normalized)) {
+    return { blocked: true, filter: {} };
+  }
+
+  const escaped = escapeRegexLiteral(normalized, 80);
+  if (!escaped) return { blocked: false, filter: {} };
+
+  if (isStrictEmail(normalized)) {
+    return {
+      blocked: false,
+      filter: {
+        email: { $regex: `^${escaped}$`, $options: 'i' },
+      },
+    };
+  }
+
+  // Name search remains partial/case-insensitive; email search remains strict to username prefix.
+  return {
+    blocked: false,
+    filter: {
+      $or: [
+        { firstName: { $regex: escaped, $options: 'i' } },
+        { lastName: { $regex: escaped, $options: 'i' } },
+        { email: { $regex: `^${escaped}[^@]*@`, $options: 'i' } },
+      ],
+    },
+  };
+}
+
 function calculateRemainingDays(expiresAt, nowMs = Date.now()) {
   if (!expiresAt) return 0;
   const endMs = new Date(expiresAt).getTime();
@@ -12900,27 +12950,51 @@ function buildManagedServiceDetail({
 app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmin, async (req, res) => {
   const q = normalizeSubscriptionSearch(req.query?.q);
   const showAll = String(req.query?.showAll || '').trim().toLowerCase() === 'true';
-  const limit = Math.max(50, Math.min(2000, Number(req.query?.limit || (showAll ? 1200 : 250)) || (showAll ? 1200 : 250)));
+  const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || (showAll ? 100 : 25)) || (showAll ? 100 : 25)));
+  const page = Math.max(1, Number(req.query?.page || 1) || 1);
+  const skip = Math.max(0, (page - 1) * pageSize);
   const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
   const nowMs = Date.now();
   const globalGrants = await getGlobalAccessGrantSnapshot();
+  const searchFilter = buildSubscriptionManagementSearchFilter(q);
+  if (searchFilter.blocked) {
+    res.json({
+      users: [],
+      totalMatched: 0,
+      page,
+      pageSize,
+      totalPages: 0,
+      hasMore: false,
+      showAll,
+    });
+    return;
+  }
 
-  const users = await UserModel.find(
-    managedUserFilter,
-    {
-      email: 1,
-      firstName: 1,
-      lastName: 1,
-      firebaseUid: 1,
-      createdAt: 1,
-      subscription: 1,
-      accessControls: 1,
-      paidServices: 1,
-    },
-  )
-    .sort({ updatedAt: -1 })
-    .limit(limit)
-    .lean();
+  const combinedFilter = {
+    ...managedUserFilter,
+    ...(searchFilter.filter || {}),
+  };
+
+  const [users, totalMatched] = await Promise.all([
+    UserModel.find(
+      combinedFilter,
+      {
+        email: 1,
+        firstName: 1,
+        lastName: 1,
+        firebaseUid: 1,
+        createdAt: 1,
+        subscription: 1,
+        accessControls: 1,
+        paidServices: 1,
+      },
+    )
+      .sort({ updatedAt: -1 })
+      .skip(skip)
+      .limit(pageSize)
+      .lean(),
+    UserModel.countDocuments(combinedFilter),
+  ]);
 
   const userIds = users.map((item) => item?._id).filter(Boolean);
   const profiles = userIds.length
@@ -12998,7 +13072,11 @@ app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmi
 
   res.json({
     users: mapped,
-    totalMatched: mapped.length,
+    totalMatched,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(totalMatched / pageSize)),
+    hasMore: skip + mapped.length < totalMatched,
     showAll,
   });
 });
