@@ -12827,6 +12827,278 @@ function normalizeSelectedPaidServices(payload) {
   return { tests, preparation, community };
 }
 
+function normalizeSubscriptionSearch(input) {
+  return String(input || '').trim().toLowerCase();
+}
+
+function calculateRemainingDays(expiresAt, nowMs = Date.now()) {
+  if (!expiresAt) return 0;
+  const endMs = new Date(expiresAt).getTime();
+  if (!Number.isFinite(endMs) || endMs <= nowMs) return 0;
+  return Math.max(0, Math.ceil((endMs - nowMs) / (24 * 60 * 60 * 1000)));
+}
+
+function inferServiceLifecycleStatus(detail, nowMs = Date.now()) {
+  const access = detail || {};
+  if (access.allowed) {
+    if (access.source === 'legacy' && access.freeTrialActive) return 'free_trial';
+    return 'active';
+  }
+  if (String(access.status || '').toLowerCase() === 'expired') return 'expired';
+  if (access.expiresAt && new Date(access.expiresAt).getTime() <= nowMs) return 'expired';
+  return 'inactive';
+}
+
+function inferActivatedBy(access, manualGrant, subscription, serviceKey) {
+  const source = String(access?.source || '').toLowerCase();
+  if (source === 'global') return 'admin';
+  if (source === 'legacy') {
+    const sub = mergedSubscription({ subscription });
+    if (trialIsActive(sub)) return 'user';
+    if (isSubscriptionActive(sub)) return 'user';
+    return 'system';
+  }
+  if (source === 'manual') {
+    const grant = normalizeManualGrant(manualGrant);
+    const grantSource = String(grant?.source || '').toLowerCase();
+    if (grantSource.includes('admin') || grant?.grantedByEmail) return 'admin';
+    if (serviceKey === 'mentor' && grantSource === 'manual') return 'admin';
+    return 'user';
+  }
+  return 'system';
+}
+
+function buildManagedServiceDetail({
+  key,
+  label,
+  access,
+  manualGrant,
+  subscription,
+  nowMs,
+}) {
+  const sub = mergedSubscription({ subscription });
+  const trialActive = trialIsActive(sub);
+  const freeTrialActive = Boolean(access?.allowed && access?.source === 'legacy' && trialActive);
+  const active = Boolean(access?.allowed);
+  const lifecycleStatus = inferServiceLifecycleStatus({ ...access, freeTrialActive }, nowMs);
+  return {
+    key,
+    label,
+    active,
+    status: lifecycleStatus,
+    source: String(access?.source || 'none'),
+    freeTrialUsed: Boolean(sub?.hasUsedTrial),
+    freeTrialActive,
+    paidPlanActive: active && !freeTrialActive,
+    activatedBy: inferActivatedBy(access, manualGrant, sub, key),
+    startedAt: toIsoOrNull(access?.startsAt || manualGrant?.startsAt),
+    expiresAt: toIsoOrNull(access?.expiresAt || manualGrant?.expiresAt),
+    remainingDays: calculateRemainingDays(access?.expiresAt || manualGrant?.expiresAt, nowMs),
+  };
+}
+
+app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmin, async (req, res) => {
+  const q = normalizeSubscriptionSearch(req.query?.q);
+  const showAll = String(req.query?.showAll || '').trim().toLowerCase() === 'true';
+  const limit = Math.max(50, Math.min(2000, Number(req.query?.limit || (showAll ? 1200 : 250)) || (showAll ? 1200 : 250)));
+  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+  const nowMs = Date.now();
+  const globalGrants = await getGlobalAccessGrantSnapshot();
+
+  const users = await UserModel.find(
+    managedUserFilter,
+    {
+      email: 1,
+      firstName: 1,
+      lastName: 1,
+      firebaseUid: 1,
+      createdAt: 1,
+      subscription: 1,
+      accessControls: 1,
+      paidServices: 1,
+    },
+  )
+    .sort({ updatedAt: -1 })
+    .limit(limit)
+    .lean();
+
+  const userIds = users.map((item) => item?._id).filter(Boolean);
+  const profiles = userIds.length
+    ? await CommunityProfileModel.find({ userId: { $in: userIds } }).select('userId profilePictureUrl shareProfilePicture').lean()
+    : [];
+  const profileByUserId = new Map(
+    (profiles || []).map((item) => [String(item.userId), item]),
+  );
+
+  const mapped = users
+    .map((item) => {
+      const userId = String(item._id);
+      const fullName = `${item.firstName || ''} ${item.lastName || ''}`.trim();
+      const haystack = `${fullName} ${item.email || ''}`.toLowerCase();
+      if (q && !haystack.includes(q)) return null;
+
+      const entitlements = resolveUserEntitlements(item, globalGrants, nowMs);
+      const paidServices = resolvePaidServices(item, nowMs);
+      const profile = profileByUserId.get(userId);
+      const sub = mergedSubscription(item);
+      const accountStatus = isSubscriptionActive(sub)
+        ? 'active'
+        : String(sub?.status || 'inactive').toLowerCase();
+
+      const mentorCard = buildManagedServiceDetail({
+        key: 'mentor',
+        label: 'Mentor',
+        access: accessStatusPayload(entitlements?.mentor),
+        manualGrant: normalizeManualGrant(item?.accessControls?.mentorManual),
+        subscription: sub,
+        nowMs,
+      });
+      const testsCard = buildManagedServiceDetail({
+        key: PAID_SERVICE_TYPES.tests,
+        label: 'Tests',
+        access: accessStatusPayload(paidServices?.tests),
+        manualGrant: normalizeManualGrant(item?.paidServices?.tests),
+        subscription: sub,
+        nowMs,
+      });
+      const preparationCard = buildManagedServiceDetail({
+        key: PAID_SERVICE_TYPES.preparation,
+        label: 'Preparation',
+        access: accessStatusPayload(paidServices?.preparation),
+        manualGrant: normalizeManualGrant(item?.paidServices?.preparation),
+        subscription: sub,
+        nowMs,
+      });
+      const communityCard = buildManagedServiceDetail({
+        key: PAID_SERVICE_TYPES.community,
+        label: 'Community',
+        access: accessStatusPayload(paidServices?.community),
+        manualGrant: normalizeManualGrant(item?.paidServices?.community),
+        subscription: sub,
+        nowMs,
+      });
+
+      return {
+        id: userId,
+        fullName: fullName || 'No name',
+        email: String(item.email || ''),
+        profileImageUrl: profile?.shareProfilePicture ? String(profile?.profilePictureUrl || '') : '',
+        accountStatus,
+        firebaseUid: String(item.firebaseUid || ''),
+        joinedAt: toIsoOrNull(item.createdAt),
+        badges: {
+          tests: testsCard.status,
+          preparation: preparationCard.status,
+          community: communityCard.status,
+          mentor: mentorCard.status,
+        },
+      };
+    })
+    .filter(Boolean);
+
+  res.json({
+    users: mapped,
+    totalMatched: mapped.length,
+    showAll,
+  });
+});
+
+app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, requireAdmin, async (req, res) => {
+  const userId = String(req.params.userId || '').trim();
+  if (!userId) {
+    res.status(400).json({ error: 'userId is required.' });
+    return;
+  }
+  const user = await UserModel.findById(userId).lean();
+  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+    res.status(404).json({ error: 'Managed user not found.' });
+    return;
+  }
+
+  const profile = await CommunityProfileModel.findOne({ userId }).select('profilePictureUrl shareProfilePicture').lean();
+  const nowMs = Date.now();
+  const globalGrants = await getGlobalAccessGrantSnapshot();
+  const sub = mergedSubscription(user);
+  const normalizedSub = normalizeSubscription(user);
+  const entitlements = resolveUserEntitlements(user, globalGrants, nowMs);
+  const paidServices = resolvePaidServices(user, nowMs);
+  const mentorAccess = accessStatusPayload(entitlements?.mentor);
+  const testsAccess = accessStatusPayload(paidServices?.tests);
+  const prepAccess = accessStatusPayload(paidServices?.preparation);
+  const communityAccess = accessStatusPayload(paidServices?.community);
+  const activeSession = user?.activeSession || null;
+  const activeUserAgent = String(activeSession?.userAgent || '').toLowerCase();
+
+  const services = {
+    tests: buildManagedServiceDetail({
+      key: PAID_SERVICE_TYPES.tests,
+      label: 'Tests Access',
+      access: testsAccess,
+      manualGrant: normalizeManualGrant(user?.paidServices?.tests),
+      subscription: sub,
+      nowMs,
+    }),
+    preparation: buildManagedServiceDetail({
+      key: PAID_SERVICE_TYPES.preparation,
+      label: 'Preparation Materials Access',
+      access: prepAccess,
+      manualGrant: normalizeManualGrant(user?.paidServices?.preparation),
+      subscription: sub,
+      nowMs,
+    }),
+    community: buildManagedServiceDetail({
+      key: PAID_SERVICE_TYPES.community,
+      label: 'Community Access',
+      access: communityAccess,
+      manualGrant: normalizeManualGrant(user?.paidServices?.community),
+      subscription: sub,
+      nowMs,
+    }),
+    mentor: {
+      ...buildManagedServiceDetail({
+        key: 'mentor',
+        label: 'Smart Study Mentor',
+        access: mentorAccess,
+        manualGrant: normalizeManualGrant(user?.accessControls?.mentorManual),
+        subscription: sub,
+        nowMs,
+      }),
+      subscriptionStatus: String(normalizedSub?.status || 'inactive'),
+      planId: String(normalizedSub?.planId || ''),
+      billingCycle: String(normalizedSub?.billingCycle || ''),
+    },
+  };
+
+  const currentPlan = resolveSubscriptionPlan(normalizedSub.planId);
+  res.json({
+    user: {
+      id: String(user._id),
+      fullName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'No name',
+      firstName: String(user.firstName || ''),
+      lastName: String(user.lastName || ''),
+      email: String(user.email || ''),
+      firebaseUid: String(user.firebaseUid || ''),
+      joinedAt: toIsoOrNull(user.createdAt),
+      profileImageUrl: profile?.shareProfilePicture ? String(profile?.profilePictureUrl || '') : '',
+      syncStatus: {
+        firebaseLinked: Boolean(user.firebaseUid),
+        android: activeUserAgent.includes('android') || activeUserAgent.includes(' wv') ? 'active' : 'not_detected',
+        web: activeUserAgent.includes('mozilla') || activeUserAgent.includes('chrome') ? 'active' : 'not_detected',
+        lastLoginAt: toIsoOrNull(user.lastLoginAt),
+      },
+      mentorPlan: {
+        status: String(normalizedSub.status || 'inactive'),
+        planId: String(normalizedSub.planId || ''),
+        planName: String(currentPlan?.name || ''),
+        billingCycle: String(normalizedSub.billingCycle || ''),
+        expiresAt: toIsoOrNull(normalizedSub.expiresAt),
+      },
+    },
+    services,
+    availableMentorPlans: Object.values(SUBSCRIPTION_PLANS),
+  });
+});
+
 app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async (_req, res) => {
   const now = new Date();
   const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
