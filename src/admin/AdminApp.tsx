@@ -1178,8 +1178,14 @@ interface AdminSubscriptionManagementListUser {
   email: string;
   profileImageUrl?: string;
   accountStatus: string;
+  provider?: 'google' | 'password' | 'unknown' | string;
   firebaseUid: string;
   joinedAt: string | null;
+  lastLoginAt?: string | null;
+  platformUsage?: {
+    lastPlatform?: string;
+    lastSeenAt?: string | null;
+  };
   badges: {
     tests: SubscriptionBadgeStatus;
     preparation: SubscriptionBadgeStatus;
@@ -1227,6 +1233,14 @@ interface AdminSubscriptionManagementUserDetailPayload {
       android: 'active' | 'not_detected';
       web: 'active' | 'not_detected';
       lastLoginAt: string | null;
+      provider?: string;
+      platformUsage?: {
+        lastPlatform?: string;
+        lastSeenAt?: string | null;
+        androidLogins?: number;
+        webLogins?: number;
+        unknownLogins?: number;
+      };
     };
     mentorPlan: {
       status: string;
@@ -1334,6 +1348,13 @@ function formatNullableDate(value?: string | null) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return 'N/A';
   return date.toLocaleString();
+}
+
+function normalizeProviderBadge(provider?: string) {
+  const key = String(provider || '').trim().toLowerCase();
+  if (key === 'google') return 'Google';
+  if (key === 'password') return 'Email';
+  return 'Unknown';
 }
 
 interface ParsedBulkMcq {
@@ -2417,6 +2438,7 @@ export default function AdminApp() {
   const [subscriptionManagementHasMore, setSubscriptionManagementHasMore] = useState(false);
   const [subscriptionSearchSuggestions, setSubscriptionSearchSuggestions] = useState<AdminSubscriptionManagementListUser[]>([]);
   const [isSubscriptionSuggestionsOpen, setIsSubscriptionSuggestionsOpen] = useState(false);
+  const [isSyncingFirebaseUsers, setIsSyncingFirebaseUsers] = useState(false);
   const [selectedSubscriptionUserId, setSelectedSubscriptionUserId] = useState('');
   const [selectedSubscriptionUserDetail, setSelectedSubscriptionUserDetail] = useState<AdminSubscriptionManagementUserDetailPayload | null>(null);
   const [isLoadingSubscriptionUserDetail, setIsLoadingSubscriptionUserDetail] = useState(false);
@@ -3427,6 +3449,24 @@ export default function AdminApp() {
     setConfigVariables(configVariablesPayload.variables || []);
     setConfigInfraSnapshot(configVariablesPayload.infraSnapshot?.items || []);
     setConfigVerification(configVariablesPayload.verification ?? null);
+  };
+
+  const syncFirebaseUsersForSubscriptions = async () => {
+    if (!authToken) return;
+    setIsSyncingFirebaseUsers(true);
+    try {
+      const payload = await apiRequest<{ ok: boolean; synced?: number; scanned?: number }>(
+        '/api/admin/subscriptions/management/sync-firebase-users',
+        { method: 'POST' },
+        authToken,
+      );
+      showSuccessToast(`Firebase user sync completed. Synced ${Number(payload?.synced || 0)} of ${Number(payload?.scanned || 0)} scanned users.`);
+      await loadAdminData(authToken);
+    } catch (error) {
+      handleApiError(error, 'Could not sync Firebase users.');
+    } finally {
+      setIsSyncingFirebaseUsers(false);
+    }
   };
 
   const loadSecurityInfoPage = useCallback(async () => {
@@ -10464,6 +10504,14 @@ export default function AdminApp() {
               <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
                 <p>Matched users: {subscriptionManagementTotal}</p>
                 <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={isSyncingFirebaseUsers}
+                onClick={() => void syncFirebaseUsersForSubscriptions()}
+              >
+                {isSyncingFirebaseUsers ? 'Syncing...' : 'Sync Firebase Users'}
+              </Button>
                   <Label htmlFor="subscription-page-size">Page size</Label>
                   <Select
                     value={String(subscriptionManagementPageSize)}
@@ -10508,6 +10556,7 @@ export default function AdminApp() {
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant="outline">Account: {entry.accountStatus || 'inactive'}</Badge>
+                    <Badge variant="outline">Provider: {normalizeProviderBadge(entry.provider)}</Badge>
                         <Badge variant={subscriptionBadgeTone(entry.badges.tests)}>Tests: {normalizeSubscriptionBadgeLabel(entry.badges.tests)}</Badge>
                         <Badge variant={subscriptionBadgeTone(entry.badges.preparation)}>Preparation: {normalizeSubscriptionBadgeLabel(entry.badges.preparation)}</Badge>
                         <Badge variant={subscriptionBadgeTone(entry.badges.community)}>Community: {normalizeSubscriptionBadgeLabel(entry.badges.community)}</Badge>
@@ -10573,6 +10622,9 @@ export default function AdminApp() {
                         <Badge variant={selectedSubscriptionUserDetail.user.syncStatus.firebaseLinked ? 'default' : 'outline'}>
                           Firebase: {selectedSubscriptionUserDetail.user.syncStatus.firebaseLinked ? 'Linked' : 'Not linked'}
                         </Badge>
+                        <Badge variant="outline">
+                          Provider: {normalizeProviderBadge(selectedSubscriptionUserDetail.user.syncStatus.provider)}
+                        </Badge>
                         <Badge variant={selectedSubscriptionUserDetail.user.syncStatus.android === 'active' ? 'default' : 'outline'}>
                           Android: {selectedSubscriptionUserDetail.user.syncStatus.android === 'active' ? 'Synced' : 'Not detected'}
                         </Badge>
@@ -10584,6 +10636,8 @@ export default function AdminApp() {
                     <div className="mt-3 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
                       <p>Joined: {formatNullableDate(selectedSubscriptionUserDetail.user.joinedAt)}</p>
                       <p>Firebase UID: {selectedSubscriptionUserDetail.user.firebaseUid || 'N/A'}</p>
+                      <p>Last login: {formatNullableDate(selectedSubscriptionUserDetail.user.syncStatus.lastLoginAt)}</p>
+                      <p>Last platform: {String(selectedSubscriptionUserDetail.user.syncStatus.platformUsage?.lastPlatform || 'unknown')}</p>
                     </div>
                   </div>
 
