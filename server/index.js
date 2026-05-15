@@ -3405,10 +3405,65 @@ async function verifyFirebaseUserToken(idToken) {
   if (!decoded.uid || !email) {
     throw new Error('Invalid Firebase token payload.');
   }
+  const providerRaw = String(decoded?.firebase?.sign_in_provider || '').trim().toLowerCase();
+  const provider = providerRaw === 'google.com'
+    ? 'google'
+    : providerRaw === 'password'
+      ? 'password'
+      : providerRaw || 'unknown';
   return {
     uid: String(decoded.uid),
     email,
+    displayName: String(decoded.name || '').trim(),
+    profilePhotoUrl: String(decoded.picture || '').trim(),
+    provider,
   };
+}
+
+function normalizeAuthProviderDetail(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'google' || normalized === 'password') return normalized;
+  return normalized || 'unknown';
+}
+
+function splitDisplayNameParts(displayName) {
+  const normalized = String(displayName || '').trim();
+  if (!normalized) return { firstName: '', lastName: '' };
+  const parts = normalized.split(/\s+/).filter(Boolean);
+  const firstName = sanitizeHumanName(parts[0] || '');
+  const lastName = sanitizeHumanName(parts.slice(1).join(' '));
+  return { firstName, lastName };
+}
+
+function inferPlatformFromRequest(req) {
+  try {
+    if (isNativeAppRequest(req)) return 'android';
+    const ua = String(req?.headers?.['user-agent'] || '').toLowerCase();
+    if (ua.includes('android')) return 'android';
+    if (ua.includes('mozilla') || ua.includes('chrome') || ua.includes('safari')) return 'web';
+  } catch {
+    // ignore
+  }
+  return 'unknown';
+}
+
+function buildNextPlatformUsage(existingUsage, platform, now = new Date()) {
+  const current = {
+    lastPlatform: String(existingUsage?.lastPlatform || 'unknown'),
+    lastSeenAt: existingUsage?.lastSeenAt || null,
+    androidLogins: Number(existingUsage?.androidLogins || 0),
+    webLogins: Number(existingUsage?.webLogins || 0),
+    unknownLogins: Number(existingUsage?.unknownLogins || 0),
+  };
+  const next = {
+    ...current,
+    lastPlatform: platform || 'unknown',
+    lastSeenAt: now,
+  };
+  if (platform === 'android') next.androidLogins += 1;
+  else if (platform === 'web') next.webLogins += 1;
+  else next.unknownLogins += 1;
+  return next;
 }
 
 async function ensureEnvAdminUserForLogin(email, password) {
@@ -7114,11 +7169,14 @@ async function createDirectStudentAccount(req, res) {
     res.status(400).json({ error: 'Firebase token email does not match registration email.' });
     return;
   }
-  const firstName = sanitizeHumanName(req.body?.firstName || '');
-  const lastName = sanitizeHumanName(req.body?.lastName || '');
+  const nameFromFirebase = splitDisplayNameParts(firebaseIdentity.displayName);
+  const firstName = sanitizeHumanName(req.body?.firstName || nameFromFirebase.firstName || '');
+  const lastName = sanitizeHumanName(req.body?.lastName || nameFromFirebase.lastName || '');
   const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
   const ua = String(req.headers['user-agent'] || '').slice(0, 250);
   const lastIp = String(req.ip || req.headers['x-forwarded-for'] || '').split(',')[0].trim().slice(0, 45);
+  const now = new Date();
+  const platform = inferPlatformFromRequest(req);
 
   if (!email) {
     res.status(400).json({ error: 'Email is required.' });
@@ -7168,8 +7226,15 @@ async function createDirectStudentAccount(req, res) {
     user.passwordHash = passwordHash;
     if (firstName) user.firstName = firstName;
     if (lastName) user.lastName = lastName;
+    user.displayName = `${firstName} ${lastName}`.trim() || String(firebaseIdentity.displayName || '').trim() || user.displayName || '';
+    if (firebaseIdentity.profilePhotoUrl) {
+      user.profilePhotoUrl = String(firebaseIdentity.profilePhotoUrl || '').trim();
+    }
     user.authProvider = 'firebase';
+    user.authProviderDetail = normalizeAuthProviderDetail(firebaseIdentity.provider);
     user.firebaseUid = firebaseIdentity.uid;
+    user.lastLoginAt = now;
+    user.platformUsage = buildNextPlatformUsage(user.platformUsage, platform, now);
     user.securityQuestion = '';
     user.securityAnswerHash = '';
     user.securityAnswerEncrypted = '';
@@ -7209,7 +7274,12 @@ async function createDirectStudentAccount(req, res) {
     phone: '',
     role: 'student',
     authProvider: 'firebase',
+    authProviderDetail: normalizeAuthProviderDetail(firebaseIdentity.provider),
     firebaseUid: firebaseIdentity.uid,
+    displayName: `${firstName} ${lastName}`.trim() || String(firebaseIdentity.displayName || '').trim(),
+    profilePhotoUrl: String(firebaseIdentity.profilePhotoUrl || '').trim(),
+    lastLoginAt: now,
+    platformUsage: buildNextPlatformUsage(null, platform, now),
     securityQuestion: '',
     securityAnswerHash: '',
     securityAnswerEncrypted: '',
@@ -7379,8 +7449,22 @@ app.post('/api/auth/login', async (req, res) => {
       if (String(user.authProvider || 'local') !== 'firebase') {
         user.authProvider = 'firebase';
       }
+      user.authProviderDetail = normalizeAuthProviderDetail(verifiedFirebase.provider);
       if (String(user.firebaseUid || '') !== String(verifiedFirebase.uid)) {
         user.firebaseUid = String(verifiedFirebase.uid);
+      }
+      if (verifiedFirebase.displayName) {
+        const nameFromFirebase = splitDisplayNameParts(verifiedFirebase.displayName);
+        if (!String(user.firstName || '').trim() && nameFromFirebase.firstName) {
+          user.firstName = nameFromFirebase.firstName;
+        }
+        if (!String(user.lastName || '').trim() && nameFromFirebase.lastName) {
+          user.lastName = nameFromFirebase.lastName;
+        }
+        user.displayName = String(user.displayName || '').trim() || verifiedFirebase.displayName;
+      }
+      if (verifiedFirebase.profilePhotoUrl) {
+        user.profilePhotoUrl = String(verifiedFirebase.profilePhotoUrl || '').trim();
       }
 
       const storedHash = String(user.passwordHash || user.password || '').trim();
@@ -7474,6 +7558,7 @@ app.post('/api/auth/login', async (req, res) => {
       }
 
       const previousSessionId = activeSession?.sessionId ? String(activeSession.sessionId) : null;
+      const loginPlatform = inferPlatformFromRequest(req);
 
       user.activeSession = {
         sessionId: crypto.randomUUID(),
@@ -7486,6 +7571,7 @@ app.post('/api/auth/login', async (req, res) => {
       const newSessionId = user.activeSession.sessionId;
       user.activeSessionId = String(newSessionId);
       user.lastLoginAt = new Date();
+      user.platformUsage = buildNextPlatformUsage(user.platformUsage, loginPlatform, user.lastLoginAt);
 
       if (conflictingDevice) {
         user.refreshTokens = [];
@@ -12881,6 +12967,93 @@ function buildSubscriptionManagementSearchFilter(value) {
   };
 }
 
+async function syncMissingFirebaseUsersToBackend() {
+  if (!firebaseAdminAuth) return { synced: 0 };
+  const limit = 500;
+  let nextPageToken = undefined;
+  let synced = 0;
+  let scanned = 0;
+  do {
+    const page = await firebaseAdminAuth.listUsers(limit, nextPageToken);
+    const batch = Array.isArray(page?.users) ? page.users : [];
+    scanned += batch.length;
+    for (const fbUser of batch) {
+      const uid = String(fbUser?.uid || '').trim();
+      const email = normalizeEmail(fbUser?.email || '');
+      if (!uid || !email) continue;
+
+      const providerCandidates = Array.isArray(fbUser?.providerData) ? fbUser.providerData : [];
+      const providerIdRaw = String(providerCandidates[0]?.providerId || '').trim().toLowerCase();
+      const provider = providerIdRaw === 'google.com'
+        ? 'google'
+        : providerIdRaw === 'password'
+          ? 'password'
+          : 'unknown';
+      const displayName = String(fbUser?.displayName || '').trim();
+      const { firstName, lastName } = splitDisplayNameParts(displayName);
+      const photoURL = String(fbUser?.photoURL || '').trim();
+      const createdAtRaw = String(fbUser?.metadata?.creationTime || '').trim();
+      const lastSignInRaw = String(fbUser?.metadata?.lastSignInTime || '').trim();
+      const createdAt = createdAtRaw ? new Date(createdAtRaw) : new Date();
+      const lastLoginAt = lastSignInRaw ? new Date(lastSignInRaw) : null;
+
+      const existing = await UserModel.findOne({
+        $or: [
+          { firebaseUid: uid },
+          { email: { $regex: `^${escapeRegexLiteral(email, 254)}$`, $options: 'i' } },
+        ],
+      }).select('_id email authProvider role firebaseUid firstName lastName displayName profilePhotoUrl authProviderDetail').lean();
+
+      if (!existing) {
+        const passwordHash = await hashPassword(`firebase:${uid}:${crypto.randomUUID()}`);
+        await UserModel.create({
+          email,
+          passwordHash,
+          firstName: firstName || '',
+          lastName: lastName || '',
+          displayName: displayName || `${firstName} ${lastName}`.trim(),
+          profilePhotoUrl: photoURL,
+          role: 'student',
+          authProvider: 'firebase',
+          authProviderDetail: normalizeAuthProviderDetail(provider),
+          firebaseUid: uid,
+          lastLoginAt,
+          createdAt,
+          preferences: defaultPreferences(),
+          progress: defaultProgress(),
+          platformUsage: {
+            lastPlatform: 'unknown',
+            lastSeenAt: lastLoginAt,
+            androidLogins: 0,
+            webLogins: 0,
+            unknownLogins: 0,
+          },
+        });
+        synced += 1;
+        continue;
+      }
+
+      const updates = {};
+      if (existing.role === 'admin') continue;
+      if (String(existing.authProvider || '') !== 'firebase') updates.authProvider = 'firebase';
+      if (String(existing.firebaseUid || '') !== uid) updates.firebaseUid = uid;
+      if (!String(existing.authProviderDetail || '').trim()) updates.authProviderDetail = normalizeAuthProviderDetail(provider);
+      if (!String(existing.firstName || '').trim() && firstName) updates.firstName = firstName;
+      if (!String(existing.lastName || '').trim() && lastName) updates.lastName = lastName;
+      if (!String(existing.displayName || '').trim() && displayName) updates.displayName = displayName;
+      if (!String(existing.profilePhotoUrl || '').trim() && photoURL) updates.profilePhotoUrl = photoURL;
+      if (!existing.lastLoginAt && lastLoginAt) updates.lastLoginAt = lastLoginAt;
+      if (Object.keys(updates).length) {
+        await UserModel.updateOne({ _id: existing._id }, { $set: updates }, { runValidators: true });
+        synced += 1;
+      }
+    }
+    nextPageToken = String(page?.pageToken || '').trim() || undefined;
+  } while (nextPageToken);
+
+  return { synced, scanned };
+}
+
 function calculateRemainingDays(expiresAt, nowMs = Date.now()) {
   if (!expiresAt) return 0;
   const endMs = new Date(expiresAt).getTime();
@@ -12956,6 +13129,9 @@ app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmi
   const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
   const nowMs = Date.now();
   const globalGrants = await getGlobalAccessGrantSnapshot();
+  if (String(req.query?.sync || '').trim().toLowerCase() === 'true') {
+    await syncMissingFirebaseUsersToBackend();
+  }
   const searchFilter = buildSubscriptionManagementSearchFilter(q);
   if (searchFilter.blocked) {
     res.json({
@@ -12982,14 +13158,19 @@ app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmi
         email: 1,
         firstName: 1,
         lastName: 1,
+        displayName: 1,
+        profilePhotoUrl: 1,
+        authProviderDetail: 1,
         firebaseUid: 1,
         createdAt: 1,
+        lastLoginAt: 1,
+        platformUsage: 1,
         subscription: 1,
         accessControls: 1,
         paidServices: 1,
       },
     )
-      .sort({ updatedAt: -1 })
+      .sort({ lastLoginAt: -1, updatedAt: -1 })
       .skip(skip)
       .limit(pageSize)
       .lean(),
@@ -13008,8 +13189,6 @@ app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmi
     .map((item) => {
       const userId = String(item._id);
       const fullName = `${item.firstName || ''} ${item.lastName || ''}`.trim();
-      const haystack = `${fullName} ${item.email || ''}`.toLowerCase();
-      if (q && !haystack.includes(q)) return null;
 
       const entitlements = resolveUserEntitlements(item, globalGrants, nowMs);
       const paidServices = resolvePaidServices(item, nowMs);
@@ -13054,12 +13233,18 @@ app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmi
 
       return {
         id: userId,
-        fullName: fullName || 'No name',
+        fullName: fullName || String(item.displayName || '').trim() || 'No name',
         email: String(item.email || ''),
-        profileImageUrl: profile?.shareProfilePicture ? String(profile?.profilePictureUrl || '') : '',
+        profileImageUrl: String(profile?.shareProfilePicture ? (profile?.profilePictureUrl || '') : (item.profilePhotoUrl || '')),
         accountStatus,
+        provider: normalizeAuthProviderDetail(item.authProviderDetail),
         firebaseUid: String(item.firebaseUid || ''),
         joinedAt: toIsoOrNull(item.createdAt),
+        lastLoginAt: toIsoOrNull(item.lastLoginAt),
+        platformUsage: {
+          lastPlatform: String(item?.platformUsage?.lastPlatform || 'unknown'),
+          lastSeenAt: toIsoOrNull(item?.platformUsage?.lastSeenAt),
+        },
         badges: {
           tests: testsCard.status,
           preparation: preparationCard.status,
@@ -13163,6 +13348,14 @@ app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, req
         android: activeUserAgent.includes('android') || activeUserAgent.includes(' wv') ? 'active' : 'not_detected',
         web: activeUserAgent.includes('mozilla') || activeUserAgent.includes('chrome') ? 'active' : 'not_detected',
         lastLoginAt: toIsoOrNull(user.lastLoginAt),
+        provider: normalizeAuthProviderDetail(user.authProviderDetail),
+        platformUsage: {
+          lastPlatform: String(user?.platformUsage?.lastPlatform || 'unknown'),
+          lastSeenAt: toIsoOrNull(user?.platformUsage?.lastSeenAt),
+          androidLogins: Number(user?.platformUsage?.androidLogins || 0),
+          webLogins: Number(user?.platformUsage?.webLogins || 0),
+          unknownLogins: Number(user?.platformUsage?.unknownLogins || 0),
+        },
       },
       mentorPlan: {
         status: String(normalizedSub.status || 'inactive'),
@@ -13175,6 +13368,18 @@ app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, req
     services,
     availableMentorPlans: Object.values(SUBSCRIPTION_PLANS),
   });
+});
+
+app.post('/api/admin/subscriptions/management/sync-firebase-users', authMiddleware, requireAdmin, async (_req, res) => {
+  try {
+    const result = await syncMissingFirebaseUsersToBackend();
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    res.status(500).json({
+      error: 'Failed to synchronize Firebase users.',
+      detail: !IS_PRODUCTION ? String(error?.message || error || '') : undefined,
+    });
+  }
 });
 
 app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async (_req, res) => {
