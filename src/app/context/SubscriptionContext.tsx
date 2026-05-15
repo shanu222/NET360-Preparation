@@ -29,17 +29,38 @@ export interface SubscriptionBadge {
   variant: PremiumBadgeVariant;
   label: string;
   endsAt: string | null;
-  source: 'trial' | 'paid' | 'none' | 'bypass';
+  source: 'trial' | 'paid' | 'none' | 'bypass' | 'manual' | 'global';
 }
 
 export interface PremiumSurfaceState {
   allowed: boolean;
-  source: 'trial' | 'paid' | 'none' | 'bypass';
+  source: 'trial' | 'paid' | 'none' | 'bypass' | 'manual' | 'global';
   endsAt: string | null;
   msRemaining: number;
   serverNow: string;
   badge?: SubscriptionBadge;
   hasSurfaceAccess?: boolean;
+}
+
+export interface AccessState {
+  allowed: boolean;
+  source: 'legacy' | 'manual' | 'global' | 'none';
+  status: string;
+  startsAt: string | null;
+  expiresAt: string | null;
+  durationDays: number;
+  isGlobal?: boolean;
+  isManual?: boolean;
+  isLegacy?: boolean;
+  legacyAllowed?: boolean;
+  durationValue?: number;
+  durationUnit?: string;
+}
+
+export interface PaidServicesState {
+  tests: AccessState;
+  preparation: AccessState;
+  community: AccessState;
 }
 
 export interface SubscriptionMePayload {
@@ -58,6 +79,9 @@ export interface SubscriptionMePayload {
     trialEndsAt?: string | null;
     hasUsedTrial?: boolean;
   };
+  mentorAccess?: AccessState;
+  preparationAccess?: AccessState;
+  paidServices?: PaidServicesState;
   premiumSurface?: PremiumSurfaceState;
   subscriptionBadge?: SubscriptionBadge;
 }

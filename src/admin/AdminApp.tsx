@@ -1099,6 +1099,16 @@ interface AdminSubscriptionOverview {
   totalUsers: number;
   activeUsers: number;
   expiredUsers: number;
+  mentorAccess?: {
+    activeUsers: number;
+    inactiveUsers: number;
+    global: AdminAccessState;
+  };
+  preparationAccess?: {
+    activeUsers: number;
+    inactiveUsers: number;
+    global: AdminAccessState;
+  };
   plans: AdminSubscriptionPlan[];
   dailyUsage: Array<{
     day: string;
@@ -1113,6 +1123,10 @@ interface AdminSubscriptionUser {
   email: string;
   firstName: string;
   lastName: string;
+  access?: {
+    mentor: AdminAccessState;
+    preparation: AdminAccessState;
+  };
   subscription: {
     status: string;
     planId: string;
@@ -1123,6 +1137,37 @@ interface AdminSubscriptionUser {
     paymentReference?: string;
     expiresAt?: string | null;
   };
+}
+
+interface AdminPaidServicesOverview {
+  totalUsers: number;
+  testsAccess: { activeUsers: number; inactiveUsers: number };
+  preparationAccess: { activeUsers: number; inactiveUsers: number };
+  communityAccess: { activeUsers: number; inactiveUsers: number };
+}
+
+interface AdminPaidServicesUser {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  paidServices: {
+    tests: AdminAccessState;
+    preparation: AdminAccessState;
+    community: AdminAccessState;
+  };
+}
+
+interface AdminAccessState {
+  allowed: boolean;
+  source: 'legacy' | 'manual' | 'global' | 'none';
+  status: string;
+  startsAt?: string | null;
+  expiresAt?: string | null;
+  durationDays?: number;
+  isGlobal?: boolean;
+  isManual?: boolean;
+  isLegacy?: boolean;
 }
 
 interface AdminCommunityReport {
@@ -2236,11 +2281,32 @@ export default function AdminApp() {
   const [subscriptionOverview, setSubscriptionOverview] = useState<AdminSubscriptionOverview | null>(null);
   const [subscriptionUsers, setSubscriptionUsers] = useState<AdminSubscriptionUser[]>([]);
   const [subscriptionFilter, setSubscriptionFilter] = useState('all');
+  const [paidServicesOverview, setPaidServicesOverview] = useState<AdminPaidServicesOverview | null>(null);
+  const [paidServicesUsers, setPaidServicesUsers] = useState<AdminPaidServicesUser[]>([]);
+  const [paidServicesQuery, setPaidServicesQuery] = useState('');
+  const [paidServicesStatusFilter, setPaidServicesStatusFilter] = useState<'all' | 'active' | 'inactive' | 'expired'>('all');
+  const [paidServiceTypeFilter, setPaidServiceTypeFilter] = useState<'tests' | 'preparation' | 'community'>('tests');
+  const [paidServicesDurationValue, setPaidServicesDurationValue] = useState('7');
+  const [paidServicesDurationUnit, setPaidServicesDurationUnit] = useState<'days' | 'weeks' | 'months'>('days');
+  const [paidServicesCustomExpiry, setPaidServicesCustomExpiry] = useState('');
+  const [paidServicesSelection, setPaidServicesSelection] = useState<{ tests: boolean; preparation: boolean; community: boolean }>({
+    tests: true,
+    preparation: false,
+    community: false,
+  });
+  const [isApplyingPaidServices, setIsApplyingPaidServices] = useState(false);
   const [assignPlanForm, setAssignPlanForm] = useState({
     email: '',
     planId: 'basic_monthly',
     status: 'active',
   });
+  const [accessTypeFilter, setAccessTypeFilter] = useState<'mentor' | 'preparation'>('mentor');
+  const [selectedAccessType, setSelectedAccessType] = useState<'mentor' | 'preparation'>('mentor');
+  const [grantDurationDays, setGrantDurationDays] = useState('7');
+  const [globalGrantDurationDays, setGlobalGrantDurationDays] = useState('7');
+  const [isGrantingAccess, setIsGrantingAccess] = useState(false);
+  const [isRevokingAccess, setIsRevokingAccess] = useState<Record<string, boolean>>({});
+  const [isApplyingGlobalAccess, setIsApplyingGlobalAccess] = useState(false);
   const [isAssigningPlan, setIsAssigningPlan] = useState(false);
   const [isAssignPlanConfirmOpen, setIsAssignPlanConfirmOpen] = useState(false);
   const [premiumRequests, setPremiumRequests] = useState<PremiumSubscriptionRequest[]>([]);
@@ -3123,6 +3189,8 @@ export default function AdminApp() {
       policyPayload,
       subscriptionOverviewPayload,
       subscriptionUsersPayload,
+      paidServicesOverviewPayload,
+      paidServicesUsersPayload,
       premiumRequestsPayload,
       passwordRecoveryPayload,
       communityReportsPayload,
@@ -3155,7 +3223,22 @@ export default function AdminApp() {
         plans: [],
         dailyUsage: [],
       })),
-      apiRequest<{ users: AdminSubscriptionUser[] }>(`/api/admin/subscriptions/users?status=${subscriptionFilter}`, {}, activeToken).catch(() => ({ users: [] })),
+      apiRequest<{ users: AdminSubscriptionUser[] }>(
+        `/api/admin/subscriptions/users?status=${subscriptionFilter}&accessType=${accessTypeFilter}`,
+        {},
+        activeToken,
+      ).catch(() => ({ users: [] })),
+      apiRequest<AdminPaidServicesOverview>('/api/admin/paid-services/overview', {}, activeToken).catch(() => ({
+        totalUsers: 0,
+        testsAccess: { activeUsers: 0, inactiveUsers: 0 },
+        preparationAccess: { activeUsers: 0, inactiveUsers: 0 },
+        communityAccess: { activeUsers: 0, inactiveUsers: 0 },
+      })),
+      apiRequest<{ users: AdminPaidServicesUser[] }>(
+        `/api/admin/paid-services/users?q=${encodeURIComponent(paidServicesQuery.trim())}&status=${paidServicesStatusFilter}&serviceType=${paidServiceTypeFilter}`,
+        {},
+        activeToken,
+      ).catch(() => ({ users: [] })),
       apiRequest<{ requests: PremiumSubscriptionRequest[] }>(
         `/api/admin/subscriptions/requests?status=${premiumRequestStatusFilter}&q=${encodeURIComponent(premiumRequestQuery.trim())}`,
         {},
@@ -3197,6 +3280,8 @@ export default function AdminApp() {
     });
     setSubscriptionOverview(subscriptionOverviewPayload);
     setSubscriptionUsers(subscriptionUsersPayload.users || []);
+    setPaidServicesOverview(paidServicesOverviewPayload);
+    setPaidServicesUsers(paidServicesUsersPayload.users || []);
     setPremiumRequests(premiumRequestsPayload.requests || []);
     setPasswordRecoveryRequests(passwordRecoveryPayload.requests || []);
     setCommunityReports(communityReportsPayload.reports || []);
@@ -3428,6 +3513,10 @@ export default function AdminApp() {
     authToken,
     refreshToken,
     subscriptionFilter,
+    accessTypeFilter,
+    paidServicesQuery,
+    paidServicesStatusFilter,
+    paidServiceTypeFilter,
     premiumRequestStatusFilter,
     premiumRequestQuery,
     passwordRecoveryStatusFilter,
@@ -6138,6 +6227,166 @@ export default function AdminApp() {
       handleApiError(error, 'Could not assign subscription.');
     } finally {
       setIsAssigningPlan(false);
+    }
+  };
+
+  const grantPaidServicesForUser = async (userId: string) => {
+    if (!authToken) return;
+    const durationValue = Number(paidServicesDurationValue || 0);
+    if (!Number.isFinite(durationValue) || durationValue <= 0) {
+      showErrorToast('Enter a valid duration value.');
+      return;
+    }
+    if (!paidServicesSelection.tests && !paidServicesSelection.preparation && !paidServicesSelection.community) {
+      showErrorToast('Select at least one service.');
+      return;
+    }
+    try {
+      setIsApplyingPaidServices(true);
+      await apiRequest(
+        `/api/admin/paid-services/${userId}/grant`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            services: paidServicesSelection,
+            durationValue,
+            durationUnit: paidServicesDurationUnit,
+            customExpiry: paidServicesCustomExpiry ? new Date(paidServicesCustomExpiry).toISOString() : '',
+          }),
+        },
+        authToken,
+      );
+      showSuccessToast('Paid services updated successfully.');
+      await loadAdminData(authToken);
+    } catch (error) {
+      handleApiError(error, 'Could not apply paid services plan.');
+    } finally {
+      setIsApplyingPaidServices(false);
+    }
+  };
+
+  const deactivatePaidServicesForUser = async (userId: string) => {
+    if (!authToken) return;
+    if (!paidServicesSelection.tests && !paidServicesSelection.preparation && !paidServicesSelection.community) {
+      showErrorToast('Select at least one service.');
+      return;
+    }
+    try {
+      setIsApplyingPaidServices(true);
+      await apiRequest(
+        `/api/admin/paid-services/${userId}/deactivate`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            services: paidServicesSelection,
+          }),
+        },
+        authToken,
+      );
+      showSuccessToast('Selected services deactivated.');
+      await loadAdminData(authToken);
+    } catch (error) {
+      handleApiError(error, 'Could not deactivate services.');
+    } finally {
+      setIsApplyingPaidServices(false);
+    }
+  };
+
+  const grantUserAccess = async (userId: string, accessType: 'mentor' | 'preparation') => {
+    if (!authToken) return;
+    const days = Number(grantDurationDays || 0);
+    if (!Number.isFinite(days) || days <= 0) {
+      showErrorToast('Enter a valid duration in days.');
+      return;
+    }
+    try {
+      setIsGrantingAccess(true);
+      await apiRequest(
+        `/api/admin/subscriptions/access/${encodeURIComponent(userId)}/grant`,
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            accessType,
+            durationDays: days,
+          }),
+        },
+        authToken,
+      );
+      showSuccessToast(`${accessType === 'mentor' ? 'Smart Study Mentor' : 'Preparation'} access granted.`);
+      await loadAdminData(authToken);
+    } catch (error) {
+      handleApiError(error, 'Could not grant access.');
+    } finally {
+      setIsGrantingAccess(false);
+    }
+  };
+
+  const revokeUserAccess = async (userId: string, accessType: 'mentor' | 'preparation') => {
+    if (!authToken) return;
+    const busyKey = `${userId}:${accessType}`;
+    try {
+      setIsRevokingAccess((prev) => ({ ...prev, [busyKey]: true }));
+      await apiRequest(
+        `/api/admin/subscriptions/access/${encodeURIComponent(userId)}/revoke`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ accessType }),
+        },
+        authToken,
+      );
+      showSuccessToast(`${accessType === 'mentor' ? 'Smart Study Mentor' : 'Preparation'} access revoked.`);
+      await loadAdminData(authToken);
+    } catch (error) {
+      handleApiError(error, 'Could not revoke access.');
+    } finally {
+      setIsRevokingAccess((prev) => ({ ...prev, [busyKey]: false }));
+    }
+  };
+
+  const grantGlobalAccess = async (accessType: 'mentor' | 'preparation') => {
+    if (!authToken) return;
+    const days = Number(globalGrantDurationDays || 0);
+    if (!Number.isFinite(days) || days <= 0) {
+      showErrorToast('Enter a valid global duration in days.');
+      return;
+    }
+    try {
+      setIsApplyingGlobalAccess(true);
+      await apiRequest(
+        '/api/admin/subscriptions/access/global/grant',
+        {
+          method: 'POST',
+          body: JSON.stringify({ accessType, durationDays: days }),
+        },
+        authToken,
+      );
+      showSuccessToast(`Global ${accessType === 'mentor' ? 'Smart Study Mentor' : 'Preparation'} access activated.`);
+      await loadAdminData(authToken);
+    } catch (error) {
+      handleApiError(error, 'Could not apply global access.');
+    } finally {
+      setIsApplyingGlobalAccess(false);
+    }
+  };
+
+  const revokeGlobalAccess = async (accessType: 'mentor' | 'preparation') => {
+    if (!authToken) return;
+    try {
+      setIsApplyingGlobalAccess(true);
+      await apiRequest(
+        '/api/admin/subscriptions/access/global/revoke',
+        {
+          method: 'POST',
+          body: JSON.stringify({ accessType }),
+        },
+        authToken,
+      );
+      showSuccessToast(`Global ${accessType === 'mentor' ? 'Smart Study Mentor' : 'Preparation'} access revoked.`);
+      await loadAdminData(authToken);
+    } catch (error) {
+      handleApiError(error, 'Could not revoke global access.');
+    } finally {
+      setIsApplyingGlobalAccess(false);
     }
   };
 
@@ -9866,6 +10115,189 @@ export default function AdminApp() {
         <TabsContent value="subscriptions" className="space-y-4">
           <Card>
             <CardHeader>
+              <CardTitle>Users Paid Services Plans</CardTitle>
+              <CardDescription>
+                Separate access control for Tests, Preparation Materials, and Community across web and Android.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="rounded-lg border p-3 text-sm">
+                  <p className="font-medium">Tests Access</p>
+                  <p className="text-xs text-muted-foreground">
+                    Active: {paidServicesOverview?.testsAccess?.activeUsers || 0} / {paidServicesOverview?.totalUsers || 0}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3 text-sm">
+                  <p className="font-medium">Preparation Materials</p>
+                  <p className="text-xs text-muted-foreground">
+                    Active: {paidServicesOverview?.preparationAccess?.activeUsers || 0} / {paidServicesOverview?.totalUsers || 0}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3 text-sm">
+                  <p className="font-medium">Community Access</p>
+                  <p className="text-xs text-muted-foreground">
+                    Active: {paidServicesOverview?.communityAccess?.activeUsers || 0} / {paidServicesOverview?.totalUsers || 0}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-[1.2fr_220px_220px]">
+                <div className="space-y-1">
+                  <Label htmlFor="paid-services-search">User search</Label>
+                  <Input
+                    id="paid-services-search"
+                    value={paidServicesQuery}
+                    onChange={(e) => setPaidServicesQuery(e.target.value)}
+                    placeholder="Search by email or name"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="paid-services-status">Status</Label>
+                  <Select value={paidServicesStatusFilter} onValueChange={(value: 'all' | 'active' | 'inactive' | 'expired') => setPaidServicesStatusFilter(value)}>
+                    <SelectTrigger id="paid-services-status">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All</SelectItem>
+                      <SelectItem value="active">Active</SelectItem>
+                      <SelectItem value="inactive">Inactive</SelectItem>
+                      <SelectItem value="expired">Expired</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="paid-services-type">Service filter</Label>
+                  <Select value={paidServiceTypeFilter} onValueChange={(value: 'tests' | 'preparation' | 'community') => setPaidServiceTypeFilter(value)}>
+                    <SelectTrigger id="paid-services-type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="tests">Tests</SelectItem>
+                      <SelectItem value="preparation">Preparation Materials</SelectItem>
+                      <SelectItem value="community">Community</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid gap-3 md:grid-cols-[1fr_140px_160px_1fr]">
+                <div className="space-y-1">
+                  <Label>Services to apply</Label>
+                  <div className="flex flex-wrap items-center gap-3 rounded-md border px-3 py-2">
+                    <label className="inline-flex items-center gap-1.5 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={paidServicesSelection.tests}
+                        onChange={(e) => setPaidServicesSelection((prev) => ({ ...prev, tests: e.target.checked }))}
+                      />
+                      Tests
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={paidServicesSelection.preparation}
+                        onChange={(e) => setPaidServicesSelection((prev) => ({ ...prev, preparation: e.target.checked }))}
+                      />
+                      Preparation
+                    </label>
+                    <label className="inline-flex items-center gap-1.5 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={paidServicesSelection.community}
+                        onChange={(e) => setPaidServicesSelection((prev) => ({ ...prev, community: e.target.checked }))}
+                      />
+                      Community
+                    </label>
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <Label>Duration value</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={paidServicesDurationValue}
+                    onChange={(e) => setPaidServicesDurationValue(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <Label>Duration unit</Label>
+                  <Select value={paidServicesDurationUnit} onValueChange={(value: 'days' | 'weeks' | 'months') => setPaidServicesDurationUnit(value)}>
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="days">Days</SelectItem>
+                      <SelectItem value="weeks">Weeks</SelectItem>
+                      <SelectItem value="months">Months</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label>Custom expiry (optional)</Label>
+                  <Input
+                    type="datetime-local"
+                    value={paidServicesCustomExpiry}
+                    onChange={(e) => setPaidServicesCustomExpiry(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2 max-h-[520px] overflow-auto">
+                {paidServicesUsers.map((entry) => (
+                  <div key={entry.id} className="rounded-lg border p-3 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-sm">{entry.email}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {[entry.firstName, entry.lastName].filter(Boolean).join(' ') || 'No name'}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={entry.paidServices.tests.allowed ? 'default' : 'outline'}>
+                          Tests: {entry.paidServices.tests.allowed ? 'Active' : 'Locked'}
+                        </Badge>
+                        <Badge variant={entry.paidServices.preparation.allowed ? 'default' : 'outline'}>
+                          Prep: {entry.paidServices.preparation.allowed ? 'Active' : 'Locked'}
+                        </Badge>
+                        <Badge variant={entry.paidServices.community.allowed ? 'default' : 'outline'}>
+                          Community: {entry.paidServices.community.allowed ? 'Active' : 'Locked'}
+                        </Badge>
+                      </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Tests expiry: {entry.paidServices.tests.expiresAt ? new Date(entry.paidServices.tests.expiresAt).toLocaleString() : 'N/A'}
+                      {' '}| Prep expiry: {entry.paidServices.preparation.expiresAt ? new Date(entry.paidServices.preparation.expiresAt).toLocaleString() : 'N/A'}
+                      {' '}| Community expiry: {entry.paidServices.community.expiresAt ? new Date(entry.paidServices.community.expiresAt).toLocaleString() : 'N/A'}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <Button
+                        size="sm"
+                        disabled={isApplyingPaidServices}
+                        onClick={() => void grantPaidServicesForUser(entry.id)}
+                      >
+                        {isApplyingPaidServices ? 'Applying…' : 'Grant / Extend Selected'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={isApplyingPaidServices}
+                        onClick={() => void deactivatePaidServicesForUser(entry.id)}
+                      >
+                        Deactivate Selected
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+                {!paidServicesUsers.length ? (
+                  <p className="text-sm text-muted-foreground">No users matched the current paid services filters.</p>
+                ) : null}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>Assign Plan Directly (Admin)</CardTitle>
               <CardDescription>Activate or update a subscription by user email without token or user-side request.</CardDescription>
             </CardHeader>
@@ -9953,6 +10385,82 @@ export default function AdminApp() {
 
           <Card>
             <CardHeader>
+              <CardTitle>Global Access Control</CardTitle>
+              <CardDescription>
+                Activate time-limited access for all users. Access auto-expires based on the configured duration.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="grid gap-3 md:grid-cols-[1fr_180px_auto] md:items-end">
+                <div className="space-y-1">
+                  <Label htmlFor="global-access-type">Access Type</Label>
+                  <Select value={selectedAccessType} onValueChange={(value: 'mentor' | 'preparation') => setSelectedAccessType(value)}>
+                    <SelectTrigger id="global-access-type">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="mentor">Smart Study Mentor</SelectItem>
+                      <SelectItem value="preparation">Preparation Access Plan</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label htmlFor="global-access-duration">Duration (days)</Label>
+                  <Input
+                    id="global-access-duration"
+                    type="number"
+                    min={1}
+                    value={globalGrantDurationDays}
+                    onChange={(e) => setGlobalGrantDurationDays(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    disabled={isApplyingGlobalAccess}
+                    onClick={() => void grantGlobalAccess(selectedAccessType)}
+                  >
+                    Activate For All
+                  </Button>
+                  <Button
+                    variant="outline"
+                    disabled={isApplyingGlobalAccess}
+                    onClick={() => void revokeGlobalAccess(selectedAccessType)}
+                  >
+                    Revoke Global
+                  </Button>
+                </div>
+              </div>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="rounded-lg border p-3 text-sm">
+                  <p className="font-medium">Smart Study Mentor</p>
+                  <p className="text-xs text-muted-foreground">
+                    Active users: {subscriptionOverview?.mentorAccess?.activeUsers || 0}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Global status: {subscriptionOverview?.mentorAccess?.global?.allowed ? 'Active' : 'Inactive'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Expires: {subscriptionOverview?.mentorAccess?.global?.expiresAt ? new Date(subscriptionOverview.mentorAccess.global.expiresAt).toLocaleString() : 'N/A'}
+                  </p>
+                </div>
+                <div className="rounded-lg border p-3 text-sm">
+                  <p className="font-medium">Preparation Access Plan</p>
+                  <p className="text-xs text-muted-foreground">
+                    Active users: {subscriptionOverview?.preparationAccess?.activeUsers || 0}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Global status: {subscriptionOverview?.preparationAccess?.global?.allowed ? 'Active' : 'Inactive'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Expires: {subscriptionOverview?.preparationAccess?.global?.expiresAt ? new Date(subscriptionOverview.preparationAccess.global.expiresAt).toLocaleString() : 'N/A'}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>Subscription Plans</CardTitle>
               <CardDescription>Current plan catalog and daily limits</CardDescription>
             </CardHeader>
@@ -9987,6 +10495,16 @@ export default function AdminApp() {
                     <SelectItem value="cancelled">Cancelled</SelectItem>
                   </SelectContent>
                 </Select>
+                <Label htmlFor="access-type-filter" className="sm:ml-2">Access Type</Label>
+                <Select value={accessTypeFilter} onValueChange={(value: 'mentor' | 'preparation') => setAccessTypeFilter(value)}>
+                  <SelectTrigger id="access-type-filter" className="w-full sm:w-[230px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="mentor">Smart Study Mentor</SelectItem>
+                    <SelectItem value="preparation">Preparation Access Plan</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="space-y-2 max-h-[500px] overflow-auto">
@@ -10004,7 +10522,17 @@ export default function AdminApp() {
                           {entry.subscription.status || 'inactive'}
                         </Badge>
                         <Badge variant="outline">{entry.subscription.planName || entry.subscription.planId || 'No plan'}</Badge>
+                        <Badge variant={entry.access?.mentor?.allowed ? 'default' : 'outline'}>
+                          Mentor: {entry.access?.mentor?.allowed ? 'Active' : 'Locked'}
+                        </Badge>
+                        <Badge variant={entry.access?.preparation?.allowed ? 'default' : 'outline'}>
+                          Prep: {entry.access?.preparation?.allowed ? 'Active' : 'Locked'}
+                        </Badge>
                       </div>
+                    </div>
+                    <div className="text-xs text-muted-foreground">
+                      Mentor expiry: {entry.access?.mentor?.expiresAt ? new Date(entry.access.mentor.expiresAt).toLocaleString() : 'N/A'} | Prep expiry:{' '}
+                      {entry.access?.preparation?.expiresAt ? new Date(entry.access.preparation.expiresAt).toLocaleString() : 'N/A'}
                     </div>
 
                     <div className="grid gap-2 md:grid-cols-3">
@@ -10026,6 +10554,48 @@ export default function AdminApp() {
                         onClick={() => void updateUserSubscription(entry.id, entry.subscription.planId || 'basic_monthly', 'inactive')}
                       >
                         Set Inactive
+                      </Button>
+                    </div>
+
+                    <div className="grid gap-2 md:grid-cols-[1fr_140px_auto_auto] md:items-end">
+                      <div className="space-y-1">
+                        <Label>Grant Access Type</Label>
+                        <Select
+                          value={selectedAccessType}
+                          onValueChange={(value: 'mentor' | 'preparation') => setSelectedAccessType(value)}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="mentor">Smart Study Mentor</SelectItem>
+                            <SelectItem value="preparation">Preparation Access Plan</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-1">
+                        <Label>Days</Label>
+                        <Input
+                          type="number"
+                          min={1}
+                          value={grantDurationDays}
+                          onChange={(e) => setGrantDurationDays(e.target.value)}
+                        />
+                      </div>
+                      <Button
+                        size="sm"
+                        disabled={isGrantingAccess}
+                        onClick={() => void grantUserAccess(entry.id, selectedAccessType)}
+                      >
+                        {isGrantingAccess ? 'Granting...' : 'Grant / Extend'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={Boolean(isRevokingAccess[`${entry.id}:${selectedAccessType}`])}
+                        onClick={() => void revokeUserAccess(entry.id, selectedAccessType)}
+                      >
+                        {isRevokingAccess[`${entry.id}:${selectedAccessType}`] ? 'Revoking...' : 'Revoke'}
                       </Button>
                     </div>
                   </div>
