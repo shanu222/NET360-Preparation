@@ -15,6 +15,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 
@@ -107,6 +108,37 @@ export const SubscriptionPage = memo(function SubscriptionPage() {
     const { seconds } = formatCountdown(surface.msRemaining);
     return `${minutes}m ${seconds}s remaining`;
   })();
+
+  const formatDateTime = (value?: string | null) => {
+    if (!value) return 'N/A';
+    const dt = new Date(value);
+    if (Number.isNaN(dt.getTime())) return 'N/A';
+    return dt.toLocaleString();
+  };
+
+  const normalizeStatus = (status?: string) => {
+    const key = String(status || '').trim().toLowerCase();
+    if (key === 'active') return { label: 'Active', tone: 'text-emerald-700 dark:text-emerald-300' };
+    if (key === 'expired' || key === 'cancelled' || key === 'revoked') return { label: 'Expired', tone: 'text-rose-700 dark:text-rose-300' };
+    return { label: 'Inactive', tone: 'text-slate-600 dark:text-slate-300' };
+  };
+
+  const formatRemaining = (remainingDays?: number, remainingHours?: number) => {
+    const days = Number(remainingDays || 0);
+    const hours = Number(remainingHours || 0);
+    if (days <= 0 && hours <= 0) return '0h left';
+    if (days > 0) return `${days} day(s) ${hours} hour(s) left`;
+    return `${hours} hour(s) left`;
+  };
+
+  const resolvePlanDuration = (durationValue?: number, durationUnit?: string, durationDays?: number) => {
+    const value = Number(durationValue || 0);
+    const unit = String(durationUnit || '').trim();
+    if (value > 0 && unit) return `${value} ${unit}`;
+    const days = Number(durationDays || 0);
+    if (days > 0) return `${days} days`;
+    return 'N/A';
+  };
 
   if (!user) {
     return (
@@ -237,6 +269,76 @@ export const SubscriptionPage = memo(function SubscriptionPage() {
           </CardHeader>
         </Card>
       ) : null}
+
+      <Card>
+        <CardHeader>
+          <CardTitle as="h2">Your Service Access</CardTitle>
+          <CardDescription>
+            Track active, expired, and remaining duration across all services.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Tabs defaultValue="free-services" className="gap-4">
+            <TabsList>
+              <TabsTrigger value="free-services">FREE SERVICES</TabsTrigger>
+              <TabsTrigger value="paid-services">PAID SERVICES</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="free-services" className="space-y-3">
+              {[
+                { key: 'tests', label: 'Tests' },
+                { key: 'preparation', label: 'Preparation Material' },
+                { key: 'community', label: 'Community' },
+              ].map((item) => {
+                const detail = me?.freeServices?.[item.key as 'tests' | 'preparation' | 'community'];
+                const status = normalizeStatus(detail?.status);
+                return (
+                  <div key={`free-${item.key}`} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{item.label}</p>
+                      <p className={`text-xs font-semibold ${status.tone}`}>{status.label}</p>
+                    </div>
+                    <div className="mt-2 grid gap-1 text-xs text-slate-600 dark:text-slate-300">
+                      <p>Expires on: {formatDateTime(detail?.expiresAt)}</p>
+                      <p>Remaining: {formatRemaining(detail?.remainingDays, detail?.remainingHours)}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </TabsContent>
+
+            <TabsContent value="paid-services" className="space-y-3">
+              {[
+                { key: 'tests', label: 'Tests' },
+                { key: 'preparation', label: 'Preparation Material' },
+                { key: 'community', label: 'Community' },
+                { key: 'mentor', label: 'Smart Study Mentor' },
+              ].map((item) => {
+                const detail = me?.paidServices?.[item.key as 'tests' | 'preparation' | 'community' | 'mentor'];
+                const status = normalizeStatus(detail?.status);
+                return (
+                  <div key={`paid-${item.key}`} className="rounded-xl border border-slate-200 p-4 dark:border-slate-700">
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{item.label}</p>
+                      <p className={`text-xs font-semibold ${status.tone}`}>{status.label}</p>
+                    </div>
+                    {item.key === 'mentor' ? (
+                      <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                        Smart Study Mentor subscription status is visible for future launch. Mentor feature access remains controlled separately.
+                      </p>
+                    ) : null}
+                    <div className="mt-2 grid gap-1 text-xs text-slate-600 dark:text-slate-300">
+                      <p>Plan duration: {resolvePlanDuration(detail?.durationValue, detail?.durationUnit, detail?.durationDays)}</p>
+                      <p>Expires on: {formatDateTime(detail?.expiresAt)}</p>
+                      <p>Remaining: {formatRemaining(detail?.remainingDays, detail?.remainingHours)}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

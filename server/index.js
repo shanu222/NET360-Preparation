@@ -4600,19 +4600,58 @@ function toIsoOrNull(value) {
 
 function accessStatusPayload(detail) {
   const normalized = detail || { allowed: false, source: 'none', status: 'inactive' };
+  const expiresAtIso = toIsoOrNull(normalized.expiresAt);
+  const nowMs = Date.now();
+  const expiresMs = expiresAtIso ? new Date(expiresAtIso).getTime() : NaN;
+  const hasExpiry = Number.isFinite(expiresMs);
+  const remainingMs = hasExpiry ? Math.max(0, expiresMs - nowMs) : 0;
+  const remainingDays = hasExpiry ? Math.floor(remainingMs / (24 * 60 * 60 * 1000)) : 0;
+  const remainingHours = hasExpiry ? Math.floor((remainingMs % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000)) : 0;
+  const isExpired = hasExpiry ? expiresMs <= nowMs : false;
   return {
     allowed: Boolean(normalized.allowed),
     source: String(normalized.source || 'none'),
     status: String(normalized.status || (normalized.allowed ? 'active' : 'inactive')),
     startsAt: toIsoOrNull(normalized.startsAt),
-    expiresAt: toIsoOrNull(normalized.expiresAt),
+    expiresAt: expiresAtIso,
     durationDays: Number(normalized.durationDays || 0),
     durationValue: Number(normalized.durationValue || 0),
     durationUnit: String(normalized.durationUnit || 'days'),
+    remainingDays,
+    remainingHours,
+    isExpired,
     isGlobal: normalized.source === 'global',
     isManual: normalized.source === 'manual',
     isLegacy: normalized.source === 'legacy',
     legacyAllowed: Boolean(normalized.legacyAllowed),
+  };
+}
+
+function buildTimelineStatus({
+  allowed,
+  startsAt,
+  expiresAt,
+  status,
+}, nowMs = Date.now()) {
+  const normalizedStatus = String(status || '').toLowerCase();
+  const expiryMs = expiresAt ? new Date(expiresAt).getTime() : NaN;
+  const hasExpiry = Number.isFinite(expiryMs);
+  const remainingMs = hasExpiry ? Math.max(0, expiryMs - nowMs) : 0;
+  const remainingDays = hasExpiry ? Math.floor(remainingMs / (24 * 60 * 60 * 1000)) : 0;
+  const remainingHours = hasExpiry ? Math.floor((remainingMs % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000)) : 0;
+  const isExpired = hasExpiry ? expiryMs <= nowMs : ['expired', 'cancelled', 'revoked'].includes(normalizedStatus);
+  const finalStatus = allowed && !isExpired
+    ? 'active'
+    : isExpired
+      ? 'expired'
+      : (normalizedStatus || 'inactive');
+  return {
+    status: finalStatus,
+    startsAt: toIsoOrNull(startsAt),
+    expiresAt: toIsoOrNull(expiresAt),
+    remainingDays,
+    remainingHours,
+    isExpired,
   };
 }
 
@@ -11627,6 +11666,66 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
     PremiumSubscriptionRequestModel.findOne({ userId: req.user._id }).sort({ createdAt: -1 }).lean(),
   ]);
   const requestPlan = resolveSubscriptionPlan(latestActivationRequest?.planId || '');
+  const mentorAccessPayload = accessStatusPayload(entitlements?.mentor);
+  const testsAccessPayload = accessStatusPayload(entitlements?.paidServices?.tests);
+  const preparationAccessPayload = accessStatusPayload(entitlements?.paidServices?.preparation);
+  const communityAccessPayload = accessStatusPayload(entitlements?.paidServices?.community);
+  const trialActive = trialIsActive(subPlain);
+  const nowMs = Date.now();
+
+  const freeServices = {
+    tests: buildTimelineStatus({
+      allowed: trialActive && testsAccessPayload?.source === 'legacy',
+      startsAt: subPlain?.trialStartedAt,
+      expiresAt: subPlain?.trialEndsAt,
+      status: trialActive
+        ? 'active'
+        : (Boolean(subPlain?.hasUsedTrial) ? 'expired' : 'inactive'),
+    }, nowMs),
+    preparation: buildTimelineStatus({
+      allowed: trialActive && preparationAccessPayload?.source === 'legacy',
+      startsAt: subPlain?.trialStartedAt,
+      expiresAt: subPlain?.trialEndsAt,
+      status: trialActive
+        ? 'active'
+        : (Boolean(subPlain?.hasUsedTrial) ? 'expired' : 'inactive'),
+    }, nowMs),
+    community: buildTimelineStatus({
+      allowed: trialActive && communityAccessPayload?.source === 'legacy',
+      startsAt: subPlain?.trialStartedAt,
+      expiresAt: subPlain?.trialEndsAt,
+      status: trialActive
+        ? 'active'
+        : (Boolean(subPlain?.hasUsedTrial) ? 'expired' : 'inactive'),
+    }, nowMs),
+  };
+
+  const paidServicesTimeline = {
+    tests: buildTimelineStatus({
+      allowed: testsAccessPayload.allowed && !(testsAccessPayload.source === 'legacy' && trialActive),
+      startsAt: testsAccessPayload.startsAt,
+      expiresAt: testsAccessPayload.expiresAt,
+      status: testsAccessPayload.status,
+    }, nowMs),
+    preparation: buildTimelineStatus({
+      allowed: preparationAccessPayload.allowed && !(preparationAccessPayload.source === 'legacy' && trialActive),
+      startsAt: preparationAccessPayload.startsAt,
+      expiresAt: preparationAccessPayload.expiresAt,
+      status: preparationAccessPayload.status,
+    }, nowMs),
+    community: buildTimelineStatus({
+      allowed: communityAccessPayload.allowed && !(communityAccessPayload.source === 'legacy' && trialActive),
+      startsAt: communityAccessPayload.startsAt,
+      expiresAt: communityAccessPayload.expiresAt,
+      status: communityAccessPayload.status,
+    }, nowMs),
+    mentor: buildTimelineStatus({
+      allowed: Boolean(mentorAccessPayload.allowed),
+      startsAt: mentorAccessPayload.startsAt || subscription.startedAt,
+      expiresAt: mentorAccessPayload.expiresAt || subscription.expiresAt,
+      status: mentorAccessPayload.status,
+    }, nowMs),
+  };
 
   res.json({
     serverTime: new Date(serverNow).toISOString(),
@@ -11638,16 +11737,30 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
     subscription: {
       ...subscription,
       isActive: isSubscriptionActive(subscription) || Boolean(entitlements?.mentor?.allowed),
-      trialActive: trialIsActive(subPlain),
+      trialActive,
       planName: mentorPlan?.name || '',
       dailyAiLimit: mentorPlan?.dailyAiLimit || 0,
     },
-    mentorAccess: accessStatusPayload(entitlements?.mentor),
+    mentorAccess: mentorAccessPayload,
     preparationAccess: accessStatusPayload(entitlements?.preparation),
+    freeServices,
     paidServices: {
-      tests: accessStatusPayload(entitlements?.paidServices?.tests),
-      preparation: accessStatusPayload(entitlements?.paidServices?.preparation),
-      community: accessStatusPayload(entitlements?.paidServices?.community),
+      tests: {
+        ...testsAccessPayload,
+        ...paidServicesTimeline.tests,
+      },
+      preparation: {
+        ...preparationAccessPayload,
+        ...paidServicesTimeline.preparation,
+      },
+      community: {
+        ...communityAccessPayload,
+        ...paidServicesTimeline.community,
+      },
+      mentor: {
+        ...mentorAccessPayload,
+        ...paidServicesTimeline.mentor,
+      },
     },
     premiumSurface,
     subscriptionBadge: premiumSurface?.badge || buildPremiumBadgeState(subPlain, serverNow),

@@ -55,12 +55,31 @@ export interface AccessState {
   legacyAllowed?: boolean;
   durationValue?: number;
   durationUnit?: string;
+  remainingDays?: number;
+  remainingHours?: number;
+  isExpired?: boolean;
+}
+
+export interface ServiceTimelineState {
+  status: string;
+  startsAt: string | null;
+  expiresAt: string | null;
+  remainingDays: number;
+  remainingHours: number;
+  isExpired: boolean;
+}
+
+export interface FreeServicesState {
+  tests: ServiceTimelineState;
+  preparation: ServiceTimelineState;
+  community: ServiceTimelineState;
 }
 
 export interface PaidServicesState {
   tests: AccessState;
   preparation: AccessState;
   community: AccessState;
+  mentor?: AccessState;
 }
 
 export interface SubscriptionMePayload {
@@ -81,6 +100,7 @@ export interface SubscriptionMePayload {
   };
   mentorAccess?: AccessState;
   preparationAccess?: AccessState;
+  freeServices?: FreeServicesState;
   paidServices?: PaidServicesState;
   premiumSurface?: PremiumSurfaceState;
   subscriptionBadge?: SubscriptionBadge;
