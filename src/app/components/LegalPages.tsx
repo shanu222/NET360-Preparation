@@ -180,62 +180,44 @@ export function TermsPage() {
 export function DeleteAccountHelpPage() {
   return (
     <LegalShell
-      title="Delete Account"
-      description="How to request and process account deletion for NET360."
+      title="How To Delete Your NET360 Account"
+      description="Users can permanently delete their NET360 Preparation account directly from the Profile/Settings section inside the app."
     >
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">1. How to Request Deletion</h2>
+        <h2 className="text-lg font-semibold">Process to delete account</h2>
         <ul className="list-disc space-y-1 pl-5">
-          <li>Open Profile & Settings in NET360.</li>
-          <li>Use the Delete Account section and follow confirmation steps.</li>
-          <li>
-            If you cannot access your account, email support at{' '}
-            {SUPPORT_EMAILS.map((email, idx) => (
-              <span key={email}>
-                {idx > 0 ? ' or ' : ''}
-                <a className="text-indigo-700 underline underline-offset-2" href={`mailto:${email}`}>
-                  {email}
-                </a>
-              </span>
-            ))}
-            {' '}for verification and assistance.
-          </li>
+          <li>Open Profile / Settings.</li>
+          <li>Open Danger Zone: Delete Account.</li>
+          <li>Type DELETE in uppercase.</li>
+          <li>Enter your registration password.</li>
+          <li>Click &quot;Delete Account Permanently&quot;.</li>
         </ul>
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">2. What Gets Deleted</h2>
-        <p>When deletion is processed, your user account and associated profile/app usage data are removed.</p>
-      </section>
-
-      <section className="space-y-2">
-        <h2 className="text-lg font-semibold">3. What May Be Retained</h2>
-        <p>
-          Limited records may be retained for legal obligations, fraud prevention, abuse detection,
-          security auditing, or dispute resolution where applicable.
-        </p>
-      </section>
-
-      <section className="space-y-2">
-        <h2 className="text-lg font-semibold">4. Timeline</h2>
-        <p>
-          Typical processing time is within 7 business days after verification. Complex or compliance-bound
-          requests may take longer.
-        </p>
-      </section>
-
-      <section className="space-y-2">
-        <h2 className="text-lg font-semibold">5. Support Contact</h2>
+        <h2 className="text-lg font-semibold">Deleted data may include</h2>
         <ul className="list-disc space-y-1 pl-5">
-          {SUPPORT_EMAILS.map((email) => (
-            <li key={email}>
-              <a className="text-indigo-700 underline underline-offset-2" href={`mailto:${email}`}>
-                {email}
-              </a>
-            </li>
-          ))}
-          <li>Phone (escalation/help): {SUPPORT_PHONE}</li>
+          <li>Profile information</li>
+          <li>Test history</li>
+          <li>Community profile</li>
+          <li>Analytics associated with the account</li>
         </ul>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">Data retention notice</h2>
+        <p>
+          Some records related to billing, security, or legal compliance may be retained temporarily for up to 90 days.
+        </p>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">For assistance contact</h2>
+        <p>
+          <a className="text-indigo-700 underline underline-offset-2" href="mailto:shanu1998end@gmail.com">
+            shanu1998end@gmail.com
+          </a>
+        </p>
       </section>
     </LegalShell>
   );
