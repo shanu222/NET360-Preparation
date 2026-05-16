@@ -1001,6 +1001,18 @@ app.use(
 );
 
 app.use(
+  '/api/auth/delete-account',
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 6,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
+    message: { error: 'Too many delete-account attempts. Please try again later.' },
+  }),
+);
+
+app.use(
   '/api/ai',
   rateLimit({
     windowMs: 5 * 60 * 1000,
@@ -7862,28 +7874,69 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const user = await UserModel.findById(req.user._id).select('_id passwordHash role email phone');
+    const user = await UserModel.findById(req.user._id).select('_id passwordHash role email phone firebaseUid activeSession');
     if (!user) {
       res.status(404).json({ error: 'Account not found.' });
       return;
     }
 
+    if ((user.role || 'student') !== 'student') {
+      res.status(403).json({ error: 'Only student accounts can use self-service deletion.' });
+      return;
+    }
+
     const passwordMatches = await bcrypt.compare(password, String(user.passwordHash || ''));
     if (!passwordMatches) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.delete_account_wrong_password',
+        severity: 'warning',
+        actorUserId: user._id,
+        actorEmail: user.email,
+      });
       res.status(401).json({ error: 'Incorrect password. Account deletion cancelled.' });
       return;
     }
 
     const userId = user._id;
+    const userIdString = String(userId);
+    const email = normalizeEmail(user.email || '');
+    const compactPhone = compactMobile(user.phone || '');
+    const firebaseUid = String(user.firebaseUid || '').trim();
+    const activeSessionId = String(user.activeSession?.sessionId || '').trim();
+
+    await logSecurityEvent(req, {
+      eventType: 'auth.delete_account_started',
+      severity: 'warning',
+      actorUserId: userId,
+      actorEmail: email,
+    });
+
+    if (activeSessionId) {
+      notifyRevokedStudentSession(userIdString, activeSessionId);
+    }
+    if (isRedisConfigured()) {
+      await cacheDel(cacheKey(`studentSession:${userIdString}`));
+    }
+    await invalidateUserSubscriptionCache(userId);
+    emitSubscriptionRefresh(userIdString, { reason: 'account_deleted' });
 
     await Promise.all([
       AttemptModel.deleteMany({ userId }),
       TestSessionModel.deleteMany({ userId }),
       AIUsageModel.deleteMany({ userId }),
-      PasswordRecoveryRequestModel.deleteMany({ userId }),
-      SignupRequestModel.deleteMany({ email: normalizeEmail(user.email) }),
-      SignupTokenModel.deleteMany({ email: normalizeEmail(user.email) }),
+      PasswordRecoveryRequestModel.deleteMany({
+        $or: [
+          { userId },
+          ...(email ? [{ email }] : []),
+          ...(compactPhone ? [{ mobileNumber: compactPhone }] : []),
+        ],
+      }),
+      SignupRequestModel.deleteMany({ email }),
+      SignupTokenModel.deleteMany({ email }),
       PremiumSubscriptionRequestModel.deleteMany({ userId }),
+      PremiumActivationTokenModel.deleteMany({
+        $or: [{ userId }, ...(email ? [{ email }] : [])],
+      }),
       CommunityProfileModel.deleteMany({ userId }),
       CommunityConnectionRequestModel.deleteMany({
         $or: [{ fromUserId: userId }, { toUserId: userId }],
@@ -7900,14 +7953,74 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       CommunityQuizChallengeModel.deleteMany({
         $or: [{ challengerUserId: userId }, { opponentUserId: userId }],
       }),
+      SupportChatMessageModel.deleteMany({
+        $or: [{ userId }, { senderUserId: userId }, { 'reactions.senderUserId': userId }],
+      }),
+      SecurityAuditEventModel.updateMany(
+        { actorUserId: userId },
+        {
+          $set: {
+            actorUserId: null,
+            actorEmail: 'deleted-user',
+          },
+        },
+      ),
+      ...(email
+        ? [
+            SecurityAuditEventModel.updateMany(
+              { actorEmail: email },
+              {
+                $set: {
+                  actorEmail: 'deleted-user',
+                },
+              },
+            ),
+          ]
+        : []),
+      // Keep legally required billing metadata while redacting provider payload.
+      PaymentTransactionModel.updateMany(
+        { userId },
+        {
+          $set: {
+            gatewayResponse: null,
+          },
+        },
+      ),
+    ]);
+
+    await Promise.all([
+      invalidateCommunityLeaderboardCache(),
+      invalidateQuizLeaderboardCache(),
     ]);
 
     await UserModel.deleteOne({ _id: userId });
 
-    res.json({
-      message: 'Your account has been permanently deleted. To use NET360 again, create a new account and obtain access again.',
+    if (firebaseUid && firebaseAdminAuth) {
+      try {
+        await firebaseAdminAuth.deleteUser(firebaseUid);
+      } catch (firebaseDeleteError) {
+        console.error('[auth/delete-account] firebase user deletion failed', {
+          userId: userIdString,
+          firebaseUid,
+          message: firebaseDeleteError?.message || firebaseDeleteError,
+        });
+      }
+    }
+
+    clearAuthCookies(res);
+
+    await logSecurityEvent(req, {
+      eventType: 'auth.delete_account_success',
+      severity: 'warning',
+      actorUserId: userId,
+      actorEmail: email,
     });
-  } catch {
+
+    res.json({
+      message: 'Your NET360 account has been permanently deleted. Any active subscription access has been revoked. You must create a new account to use NET360 again.',
+    });
+  } catch (error) {
+    console.error('[auth/delete-account] failed', error?.message || error);
     res.status(500).json({ error: 'Could not delete account. Please try again.' });
   }
 });

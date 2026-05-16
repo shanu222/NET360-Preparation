@@ -29,7 +29,6 @@ import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 import { getMediaUrl, loginBannerImageUrl, shouldUseLocalMediaFallback } from '../lib/publicMedia';
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 import { ImageWithFallback } from './figma/ImageWithFallback';
-import { apiRequest } from '../lib/api';
 import { getAuthDebugSnapshot, subscribeAuthDebug, type AuthDebugSnapshot } from '../lib/authDebugState';
 import { isNativeRuntime as isNativeRuntimePlatform } from '../lib/nativeDiagnostics';
 const PROFILE_PHOTO_STORAGE_KEY = 'net360-profile-photo-data-url';
@@ -79,6 +78,13 @@ type SessionConflictInfo = {
 };
 
 function developerAuthErrorMessage(error: unknown): string {
+  const normalizedCode = String((error as { code?: string })?.code || '').trim();
+  if (normalizedCode === 'USER_CANCELLED') {
+    return 'Sign-in was cancelled.';
+  }
+  if (normalizedCode === 'GOOGLE_OAUTH_ANDROID_MISCONFIG') {
+    return 'Android Google Sign-In is not configured correctly for this app package/signing key yet.';
+  }
   const typed = error as AuthErrorLike;
   const code = String(typed?.code || typed?.payload?.code || '').trim() || 'none';
   const status = Number(typed?.status);
@@ -163,7 +169,7 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
 }
 
 export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
-  const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, logout } = useAuth();
+  const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, deleteAccount, logout } = useAuth();
   const { surface } = useSubscription();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
   const [localProfile, setLocalProfile] = useState(profile);
@@ -194,6 +200,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const [showDeleteAccountPanel, setShowDeleteAccountPanel] = useState(false);
   const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
   const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState('');
+  const [deleteAccountAttempted, setDeleteAccountAttempted] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isPersonalInfoExpanded, setIsPersonalInfoExpanded] = useState(true);
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
@@ -231,6 +238,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     setShowDeleteAccountPanel(false);
     setDeleteAccountConfirmationText('');
     setDeleteAccountPassword('');
+    setDeleteAccountAttempted(false);
   }, [user?.id]);
 
   useEffect(() => {
@@ -528,13 +536,18 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     reader.readAsDataURL(file);
   };
 
+  const isDeleteConfirmationValid = deleteAccountConfirmationText.trim() === 'DELETE';
+  const isDeletePasswordProvided = deleteAccountPassword.trim().length > 0;
+  const canSubmitDeleteAccount = isDeleteConfirmationValid && isDeletePasswordProvided && !isDeletingAccount;
+
   const handleDeleteAccount = async () => {
-    if (!deleteAccountPassword.trim()) {
+    setDeleteAccountAttempted(true);
+    if (!isDeletePasswordProvided) {
       showErrorToast('Enter your registration password to confirm account deletion.');
       return;
     }
 
-    if (deleteAccountConfirmationText.trim() !== 'DELETE') {
+    if (!isDeleteConfirmationValid) {
       showErrorToast('Type DELETE exactly to confirm permanent account deletion.');
       return;
     }
@@ -546,18 +559,17 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
 
     try {
       setIsDeletingAccount(true);
-      await apiRequest<{ message: string }>('/api/auth/delete-account', {
-        method: 'POST',
-        body: JSON.stringify({
-          password: deleteAccountPassword,
-          confirmationText: deleteAccountConfirmationText.trim(),
-        }),
+      const result = await deleteAccount({
+        password: deleteAccountPassword,
+        confirmationText: deleteAccountConfirmationText.trim(),
       });
-
-      showSuccessToast('Your account was deleted successfully.');
+      showSuccessToast(
+        result?.message
+        || 'Your NET360 account has been permanently deleted. Any active subscription access has been revoked. You must create a new account to use NET360 again.',
+      );
       setDeleteAccountPassword('');
       setDeleteAccountConfirmationText('');
-      logout();
+      setDeleteAccountAttempted(false);
     } catch (error) {
       handleApiError(error, 'Could not delete account.');
     } finally {
@@ -572,6 +584,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       if (next) {
         setDeleteAccountConfirmationText('');
         setDeleteAccountPassword('');
+        setDeleteAccountAttempted(false);
       }
       return next;
     });
@@ -1006,7 +1019,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                     Terms & Conditions
                   </a>
                   <a href="/delete-account" className="underline underline-offset-2 hover:text-indigo-900">
-                    Delete Account
+                    How To Delete Your Account
                   </a>
                   <a href="mailto:support@net360preparation.com" className="underline underline-offset-2 hover:text-indigo-900">
                     Contact Support
@@ -1309,6 +1322,10 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               If you want to use the service again in the future, you will need to create a new account and obtain access again.
             </p>
 
+            <Button type="button" variant="outline" className="w-fit border-red-300 bg-white text-red-700 hover:bg-red-50" onClick={() => onNavigate?.('delete-account')}>
+              How To Delete Your Account
+            </Button>
+
             <div className="space-y-2">
               <Label htmlFor="delete-account-confirmation-text">Type DELETE to confirm</Label>
               <Input
@@ -1321,6 +1338,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 className="border-red-200 bg-white"
               />
               <p className="text-xs text-red-700/90">Enter DELETE in uppercase to continue.</p>
+              {deleteAccountAttempted && !isDeleteConfirmationValid ? (
+                <p className="text-xs font-medium text-red-700">Type DELETE exactly (case-sensitive).</p>
+              ) : null}
             </div>
 
             <div className="space-y-2">
@@ -1334,13 +1354,16 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 placeholder="Enter password to confirm"
                 className="border-red-200 bg-white"
               />
+              {deleteAccountAttempted && !isDeletePasswordProvided ? (
+                <p className="text-xs font-medium text-red-700">Password is required for secure account deletion.</p>
+              ) : null}
             </div>
             <Button
               variant="destructive"
               onClick={() => void handleDeleteAccount()}
-              disabled={isDeletingAccount || !deleteAccountPassword.trim() || deleteAccountConfirmationText.trim() !== 'DELETE'}
+              disabled={!canSubmitDeleteAccount}
             >
-              {isDeletingAccount ? 'Deleting Account...' : 'Delete Account Permanently'}
+              {isDeletingAccount ? 'Deleting Account Permanently...' : 'Delete Account Permanently'}
             </Button>
           </CardContent>
         ) : null}

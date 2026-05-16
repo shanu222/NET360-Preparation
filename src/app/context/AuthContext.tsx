@@ -51,6 +51,7 @@ interface AuthContextValue {
     lastName?: string;
   }) => Promise<void>;
   sendRecoveryEmail: (email: string) => Promise<void>;
+  deleteAccount: (params: { password: string; confirmationText: string }) => Promise<{ message: string }>;
   logout: () => void;
 }
 
@@ -104,6 +105,30 @@ function redirectToLoginScreen() {
     : '/?tab=profile';
   if (window.location.pathname + window.location.search === target) return;
   window.location.assign(target);
+}
+
+function clearSessionStorageSafe() {
+  if (typeof window === 'undefined') return;
+  try {
+    sessionStorage.clear();
+  } catch {
+    // Ignore unavailable storage.
+  }
+}
+
+function clearLocalStorageAuthStateSafe() {
+  if (typeof window === 'undefined') return;
+  const keysToDelete = [
+    'net360-profile-photo-data-url',
+    'net360-auth-debug',
+  ];
+  for (const key of keysToDelete) {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      // Ignore unavailable storage.
+    }
+  }
 }
 
 let authSessionLoadGeneration = 0;
@@ -973,20 +998,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await sendPasswordResetEmail(activeAuth, email);
   }, []);
 
+  const clearClientAuthState = useCallback(() => {
+    setToken(null);
+    setRefreshToken(null);
+    setUser(null);
+    clearPersistedStudentTokens();
+    clearSessionStorageSafe();
+    clearLocalStorageAuthStateSafe();
+  }, []);
+
   const logout = useCallback(() => {
     const rt = shouldPersistAuthTokens() ? refreshToken : null;
     void apiRequest('/api/auth/logout', {
       method: 'POST',
       body: JSON.stringify(rt ? { refreshToken: rt } : {}),
     }).catch(() => undefined);
-    setToken(null);
-    setRefreshToken(null);
-    setUser(null);
-    clearPersistedStudentTokens();
+    clearClientAuthState();
     if (firebaseAuth) {
       void signOut(firebaseAuth).catch(() => undefined);
     }
-  }, [refreshToken]);
+  }, [clearClientAuthState, refreshToken]);
+
+  const deleteAccount = useCallback<AuthContextValue['deleteAccount']>(async ({ password, confirmationText }) => {
+    const payload = await apiRequest<{ message: string }>('/api/auth/delete-account', {
+      method: 'POST',
+      body: JSON.stringify({ password, confirmationText }),
+      timeoutMs: 60_000,
+      retryCount: 0,
+    });
+    clearClientAuthState();
+    if (firebaseAuth) {
+      await signOut(firebaseAuth).catch(() => undefined);
+    }
+    redirectToLoginScreen();
+    return payload;
+  }, [clearClientAuthState]);
 
   useEffect(() => {
     const onRevoked = (ev: Event) => {
@@ -1012,9 +1058,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loginWithGoogle,
       registerWithToken,
       sendRecoveryEmail,
+      deleteAccount,
       logout,
     }),
-    [token, user, loading, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, logout],
+    [token, user, loading, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, deleteAccount, logout],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
