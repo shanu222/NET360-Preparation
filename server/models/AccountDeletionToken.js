@@ -8,7 +8,7 @@ const accountDeletionTokenSchema = new mongoose.Schema(
   {
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     tokenHash: { type: String, required: true, unique: true, index: true },
-    emailNormalized: { type: String, required: true, lowercase: true, trim: true, index: true },
+    email: { type: String, required: true, lowercase: true, trim: true, index: true },
     authProviderSnapshot: { type: String, required: true, trim: true },
     /** SHA-256 prefix of session/device/UA fingerprint at request time (audit only). */
     sessionFingerprint: { type: String, default: '' },

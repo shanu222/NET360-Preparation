@@ -8093,8 +8093,7 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
     const firebaseUid = String(user.firebaseUid || '').trim();
     if (isGoogleManagedAuthProvider(authProvider, firebaseUid)) {
       res.status(400).json({
-        error:
-          'This account uses Google Sign-In. Use the secure deletion link sent to your email, or tap “Send Account Deletion Link” in your profile.',
+        error: 'Use email verification link for Google accounts.',
       });
       return;
     }
@@ -8167,7 +8166,7 @@ app.post('/api/auth/request-delete-link', authMiddleware, async (req, res) => {
     await AccountDeletionTokenModel.create({
       userId: user._id,
       tokenHash,
-      emailNormalized: email,
+      email,
       authProviderSnapshot: authProvider,
       sessionFingerprint: fingerprint,
       expiresAt,
@@ -8231,7 +8230,7 @@ app.get('/api/auth/verify-delete-token', async (req, res) => {
       res.json({ valid: false, error: 'This deletion link is no longer valid.' });
       return;
     }
-    if (normalizeEmail(u.email || '') !== doc.emailNormalized) {
+    if (normalizeEmail(u.email || '') !== doc.email) {
       res.json({ valid: false, error: 'This deletion link is no longer valid.' });
       return;
     }
@@ -8283,7 +8282,7 @@ app.post('/api/auth/confirm-delete', async (req, res) => {
       return;
     }
     const email = normalizeEmail(user.email || '');
-    if (email !== claimed.emailNormalized) {
+    if (email !== claimed.email) {
       res.status(400).json({ error: 'This deletion link does not match this account.' });
       return;
     }
