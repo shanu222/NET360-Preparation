@@ -170,7 +170,7 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
 }
 
 export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
-  const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, confirmGoogleDeleteReauth, deleteAccount, logout } = useAuth();
+  const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, deleteAccount, requestAccountDeletionLink, logout } = useAuth();
   const { surface } = useSubscription();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
   const [localProfile, setLocalProfile] = useState(profile);
@@ -202,8 +202,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
   const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState('');
   const [deleteAccountAttempted, setDeleteAccountAttempted] = useState(false);
-  const [deleteFirebaseReauthToken, setDeleteFirebaseReauthToken] = useState('');
-  const [isVerifyingDeleteGoogle, setIsVerifyingDeleteGoogle] = useState(false);
+  const [isRequestingDeletionLink, setIsRequestingDeletionLink] = useState(false);
+  const [deletionLinkFeedback, setDeletionLinkFeedback] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isPersonalInfoExpanded, setIsPersonalInfoExpanded] = useState(true);
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
@@ -241,7 +241,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     setShowDeleteAccountPanel(false);
     setDeleteAccountConfirmationText('');
     setDeleteAccountPassword('');
-    setDeleteFirebaseReauthToken('');
+    setDeletionLinkFeedback('');
     setDeleteAccountAttempted(false);
   }, [user?.id]);
 
@@ -249,18 +249,6 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     if (typeof window === 'undefined') return;
     const search = new URLSearchParams(window.location.search);
     setShowAuthDebugPanel(isNativeRuntimePlatform() && search.get('debugAuth') === '1');
-  }, []);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const onDeleteReauthToken = (ev: Event) => {
-      const detail = (ev as CustomEvent<{ firebaseIdToken?: string }>).detail;
-      const next = String(detail?.firebaseIdToken || '').trim();
-      if (!next) return;
-      setDeleteFirebaseReauthToken(next);
-    };
-    window.addEventListener('net360:google-delete-reauth-token', onDeleteReauthToken);
-    return () => window.removeEventListener('net360:google-delete-reauth-token', onDeleteReauthToken);
   }, []);
 
   useEffect(() => {
@@ -569,38 +557,40 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
 
   const isDeleteConfirmationValid = deleteAccountConfirmationText.trim() === 'DELETE';
   const authProvider = String(user?.authProvider || '').toLowerCase();
-  const isFirebaseManagedAuth = authProvider === 'firebase' || authProvider === 'google';
+  const isGoogleSsoAuth = authProvider === 'firebase' || authProvider === 'google';
+  const isPasswordAuth = authProvider === 'local' || authProvider === 'password';
   const isDeletePasswordProvided = deleteAccountPassword.trim().length > 0;
-  const isDeleteGoogleVerified = deleteFirebaseReauthToken.trim().length > 0;
-  const canSubmitDeleteAccount = isDeleteConfirmationValid
-    && (isFirebaseManagedAuth || isDeletePasswordProvided)
-    && !isVerifyingDeleteGoogle
-    && !isDeletingAccount;
+  const canSubmitPasswordDelete = isDeleteConfirmationValid && isDeletePasswordProvided && !isDeletingAccount;
+  const canSendDeletionLink = isDeleteConfirmationValid && isGoogleSsoAuth && !isRequestingDeletionLink;
 
-  const handleGoogleDeleteVerification = async () => {
+  const handleRequestDeletionLink = async () => {
+    setDeleteAccountAttempted(true);
+    if (!isDeleteConfirmationValid) {
+      showErrorToast('Type DELETE exactly to confirm you want to start account deletion.');
+      return;
+    }
     try {
-      setIsVerifyingDeleteGoogle(true);
-      const verified = await confirmGoogleDeleteReauth();
-      setDeleteFirebaseReauthToken(String(verified?.firebaseIdToken || '').trim());
-      showSuccessToast('Google account verified. You can now delete your account.');
+      setIsRequestingDeletionLink(true);
+      setDeletionLinkFeedback('');
+      const result = await requestAccountDeletionLink();
+      const msg = String(result?.message || '').trim()
+        || 'Deletion confirmation link sent to your Google email.';
+      setDeletionLinkFeedback(msg);
+      showSuccessToast(msg);
     } catch (error) {
-      const code = String((error as { code?: string })?.code || '').trim();
-      if (code === 'USER_CANCELLED') {
-        showNeutralToast('Google verification was cancelled.');
-      } else if (code === 'DELETE_REAUTH_REDIRECT') {
-        showNeutralToast((error as Error).message);
-      } else {
-        handleApiError(error, 'Could not verify your Google account.');
-      }
-      setDeleteFirebaseReauthToken('');
+      handleApiError(error, 'Could not send deletion link.');
     } finally {
-      setIsVerifyingDeleteGoogle(false);
+      setIsRequestingDeletionLink(false);
     }
   };
 
   const handleDeleteAccount = async () => {
     setDeleteAccountAttempted(true);
-    if (!isFirebaseManagedAuth && !isDeletePasswordProvided) {
+    if (!isPasswordAuth) {
+      showErrorToast('Use the secure email link to delete a Google Sign-In account.');
+      return;
+    }
+    if (!isDeletePasswordProvided) {
       showErrorToast('Enter your registration password to confirm account deletion.');
       return;
     }
@@ -620,9 +610,6 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       const result = await deleteAccount({
         password: deleteAccountPassword,
         confirmationText: deleteAccountConfirmationText.trim(),
-        firebaseIdToken: isFirebaseManagedAuth
-          ? (deleteFirebaseReauthToken.trim() || undefined)
-          : undefined,
       });
       showSuccessToast(
         result?.message
@@ -634,16 +621,11 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       );
       setDeleteAccountPassword('');
       setDeleteAccountConfirmationText('');
-      setDeleteFirebaseReauthToken('');
+      setDeletionLinkFeedback('');
       setDeleteAccountAttempted(false);
       window.location.assign('/?tab=profile');
     } catch (error) {
-      const code = String((error as { code?: string })?.code || '').trim();
-      if (code === 'DELETE_REAUTH_REDIRECT') {
-        showNeutralToast((error as Error).message);
-      } else {
-        handleApiError(error, 'Could not delete account.');
-      }
+      handleApiError(error, 'Could not delete account.');
     } finally {
       setIsDeletingAccount(false);
     }
@@ -656,7 +638,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       if (next) {
         setDeleteAccountConfirmationText('');
         setDeleteAccountPassword('');
-        setDeleteFirebaseReauthToken('');
+        setDeletionLinkFeedback('');
         setDeleteAccountAttempted(false);
       }
       return next;
@@ -1420,23 +1402,27 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               ) : null}
             </div>
 
-            {isFirebaseManagedAuth ? (
+            {isGoogleSsoAuth ? (
               <div className="space-y-2">
-                <Label>Google account verification</Label>
+                <Label>Google Sign-In account</Label>
                 <p className="text-xs text-red-700/90">
-                  This account uses Google Sign-In. You will be prompted to verify with Google when you delete (unless you verified below recently). You can also verify ahead of time using the button below.
+                  This account uses Google Sign-In. For your security we do not delete Google accounts from this screen.
+                  We will email a single-use HTTPS link to <span className="font-medium">{user?.email || 'your Google email'}</span>.
                 </p>
                 <Button
                   type="button"
                   variant="outline"
                   className="w-fit border-red-300 bg-white text-red-700 hover:bg-red-50"
-                  disabled={isVerifyingDeleteGoogle || isDeletingAccount}
-                  onClick={() => void handleGoogleDeleteVerification()}
+                  disabled={!canSendDeletionLink || isDeletingAccount}
+                  onClick={() => void handleRequestDeletionLink()}
                 >
-                  {isVerifyingDeleteGoogle ? 'Verifying Google Account...' : 'Verify Google Account'}
+                  {isRequestingDeletionLink ? 'Sending link…' : 'Send Account Deletion Link'}
                 </Button>
-                {isDeleteGoogleVerified ? (
-                  <p className="text-xs font-medium text-emerald-700">Google account verified. You can now delete your account.</p>
+                {deletionLinkFeedback ? (
+                  <p className="text-xs font-medium text-emerald-700">{deletionLinkFeedback}</p>
+                ) : null}
+                {deleteAccountAttempted && !isDeleteConfirmationValid ? (
+                  <p className="text-xs font-medium text-red-700">Type DELETE above before sending the link.</p>
                 ) : null}
               </div>
             ) : (
@@ -1456,13 +1442,15 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 ) : null}
               </div>
             )}
+            {isPasswordAuth ? (
             <Button
               variant="destructive"
               onClick={() => void handleDeleteAccount()}
-              disabled={!canSubmitDeleteAccount}
+              disabled={!canSubmitPasswordDelete}
             >
               {isDeletingAccount ? 'Deleting Account Permanently...' : 'Delete Account Permanently'}
             </Button>
+            ) : null}
           </CardContent>
         ) : null}
       </Card>
