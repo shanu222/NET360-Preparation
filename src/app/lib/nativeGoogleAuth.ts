@@ -2,8 +2,19 @@ import { Capacitor } from '@capacitor/core';
 
 let socialLoginInit: Promise<void> | null = null;
 
+function nativeGoogleLogEnabled(): boolean {
+  try {
+    if (Capacitor.getPlatform() === 'android' && Capacitor.isNativePlatform()) return true;
+    const env = (import.meta as ImportMeta & { env?: { DEV?: boolean; VITE_NATIVE_AUTH_DEBUG?: string } }).env;
+    return Boolean(env?.DEV) || String(env?.VITE_NATIVE_AUTH_DEBUG || '').trim() === '1';
+  } catch {
+    return false;
+  }
+}
+
 function androidNativeLog(event: string, details: Record<string, unknown> = {}) {
   if (Capacitor.getPlatform() !== 'android' || !Capacitor.isNativePlatform()) return;
+  if (!nativeGoogleLogEnabled()) return;
   const payload = { ts: new Date().toISOString(), event, ...details };
   try {
     // eslint-disable-next-line no-console
@@ -85,13 +96,33 @@ function readNativeStatusCode(e: unknown): number | null {
 
 function isLikelyAndroidOauthMisconfig(code: string, statusCode: number | null, message: string): boolean {
   const msg = String(message || '').toLowerCase();
-  if (statusCode === 10 || statusCode === 12500 || statusCode === 12501) return true;
+  if (statusCode === 10 || statusCode === 12500) return true;
   if (msg.includes('developer_error')) return true;
   if (msg.includes('status: 10')) return true;
   if (msg.includes('oauth')) return true;
   if (msg.includes('sha-1') || msg.includes('sha1') || msg.includes('certificate')) return true;
   if (code === 'USER_CANCELLED' && (msg.includes('failed') || msg.includes('misconfig'))) return true;
   return false;
+}
+
+function isGoogleSignInCancelled(code: string, statusCode: number | null, message: string): boolean {
+  const msg = String(message || '').toLowerCase();
+  return code === 'USER_CANCELLED'
+    || statusCode === 12501
+    || msg.includes('cancel')
+    || msg.includes('sign_in_cancelled');
+}
+
+function isLikelyPlayServicesIssue(statusCode: number | null, message: string): boolean {
+  const msg = String(message || '').toLowerCase();
+  return statusCode === 1
+    || statusCode === 2
+    || statusCode === 3
+    || statusCode === 9
+    || msg.includes('play services')
+    || msg.includes('service_missing')
+    || msg.includes('service_version_update_required')
+    || msg.includes('service_disabled');
 }
 
 /**
@@ -129,6 +160,7 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
 
   let SocialLogin: {
     initialize: (options: unknown) => Promise<void>;
+    getPluginVersion?: () => Promise<{ version?: string }>;
     login: (options: unknown) => Promise<{
       provider: string;
       result: {
@@ -144,6 +176,14 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
       (specifier: string) => Promise<Record<string, unknown>>;
     const mod = await importDynamic('@capgo/capacitor-social-login');
     SocialLogin = mod.SocialLogin as typeof SocialLogin;
+    if (typeof SocialLogin.getPluginVersion === 'function') {
+      try {
+        const info = await SocialLogin.getPluginVersion();
+        androidNativeLog('social-login-plugin-version', { version: String(info?.version || '') || undefined });
+      } catch (e) {
+        androidNativeLog('social-login-plugin-version-failed', { error: serializeNativeError(e) });
+      }
+    }
   } catch (e) {
     androidNativeLog('plugin-import-failed', { error: serializeNativeError(e) });
     throw e;
@@ -189,6 +229,13 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
         style: 'standard',
       },
     });
+    androidNativeLog('social-login-login-raw-result', {
+      provider: res?.provider,
+      responseType: res?.result?.responseType,
+      hasIdToken: Boolean(res?.result?.idToken),
+      hasAccessToken: Boolean(res?.result?.accessToken?.token),
+      profileEmailPresent: Boolean(res?.result?.profile?.email),
+    });
   } catch (e) {
     const code = String((e as { code?: string })?.code || '').trim();
     const statusCode = readNativeStatusCode(e);
@@ -198,6 +245,18 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
       statusCode: statusCode ?? undefined,
       error: serializeNativeError(e),
     });
+    if (isGoogleSignInCancelled(code, statusCode, message)) {
+      const err = new Error('Google sign-in was cancelled.') as Error & { code?: string };
+      err.code = 'USER_CANCELLED';
+      throw err;
+    }
+    if (isLikelyPlayServicesIssue(statusCode, message)) {
+      const err = new Error(
+        'Google Play Services is unavailable or needs an update on this device. Update Google Play Services and try again.',
+      ) as Error & { code?: string };
+      err.code = 'GOOGLE_PLAY_SERVICES_UNAVAILABLE';
+      throw err;
+    }
     if (isLikelyAndroidOauthMisconfig(code, statusCode, message)) {
       const err = new Error(
         'Android Google OAuth is misconfigured for this package/signing key. ' +
