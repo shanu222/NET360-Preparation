@@ -194,6 +194,7 @@ const STUDENT_NAVIGATION_ITEMS: Array<{ id: SectionId; label: string; icon: type
   { id: 'community', label: 'Community', icon: Users },
   { id: 'subscription', label: 'Subscription', icon: Crown },
   { id: 'profile', label: 'Profile', icon: User },
+  { id: 'delete-account', label: 'How To Delete Your Account', icon: FileText },
 ];
 
 const SidebarNavigation = memo(function SidebarNavigation({
