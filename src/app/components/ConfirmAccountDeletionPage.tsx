@@ -42,7 +42,15 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
         }>(`/api/auth/verify-delete-token?token=${encodeURIComponent(rawToken)}`, { method: 'GET' }, null);
         if (cancelled) return;
         if (!res?.valid) {
-          setVerify({ status: 'invalid', message: String(res?.error || 'This deletion link is not valid.') });
+          const invalidMessage = String(res?.error || 'This deletion link is not valid.');
+          setVerify({ status: 'invalid', message: invalidMessage });
+          if (invalidMessage.toLowerCase().includes('expired')) {
+            showErrorToast('This deletion link has expired. Request a new verification email.');
+          } else if (invalidMessage.toLowerCase().includes('already been used')) {
+            showErrorToast('This deletion link was already used.');
+          } else {
+            showErrorToast(invalidMessage);
+          }
           return;
         }
         setVerify({

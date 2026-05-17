@@ -298,12 +298,13 @@ const ALLOW_QUERY_TOKEN_AUTH =
     : !IS_PRODUCTION;
 
 const MODEL_PROVIDER_KEY = process.env.MODEL_PROVIDER_API_KEY || process.env.OPENAI_API_KEY || '';
-const SMTP_HOST = String(process.env.SMTP_HOST || 'smtp.gmail.com').trim();
+const SMTP_HOST = String(process.env.SMTP_HOST || '').trim();
 const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
 const SMTP_SECURE = String(process.env.SMTP_SECURE || 'false').toLowerCase() === 'true';
 const SMTP_USER = String(process.env.SMTP_USER || '').trim();
 const SMTP_PASS = String(process.env.SMTP_PASS || '').trim();
 const SMTP_FROM_EMAIL = String(process.env.SMTP_FROM_EMAIL || SMTP_USER).trim();
+const NET360_PUBLIC_APP_URL = String(process.env.NET360_PUBLIC_APP_URL || process.env.PUBLIC_APP_URL || '').trim();
 const TWILIO_ACCOUNT_SID = String(process.env.TWILIO_ACCOUNT_SID || '').trim();
 const TWILIO_AUTH_TOKEN = String(process.env.TWILIO_AUTH_TOKEN || '').trim();
 const TWILIO_PHONE_NUMBER = String(process.env.TWILIO_PHONE_NUMBER || '').trim();
@@ -320,7 +321,22 @@ const runtimeConfigCache = {
 
 const RUNTIME_CONFIG_CACHE_MS = 10_000;
 
-const smtpTransporter = SMTP_USER && SMTP_PASS
+const smtpMissingEnv = [];
+if (!SMTP_HOST) smtpMissingEnv.push('SMTP_HOST');
+if (!Number.isFinite(SMTP_PORT) || SMTP_PORT <= 0) smtpMissingEnv.push('SMTP_PORT');
+if (!SMTP_USER) smtpMissingEnv.push('SMTP_USER');
+if (!SMTP_PASS) smtpMissingEnv.push('SMTP_PASS');
+if (!SMTP_FROM_EMAIL) smtpMissingEnv.push('SMTP_FROM_EMAIL');
+if (!NET360_PUBLIC_APP_URL) smtpMissingEnv.push('NET360_PUBLIC_APP_URL');
+
+const smtpRuntime = {
+  enabled: smtpMissingEnv.length === 0,
+  verifyAttempted: false,
+  verified: false,
+  verifyError: '',
+};
+
+const smtpTransporter = smtpRuntime.enabled
   ? nodemailer.createTransport({
     host: SMTP_HOST,
     port: SMTP_PORT,
@@ -331,6 +347,32 @@ const smtpTransporter = SMTP_USER && SMTP_PASS
     },
   })
   : null;
+
+async function verifySmtpTransport(reason = 'startup') {
+  if (!smtpTransporter) return false;
+  if (smtpRuntime.verified) return true;
+  smtpRuntime.verifyAttempted = true;
+  try {
+    await smtpTransporter.verify();
+    smtpRuntime.verified = true;
+    smtpRuntime.verifyError = '';
+    console.log(`[smtp] transporter verified (${reason})`);
+    return true;
+  } catch (error) {
+    smtpRuntime.verified = false;
+    smtpRuntime.verifyError = (error instanceof Error ? error.message : String(error)).slice(0, 220);
+    console.warn(`[smtp] transporter verify failed (${reason}): ${smtpRuntime.verifyError}`);
+    return false;
+  }
+}
+
+if (!smtpRuntime.enabled) {
+  const missing = smtpMissingEnv.length ? smtpMissingEnv.join(', ') : 'unknown';
+  console.warn(`[smtp] disabled. Missing env: ${missing}`);
+} else {
+  console.log(`[smtp] enabled host=${SMTP_HOST || 'n/a'} port=${SMTP_PORT} secure=${SMTP_SECURE ? 'true' : 'false'} from=${SMTP_FROM_EMAIL || 'n/a'}`);
+  void verifySmtpTransport('startup');
+}
 
 const twilioClient = TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN
   ? Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
@@ -3840,7 +3882,7 @@ function generateAccountDeletionRawToken() {
 }
 
 function resolveNet360PublicWebBaseUrl() {
-  const raw = String(process.env.NET360_PUBLIC_APP_URL || process.env.PUBLIC_APP_URL || '').trim().replace(/\/+$/, '');
+  const raw = String(NET360_PUBLIC_APP_URL || '').trim().replace(/\/+$/, '');
   if (raw) {
     try {
       const u = new URL(raw.includes('://') ? raw : `https://${raw}`);
@@ -3856,6 +3898,26 @@ function resolveNet360PublicWebBaseUrl() {
     return 'https://net360preparation.com';
   }
   return 'http://localhost:5173';
+}
+
+async function ensureDeletionEmailDeliveryReady() {
+  if (!smtpRuntime.enabled || !smtpTransporter) {
+    return {
+      ok: false,
+      detail: 'Email delivery is temporarily unavailable.',
+    };
+  }
+  if (smtpRuntime.verified) {
+    return { ok: true, detail: '' };
+  }
+  const verified = await verifySmtpTransport('delete-link');
+  if (!verified) {
+    return {
+      ok: false,
+      detail: 'Email delivery is temporarily unavailable.',
+    };
+  }
+  return { ok: true, detail: '' };
 }
 
 function buildAccountDeletionSessionFingerprint(req, user) {
@@ -3880,8 +3942,9 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
   if (!isValidEmail(toEmail)) {
     return { status: 'failed', detail: 'Invalid destination email.' };
   }
-  if (!smtpTransporter || !SMTP_FROM_EMAIL) {
-    return { status: 'failed', detail: 'SMTP provider not configured.' };
+  const readiness = await ensureDeletionEmailDeliveryReady();
+  if (!readiness.ok || !smtpTransporter || !SMTP_FROM_EMAIL) {
+    return { status: 'failed', detail: readiness.detail || 'Email delivery is temporarily unavailable.' };
   }
   const greetingName = String(firstName || '').trim() || 'NET360 student';
   const expiryLabel = expiresAt.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
@@ -8121,6 +8184,12 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
 
 app.post('/api/auth/request-delete-link', authMiddleware, async (req, res) => {
   try {
+    const confirmationText = String(req.body?.confirmationText || '').trim();
+    if (confirmationText !== 'DELETE') {
+      res.status(400).json({ error: 'Type DELETE to confirm permanent account deletion.' });
+      return;
+    }
+
     const user = await UserModel.findById(req.user._id).select('_id role email firebaseUid authProvider activeSession firstName');
     if (!user) {
       res.status(404).json({ error: 'Account not found.' });
@@ -8141,6 +8210,12 @@ app.post('/api/auth/request-delete-link', authMiddleware, async (req, res) => {
     const email = normalizeEmail(user.email || '');
     if (!email) {
       res.status(400).json({ error: 'No email is associated with this account.' });
+      return;
+    }
+
+    const emailReady = await ensureDeletionEmailDeliveryReady();
+    if (!emailReady.ok) {
+      res.status(503).json({ error: 'Email delivery is temporarily unavailable.' });
       return;
     }
 
@@ -8183,7 +8258,7 @@ app.post('/api/auth/request-delete-link', authMiddleware, async (req, res) => {
 
     if (sendResult.status !== 'sent') {
       await AccountDeletionTokenModel.deleteOne({ tokenHash });
-      res.status(503).json({ error: 'Could not send deletion email. Please try again later or contact support.' });
+      res.status(503).json({ error: 'Email delivery is temporarily unavailable.' });
       return;
     }
 

@@ -55,7 +55,7 @@ interface AuthContextValue {
   }) => Promise<void>;
   sendRecoveryEmail: (email: string) => Promise<void>;
   deleteAccount: (params: { password: string; confirmationText: string }) => Promise<{ message: string }>;
-  requestAccountDeletionLink: () => Promise<{ message: string; expiresAt?: string }>;
+  requestAccountDeletionLink: (params: { confirmationText: string }) => Promise<{ message: string; expiresAt?: string }>;
   logout: () => void;
 }
 
@@ -1054,12 +1054,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await sendPasswordResetEmail(activeAuth, email);
   }, []);
 
-  const requestAccountDeletionLink = useCallback<AuthContextValue['requestAccountDeletionLink']>(async () => {
+  const requestAccountDeletionLink = useCallback<AuthContextValue['requestAccountDeletionLink']>(async ({ confirmationText }) => {
     return apiRequest<{ message: string; expiresAt?: string }>(
       '/api/auth/request-delete-link',
       {
         method: 'POST',
-        body: JSON.stringify({ deviceId }),
+        body: JSON.stringify({ deviceId, confirmationText }),
         timeoutMs: 45_000,
         retryCount: 0,
       },
