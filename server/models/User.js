@@ -118,7 +118,7 @@ const userSchema = new mongoose.Schema(
     hsscPercentage: { type: String, default: '' },
     testDate: { type: String, default: '' },
     role: { type: String, enum: ['student', 'admin'], default: 'student', index: true },
-    authProvider: { type: String, enum: ['local', 'firebase'], default: 'local', index: true },
+    authProvider: { type: String, enum: ['local', 'firebase', 'google', 'password'], default: 'local', index: true },
     firebaseUid: { type: String, default: '', index: true },
     preferences: { type: preferencesSchema, default: () => ({}) },
     progress: { type: progressSchema, default: () => ({}) },
