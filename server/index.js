@@ -8321,6 +8321,12 @@ app.get('/api/auth/verify-delete-token', async (req, res) => {
 
 app.post('/api/auth/confirm-delete', async (req, res) => {
   try {
+    const confirmationText = String(req.body?.confirmationText || '').trim();
+    if (confirmationText !== 'DELETE') {
+      res.status(400).json({ error: 'Type DELETE to confirm permanent account deletion.' });
+      return;
+    }
+
     const raw = String(req.body?.token || '').trim();
     if (!raw || raw.length > 512) {
       res.status(400).json({ error: 'Invalid deletion link.' });

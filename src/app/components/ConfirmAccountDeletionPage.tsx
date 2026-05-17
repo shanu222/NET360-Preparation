@@ -4,9 +4,11 @@ import { Helmet } from 'react-helmet-async';
 import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Input } from './ui/input';
+import { Label } from './ui/label';
 import { apiRequest } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
-import { showErrorToast } from '../lib/userToast';
+import { showErrorToast, showSuccessToast } from '../lib/userToast';
 
 type VerifyState =
   | { status: 'idle' }
@@ -23,6 +25,8 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
   const [verify, setVerify] = useState<VerifyState>({ status: 'idle' });
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
+  const [confirmationText, setConfirmationText] = useState('');
+  const [submitError, setSubmitError] = useState('');
 
   useEffect(() => {
     if (!rawToken || rawToken.length > 512) {
@@ -75,19 +79,30 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
 
   const handleConfirm = useCallback(async () => {
     if (!rawToken || verify.status !== 'ready') return;
+    if (confirmationText.trim() !== 'DELETE') {
+      setSubmitError('Type DELETE exactly to confirm permanent account deletion.');
+      return;
+    }
     try {
       setSubmitting(true);
+      setSubmitError('');
       const result = await apiRequest<{ message: string }>(
         '/api/auth/confirm-delete',
         {
           method: 'POST',
-          body: JSON.stringify({ token: rawToken }),
+          body: JSON.stringify({
+            token: rawToken,
+            confirmationText: 'DELETE',
+          }),
           timeoutMs: 90_000,
           retryCount: 0,
         },
         null,
       );
       setDone(true);
+      showSuccessToast(
+        result?.message || 'Your NET360 account has been permanently deleted.',
+      );
       try {
         await logout();
       } catch {
@@ -97,15 +112,21 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
         navigate('/', { replace: true });
       }, 2200);
     } catch (error) {
-      showErrorToast((error as Error)?.message || 'Could not complete account deletion.');
+      const message = String((error as Error)?.message || 'Could not complete account deletion.');
+      setSubmitError(message);
+      showErrorToast(message);
     } finally {
       setSubmitting(false);
     }
-  }, [logout, navigate, rawToken, verify.status]);
+  }, [confirmationText, logout, navigate, rawToken, verify.status]);
 
   const expiryLabel = verify.status === 'ready' && verify.expiresAt
     ? new Date(verify.expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
     : '';
+  const canConfirmDelete = verify.status === 'ready'
+    && confirmationText.trim() === 'DELETE'
+    && !submitting
+    && !done;
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-4 py-10">
@@ -138,7 +159,7 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
 
           {verify.status === 'ready' ? (
             <>
-              <div className="rounded-xl border border-amber-200 bg-amber-50/90 p-4 text-sm text-amber-950 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100">
+              <div className="rounded-xl border border-amber-300 bg-amber-50/95 p-4 text-sm text-amber-950 dark:border-amber-800/60 dark:bg-amber-950/60 dark:text-amber-50">
                 <p className="font-semibold">This action is permanent</p>
                 <p className="mt-2 leading-relaxed">
                   Deleting your NET360 account removes your access, subscriptions, preparation progress, community
@@ -160,6 +181,9 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
                 {expiryLabel ? (
                   <p className="text-xs text-slate-500 dark:text-slate-400">Link valid until {expiryLabel}.</p>
                 ) : null}
+                <p className="text-xs font-medium text-rose-700 dark:text-rose-300">
+                  This deletion link is single-use and cannot be reused after confirmation.
+                </p>
                 {user?.email && verify.email && user.email.toLowerCase() !== verify.email.toLowerCase() ? (
                   <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
                     You are signed in as a different NET360 account. After deletion, this browser session will be
@@ -167,15 +191,32 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
                   </p>
                 ) : null}
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="confirm-delete-text" className="text-sm font-semibold text-rose-800 dark:text-rose-200">
+                  Type DELETE to permanently remove your account
+                </Label>
+                <Input
+                  id="confirm-delete-text"
+                  name="confirm-delete-text"
+                  autoComplete="off"
+                  placeholder="DELETE"
+                  value={confirmationText}
+                  onChange={(e) => setConfirmationText(e.target.value)}
+                  className="border-rose-300 bg-white text-slate-900 placeholder:text-slate-500 dark:border-rose-700 dark:bg-slate-950 dark:text-slate-100"
+                />
+              </div>
               <Button
                 type="button"
                 variant="destructive"
-                className="w-full min-h-11 touch-manipulation"
-                disabled={submitting || done}
+                className={`w-full min-h-11 touch-manipulation ${canConfirmDelete ? 'opacity-100' : 'opacity-60'}`}
+                disabled={!canConfirmDelete}
                 onClick={() => void handleConfirm()}
               >
-                {submitting ? 'Deleting account…' : done ? 'Account deleted' : 'Confirm permanent account deletion'}
+                {submitting ? 'Deleting account…' : done ? 'Account deleted' : 'Confirm Permanent Account Deletion'}
               </Button>
+              {submitError ? (
+                <p className="text-xs font-medium text-rose-700 dark:text-rose-300">{submitError}</p>
+              ) : null}
             </>
           ) : null}
 
