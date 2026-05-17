@@ -231,11 +231,11 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
               </div>
               <Button
                 type="button"
-                variant="default"
-                className={`relative z-10 w-full min-h-11 touch-manipulation transition-colors ${
+                variant="ghost"
+                className={`relative z-10 w-full rounded-xl px-4 py-4 text-base font-semibold transition-all duration-200 disabled:!opacity-60 ${
                   canDelete
-                    ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:from-indigo-500 hover:to-violet-500 dark:from-indigo-500 dark:to-violet-500 dark:hover:from-indigo-400 dark:hover:to-violet-400'
-                    : 'cursor-not-allowed bg-slate-300 text-slate-700 opacity-50 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-700'
+                    ? '!bg-gradient-to-r !from-violet-600 !to-purple-600 !text-white shadow-lg hover:scale-[1.01] active:scale-[0.99] cursor-pointer hover:!text-white dark:!text-white'
+                    : '!bg-gray-200 !text-gray-500 opacity-60 cursor-not-allowed hover:!bg-gray-200 hover:!text-gray-500 dark:!bg-gray-700 dark:!text-gray-300'
                 }`}
                 disabled={!canDelete}
                 onClick={() => void handleConfirm()}
