@@ -1416,7 +1416,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                   disabled={!canSendDeletionLink || isDeletingAccount}
                   onClick={() => void handleRequestDeletionLink()}
                 >
-                  {isRequestingDeletionLink ? 'Sending link…' : 'Send Account Deletion Link'}
+                  {isRequestingDeletionLink ? 'Sending link…' : 'Send Verification Link'}
                 </Button>
                 {deletionLinkFeedback ? (
                   <p className="text-xs font-medium text-emerald-700">{deletionLinkFeedback}</p>
