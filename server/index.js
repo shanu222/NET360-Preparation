@@ -1,3 +1,13 @@
+﻿const allowedOrigins = [
+  "https://net360preparation.com",
+  "https://www.net360preparation.com",
+  "capacitor://localhost",
+  "http://localhost",
+  "https://localhost",
+  "http://10.0.2.2",
+  "http://127.0.0.1"
+];
+
 import dotenv from 'dotenv';
 import express from 'express';
 import compression from 'compression';
@@ -85,6 +95,7 @@ import { PremiumSubscriptionRequestModel } from './models/PremiumSubscriptionReq
 import { PremiumActivationTokenModel } from './models/PremiumActivationToken.js';
 import { PasswordRecoveryRequestModel } from './models/PasswordRecoveryRequest.js';
 import { SupportChatMessageModel } from './models/SupportChatMessage.js';
+import { AccountDeletionTokenModel } from './models/AccountDeletionToken.js';
 import { SecurityAuditEventModel } from './models/SecurityAuditEvent.js';
 import { RuntimeConfigModel } from './models/RuntimeConfig.js';
 import {
@@ -421,6 +432,88 @@ const PREMIUM_CHECKOUT_PLAN_ID = 'premium_6m';
 const PAYFAST_WALLET_ACCOUNT_TYPE_ID = String(process.env.PAYFAST_WALLET_ACCOUNT_TYPE_ID || '4').trim();
 
 const app = express();
+
+
+
+app.use(cors({
+  origin: function(origin, callback) {
+
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.log("Blocked by CORS:", origin);
+
+    return callback(null, true);
+  },
+
+  credentials: true,
+
+  methods: [
+    "GET",
+    "POST",
+    "PUT",
+    "PATCH",
+    "DELETE",
+    "OPTIONS"
+  ],
+
+  allowedHeaders: [
+    "Origin",
+    "X-Requested-With",
+    "Content-Type",
+    "Accept",
+    "Authorization",
+    "x-net360-client-platform",
+    "x-net360-client-version",
+    "X-Net360-Auth-Transport-Preference",
+    "x-net360-auth-transport-preference",
+  ]
+}));
+
+app.options("*", cors());
+
+
+app.use((req, res, next) => {
+  
+
+  const origin = req.headers.origin;
+
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+
+  res.header(
+    'Access-Control-Allow-Headers',
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-net360-client-platform, x-net360-client-version, X-Net360-Auth-Transport-Preference, x-net360-auth-transport-preference',
+  );
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.header('Access-Control-Allow-Credentials', 'true');
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
+
+
+
+
+
+
+
+
+
+
+
+app.options('*', cors());
+
 const aiParseUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: AI_PARSE_MAX_FILE_BYTES },
@@ -700,31 +793,17 @@ const corsAllowedOriginsList = corsAllowedOriginsListRaw
   : null;
 
 /**
- * Origins always permitted even when `CORS_ALLOWED_ORIGINS` is set:
- * - Local dev + Capacitor shells (`isTrustedNativeAppOrigin`): fixed strings only (not `*`).
- * - Official NET360 HTTPS hosts (`isKnownNet360ProductionWebOrigin`): avoids misconfigured allowlists
- *   (e.g. only the API origin) that would block the SPA and show missing `Access-Control-Allow-Origin`.
+ * Origins always permitted even when `CORS_ALLOWED_ORIGINS` is set (local dev + Capacitor shells).
+ * Capacitor / Ionic use non-http(s) origins; local dev uses localhost with common Vite / dev-server ports.
+ * Fixed strings only (not `*`): the browser only sends these `Origin` values for pages served from
+ * those URLs, so this does not grant access to arbitrary third-party websites.
  */
-function isKnownNet360ProductionWebOrigin(origin) {
-  const o = String(origin || '').trim().toLowerCase();
-  if (!o) return false;
-  try {
-    const u = new URL(o);
-    if (u.protocol !== 'https:') return false;
-    const h = u.hostname.toLowerCase();
-    return h === 'www.net360preparation.com' || h === 'net360preparation.com';
-  } catch {
-    return false;
-  }
-}
-
 function isTrustedNativeAppOrigin(origin) {
   const o = String(origin || '').trim().toLowerCase();
   if (!o) return false;
   const trusted = new Set([
     'http://localhost',
     'https://localhost',
-    // Capacitor `androidScheme: "https"` serves from https://localhost (no port in Origin).
     'http://localhost:3000',
     'https://localhost:3000',
     'http://localhost:5173',
@@ -756,18 +835,12 @@ const corsOriginResolver = corsAllowedOriginsList
         callback(null, true);
         return;
       }
-      if (IS_PRODUCTION && isKnownNet360ProductionWebOrigin(origin)) {
-        callback(null, true);
-        return;
-      }
       if (corsAllowedOriginsList.includes(origin)) {
         callback(null, true);
         return;
       }
       if (IS_PRODUCTION) {
-        console.warn('[cors] Blocked origin:', origin);
       } else {
-        console.warn('[cors] Blocked origin (dev):', origin);
       }
       callback(null, false);
     }
@@ -779,7 +852,7 @@ const corsOriginResolver = corsAllowedOriginsList
  * The SPA (`src/app/lib/api.ts`) sets `X-Net360-Client-Platform` on fetch (web vs native). Any
  * non-simple header triggers a CORS preflight: the browser sends OPTIONS with
  * `Access-Control-Request-Headers: ...`. If the response omits those names in
- * `Access-Control-Allow-Headers`, the real POST/GET is never sent → console shows the header
+ * `Access-Control-Allow-Headers`, the real POST/GET is never sent â†’ console shows the header
  * "is not allowed" and `net::ERR_FAILED` for the follow-up request.
  *
  * We use an explicit `allowedHeaders` list (not `*`) because credentialed requests require
@@ -788,8 +861,7 @@ const corsOriginResolver = corsAllowedOriginsList
  * Origins: if `CORS_ALLOWED_ORIGINS` is unset, `origin: true` makes the `cors` package reflect
  * the request `Origin` (not `Access-Control-Allow-Origin: *`), which preserves cookie auth for
  * known frontends. When `CORS_ALLOWED_ORIGINS` is set, requests must match the allowlist (with
- * www/apex expansion), `isTrustedNativeAppOrigin`, or `isKnownNet360ProductionWebOrigin` for the
- * official NET360 HTTPS hosts — set the env in production to restrict other origins.
+ * www/apex expansion) or `isTrustedNativeAppOrigin` â€” set the env in production to restrict origins.
  *
  * `app.options('*', corsMiddleware)` plus `skip` on rate-limiters for OPTIONS avoids 429s on
  * preflight without CORS headers.
@@ -799,17 +871,17 @@ const corsMiddleware = cors({
   credentials: true,
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Requested-With',
-    'Accept',
-    'Origin',
-    'Cookie',
-    'X-CSRF-Token',
-    'Cache-Control',
-    'X-Net360-Client-Platform',
-    'X-Net360-Auth-Transport-Preference',
-  ],
+      'Origin',
+      'X-Requested-With',
+      'Content-Type',
+      'Accept',
+      'Authorization',
+      'x-net360-client-platform',
+      'x-net360-client-version',
+      'x-requested-with',
+      'X-Net360-Auth-Transport-Preference',
+      'x-net360-auth-transport-preference',
+    ],
   exposedHeaders: ['Content-Length', 'Content-Type', 'X-Net360-Auth-Transport', 'X-Net360-Auth-Cookies-Set'],
   maxAge: 86_400,
   optionsSuccessStatus: 204,
@@ -1013,6 +1085,42 @@ app.use(
 );
 
 app.use(
+  '/api/auth/request-delete-link',
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 8,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
+    message: { error: 'Too many account deletion link requests. Please try again later.' },
+  }),
+);
+
+app.use(
+  '/api/auth/verify-delete-token',
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
+    message: { error: 'Too many token verification attempts. Please try again later.' },
+  }),
+);
+
+app.use(
+  '/api/auth/confirm-delete',
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 12,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
+    message: { error: 'Too many account deletion confirmations. Please try again later.' },
+  }),
+);
+
+app.use(
   '/api/ai',
   rateLimit({
     windowMs: 5 * 60 * 1000,
@@ -1143,50 +1251,6 @@ function readPagination(query, options = {}) {
   const limit = parsePositiveInt(query?.limit, defaultLimit, 1, maxLimit);
   const skip = (page - 1) * limit;
   return { page, limit, skip };
-}
-
-/** First non-empty trimmed string (query/body alias resolution; does not touch Mongo schema). */
-function firstTruthyTrimmedString(...candidates) {
-  for (let i = 0; i < candidates.length; i += 1) {
-    const s = String(candidates[i] ?? '').trim();
-    if (s) return s;
-  }
-  return '';
-}
-
-/**
- * Coalesce MCQ filter fields from `req.query` or JSON body (duplicate keys / legacy client names).
- */
-function normalizeMcqFilterPayload(flat) {
-  const o = flat && typeof flat === 'object' ? flat : {};
-  return {
-    subject: firstTruthyTrimmedString(
-      o.subject,
-      o.subjectKey,
-      o.subjectSlug,
-      o.subject_id,
-    ),
-    part: firstTruthyTrimmedString(o.part, o.part_id, o.academicPart),
-    chapter: firstTruthyTrimmedString(
-      o.chapter,
-      o.chapter_id,
-      o.chapterTitle,
-      o.chapter_name,
-    ),
-    section: firstTruthyTrimmedString(
-      o.section,
-      o.section_id,
-      o.sectionTitle,
-      o.section_name,
-    ),
-    topic: firstTruthyTrimmedString(
-      o.topic,
-      o.topic_id,
-      o.topicTitle,
-      o.topic_name,
-    ),
-    difficulty: firstTruthyTrimmedString(o.difficulty),
-  };
 }
 
 function escapeRegexLiteral(value, maxLen = 80) {
@@ -3354,8 +3418,9 @@ function makeAccessToken(user) {
     role: user.role || 'student',
   };
 
-  const sessionId = String(user.activeSessionId || user.activeSession?.sessionId || '').trim();
-  if (sessionId) payload.sessionId = sessionId;
+  if ((user.role || 'student') === 'student' && user.activeSession?.sessionId) {
+    payload.sessionId = user.activeSession.sessionId;
+  }
 
   return jwt.sign(
     payload,
@@ -3371,8 +3436,9 @@ function makeRefreshToken(user) {
     role: user.role || 'student',
   };
 
-  const sessionId = String(user.activeSessionId || user.activeSession?.sessionId || '').trim();
-  if (sessionId) payload.sessionId = sessionId;
+  if ((user.role || 'student') === 'student' && user.activeSession?.sessionId) {
+    payload.sessionId = user.activeSession.sessionId;
+  }
 
   return jwt.sign(
     payload,
@@ -3417,65 +3483,15 @@ async function verifyFirebaseUserToken(idToken) {
   if (!decoded.uid || !email) {
     throw new Error('Invalid Firebase token payload.');
   }
-  const providerRaw = String(decoded?.firebase?.sign_in_provider || '').trim().toLowerCase();
-  const provider = providerRaw === 'google.com'
-    ? 'google'
-    : providerRaw === 'password'
-      ? 'password'
-      : providerRaw || 'unknown';
+  const authTimeSeconds = Number(decoded.auth_time || 0);
+  const authTimeMs = Number.isFinite(authTimeSeconds) && authTimeSeconds > 0
+    ? Math.floor(authTimeSeconds * 1000)
+    : 0;
   return {
     uid: String(decoded.uid),
     email,
-    displayName: String(decoded.name || '').trim(),
-    profilePhotoUrl: String(decoded.picture || '').trim(),
-    provider,
+    authTimeMs,
   };
-}
-
-function normalizeAuthProviderDetail(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'google' || normalized === 'password') return normalized;
-  return normalized || 'unknown';
-}
-
-function splitDisplayNameParts(displayName) {
-  const normalized = String(displayName || '').trim();
-  if (!normalized) return { firstName: '', lastName: '' };
-  const parts = normalized.split(/\s+/).filter(Boolean);
-  const firstName = sanitizeHumanName(parts[0] || '');
-  const lastName = sanitizeHumanName(parts.slice(1).join(' '));
-  return { firstName, lastName };
-}
-
-function inferPlatformFromRequest(req) {
-  try {
-    if (isNativeAppRequest(req)) return 'android';
-    const ua = String(req?.headers?.['user-agent'] || '').toLowerCase();
-    if (ua.includes('android')) return 'android';
-    if (ua.includes('mozilla') || ua.includes('chrome') || ua.includes('safari')) return 'web';
-  } catch {
-    // ignore
-  }
-  return 'unknown';
-}
-
-function buildNextPlatformUsage(existingUsage, platform, now = new Date()) {
-  const current = {
-    lastPlatform: String(existingUsage?.lastPlatform || 'unknown'),
-    lastSeenAt: existingUsage?.lastSeenAt || null,
-    androidLogins: Number(existingUsage?.androidLogins || 0),
-    webLogins: Number(existingUsage?.webLogins || 0),
-    unknownLogins: Number(existingUsage?.unknownLogins || 0),
-  };
-  const next = {
-    ...current,
-    lastPlatform: platform || 'unknown',
-    lastSeenAt: now,
-  };
-  if (platform === 'android') next.androidLogins += 1;
-  else if (platform === 'web') next.webLogins += 1;
-  else next.unknownLogins += 1;
-  return next;
 }
 
 async function ensureEnvAdminUserForLogin(email, password) {
@@ -3677,7 +3693,7 @@ function duplicateAccountErrorMessage(matchedBy, hasActiveSubscription) {
   return `An account already exists with this ${fieldLabel}. Please log in using your existing account, or use a different email address or mobile number.`;
 }
 
-/** Token-based / bcrypt users without a Firebase UID — safe to link when they complete Firebase signup. */
+/** Token-based / bcrypt users without a Firebase UID â€” safe to link when they complete Firebase signup. */
 function isLegacyStudentForFirebaseMigration(userLike) {
   if (!userLike) return false;
   if (String(userLike.role || 'student') === 'admin') return false;
@@ -3810,6 +3826,265 @@ async function sendRecoveryEmail(destination, token, expiresInMinutes = 30) {
       detail: error instanceof Error ? error.message : 'Email provider error.',
     };
   }
+}
+
+const ACCOUNT_DELETION_LINK_TTL_MS = 15 * 60 * 1000;
+const NET360_SUPPORT_EMAIL = 'support@net360preparation.com';
+
+function hashAccountDeletionRawToken(rawToken) {
+  return crypto.createHash('sha256').update(String(rawToken || ''), 'utf8').digest('hex');
+}
+
+function generateAccountDeletionRawToken() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function resolveNet360PublicWebBaseUrl() {
+  const raw = String(process.env.NET360_PUBLIC_APP_URL || process.env.PUBLIC_APP_URL || '').trim().replace(/\/+$/, '');
+  if (raw) {
+    try {
+      const u = new URL(raw.includes('://') ? raw : `https://${raw}`);
+      if (IS_PRODUCTION && u.protocol !== 'https:') {
+        return `https://${u.host}`;
+      }
+      return `${u.protocol}//${u.host}`.replace(/\/+$/, '');
+    } catch {
+      /* fall through */
+    }
+  }
+  if (IS_PRODUCTION) {
+    return 'https://net360preparation.com';
+  }
+  return 'http://localhost:5173';
+}
+
+function buildAccountDeletionSessionFingerprint(req, user) {
+  const sid = String(user?.activeSession?.sessionId || '').trim();
+  const did = String(req.body?.deviceId || req.get('x-net360-device-id') || '').trim().slice(0, 120);
+  const ua = getUserAgent(req);
+  const combined = `session:${sid}|device:${did}|ua:${ua}`;
+  return crypto.createHash('sha256').update(combined, 'utf8').digest('hex').slice(0, 48);
+}
+
+function isGoogleManagedAuthProvider(authProvider, firebaseUid) {
+  const p = String(authProvider || 'local').trim().toLowerCase();
+  return p === 'firebase' || p === 'google' || Boolean(String(firebaseUid || '').trim());
+}
+
+function isPasswordManagedAuthProvider(authProvider) {
+  const p = String(authProvider || 'local').trim().toLowerCase();
+  return p === 'local' || p === 'password';
+}
+
+async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, expiresAt }) {
+  if (!isValidEmail(toEmail)) {
+    return { status: 'failed', detail: 'Invalid destination email.' };
+  }
+  if (!smtpTransporter || !SMTP_FROM_EMAIL) {
+    return { status: 'failed', detail: 'SMTP provider not configured.' };
+  }
+  const greetingName = String(firstName || '').trim() || 'NET360 student';
+  const expiryLabel = expiresAt.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  const subject = 'Confirm NET360 account deletion';
+  const text = [
+    `Hi ${greetingName},`,
+    '',
+    'We received a request to permanently delete your NET360 account.',
+    '',
+    `This confirmation link expires at ${expiryLabel} (about 15 minutes from when it was sent).`,
+    '',
+    `Open this link to review and confirm deletion: ${deleteUrl}`,
+    '',
+    'If you did not request account deletion, ignore this email. Your account will stay active.',
+    '',
+    `Questions? Contact ${NET360_SUPPORT_EMAIL}`,
+    '',
+    '— NET360 Preparation',
+  ].join('\n');
+
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f8;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1e1b4b;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f4f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 12px 40px rgba(30,27,75,0.12);">
+        <tr><td style="padding:28px 28px 8px;font-size:20px;font-weight:700;color:#312e81;">NET360 Preparation</td></tr>
+        <tr><td style="padding:8px 28px 20px;font-size:14px;color:#64748b;">Account deletion request</td></tr>
+        <tr><td style="padding:0 28px 16px;font-size:15px;line-height:1.6;color:#334155;">
+          Hi <strong>${escapeHtml(greetingName)}</strong>,
+        </td></tr>
+        <tr><td style="padding:0 28px 16px;font-size:15px;line-height:1.6;color:#334155;">
+          We received a request to <strong>permanently delete</strong> your NET360 account. This action cannot be undone and will remove your access, subscriptions, and associated study data on the platform.
+        </td></tr>
+        <tr><td style="padding:0 28px 16px;font-size:14px;line-height:1.6;color:#b45309;background:#fffbeb;border-radius:12px;margin:0 20px;">
+          <div style="padding:14px 16px;"><strong>Link expires:</strong> ${escapeHtml(expiryLabel)} (15 minutes from send). Each link is single-use.</div>
+        </td></tr>
+        <tr><td style="padding:24px 28px 8px;" align="center">
+          <a href="${escapeHtml(deleteUrl)}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 28px;border-radius:12px;">Delete My NET360 Account</a>
+        </td></tr>
+        <tr><td style="padding:8px 28px 24px;font-size:13px;line-height:1.5;color:#64748b;" align="center">
+          If the button does not work, copy and paste this URL into your browser (HTTPS only):<br/>
+          <span style="word-break:break-all;color:#4338ca;">${escapeHtml(deleteUrl)}</span>
+        </td></tr>
+        <tr><td style="padding:0 28px 24px;font-size:14px;line-height:1.6;color:#334155;">
+          If you did <strong>not</strong> request deletion, you can safely ignore this message — your account will remain active.
+        </td></tr>
+        <tr><td style="padding:16px 28px 28px;font-size:13px;color:#64748b;border-top:1px solid #e2e8f0;">
+          Support: <a href="mailto:${escapeHtml(NET360_SUPPORT_EMAIL)}" style="color:#4f46e5;">${escapeHtml(NET360_SUPPORT_EMAIL)}</a>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    await smtpTransporter.sendMail({
+      from: SMTP_FROM_EMAIL,
+      to: toEmail,
+      subject,
+      text,
+      html,
+    });
+    return { status: 'sent', detail: 'Deletion email sent.' };
+  } catch (error) {
+    return { status: 'failed', detail: error instanceof Error ? error.message : 'Email provider error.' };
+  }
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+async function executePermanentStudentAccountDeletion(req, res, user) {
+  const userId = user._id;
+  const userIdString = String(userId);
+  const email = normalizeEmail(user.email || '');
+  const compactPhone = compactMobile(user.phone || '');
+  const firebaseUid = String(user.firebaseUid || '').trim();
+  const activeSessionId = String(user.activeSession?.sessionId || '').trim();
+
+  await logSecurityEvent(req, {
+    eventType: 'auth.delete_account_started',
+    severity: 'warning',
+    actorUserId: userId,
+    actorEmail: email,
+  });
+
+  if (activeSessionId) {
+    notifyRevokedStudentSession(userIdString, activeSessionId);
+  }
+  if (isRedisConfigured()) {
+    await cacheDel(cacheKey(`studentSession:${userIdString}`));
+  }
+  await invalidateUserSubscriptionCache(userId);
+  emitSubscriptionRefresh(userIdString, { reason: 'account_deleted' });
+
+  await Promise.all([
+    AttemptModel.deleteMany({ userId }),
+    TestSessionModel.deleteMany({ userId }),
+    AIUsageModel.deleteMany({ userId }),
+    PasswordRecoveryRequestModel.deleteMany({
+      $or: [
+        { userId },
+        ...(email ? [{ email }] : []),
+        ...(compactPhone ? [{ mobileNumber: compactPhone }] : []),
+      ],
+    }),
+    SignupRequestModel.deleteMany({ email }),
+    SignupTokenModel.deleteMany({ email }),
+    PremiumSubscriptionRequestModel.deleteMany({ userId }),
+    PremiumActivationTokenModel.deleteMany({
+      $or: [{ userId }, ...(email ? [{ email }] : [])],
+    }),
+    CommunityProfileModel.deleteMany({ userId }),
+    CommunityConnectionRequestModel.deleteMany({
+      $or: [{ fromUserId: userId }, { toUserId: userId }],
+    }),
+    CommunityConnectionModel.deleteMany({
+      $or: [{ participantA: userId }, { participantB: userId }],
+    }),
+    CommunityMessageModel.deleteMany({ senderUserId: userId }),
+    CommunityReportModel.deleteMany({
+      $or: [{ reporterUserId: userId }, { reportedUserId: userId }],
+    }),
+    CommunityBlockModel.deleteMany({ userId }),
+    CommunityRoomPostModel.deleteMany({ authorUserId: userId }),
+    CommunityQuizChallengeModel.deleteMany({
+      $or: [{ challengerUserId: userId }, { opponentUserId: userId }],
+    }),
+    SupportChatMessageModel.deleteMany({
+      $or: [{ userId }, { senderUserId: userId }, { 'reactions.senderUserId': userId }],
+    }),
+    SecurityAuditEventModel.updateMany(
+      { actorUserId: userId },
+      {
+        $set: {
+          actorUserId: null,
+          actorEmail: 'deleted-user',
+        },
+      },
+    ),
+    ...(email
+      ? [
+          SecurityAuditEventModel.updateMany(
+            { actorEmail: email },
+            {
+              $set: {
+                actorEmail: 'deleted-user',
+              },
+            },
+          ),
+        ]
+      : []),
+    PaymentTransactionModel.updateMany(
+      { userId },
+      {
+        $set: {
+          gatewayResponse: null,
+        },
+      },
+    ),
+  ]);
+
+  await Promise.all([
+    invalidateCommunityLeaderboardCache(),
+    invalidateQuizLeaderboardCache(),
+  ]);
+
+  await AccountDeletionTokenModel.deleteMany({ userId });
+
+  await UserModel.deleteOne({ _id: userId });
+
+  if (firebaseUid && firebaseAdminAuth) {
+    try {
+      await firebaseAdminAuth.deleteUser(firebaseUid);
+    } catch (firebaseDeleteError) {
+      console.error('[auth/delete-account] firebase user deletion failed', {
+        userId: userIdString,
+        firebaseUid,
+        message: firebaseDeleteError?.message || firebaseDeleteError,
+      });
+    }
+  }
+
+  clearAuthCookies(res);
+
+  await logSecurityEvent(req, {
+    eventType: 'auth.delete_account_success',
+    severity: 'warning',
+    actorUserId: userId,
+    actorEmail: email,
+  });
+
+  return {
+    message:
+      'Your NET360 account has been permanently deleted. Any active subscription access has been revoked. You must create a new account to use NET360 again.',
+  };
 }
 
 async function sendRecoverySms(destination, token, expiresInMinutes = 30) {
@@ -4286,7 +4561,7 @@ async function buildAdminConfigurationListPayload(rows, liveVerify) {
       } else {
         status = 'neutral';
         statusLabel = 'Active (unverified)';
-        statusDetail = 'Click “Refresh List” to run a live OpenAI probe.';
+        statusDetail = 'Click â€œRefresh Listâ€ to run a live OpenAI probe.';
       }
     } else if (key === 'OPENAI_MODEL' || key === 'MODEL_PROVIDER_MODEL') {
       if (eff.source === 'none') {
@@ -4468,7 +4743,7 @@ function inferSessionPlatform(deviceId, userAgent) {
   return 'web';
 }
 
-/** When true, keep 409 ACTIVE_SESSION_ELSEWHERE unless client sends forceLogin/forceLogoutOtherDevice. Default: true. */
+/** When true, keep 409 SESSION_DISABLED_TEMP unless client sends forceLogin/forceLogoutOtherDevice. Default: true. */
 function shouldRequireDeviceLoginConfirmation() {
   const raw = String(process.env.REQUIRE_CONFIRM_FOR_DEVICE_LOGIN || '').toLowerCase().trim();
   if (raw === 'false' || raw === '0' || raw === 'no') return false;
@@ -6620,34 +6895,24 @@ async function authMiddleware(req, res, next) {
     }
 
     const role = user.role || 'student';
-    const tokenSessionId = String(payload.sessionId || '').trim();
-    const dbSessionId = String(user.activeSessionId || user.activeSession?.sessionId || '').trim();
-    const shouldEnforceSingleSession = Boolean(dbSessionId);
-    if (shouldEnforceSingleSession) {
-      if (!tokenSessionId || tokenSessionId !== dbSessionId) {
+
+    if (role === 'student') {
+      const tokenSessionId = String(payload.sessionId || '');
+      const activeSessionId = String(user.activeSession?.sessionId || '');
+      if (!tokenSessionId || !activeSessionId || tokenSessionId !== activeSessionId) {
         await logSecurityEvent(req, {
           eventType: 'auth.session_mismatch',
           severity: 'warning',
           actorUserId: user._id,
           actorEmail: user.email,
-          metadata: {
-            role,
-            hasTokenSessionId: Boolean(tokenSessionId),
-            hasDbSessionId: Boolean(dbSessionId),
-          },
         });
         res.status(401).json({
-          success: false,
-          code: 'SESSION_REVOKED',
-          error: 'Session expired because account was logged in elsewhere.',
-          message: 'Session expired because account was logged in elsewhere.',
+          error: 'Session is no longer active. Please log in again.',
+          code: 'SESSION_NO_LONGER_ACTIVE',
         });
         return;
       }
-    }
 
-    // Best-effort lastSeen updates (students only, legacy activeSession subdoc).
-    if (role === 'student' && user.activeSession?.sessionId) {
       const nowMs = Date.now();
       const lastSeenMs = user.activeSession?.lastSeenAt
         ? new Date(user.activeSession.lastSeenAt).getTime()
@@ -6693,7 +6958,7 @@ const studentPremiumSurface = [
   requireTrialOrPremiumContent(UserModel, resolveEntitlementsForUser),
 ];
 
-/** Legacy token-based signup, admin premium proof queues, and recovery lists — fully retired (410). */
+/** Legacy token-based signup, admin premium proof queues, and recovery lists â€” fully retired (410). */
 function respondLegacyAdminWorkflowGone(_req, res) {
   res.status(410).json({
     error:
@@ -7221,14 +7486,11 @@ async function createDirectStudentAccount(req, res) {
     res.status(400).json({ error: 'Firebase token email does not match registration email.' });
     return;
   }
-  const nameFromFirebase = splitDisplayNameParts(firebaseIdentity.displayName);
-  const firstName = sanitizeHumanName(req.body?.firstName || nameFromFirebase.firstName || '');
-  const lastName = sanitizeHumanName(req.body?.lastName || nameFromFirebase.lastName || '');
+  const firstName = sanitizeHumanName(req.body?.firstName || '');
+  const lastName = sanitizeHumanName(req.body?.lastName || '');
   const deviceId = sanitizeDeviceId(req.body?.deviceId || req.headers['user-agent'] || '');
   const ua = String(req.headers['user-agent'] || '').slice(0, 250);
   const lastIp = String(req.ip || req.headers['x-forwarded-for'] || '').split(',')[0].trim().slice(0, 45);
-  const now = new Date();
-  const platform = inferPlatformFromRequest(req);
 
   if (!email) {
     res.status(400).json({ error: 'Email is required.' });
@@ -7278,15 +7540,8 @@ async function createDirectStudentAccount(req, res) {
     user.passwordHash = passwordHash;
     if (firstName) user.firstName = firstName;
     if (lastName) user.lastName = lastName;
-    user.displayName = `${firstName} ${lastName}`.trim() || String(firebaseIdentity.displayName || '').trim() || user.displayName || '';
-    if (firebaseIdentity.profilePhotoUrl) {
-      user.profilePhotoUrl = String(firebaseIdentity.profilePhotoUrl || '').trim();
-    }
     user.authProvider = 'firebase';
-    user.authProviderDetail = normalizeAuthProviderDetail(firebaseIdentity.provider);
     user.firebaseUid = firebaseIdentity.uid;
-    user.lastLoginAt = now;
-    user.platformUsage = buildNextPlatformUsage(user.platformUsage, platform, now);
     user.securityQuestion = '';
     user.securityAnswerHash = '';
     user.securityAnswerEncrypted = '';
@@ -7326,12 +7581,7 @@ async function createDirectStudentAccount(req, res) {
     phone: '',
     role: 'student',
     authProvider: 'firebase',
-    authProviderDetail: normalizeAuthProviderDetail(firebaseIdentity.provider),
     firebaseUid: firebaseIdentity.uid,
-    displayName: `${firstName} ${lastName}`.trim() || String(firebaseIdentity.displayName || '').trim(),
-    profilePhotoUrl: String(firebaseIdentity.profilePhotoUrl || '').trim(),
-    lastLoginAt: now,
-    platformUsage: buildNextPlatformUsage(null, platform, now),
     securityQuestion: '',
     securityAnswerHash: '',
     securityAnswerEncrypted: '',
@@ -7501,22 +7751,8 @@ app.post('/api/auth/login', async (req, res) => {
       if (String(user.authProvider || 'local') !== 'firebase') {
         user.authProvider = 'firebase';
       }
-      user.authProviderDetail = normalizeAuthProviderDetail(verifiedFirebase.provider);
       if (String(user.firebaseUid || '') !== String(verifiedFirebase.uid)) {
         user.firebaseUid = String(verifiedFirebase.uid);
-      }
-      if (verifiedFirebase.displayName) {
-        const nameFromFirebase = splitDisplayNameParts(verifiedFirebase.displayName);
-        if (!String(user.firstName || '').trim() && nameFromFirebase.firstName) {
-          user.firstName = nameFromFirebase.firstName;
-        }
-        if (!String(user.lastName || '').trim() && nameFromFirebase.lastName) {
-          user.lastName = nameFromFirebase.lastName;
-        }
-        user.displayName = String(user.displayName || '').trim() || verifiedFirebase.displayName;
-      }
-      if (verifiedFirebase.profilePhotoUrl) {
-        user.profilePhotoUrl = String(verifiedFirebase.profilePhotoUrl || '').trim();
       }
 
       const storedHash = String(user.passwordHash || user.password || '').trim();
@@ -7571,15 +7807,15 @@ app.post('/api/auth/login', async (req, res) => {
             attemptedDeviceFp: authDeviceFingerprint(deviceId),
           },
         });
-        console.warn('[auth/login] blocked strict device policy', {
+        console.warn('[auth/login] blocked device policy temp disabled', {
           userId: String(user._id),
           email: redactEmailForLog(email),
-          code: 'ACTIVE_SESSION_ELSEWHERE',
+          code: 'SESSION_DISABLED_TEMP',
         });
         res.status(409).json({
           error: 'Your account is already active on another device.',
           message: 'Account already active on another device.',
-          code: 'ACTIVE_SESSION_ELSEWHERE',
+          code: 'SESSION_DISABLED_TEMP',
           canForceLogin: true,
           existingDevice: authDeviceFingerprint(activeSession?.deviceId),
           existingPlatform: inferSessionPlatform(activeSession?.deviceId, activeSession?.userAgent),
@@ -7610,7 +7846,6 @@ app.post('/api/auth/login', async (req, res) => {
       }
 
       const previousSessionId = activeSession?.sessionId ? String(activeSession.sessionId) : null;
-      const loginPlatform = inferPlatformFromRequest(req);
 
       user.activeSession = {
         sessionId: crypto.randomUUID(),
@@ -7621,9 +7856,6 @@ app.post('/api/auth/login', async (req, res) => {
         lastIp,
       };
       const newSessionId = user.activeSession.sessionId;
-      user.activeSessionId = String(newSessionId);
-      user.lastLoginAt = new Date();
-      user.platformUsage = buildNextPlatformUsage(user.platformUsage, loginPlatform, user.lastLoginAt);
 
       if (conflictingDevice) {
         user.refreshTokens = [];
@@ -7660,21 +7892,6 @@ app.post('/api/auth/login', async (req, res) => {
       res.status(200).json(buildAuthJsonBody(req, payload));
       return;
     }
-
-    // Admin logins also get a single-device session id for JWT checks (no socket disconnect required).
-    const ua = String(req.headers['user-agent'] || '').slice(0, 250);
-    const lastIp = String(req.ip || req.headers['x-forwarded-for'] || '').split(',')[0].trim().slice(0, 45);
-    user.activeSessionId = crypto.randomUUID();
-    user.lastLoginAt = new Date();
-    // Keep legacy shape for diagnostics; admin session doesn't require `activeSession` for policy but storing it is harmless.
-    user.activeSession = {
-      sessionId: String(user.activeSessionId),
-      deviceId,
-      startedAt: new Date(),
-      lastSeenAt: new Date(),
-      userAgent: ua,
-      lastIp,
-    };
 
     const payload = await issueAuthPayload(user, req);
     setAuthCookies(res, payload.token, payload.refreshToken);
@@ -7751,8 +7968,8 @@ app.post('/api/auth/refresh', async (req, res) => {
 
     if ((user.role || 'student') === 'student') {
       const tokenSessionId = String(payload.sessionId || '');
-      const activeSessionId = String(user.activeSessionId || user.activeSession?.sessionId || '');
-      if (activeSessionId && (!tokenSessionId || tokenSessionId !== activeSessionId)) {
+      const activeSessionId = String(user.activeSession?.sessionId || '');
+      if (!tokenSessionId || !activeSessionId || tokenSessionId !== activeSessionId) {
         user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
         await user.save();
         await logSecurityEvent(req, {
@@ -7762,23 +7979,12 @@ app.post('/api/auth/refresh', async (req, res) => {
           actorEmail: user.email,
         });
         clearAuthCookies(res);
-        res.status(401).json({
-          success: false,
-          code: 'SESSION_REVOKED',
-          error: 'Session expired because account was logged in elsewhere.',
-          message: 'Session expired because account was logged in elsewhere.',
-        });
+        res.status(401).json({ error: 'Session ended. Please log in again.', code: 'SESSION_NO_LONGER_ACTIVE' });
         return;
       }
     }
 
     user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
-    if ((user.role || 'student') === 'student') {
-      const refreshPlatform = inferPlatformFromRequest(req);
-      const now = new Date();
-      user.lastLoginAt = now;
-      user.platformUsage = buildNextPlatformUsage(user.platformUsage, refreshPlatform, now);
-    }
     await user.save();
 
     const newPayload = await issueAuthPayload(user, req);
@@ -7820,23 +8026,24 @@ app.post('/api/auth/logout', async (req, res) => {
       const tokenHash = hashToken(refreshToken);
       user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
 
-      const tokenSessionId = String(payload.sessionId || '');
-      const activeId = String(user.activeSessionId || user.activeSession?.sessionId || '');
-      if (tokenSessionId && activeId === tokenSessionId) {
-        user.activeSession = null;
-        user.activeSessionId = '';
-        console.log('[auth/logout] cleared_active_session', {
-          userId: String(user._id),
-          sessionId: tokenSessionId,
-          email: redactEmailForLog(user.email || ''),
-        });
-      } else if (tokenSessionId) {
-        console.log('[auth/logout] refresh_session_mismatch_skip_clear', {
-          userId: String(user._id),
-          tokenSessionId,
-          activeId: activeId || '(none)',
-          email: redactEmailForLog(user.email || ''),
-        });
+      if ((user.role || 'student') === 'student') {
+        const tokenSessionId = String(payload.sessionId || '');
+        const activeId = String(user.activeSession?.sessionId || '');
+        if (tokenSessionId && activeId === tokenSessionId) {
+          user.activeSession = null;
+          console.log('[auth/logout] cleared_active_session', {
+            userId: String(user._id),
+            sessionId: tokenSessionId,
+            email: redactEmailForLog(user.email || ''),
+          });
+        } else if (tokenSessionId) {
+          console.log('[auth/logout] refresh_session_mismatch_skip_clear', {
+            userId: String(user._id),
+            tokenSessionId,
+            activeId: activeId || '(none)',
+            email: redactEmailForLog(user.email || ''),
+          });
+        }
       }
 
       await user.save();
@@ -7871,7 +8078,7 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const user = await UserModel.findById(req.user._id).select('_id passwordHash role email phone firebaseUid authProvider activeSession');
+    const user = await UserModel.findById(req.user._id).select('_id passwordHash role email phone firebaseUid authProvider activeSession firstName');
     if (!user) {
       res.status(404).json({ error: 'Account not found.' });
       return;
@@ -7882,150 +8089,224 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const userId = user._id;
-    const userIdString = String(userId);
-    const email = normalizeEmail(user.email || '');
-    const compactPhone = compactMobile(user.phone || '');
-    const firebaseUid = String(user.firebaseUid || '').trim();
     const authProvider = String(user.authProvider || 'local').trim().toLowerCase();
-    const isFirebaseManagedAccount = authProvider === 'firebase' || Boolean(firebaseUid);
-    const activeSessionId = String(user.activeSession?.sessionId || '').trim();
-
-    if (!isFirebaseManagedAccount) {
-      if (!password) {
-        res.status(400).json({ error: 'Password is required to delete account.' });
-        return;
-      }
-      const passwordMatches = await bcrypt.compare(password, String(user.passwordHash || ''));
-      if (!passwordMatches) {
-        await logSecurityEvent(req, {
-          eventType: 'auth.delete_account_wrong_password',
-          severity: 'warning',
-          actorUserId: user._id,
-          actorEmail: user.email,
-        });
-        res.status(401).json({ error: 'Incorrect password. Account deletion cancelled.' });
-        return;
-      }
+    const firebaseUid = String(user.firebaseUid || '').trim();
+    if (isGoogleManagedAuthProvider(authProvider, firebaseUid)) {
+      res.status(400).json({
+        error:
+          'This account uses Google Sign-In. Use the secure deletion link sent to your email, or tap “Send Account Deletion Link” in your profile.',
+      });
+      return;
     }
 
-    await logSecurityEvent(req, {
-      eventType: 'auth.delete_account_started',
-      severity: 'warning',
-      actorUserId: userId,
-      actorEmail: email,
-    });
-
-    if (activeSessionId) {
-      notifyRevokedStudentSession(userIdString, activeSessionId);
-    }
-    if (isRedisConfigured()) {
-      await cacheDel(cacheKey(`studentSession:${userIdString}`));
-    }
-    await invalidateUserSubscriptionCache(userId);
-    emitSubscriptionRefresh(userIdString, { reason: 'account_deleted' });
-
-    await Promise.all([
-      AttemptModel.deleteMany({ userId }),
-      TestSessionModel.deleteMany({ userId }),
-      AIUsageModel.deleteMany({ userId }),
-      PasswordRecoveryRequestModel.deleteMany({
-        $or: [
-          { userId },
-          ...(email ? [{ email }] : []),
-          ...(compactPhone ? [{ mobileNumber: compactPhone }] : []),
-        ],
-      }),
-      SignupRequestModel.deleteMany({ email }),
-      SignupTokenModel.deleteMany({ email }),
-      PremiumSubscriptionRequestModel.deleteMany({ userId }),
-      PremiumActivationTokenModel.deleteMany({
-        $or: [{ userId }, ...(email ? [{ email }] : [])],
-      }),
-      CommunityProfileModel.deleteMany({ userId }),
-      CommunityConnectionRequestModel.deleteMany({
-        $or: [{ fromUserId: userId }, { toUserId: userId }],
-      }),
-      CommunityConnectionModel.deleteMany({
-        $or: [{ participantA: userId }, { participantB: userId }],
-      }),
-      CommunityMessageModel.deleteMany({ senderUserId: userId }),
-      CommunityReportModel.deleteMany({
-        $or: [{ reporterUserId: userId }, { reportedUserId: userId }],
-      }),
-      CommunityBlockModel.deleteMany({ userId }),
-      CommunityRoomPostModel.deleteMany({ authorUserId: userId }),
-      CommunityQuizChallengeModel.deleteMany({
-        $or: [{ challengerUserId: userId }, { opponentUserId: userId }],
-      }),
-      SupportChatMessageModel.deleteMany({
-        $or: [{ userId }, { senderUserId: userId }, { 'reactions.senderUserId': userId }],
-      }),
-      SecurityAuditEventModel.updateMany(
-        { actorUserId: userId },
-        {
-          $set: {
-            actorUserId: null,
-            actorEmail: 'deleted-user',
-          },
-        },
-      ),
-      ...(email
-        ? [
-            SecurityAuditEventModel.updateMany(
-              { actorEmail: email },
-              {
-                $set: {
-                  actorEmail: 'deleted-user',
-                },
-              },
-            ),
-          ]
-        : []),
-      // Keep legally required billing metadata while redacting provider payload.
-      PaymentTransactionModel.updateMany(
-        { userId },
-        {
-          $set: {
-            gatewayResponse: null,
-          },
-        },
-      ),
-    ]);
-
-    await Promise.all([
-      invalidateCommunityLeaderboardCache(),
-      invalidateQuizLeaderboardCache(),
-    ]);
-
-    await UserModel.deleteOne({ _id: userId });
-
-    if (firebaseUid && firebaseAdminAuth) {
-      try {
-        await firebaseAdminAuth.deleteUser(firebaseUid);
-      } catch (firebaseDeleteError) {
-        console.error('[auth/delete-account] firebase user deletion failed', {
-          userId: userIdString,
-          firebaseUid,
-          message: firebaseDeleteError?.message || firebaseDeleteError,
-        });
-      }
+    if (!isPasswordManagedAuthProvider(authProvider)) {
+      res.status(400).json({ error: 'This account cannot be deleted with a password on this endpoint.' });
+      return;
     }
 
-    clearAuthCookies(res);
+    if (!password) {
+      res.status(400).json({ error: 'Password is required to delete account.' });
+      return;
+    }
 
-    await logSecurityEvent(req, {
-      eventType: 'auth.delete_account_success',
-      severity: 'warning',
-      actorUserId: userId,
-      actorEmail: email,
-    });
+    const passwordMatches = await bcrypt.compare(password, String(user.passwordHash || ''));
+    if (!passwordMatches) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.delete_account_wrong_password',
+        severity: 'warning',
+        actorUserId: user._id,
+        actorEmail: user.email,
+      });
+      res.status(401).json({ error: 'Incorrect password. Account deletion cancelled.' });
+      return;
+    }
 
-    res.json({
-      message: 'Your NET360 account has been permanently deleted. Any active subscription access has been revoked. You must create a new account to use NET360 again.',
-    });
+    const payload = await executePermanentStudentAccountDeletion(req, res, user);
+    res.json(payload);
   } catch (error) {
     console.error('[auth/delete-account] failed', error?.message || error);
+    res.status(500).json({ error: 'Could not delete account. Please try again.' });
+  }
+});
+
+app.post('/api/auth/request-delete-link', authMiddleware, async (req, res) => {
+  try {
+    const user = await UserModel.findById(req.user._id).select('_id role email firebaseUid authProvider activeSession firstName');
+    if (!user) {
+      res.status(404).json({ error: 'Account not found.' });
+      return;
+    }
+    if ((user.role || 'student') !== 'student') {
+      res.status(403).json({ error: 'Only student accounts can request account deletion.' });
+      return;
+    }
+
+    const authProvider = String(user.authProvider || 'local').trim().toLowerCase();
+    const firebaseUid = String(user.firebaseUid || '').trim();
+    if (!isGoogleManagedAuthProvider(authProvider, firebaseUid)) {
+      res.status(400).json({ error: 'Email deletion links are only for Google Sign-In accounts.' });
+      return;
+    }
+
+    const email = normalizeEmail(user.email || '');
+    if (!email) {
+      res.status(400).json({ error: 'No email is associated with this account.' });
+      return;
+    }
+
+    await AccountDeletionTokenModel.deleteMany({
+      userId: user._id,
+      usedAt: null,
+    });
+
+    const rawToken = generateAccountDeletionRawToken();
+    const tokenHash = hashAccountDeletionRawToken(rawToken);
+    const expiresAt = new Date(Date.now() + ACCOUNT_DELETION_LINK_TTL_MS);
+    const fingerprint = buildAccountDeletionSessionFingerprint(req, user);
+
+    await AccountDeletionTokenModel.create({
+      userId: user._id,
+      tokenHash,
+      emailNormalized: email,
+      authProviderSnapshot: authProvider,
+      sessionFingerprint: fingerprint,
+      expiresAt,
+    });
+
+    const base = resolveNet360PublicWebBaseUrl();
+    const deleteUrl = `${base}/confirm-account-deletion?token=${encodeURIComponent(rawToken)}`;
+
+    const sendResult = await sendAccountDeletionLinkEmail({
+      toEmail: email,
+      firstName: user.firstName,
+      deleteUrl,
+      expiresAt,
+    });
+
+    await logSecurityEvent(req, {
+      eventType: 'auth.delete_link_requested',
+      severity: 'warning',
+      actorUserId: user._id,
+      actorEmail: email,
+      metadata: { emailDispatchStatus: sendResult.status },
+    });
+
+    if (sendResult.status !== 'sent') {
+      await AccountDeletionTokenModel.deleteOne({ tokenHash });
+      res.status(503).json({ error: 'Could not send deletion email. Please try again later or contact support.' });
+      return;
+    }
+
+    res.json({
+      message: `Deletion confirmation link sent to ${email}. The link expires in 15 minutes.`,
+      expiresAt: expiresAt.toISOString(),
+    });
+  } catch (error) {
+    console.error('[auth/request-delete-link] failed', error?.message || error);
+    res.status(500).json({ error: 'Could not send deletion link. Please try again.' });
+  }
+});
+
+app.get('/api/auth/verify-delete-token', async (req, res) => {
+  try {
+    const raw = String(req.query?.token || '').trim();
+    if (!raw || raw.length > 512) {
+      res.status(400).json({ valid: false, error: 'Invalid deletion link.' });
+      return;
+    }
+    const tokenHash = hashAccountDeletionRawToken(raw);
+    const doc = await AccountDeletionTokenModel.findOne({ tokenHash }).lean();
+    const now = Date.now();
+    if (!doc || doc.usedAt) {
+      res.json({ valid: false, error: 'This deletion link is invalid or has already been used.' });
+      return;
+    }
+    if (new Date(doc.expiresAt).getTime() <= now) {
+      res.json({ valid: false, error: 'This deletion link has expired. Request a new link from your NET360 profile.' });
+      return;
+    }
+
+    const u = await UserModel.findById(doc.userId).select('email firstName authProvider firebaseUid role').lean();
+    if (!u || (u.role || 'student') !== 'student') {
+      res.json({ valid: false, error: 'This deletion link is no longer valid.' });
+      return;
+    }
+    if (normalizeEmail(u.email || '') !== doc.emailNormalized) {
+      res.json({ valid: false, error: 'This deletion link is no longer valid.' });
+      return;
+    }
+    const ap = String(u.authProvider || 'local').toLowerCase();
+    const uid = String(u.firebaseUid || '').trim();
+    if (!isGoogleManagedAuthProvider(ap, uid)) {
+      res.json({ valid: false, error: 'This deletion link is no longer valid.' });
+      return;
+    }
+
+    res.json({
+      valid: true,
+      email: normalizeEmail(u.email || ''),
+      firstName: String(u.firstName || '').trim(),
+      expiresAt: new Date(doc.expiresAt).toISOString(),
+    });
+  } catch (error) {
+    console.error('[auth/verify-delete-token] failed', error?.message || error);
+    res.status(500).json({ valid: false, error: 'Could not verify deletion link.' });
+  }
+});
+
+app.post('/api/auth/confirm-delete', async (req, res) => {
+  try {
+    const raw = String(req.body?.token || '').trim();
+    if (!raw || raw.length > 512) {
+      res.status(400).json({ error: 'Invalid deletion link.' });
+      return;
+    }
+    const tokenHash = hashAccountDeletionRawToken(raw);
+    const now = new Date();
+    const claimed = await AccountDeletionTokenModel.findOneAndUpdate(
+      { tokenHash, usedAt: null, expiresAt: { $gt: now } },
+      { $set: { usedAt: now } },
+      { new: true },
+    );
+    if (!claimed) {
+      res.status(400).json({ error: 'This deletion link is invalid, expired, or has already been used.' });
+      return;
+    }
+
+    const user = await UserModel.findById(claimed.userId).select('_id passwordHash role email phone firebaseUid authProvider activeSession firstName');
+    if (!user) {
+      res.status(400).json({ error: 'This account no longer exists.' });
+      return;
+    }
+    if ((user.role || 'student') !== 'student') {
+      res.status(403).json({ error: 'This deletion link cannot be used for this account.' });
+      return;
+    }
+    const email = normalizeEmail(user.email || '');
+    if (email !== claimed.emailNormalized) {
+      res.status(400).json({ error: 'This deletion link does not match this account.' });
+      return;
+    }
+    const ap = String(user.authProvider || 'local').toLowerCase();
+    const uid = String(user.firebaseUid || '').trim();
+    if (!isGoogleManagedAuthProvider(ap, uid)) {
+      res.status(400).json({ error: 'This deletion link is no longer valid for this account.' });
+      return;
+    }
+    if (String(claimed.authProviderSnapshot || '').toLowerCase() !== ap) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.delete_token_provider_mismatch',
+        severity: 'warning',
+        actorUserId: user._id,
+        actorEmail: email,
+        metadata: { snapshot: claimed.authProviderSnapshot, current: ap },
+      });
+    }
+
+    const payload = await executePermanentStudentAccountDeletion(req, res, user);
+    res.json(payload);
+  } catch (error) {
+    console.error('[auth/confirm-delete] failed', error?.message || error);
     res.status(500).json({ error: 'Could not delete account. Please try again.' });
   }
 });
@@ -8223,8 +8504,9 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   const u = userPublic(req.user);
-  const sessionId = String(req.user.activeSessionId || req.user.activeSession?.sessionId || '').trim();
-  if (sessionId) u.activeSessionId = sessionId;
+  if ((req.user.role || 'student') === 'student' && req.user.activeSession?.sessionId) {
+    u.activeSessionId = String(req.user.activeSession.sessionId);
+  }
   res.json({ user: u });
 });
 
@@ -10287,12 +10569,12 @@ app.get('/api/community/achievements', ...studentPremiumSurface, async (req, res
   const answerStats = myAnswers[0] || { totalUpvotes: 0, answersCount: 0 };
 
   const badges = [
-    { id: 'practice-master', label: 'Practice Master', icon: '📘', earned: solved >= 1000, progress: solved, target: 1000 },
-    { id: 'accuracy-king', label: 'Accuracy King', icon: '🎯', earned: avg >= 90, progress: Number(avg.toFixed(1)), target: 90 },
-    { id: 'physics-expert', label: 'Physics Expert', icon: '🧠', earned: physicsAttempts.length >= 5 && physicsAverage >= 85, progress: Number(physicsAverage.toFixed(1)), target: 85 },
-    { id: 'study-streak-7', label: '7-Day Study Streak', icon: '🔥', earned: streak >= 7, progress: streak, target: 7 },
-    { id: 'leaderboard-top10', label: 'Top 10 Leaderboard', icon: '🏆', earned: top10Ids.has(String(req.user._id)), progress: top10Ids.has(String(req.user._id)) ? 10 : 0, target: 10 },
-    { id: 'doubt-contributor', label: 'Contributor Badge', icon: '🏅', earned: Number(answerStats.totalUpvotes || 0) >= 10, progress: Number(answerStats.totalUpvotes || 0), target: 10 },
+    { id: 'practice-master', label: 'Practice Master', icon: 'ðŸ“˜', earned: solved >= 1000, progress: solved, target: 1000 },
+    { id: 'accuracy-king', label: 'Accuracy King', icon: 'ðŸŽ¯', earned: avg >= 90, progress: Number(avg.toFixed(1)), target: 90 },
+    { id: 'physics-expert', label: 'Physics Expert', icon: 'ðŸ§ ', earned: physicsAttempts.length >= 5 && physicsAverage >= 85, progress: Number(physicsAverage.toFixed(1)), target: 85 },
+    { id: 'study-streak-7', label: '7-Day Study Streak', icon: 'ðŸ”¥', earned: streak >= 7, progress: streak, target: 7 },
+    { id: 'leaderboard-top10', label: 'Top 10 Leaderboard', icon: 'ðŸ†', earned: top10Ids.has(String(req.user._id)), progress: top10Ids.has(String(req.user._id)) ? 10 : 0, target: 10 },
+    { id: 'doubt-contributor', label: 'Contributor Badge', icon: 'ðŸ…', earned: Number(answerStats.totalUpvotes || 0) >= 10, progress: Number(answerStats.totalUpvotes || 0), target: 10 },
   ];
 
   res.json({
@@ -10820,15 +11102,9 @@ app.post('/api/admin/community/reports/:reportId/review', authMiddleware, requir
   res.json({ ok: true, status: report.status });
 });
 
-app.get('/api/mcqs', authMiddleware, mcqsReadLimiter, async (req, res) => {
+app.get('/api/mcqs', mcqsReadLimiter, async (req, res) => {
   try {
-    const aliases = normalizeMcqFilterPayload(req.query);
-    const subject = firstTruthyTrimmedString(req.query?.subject, aliases.subject);
-    const part = firstTruthyTrimmedString(req.query?.part, aliases.part);
-    const chapter = firstTruthyTrimmedString(req.query?.chapter, aliases.chapter);
-    const section = firstTruthyTrimmedString(req.query?.section, aliases.section);
-    const topic = firstTruthyTrimmedString(req.query?.topic, aliases.topic);
-    const difficulty = firstTruthyTrimmedString(req.query?.difficulty, aliases.difficulty);
+    const { subject, part, chapter, section, difficulty, topic } = req.query;
     console.log('[MCQ FETCH] Incoming filters:', {
       subject,
       part,
@@ -10925,7 +11201,7 @@ app.get('/api/mcqs', authMiddleware, mcqsReadLimiter, async (req, res) => {
   }
 });
 
-app.get('/api/mcqs/counts', authMiddleware, mcqsReadLimiter, async (_req, res) => {
+app.get('/api/mcqs/counts', mcqsReadLimiter, async (_req, res) => {
   try {
     const ck = cacheKey('mcqs:counts:v1');
     const cached = await cacheGetJson(ck);
@@ -11475,7 +11751,7 @@ async function handlePremiumStartTrial(req, res) {
 }
 
 app.post('/api/subscriptions/start-trial', authMiddleware, subscriptionExpiryRefresh(UserModel), handlePremiumStartTrial);
-/** Shorter alias — identical behavior (some proxies cache or map paths inconsistently). */
+/** Shorter alias â€” identical behavior (some proxies cache or map paths inconsistently). */
 app.post('/api/trial/start', authMiddleware, subscriptionExpiryRefresh(UserModel), handlePremiumStartTrial);
 
 app.post('/api/payments/order', authMiddleware, subscriptionExpiryRefresh(UserModel), async (req, res) => {
@@ -12277,21 +12553,19 @@ app.get('/api/study-plans/latest', ...studentPremiumSurface, async (req, res) =>
 });
 
 app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
-  const body = req.body && typeof req.body === 'object' ? req.body : {};
-  const aliases = normalizeMcqFilterPayload(body);
   const {
+    subject,
+    part,
+    chapter,
+    section,
+    difficulty,
+    topic,
     mode,
     questionCount = 20,
     netType,
     testType,
-  } = body;
-  const subject = firstTruthyTrimmedString(body.subject, aliases.subject);
-  const part = firstTruthyTrimmedString(body.part, aliases.part);
-  const chapter = firstTruthyTrimmedString(body.chapter, aliases.chapter);
-  const section = firstTruthyTrimmedString(body.section, aliases.section);
-  const topic = firstTruthyTrimmedString(body.topic, aliases.topic);
-  const difficulty = firstTruthyTrimmedString(body.difficulty, aliases.difficulty);
-  const selectedSubject = firstTruthyTrimmedString(body.selectedSubject, body.selected_subject);
+    selectedSubject,
+  } = req.body || {};
 
   if (!mode) {
     res.status(400).json({ error: 'mode is required.' });
@@ -12546,23 +12820,22 @@ app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
 
   const questions = selected.map((question) => {
     const serialized = serializeMcq(question);
-    // Always use serializeMcq() for text fields — raw Mongo docs may use question_text / legacy keys only.
     return {
       id: String(question._id),
-      subject: serialized.subject || canonicalizeSubject(question.subject) || normalizedSubject,
-      part: serialized.part,
-      chapter: serialized.chapter,
-      section: serialized.section,
-      topic: serialized.topic,
-      question: serialized.question,
-      questionImageUrl: serialized.questionImageUrl,
-      imageUrl: serialized.imageUrl,
-      videoUrl: serialized.videoUrl,
+      subject: canonicalizeSubject(question.subject) || normalizedSubject,
+      part: String(question.part || '').trim(),
+      chapter: String(question.chapter || '').trim(),
+      section: String(question.section || '').trim(),
+      topic: question.topic,
+      question: question.question,
+      questionImageUrl: String(question.questionImageUrl || '').trim(),
+      imageUrl: String(question.imageUrl || question.questionImageUrl || '').trim(),
+      videoUrl: String(question.videoUrl || '').trim(),
       questionImage: serialized.questionImage || null,
       options: serialized.options,
       optionMedia: serialized.optionMedia || [],
-      difficulty: serialized.difficulty || question.difficulty,
-      explanation: serialized.explanationText || serialized.tip || '',
+      difficulty: question.difficulty,
+      explanation: serialized.explanationText || '',
       explanationImage: serialized.explanationImage || null,
       shortTrick: serialized.shortTrickText || '',
       shortTrickImage: serialized.shortTrickImage || null,
@@ -12858,7 +13131,7 @@ app.get('/api/reports/export', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) => {
-  const managedUserFilter = { role: { $ne: 'admin' } };
+  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
   const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingQuestionSubmissions] = await Promise.all([
     UserModel.countDocuments(managedUserFilter),
     MCQModel.countDocuments(),
@@ -13150,550 +13423,9 @@ function normalizeSelectedPaidServices(payload) {
   return { tests, preparation, community };
 }
 
-function normalizeSubscriptionSearch(input) {
-  return String(input || '').trim().toLowerCase();
-}
-
-function isStrictEmail(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (!normalized) return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
-}
-
-function isBlockedEmailFragmentSearch(value) {
-  const normalized = normalizeSubscriptionSearch(value);
-  if (!normalized) return false;
-  if (normalized.startsWith('@') || normalized.startsWith('.')) return true;
-  if (normalized.includes('@') && !isStrictEmail(normalized)) return true;
-  if (normalized.includes('.com') && !isStrictEmail(normalized)) return true;
-  if (normalized === 'gmail' || normalized === '@gmail' || normalized === '@gmail.com' || normalized === '.com') {
-    return true;
-  }
-  return false;
-}
-
-function buildSubscriptionManagementSearchFilter(value) {
-  const normalized = normalizeSubscriptionSearch(value);
-  if (!normalized) return { blocked: false, filter: {} };
-  if (isBlockedEmailFragmentSearch(normalized)) {
-    return { blocked: true, filter: {} };
-  }
-
-  const escaped = escapeRegexLiteral(normalized, 80);
-  if (!escaped) return { blocked: false, filter: {} };
-
-  if (isStrictEmail(normalized)) {
-    return {
-      blocked: false,
-      filter: {
-        email: { $regex: `^${escaped}$`, $options: 'i' },
-      },
-    };
-  }
-
-  // Name search remains partial/case-insensitive; email search remains strict to username prefix.
-  return {
-    blocked: false,
-    filter: {
-      $or: [
-        { firstName: { $regex: escaped, $options: 'i' } },
-        { lastName: { $regex: escaped, $options: 'i' } },
-        { email: { $regex: `^${escaped}[^@]*@`, $options: 'i' } },
-      ],
-    },
-  };
-}
-
-async function syncMissingFirebaseUsersToBackend() {
-  if (!firebaseAdminAuth) return { synced: 0 };
-  const limit = 500;
-  let nextPageToken = undefined;
-  let synced = 0;
-  let scanned = 0;
-  do {
-    const page = await firebaseAdminAuth.listUsers(limit, nextPageToken);
-    const batch = Array.isArray(page?.users) ? page.users : [];
-    scanned += batch.length;
-    for (const fbUser of batch) {
-      const uid = String(fbUser?.uid || '').trim();
-      const email = normalizeEmail(fbUser?.email || '');
-      if (!uid || !email) continue;
-
-      const providerCandidates = Array.isArray(fbUser?.providerData) ? fbUser.providerData : [];
-      const providerIdRaw = String(providerCandidates[0]?.providerId || '').trim().toLowerCase();
-      const provider = providerIdRaw === 'google.com'
-        ? 'google'
-        : providerIdRaw === 'password'
-          ? 'password'
-          : 'unknown';
-      const displayName = String(fbUser?.displayName || '').trim();
-      const { firstName, lastName } = splitDisplayNameParts(displayName);
-      const photoURL = String(fbUser?.photoURL || '').trim();
-      const createdAtRaw = String(fbUser?.metadata?.creationTime || '').trim();
-      const lastSignInRaw = String(fbUser?.metadata?.lastSignInTime || '').trim();
-      const createdAt = createdAtRaw ? new Date(createdAtRaw) : new Date();
-      const lastLoginAt = lastSignInRaw ? new Date(lastSignInRaw) : null;
-
-      const existing = await UserModel.findOne({
-        $or: [
-          { firebaseUid: uid },
-          { email: { $regex: `^${escapeRegexLiteral(email, 254)}$`, $options: 'i' } },
-        ],
-      }).select('_id email authProvider role firebaseUid firstName lastName displayName profilePhotoUrl authProviderDetail').lean();
-
-      if (!existing) {
-        const passwordHash = await hashPassword(`firebase:${uid}:${crypto.randomUUID()}`);
-        await UserModel.create({
-          email,
-          passwordHash,
-          firstName: firstName || '',
-          lastName: lastName || '',
-          displayName: displayName || `${firstName} ${lastName}`.trim(),
-          profilePhotoUrl: photoURL,
-          role: 'student',
-          authProvider: 'firebase',
-          authProviderDetail: normalizeAuthProviderDetail(provider),
-          firebaseUid: uid,
-          lastLoginAt,
-          createdAt,
-          preferences: defaultPreferences(),
-          progress: defaultProgress(),
-          platformUsage: {
-            lastPlatform: 'unknown',
-            lastSeenAt: lastLoginAt,
-            androidLogins: 0,
-            webLogins: 0,
-            unknownLogins: 0,
-          },
-        });
-        synced += 1;
-        continue;
-      }
-
-      const updates = {};
-      if (existing.role === 'admin') continue;
-      if (String(existing.authProvider || '') !== 'firebase') updates.authProvider = 'firebase';
-      if (String(existing.firebaseUid || '') !== uid) updates.firebaseUid = uid;
-      if (!String(existing.authProviderDetail || '').trim()) updates.authProviderDetail = normalizeAuthProviderDetail(provider);
-      if (!String(existing.firstName || '').trim() && firstName) updates.firstName = firstName;
-      if (!String(existing.lastName || '').trim() && lastName) updates.lastName = lastName;
-      if (!String(existing.displayName || '').trim() && displayName) updates.displayName = displayName;
-      if (!String(existing.profilePhotoUrl || '').trim() && photoURL) updates.profilePhotoUrl = photoURL;
-      if (!existing.lastLoginAt && lastLoginAt) updates.lastLoginAt = lastLoginAt;
-      if (Object.keys(updates).length) {
-        await UserModel.updateOne({ _id: existing._id }, { $set: updates }, { runValidators: true });
-        synced += 1;
-      }
-    }
-    nextPageToken = String(page?.pageToken || '').trim() || undefined;
-  } while (nextPageToken);
-
-  return { synced, scanned };
-}
-
-const ADMIN_USER_SYNC_MAX_AGE_MS = 5 * 60 * 1000;
-const adminUserSyncState = {
-  lastSyncedAt: 0,
-  inFlight: null,
-};
-
-async function ensureCentralizedAppUsersSync(options = {}) {
-  const force = Boolean(options?.force);
-  if (!firebaseAdminAuth) return { synced: 0, scanned: 0, skipped: true };
-  const now = Date.now();
-  if (!force && adminUserSyncState.lastSyncedAt > 0 && (now - adminUserSyncState.lastSyncedAt) < ADMIN_USER_SYNC_MAX_AGE_MS) {
-    return { synced: 0, scanned: 0, skipped: true };
-  }
-  if (adminUserSyncState.inFlight) {
-    return adminUserSyncState.inFlight;
-  }
-  adminUserSyncState.inFlight = syncMissingFirebaseUsersToBackend()
-    .then((result) => {
-      adminUserSyncState.lastSyncedAt = Date.now();
-      return result;
-    })
-    .finally(() => {
-      adminUserSyncState.inFlight = null;
-    });
-  return adminUserSyncState.inFlight;
-}
-
-async function fetchAdminManagedUsers({
-  q,
-  page,
-  pageSize,
-  showAll,
-  forceSync = false,
-}) {
-  const normalizedQuery = normalizeSubscriptionSearch(q);
-  const managedUserFilter = { role: { $ne: 'admin' } };
-  const nowMs = Date.now();
-  const globalGrants = await getGlobalAccessGrantSnapshot();
-  if (showAll || forceSync || !normalizedQuery) {
-    await ensureCentralizedAppUsersSync({ force: forceSync });
-  }
-  const searchFilter = buildSubscriptionManagementSearchFilter(normalizedQuery);
-  if (searchFilter.blocked) {
-    return {
-      users: [],
-      totalMatched: 0,
-      page,
-      pageSize,
-      totalPages: 0,
-      hasMore: false,
-      showAll,
-    };
-  }
-
-  const skip = Math.max(0, (page - 1) * pageSize);
-  const combinedFilter = {
-    ...managedUserFilter,
-    ...(searchFilter.filter || {}),
-  };
-
-  const [users, totalMatched] = await Promise.all([
-    UserModel.find(
-      combinedFilter,
-      {
-        email: 1,
-        firstName: 1,
-        lastName: 1,
-        displayName: 1,
-        profilePhotoUrl: 1,
-        authProviderDetail: 1,
-        firebaseUid: 1,
-        createdAt: 1,
-        lastLoginAt: 1,
-        platformUsage: 1,
-        subscription: 1,
-        accessControls: 1,
-        paidServices: 1,
-      },
-    )
-      .sort({ lastLoginAt: -1, updatedAt: -1, createdAt: -1 })
-      .skip(skip)
-      .limit(pageSize)
-      .lean(),
-    UserModel.countDocuments(combinedFilter),
-  ]);
-
-  const userIds = users.map((item) => item?._id).filter(Boolean);
-  const profiles = userIds.length
-    ? await CommunityProfileModel.find({ userId: { $in: userIds } }).select('userId profilePictureUrl shareProfilePicture').lean()
-    : [];
-  const profileByUserId = new Map(
-    (profiles || []).map((item) => [String(item.userId), item]),
-  );
-
-  const mapped = users
-    .map((item) => {
-      const userId = String(item._id);
-      const fullName = `${item.firstName || ''} ${item.lastName || ''}`.trim();
-
-      const entitlements = resolveUserEntitlements(item, globalGrants, nowMs);
-      const paidServices = resolvePaidServices(item, nowMs);
-      const profile = profileByUserId.get(userId);
-      const sub = mergedSubscription(item);
-      const accountStatus = isSubscriptionActive(sub)
-        ? 'active'
-        : String(sub?.status || 'inactive').toLowerCase();
-
-      const mentorCard = buildManagedServiceDetail({
-        key: 'mentor',
-        label: 'Mentor',
-        access: accessStatusPayload(entitlements?.mentor),
-        manualGrant: normalizeManualGrant(item?.accessControls?.mentorManual),
-        subscription: sub,
-        nowMs,
-      });
-      const testsCard = buildManagedServiceDetail({
-        key: PAID_SERVICE_TYPES.tests,
-        label: 'Tests',
-        access: accessStatusPayload(paidServices?.tests),
-        manualGrant: normalizeManualGrant(item?.paidServices?.tests),
-        subscription: sub,
-        nowMs,
-      });
-      const preparationCard = buildManagedServiceDetail({
-        key: PAID_SERVICE_TYPES.preparation,
-        label: 'Preparation',
-        access: accessStatusPayload(paidServices?.preparation),
-        manualGrant: normalizeManualGrant(item?.paidServices?.preparation),
-        subscription: sub,
-        nowMs,
-      });
-      const communityCard = buildManagedServiceDetail({
-        key: PAID_SERVICE_TYPES.community,
-        label: 'Community',
-        access: accessStatusPayload(paidServices?.community),
-        manualGrant: normalizeManualGrant(item?.paidServices?.community),
-        subscription: sub,
-        nowMs,
-      });
-
-      return {
-        id: userId,
-        fullName: fullName || String(item.displayName || '').trim() || 'No name',
-        email: String(item.email || ''),
-        profileImageUrl: String(profile?.shareProfilePicture ? (profile?.profilePictureUrl || '') : (item.profilePhotoUrl || '')),
-        accountStatus,
-        provider: normalizeAuthProviderDetail(item.authProviderDetail),
-        firebaseUid: String(item.firebaseUid || ''),
-        joinedAt: toIsoOrNull(item.createdAt),
-        lastLoginAt: toIsoOrNull(item.lastLoginAt),
-        platformUsage: {
-          lastPlatform: String(item?.platformUsage?.lastPlatform || 'unknown'),
-          lastSeenAt: toIsoOrNull(item?.platformUsage?.lastSeenAt),
-        },
-        badges: {
-          tests: testsCard.status,
-          preparation: preparationCard.status,
-          community: communityCard.status,
-          mentor: mentorCard.status,
-        },
-      };
-    })
-    .filter(Boolean);
-
-  return {
-    users: mapped,
-    totalMatched,
-    page,
-    pageSize,
-    totalPages: Math.max(1, Math.ceil(totalMatched / pageSize)),
-    hasMore: skip + mapped.length < totalMatched,
-    showAll,
-  };
-}
-
-function calculateRemainingDays(expiresAt, nowMs = Date.now()) {
-  if (!expiresAt) return 0;
-  const endMs = new Date(expiresAt).getTime();
-  if (!Number.isFinite(endMs) || endMs <= nowMs) return 0;
-  return Math.max(0, Math.ceil((endMs - nowMs) / (24 * 60 * 60 * 1000)));
-}
-
-function inferServiceLifecycleStatus(detail, nowMs = Date.now()) {
-  const access = detail || {};
-  if (access.allowed) {
-    if (access.source === 'legacy' && access.freeTrialActive) return 'free_trial';
-    return 'active';
-  }
-  if (String(access.status || '').toLowerCase() === 'expired') return 'expired';
-  if (access.expiresAt && new Date(access.expiresAt).getTime() <= nowMs) return 'expired';
-  return 'inactive';
-}
-
-function inferActivatedBy(access, manualGrant, subscription, serviceKey) {
-  const source = String(access?.source || '').toLowerCase();
-  if (source === 'global') return 'admin';
-  if (source === 'legacy') {
-    const sub = mergedSubscription({ subscription });
-    if (trialIsActive(sub)) return 'user';
-    if (isSubscriptionActive(sub)) return 'user';
-    return 'system';
-  }
-  if (source === 'manual') {
-    const grant = normalizeManualGrant(manualGrant);
-    const grantSource = String(grant?.source || '').toLowerCase();
-    if (grantSource.includes('admin') || grant?.grantedByEmail) return 'admin';
-    if (serviceKey === 'mentor' && grantSource === 'manual') return 'admin';
-    return 'user';
-  }
-  return 'system';
-}
-
-function buildManagedServiceDetail({
-  key,
-  label,
-  access,
-  manualGrant,
-  subscription,
-  nowMs,
-}) {
-  const sub = mergedSubscription({ subscription });
-  const trialActive = trialIsActive(sub);
-  const freeTrialActive = Boolean(access?.allowed && access?.source === 'legacy' && trialActive);
-  const active = Boolean(access?.allowed);
-  const lifecycleStatus = inferServiceLifecycleStatus({ ...access, freeTrialActive }, nowMs);
-  return {
-    key,
-    label,
-    active,
-    status: lifecycleStatus,
-    source: String(access?.source || 'none'),
-    freeTrialUsed: Boolean(sub?.hasUsedTrial),
-    freeTrialActive,
-    paidPlanActive: active && !freeTrialActive,
-    activatedBy: inferActivatedBy(access, manualGrant, sub, key),
-    startedAt: toIsoOrNull(access?.startsAt || manualGrant?.startsAt),
-    expiresAt: toIsoOrNull(access?.expiresAt || manualGrant?.expiresAt),
-    remainingDays: calculateRemainingDays(access?.expiresAt || manualGrant?.expiresAt, nowMs),
-  };
-}
-
-app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmin, async (req, res) => {
-  const q = normalizeSubscriptionSearch(req.query?.q);
-  const showAll = String(req.query?.showAll || '').trim().toLowerCase() === 'true';
-  const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || (showAll ? 100 : 25)) || (showAll ? 100 : 25)));
-  const page = Math.max(1, Number(req.query?.page || 1) || 1);
-  const syncRequested = String(req.query?.sync || '').trim().toLowerCase() === 'true';
-  const payload = await fetchAdminManagedUsers({
-    q,
-    page,
-    pageSize,
-    showAll,
-    forceSync: syncRequested,
-  });
-  res.json(payload);
-});
-
-app.get('/api/admin/users/search', authMiddleware, requireAdmin, async (req, res) => {
-  const q = normalizeSubscriptionSearch(req.query?.q);
-  const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || 25) || 25));
-  const page = Math.max(1, Number(req.query?.page || 1) || 1);
-  const payload = await fetchAdminManagedUsers({
-    q,
-    page,
-    pageSize,
-    showAll: false,
-    forceSync: false,
-  });
-  res.json(payload);
-});
-
-app.get('/api/admin/users/all', authMiddleware, requireAdmin, async (req, res) => {
-  const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || 100) || 100));
-  const page = Math.max(1, Number(req.query?.page || 1) || 1);
-  const payload = await fetchAdminManagedUsers({
-    q: '',
-    page,
-    pageSize,
-    showAll: true,
-    forceSync: false,
-  });
-  res.json(payload);
-});
-
-app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, requireAdmin, async (req, res) => {
-  const userId = String(req.params.userId || '').trim();
-  if (!userId) {
-    res.status(400).json({ error: 'userId is required.' });
-    return;
-  }
-  const user = await UserModel.findById(userId).lean();
-  if (!user || user.role === 'admin') {
-    res.status(404).json({ error: 'Managed user not found.' });
-    return;
-  }
-
-  const profile = await CommunityProfileModel.findOne({ userId }).select('profilePictureUrl shareProfilePicture').lean();
-  const nowMs = Date.now();
-  const globalGrants = await getGlobalAccessGrantSnapshot();
-  const sub = mergedSubscription(user);
-  const normalizedSub = normalizeSubscription(user);
-  const entitlements = resolveUserEntitlements(user, globalGrants, nowMs);
-  const paidServices = resolvePaidServices(user, nowMs);
-  const mentorAccess = accessStatusPayload(entitlements?.mentor);
-  const testsAccess = accessStatusPayload(paidServices?.tests);
-  const prepAccess = accessStatusPayload(paidServices?.preparation);
-  const communityAccess = accessStatusPayload(paidServices?.community);
-  const activeSession = user?.activeSession || null;
-  const activeUserAgent = String(activeSession?.userAgent || '').toLowerCase();
-
-  const services = {
-    tests: buildManagedServiceDetail({
-      key: PAID_SERVICE_TYPES.tests,
-      label: 'Tests Access',
-      access: testsAccess,
-      manualGrant: normalizeManualGrant(user?.paidServices?.tests),
-      subscription: sub,
-      nowMs,
-    }),
-    preparation: buildManagedServiceDetail({
-      key: PAID_SERVICE_TYPES.preparation,
-      label: 'Preparation Materials Access',
-      access: prepAccess,
-      manualGrant: normalizeManualGrant(user?.paidServices?.preparation),
-      subscription: sub,
-      nowMs,
-    }),
-    community: buildManagedServiceDetail({
-      key: PAID_SERVICE_TYPES.community,
-      label: 'Community Access',
-      access: communityAccess,
-      manualGrant: normalizeManualGrant(user?.paidServices?.community),
-      subscription: sub,
-      nowMs,
-    }),
-    mentor: {
-      ...buildManagedServiceDetail({
-        key: 'mentor',
-        label: 'Smart Study Mentor',
-        access: mentorAccess,
-        manualGrant: normalizeManualGrant(user?.accessControls?.mentorManual),
-        subscription: sub,
-        nowMs,
-      }),
-      subscriptionStatus: String(normalizedSub?.status || 'inactive'),
-      planId: String(normalizedSub?.planId || ''),
-      billingCycle: String(normalizedSub?.billingCycle || ''),
-    },
-  };
-
-  const currentPlan = resolveSubscriptionPlan(normalizedSub.planId);
-  res.json({
-    user: {
-      id: String(user._id),
-      fullName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'No name',
-      firstName: String(user.firstName || ''),
-      lastName: String(user.lastName || ''),
-      email: String(user.email || ''),
-      firebaseUid: String(user.firebaseUid || ''),
-      joinedAt: toIsoOrNull(user.createdAt),
-      profileImageUrl: profile?.shareProfilePicture ? String(profile?.profilePictureUrl || '') : '',
-      syncStatus: {
-        firebaseLinked: Boolean(user.firebaseUid),
-        android: activeUserAgent.includes('android') || activeUserAgent.includes(' wv') ? 'active' : 'not_detected',
-        web: activeUserAgent.includes('mozilla') || activeUserAgent.includes('chrome') ? 'active' : 'not_detected',
-        lastLoginAt: toIsoOrNull(user.lastLoginAt),
-        provider: normalizeAuthProviderDetail(user.authProviderDetail),
-        platformUsage: {
-          lastPlatform: String(user?.platformUsage?.lastPlatform || 'unknown'),
-          lastSeenAt: toIsoOrNull(user?.platformUsage?.lastSeenAt),
-          androidLogins: Number(user?.platformUsage?.androidLogins || 0),
-          webLogins: Number(user?.platformUsage?.webLogins || 0),
-          unknownLogins: Number(user?.platformUsage?.unknownLogins || 0),
-        },
-      },
-      mentorPlan: {
-        status: String(normalizedSub.status || 'inactive'),
-        planId: String(normalizedSub.planId || ''),
-        planName: String(currentPlan?.name || ''),
-        billingCycle: String(normalizedSub.billingCycle || ''),
-        expiresAt: toIsoOrNull(normalizedSub.expiresAt),
-      },
-    },
-    services,
-    availableMentorPlans: Object.values(SUBSCRIPTION_PLANS),
-  });
-});
-
-app.post('/api/admin/subscriptions/management/sync-firebase-users', authMiddleware, requireAdmin, async (_req, res) => {
-  try {
-    const result = await ensureCentralizedAppUsersSync({ force: true });
-    res.json({ ok: true, ...result });
-  } catch (error) {
-    res.status(500).json({
-      error: 'Failed to synchronize Firebase users.',
-      detail: !IS_PRODUCTION ? String(error?.message || error || '') : undefined,
-    });
-  }
-});
-
 app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async (_req, res) => {
   const now = new Date();
-  const managedUserFilter = { role: { $ne: 'admin' } };
+  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
   await finalizeExpiredGlobalAccess(GlobalAccessGrantModel);
   const globalGrants = await getGlobalAccessGrantSnapshot();
   const mentorGlobalActive = isGrantActive(globalGrants.mentor, now.getTime());
@@ -13769,7 +13501,7 @@ app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async
 app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (req, res) => {
   const status = String(req.query?.status || 'all').toLowerCase();
   const accessType = String(req.query?.accessType || '').trim().toLowerCase();
-  const filter = { role: { $ne: 'admin' } };
+  const filter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
   if (status !== 'all' && (!accessType || accessType === 'mentor')) {
     filter['subscription.status'] = status;
   }
@@ -13826,7 +13558,7 @@ app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (r
 
 app.get('/api/admin/paid-services/overview', authMiddleware, requireAdmin, async (_req, res) => {
   const now = new Date();
-  const managedUserFilter = { role: { $ne: 'admin' } };
+  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
   const [totalUsers, testsManualActive, prepManualActive, communityManualActive, legacyPaidEligible] = await Promise.all([
     UserModel.countDocuments(managedUserFilter),
     UserModel.countDocuments({ ...managedUserFilter, 'paidServices.tests.status': 'active', 'paidServices.tests.expiresAt': { $gt: now } }),
@@ -13855,7 +13587,7 @@ app.get('/api/admin/paid-services/users', authMiddleware, requireAdmin, async (r
   const q = String(req.query?.q || '').trim().toLowerCase();
   const status = String(req.query?.status || 'all').trim().toLowerCase();
   const serviceType = parsePaidServiceType(req.query?.serviceType) || PAID_SERVICE_TYPES.tests;
-  const filter = { role: { $ne: 'admin' } };
+  const filter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
   const users = await UserModel.find(filter, {
     email: 1,
     firstName: 1,
@@ -13916,7 +13648,7 @@ app.post('/api/admin/paid-services/:userId/grant', authMiddleware, requireAdmin,
     return;
   }
   const user = await UserModel.findById(userId).select('role authProvider paidServices');
-  if (!user || user.role === 'admin') {
+  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
@@ -13984,7 +13716,7 @@ app.post('/api/admin/paid-services/:userId/deactivate', authMiddleware, requireA
     return;
   }
   const user = await UserModel.findById(userId).select('role authProvider paidServices');
-  if (!user || user.role === 'admin') {
+  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
@@ -14053,7 +13785,7 @@ app.post('/api/admin/subscriptions/access/:userId/grant', authMiddleware, requir
   }
 
   const user = await UserModel.findById(userId).select('subscription accessControls role authProvider email firstName lastName');
-  if (!user || user.role === 'admin') {
+  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
@@ -14105,7 +13837,7 @@ app.post('/api/admin/subscriptions/access/:userId/revoke', authMiddleware, requi
     return;
   }
   const user = await UserModel.findById(userId).select('accessControls role authProvider');
-  if (!user || user.role === 'admin') {
+  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
@@ -14217,7 +13949,7 @@ app.post('/api/admin/signup-requests/:requestId/reject', authMiddleware, require
 app.get('/api/admin/subscriptions/requests/:requestId/payment-proof', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
 app.get('/api/admin/users', authMiddleware, requireAdmin, async (req, res) => {
-  const users = await UserModel.find({ role: { $ne: 'admin' } }, {
+  const users = await UserModel.find({ role: { $ne: 'admin' }, authProvider: 'firebase' }, {
     email: 1,
     firstName: 1,
     lastName: 1,
@@ -16300,3 +16032,5 @@ bootstrap().catch((error) => {
   }
   process.exit(1);
 });
+
+

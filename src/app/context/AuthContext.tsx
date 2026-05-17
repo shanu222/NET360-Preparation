@@ -6,6 +6,7 @@ import {
   deleteUser,
   GoogleAuthProvider,
   sendPasswordResetEmail,
+  signInWithCredential,
   signInWithEmailAndPassword,
   signInWithPopup,
   signInWithRedirect,
@@ -24,9 +25,10 @@ import {
   shouldPersistAuthTokens,
 } from '../lib/authSession';
 import { ensureFirebaseAuthReady, firebaseAuth, isFirebaseConfigured } from '../lib/firebase';
-import { showWarningToast } from '../lib/userToast';
+import { showNeutralToast, showSuccessToast, showWarningToast } from '../lib/userToast';
 import { updateAuthDebug } from '../lib/authDebugState';
 import { isNativeRuntime as isNativeRuntimePlatform, logNativeEvent } from '../lib/nativeDiagnostics';
+import { signInWithGoogleAndroidNative } from '../lib/nativeGoogleAuth';
 
 interface AuthUser {
   id: string;
@@ -53,6 +55,7 @@ interface AuthContextValue {
   }) => Promise<void>;
   sendRecoveryEmail: (email: string) => Promise<void>;
   deleteAccount: (params: { password: string; confirmationText: string }) => Promise<{ message: string }>;
+  requestAccountDeletionLink: () => Promise<{ message: string; expiresAt?: string }>;
   logout: () => void;
 }
 
@@ -156,17 +159,18 @@ function isLikelyTransientAuthFailure(error: unknown): boolean {
   );
 }
 
-function decodeJwtClaims(token: string): { aud?: string; iss?: string; sub?: string } {
+function decodeJwtClaims(token: string): { aud?: string; iss?: string; sub?: string; auth_time?: number } {
   try {
     const payloadPart = String(token || '').split('.')[1] || '';
     if (!payloadPart) return {};
     const normalized = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
     const pad = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
-    const parsed = JSON.parse(atob(normalized + pad)) as { aud?: string; iss?: string; sub?: string };
+    const parsed = JSON.parse(atob(normalized + pad)) as { aud?: string; iss?: string; sub?: string; auth_time?: number };
     return {
       aud: String(parsed.aud || ''),
       iss: String(parsed.iss || ''),
       sub: String(parsed.sub || ''),
+      auth_time: typeof parsed.auth_time === 'number' && Number.isFinite(parsed.auth_time) ? parsed.auth_time : undefined,
     };
   } catch {
     return {};
@@ -176,13 +180,6 @@ function decodeJwtClaims(token: string): { aud?: string; iss?: string; sub?: str
 function extractAuthErrorCode(error: unknown): string {
   const typed = error as Error & { code?: string; payload?: { code?: string } };
   return String(typed?.code || typed?.payload?.code || '').trim();
-}
-
-/** Backend single-session policy: 409 with this code — safe to retry once with force after Firebase proof. */
-function isActiveSessionElsewhereConflict(error: unknown) {
-  if (extractAuthErrorCode(error) === 'ACTIVE_SESSION_ELSEWHERE') return true;
-  const e = error as Error & { status?: number; payload?: { code?: string } };
-  return e.status === 409 && String(e.payload?.code || '') === 'ACTIVE_SESSION_ELSEWHERE';
 }
 
 async function signInWithEmailPasswordRest(email: string, password: string): Promise<{ idToken: string }> {
@@ -224,6 +221,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
   const [deviceId] = useState<string>(() => getOrCreateDeviceId());
   const isNativeRuntime = Capacitor.isNativePlatform() && isNativeRuntimePlatform();
+  const isAndroidNative = isNativeRuntime && Capacitor.getPlatform() === 'android';
   const runSessionRestoreRef = useRef<(reason?: string) => Promise<void>>(async () => undefined);
   const authBootstrapInFlightRef = useRef<Promise<boolean> | null>(null);
 
@@ -430,7 +428,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         try {
           const me = await apiRequest<{ user: AuthUser }>(
             '/api/auth/me',
-            { retryCount: 2, retryDelayMs: 900, timeoutMs: 45_000 },
+            { retryCount: isNativeRuntime ? 2 : 1, retryDelayMs: 900, timeoutMs: 45_000 },
             bearer,
           );
           if (cancelled || loadId !== authSessionLoadGeneration) return;
@@ -686,48 +684,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           backendLoginStatus: 'pending',
           backendLoginCode: '',
         });
-        const forceFromOpts = Boolean(opts?.forceLogoutOtherDevice || opts?.forceLogin);
-        let payload: { token?: string; refreshToken?: string; user: AuthUser };
-        try {
-          payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
-            '/api/auth/login',
-            {
-              method: 'POST',
-              retryCount: isNativeRuntime ? 2 : 1,
-              retryDelayMs: 900,
-              timeoutMs: 50_000,
-              body: JSON.stringify({
-                email,
-                deviceId,
-                firebaseIdToken,
-                forceLogoutOtherDevice: forceFromOpts,
-                forceLogin: forceFromOpts,
-              }),
-            },
-          );
-        } catch (loginErr) {
-          if (!forceFromOpts && isActiveSessionElsewhereConflict(loginErr)) {
-            logNativeEvent('auth', 'login-auto-force-retry', { reason: 'ACTIVE_SESSION_ELSEWHERE' }, 'warn');
-            payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
-              '/api/auth/login',
-              {
-                method: 'POST',
-                retryCount: isNativeRuntime ? 2 : 1,
-                retryDelayMs: 900,
-                timeoutMs: 50_000,
-                body: JSON.stringify({
-                  email,
-                  deviceId,
-                  firebaseIdToken,
-                  forceLogoutOtherDevice: true,
-                  forceLogin: true,
-                }),
-              },
-            );
-          } else {
-            throw loginErr;
-          }
-        }
+        const payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+          '/api/auth/login',
+          {
+            method: 'POST',
+            retryCount: isNativeRuntime ? 2 : 1,
+            retryDelayMs: 900,
+            timeoutMs: 50_000,
+            body: JSON.stringify({
+              email,
+              deviceId,
+              firebaseIdToken,
+              forceLogoutOtherDevice: Boolean(opts?.forceLogoutOtherDevice || opts?.forceLogin),
+              forceLogin: Boolean(opts?.forceLogin || opts?.forceLogoutOtherDevice),
+            }),
+          },
+        );
         const stabilizedPayload = await finalizeNativeAuthTransport(payload, 'login');
         logNativeEvent('auth', 'login-success', { email: email.toLowerCase() });
         updateAuthDebug({
@@ -762,9 +734,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     forceLogoutOtherDevice?: boolean;
     forceLogin?: boolean;
   }) => {
-    const forceFromParams = Boolean(params.forceLogoutOtherDevice || params.forceLogin);
-    const postLogin = async (force: boolean) =>
-      apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+    try {
+      const loginPayload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
         '/api/auth/login',
         {
           method: 'POST',
@@ -775,51 +746,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             email: params.email,
             firebaseIdToken: params.firebaseIdToken,
             deviceId,
-            forceLogoutOtherDevice: force || forceFromParams,
-            forceLogin: force || forceFromParams,
+            forceLogoutOtherDevice: Boolean(params.forceLogoutOtherDevice || params.forceLogin),
+            forceLogin: Boolean(params.forceLogin || params.forceLogoutOtherDevice),
           }),
         },
       );
-
-    let loginPayload: { token?: string; refreshToken?: string; user: AuthUser } | null = null;
-    try {
-      loginPayload = await postLogin(false);
+      const stabilizedPayload = await finalizeNativeAuthTransport(loginPayload, 'social-login');
+      updateAuthDebug({
+        backendLoginStatus: 'success',
+        backendLoginCode: '',
+        activeSessionStatus: 'active',
+      });
+      applyAuthPayload(stabilizedPayload);
+      return;
     } catch (error) {
-      if (!forceFromParams && isActiveSessionElsewhereConflict(error)) {
-        logNativeEvent('auth', 'social-login-auto-force-retry', { reason: 'ACTIVE_SESSION_ELSEWHERE' }, 'warn');
-        try {
-          loginPayload = await postLogin(true);
-        } catch (second) {
-          const typed = second as Error & { status?: number };
-          if (typed?.status !== 401) {
-            throw second;
-          }
-        }
-      } else {
-        const typed = error as Error & { status?: number };
-        if (typed?.status !== 401) {
-          throw error;
-        }
-      }
-    }
-
-    if (loginPayload) {
-      try {
-        const stabilizedPayload = await finalizeNativeAuthTransport(loginPayload, 'social-login');
-        updateAuthDebug({
-          backendLoginStatus: 'success',
-          backendLoginCode: '',
-          activeSessionStatus: 'active',
-        });
-        applyAuthPayload(stabilizedPayload);
-        return;
-      } catch (finalizeErr) {
-        updateAuthDebug({
-          backendLoginStatus: 'failed',
-          backendLoginCode: extractAuthErrorCode(finalizeErr),
-          activeSessionStatus: 'unknown',
-        });
-        throw finalizeErr;
+      const typed = error as Error & { status?: number };
+      updateAuthDebug({
+        backendLoginStatus: 'failed',
+        backendLoginCode: extractAuthErrorCode(error),
+        activeSessionStatus: extractAuthErrorCode(error) === 'ACTIVE_SESSION_ELSEWHERE' ? 'conflict' : 'unknown',
+      });
+      if (typed?.status !== 401) {
+        throw error;
       }
     }
 
@@ -863,9 +811,115 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     provider.addScope('profile');
     provider.addScope('email');
     provider.setCustomParameters({ prompt: 'select_account' });
+    if (isAndroidNative) {
+      try {
+        showNeutralToast('Opening Google sign-in…');
+        const { idToken, accessToken } = await signInWithGoogleAndroidNative();
+        const googleClaims = decodeJwtClaims(idToken);
+        if (typeof console !== 'undefined' && console.error) {
+          console.error('[net360/google-native]', JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'pre-firebase-credential',
+            googleIdAud: googleClaims.aud || undefined,
+            googleIdIss: googleClaims.iss || undefined,
+            hasAccessToken: Boolean(accessToken),
+          }));
+        }
+        const credential = GoogleAuthProvider.credential(idToken, accessToken || undefined);
+        let userCred;
+        try {
+          userCred = await signInWithCredential(activeAuth, credential);
+        } catch (fe) {
+          const feCode = String((fe as { code?: string })?.code || '').trim();
+          const feMsg = (fe as Error)?.message || String(fe);
+          if (typeof console !== 'undefined' && console.error) {
+            console.error('[net360/google-native]', JSON.stringify({
+              ts: new Date().toISOString(),
+              event: 'firebase-signInWithCredential-failed',
+              code: feCode || undefined,
+              message: feMsg,
+              googleIdAud: googleClaims.aud || undefined,
+            }));
+          }
+          logNativeEvent('auth', 'firebase-signInWithCredential-failed', { code: feCode, message: feMsg }, 'error');
+          throw fe;
+        }
+        if (typeof console !== 'undefined' && console.error) {
+          console.error('[net360/google-native]', JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'firebase-signInWithCredential-ok',
+            uidPrefix: userCred.user.uid ? `${userCred.user.uid.slice(0, 8)}…` : '',
+            hasEmail: Boolean(userCred.user.email),
+          }));
+        }
+        updateAuthDebug({ userAuthenticated: true });
+        const firebaseIdToken = await userCred.user.getIdToken();
+        const tokenClaims = decodeJwtClaims(firebaseIdToken);
+        logNativeEvent('auth', 'firebase-token-issued-google-native', {
+          aud: tokenClaims.aud || '',
+          iss: tokenClaims.iss || '',
+          sub: tokenClaims.sub ? `${String(tokenClaims.sub).slice(0, 8)}...` : '',
+        });
+        updateAuthDebug({
+          firebaseTokenGenerated: true,
+          tokenAudience: tokenClaims.aud || '',
+          tokenIssuer: tokenClaims.iss || '',
+        });
+        const [firstName = '', ...rest] = String(userCred.user.displayName || '').trim().split(/\s+/);
+        const lastName = rest.join(' ').trim();
+        const email = String(userCred.user.email || '').trim().toLowerCase();
+        if (!email) {
+          throw new Error('Google login did not return an email address.');
+        }
+        await upsertSocialAuthSession({
+          email,
+          firebaseIdToken,
+          firstName,
+          lastName,
+          forceLogoutOtherDevice: opts?.forceLogoutOtherDevice,
+          forceLogin: opts?.forceLogin,
+        });
+        logNativeEvent('auth', 'google-native-success', { email });
+        showSuccessToast('Signed in with Google.');
+      } catch (error) {
+        const code = String((error as { code?: string })?.code || '').trim();
+        if (code === 'USER_CANCELLED') {
+          logNativeEvent('auth', 'google-native-cancelled', {});
+          throw error;
+        }
+        const message = (error as Error)?.message || String(error);
+        if (typeof console !== 'undefined' && console.error) {
+          console.error('[net360/google-native]', JSON.stringify({
+            ts: new Date().toISOString(),
+            event: 'google-native-outer-catch',
+            code: code || undefined,
+            message,
+          }));
+        }
+        logNativeEvent('auth', 'google-native-failed', { message }, 'error');
+        throw new Error(
+          message.includes('auth/')
+            ? message
+            : 'Google sign-in could not complete on this device. Try again or use email and password.',
+        );
+      }
+      return;
+    }
     if (isNativeRuntime) {
-      // Redirect/popup based Google auth is unreliable in Android embedded WebViews (returns to localhost origin).
-      throw new Error('Google sign-in is not available in this Android build yet. Please use email and password.');
+      try {
+        showNeutralToast('Opening Google sign-in…');
+        await signInWithRedirect(activeAuth, provider);
+        logNativeEvent('auth', 'google-redirect-started', {});
+      } catch (error) {
+        const message = (error as Error)?.message || String(error);
+        logNativeEvent('auth', 'google-redirect-start-failed', { message }, 'error');
+        throw new Error(
+          message.includes('auth/')
+            ? message
+            : 'Google sign-in could not start on this device. Try again or use email and password.',
+        );
+      }
+      return;
     }
     const credential = await signInWithPopup(activeAuth, provider);
     updateAuthDebug({ userAuthenticated: true });
@@ -896,10 +950,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       forceLogin: opts?.forceLogin,
     });
     logNativeEvent('auth', 'google-popup-success');
-  }, [ensureNativeAuthBootstrap, isNativeRuntime, upsertSocialAuthSession]);
+  }, [ensureNativeAuthBootstrap, isAndroidNative, isNativeRuntime, upsertSocialAuthSession]);
 
   useEffect(() => {
-    if (!isNativeRuntime || !isFirebaseConfigured()) return;
+    if (!isNativeRuntime || !isFirebaseConfigured() || isAndroidNative) return;
     let cancelled = false;
 
     void (async () => {
@@ -922,6 +976,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         await upsertSocialAuthSession({ email, firebaseIdToken, firstName, lastName });
         logNativeEvent('auth', 'google-redirect-complete', { email });
+        showSuccessToast('Signed in with Google.');
       } catch (error) {
         if (!cancelled) {
           logNativeEvent('auth', 'google-redirect-failed', {
@@ -937,7 +992,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [isNativeRuntime, upsertSocialAuthSession]);
+  }, [isAndroidNative, isNativeRuntime, upsertSocialAuthSession]);
 
   const registerWithToken = useCallback<AuthContextValue['registerWithToken']>(async ({
     email,
@@ -999,6 +1054,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await sendPasswordResetEmail(activeAuth, email);
   }, []);
 
+  const requestAccountDeletionLink = useCallback<AuthContextValue['requestAccountDeletionLink']>(async () => {
+    return apiRequest<{ message: string; expiresAt?: string }>(
+      '/api/auth/request-delete-link',
+      {
+        method: 'POST',
+        body: JSON.stringify({ deviceId }),
+        timeoutMs: 45_000,
+        retryCount: 0,
+      },
+    );
+  }, [deviceId]);
+
   const clearClientAuthState = useCallback(() => {
     setToken(null);
     setRefreshToken(null);
@@ -1021,17 +1088,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearClientAuthState, refreshToken]);
 
   const deleteAccount = useCallback<AuthContextValue['deleteAccount']>(async ({ password, confirmationText }) => {
+    const finalizeSuccess = async (payload: { message: string }) => {
+      clearClientAuthState();
+      if (firebaseAuth) {
+        await signOut(firebaseAuth).catch(() => undefined);
+      }
+      return payload;
+    };
+
     const payload = await apiRequest<{ message: string }>('/api/auth/delete-account', {
       method: 'POST',
-      body: JSON.stringify({ password, confirmationText }),
+      body: JSON.stringify({
+        password,
+        confirmationText,
+      }),
       timeoutMs: 60_000,
       retryCount: 0,
     });
-    clearClientAuthState();
-    if (firebaseAuth) {
-      await signOut(firebaseAuth).catch(() => undefined);
-    }
-    return payload;
+    return finalizeSuccess(payload);
   }, [clearClientAuthState]);
 
   useEffect(() => {
@@ -1041,7 +1115,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!prev) return;
       const mine = readSessionIdFromAccessToken();
       if (mine && mine === prev) {
-        showWarningToast('You were logged out because your account was signed in on another device.');
+        showWarningToast('You were signed out because your account was opened on another device.');
         logout();
       }
     };
@@ -1059,9 +1133,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       registerWithToken,
       sendRecoveryEmail,
       deleteAccount,
+      requestAccountDeletionLink,
       logout,
     }),
-    [token, user, loading, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, deleteAccount, logout],
+    [
+      token,
+      user,
+      loading,
+      login,
+      loginWithGoogle,
+      registerWithToken,
+      sendRecoveryEmail,
+      deleteAccount,
+      requestAccountDeletionLink,
+      logout,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

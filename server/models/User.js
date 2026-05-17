@@ -118,34 +118,13 @@ const userSchema = new mongoose.Schema(
     hsscPercentage: { type: String, default: '' },
     testDate: { type: String, default: '' },
     role: { type: String, enum: ['student', 'admin'], default: 'student', index: true },
-    authProvider: { type: String, enum: ['local', 'firebase'], default: 'local', index: true },
-    authProviderDetail: { type: String, default: 'unknown', index: true },
+    authProvider: { type: String, enum: ['local', 'firebase', 'google', 'password'], default: 'local', index: true },
     firebaseUid: { type: String, default: '', index: true },
-    displayName: { type: String, default: '' },
-    profilePhotoUrl: { type: String, default: '' },
-    platformUsage: {
-      type: {
-        lastPlatform: { type: String, default: 'unknown' },
-        lastSeenAt: { type: Date, default: null },
-        androidLogins: { type: Number, default: 0 },
-        webLogins: { type: Number, default: 0 },
-        unknownLogins: { type: Number, default: 0 },
-      },
-      default: () => ({}),
-      _id: false,
-    },
     preferences: { type: preferencesSchema, default: () => ({}) },
     progress: { type: progressSchema, default: () => ({}) },
     subscription: { type: subscriptionSchema, default: () => ({}) },
     accessControls: { type: accessControlsSchema, default: () => ({}) },
     paidServices: { type: paidServicesSchema, default: () => ({}) },
-    /**
-     * Single-device login session id. Preferred over `activeSession.sessionId` for auth checks.
-     * Backwards compatible: legacy accounts may only have `activeSession`.
-     */
-    activeSessionId: { type: String, default: '', index: true },
-    /** Last successful login timestamp (any provider). */
-    lastLoginAt: { type: Date, default: null },
     activeSession: { type: activeSessionSchema, default: null },
     refreshTokens: { type: [refreshTokenSchema], default: [] },
     resetPasswordTokenHash: { type: String, default: null },
@@ -162,7 +141,5 @@ const userSchema = new mongoose.Schema(
 
 userSchema.index({ role: 1, createdAt: -1 });
 userSchema.index({ role: 1, updatedAt: -1 });
-userSchema.index({ role: 1, authProvider: 1, lastLoginAt: -1 });
-userSchema.index({ authProvider: 1, authProviderDetail: 1, lastLoginAt: -1 });
 
 export const UserModel = mongoose.models.User || mongoose.model('User', userSchema);
