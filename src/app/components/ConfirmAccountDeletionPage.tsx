@@ -78,7 +78,7 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
   }, [rawToken]);
 
   const handleConfirm = useCallback(async () => {
-    if (!rawToken || verify.status !== 'ready') return;
+    if (!rawToken || verify.status !== 'ready' || done) return;
     if (confirmationText.trim() !== 'DELETE') {
       setSubmitError('Type DELETE exactly to confirm permanent account deletion.');
       return;
@@ -123,10 +123,21 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
   const expiryLabel = verify.status === 'ready' && verify.expiresAt
     ? new Date(verify.expiresAt).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
     : '';
-  const canConfirmDelete = verify.status === 'ready'
-    && confirmationText.trim() === 'DELETE'
-    && !submitting
-    && !done;
+  const tokenValid = verify.status === 'ready';
+  const isSubmitting = submitting;
+  const canDelete = confirmationText.trim() === 'DELETE'
+    && !isSubmitting
+    && tokenValid;
+
+  console.log('confirmationText:', confirmationText);
+  console.log('canDelete:', canDelete);
+
+  const handleConfirmationInput = useCallback((value: string) => {
+    setConfirmationText(value);
+    if (submitError) {
+      setSubmitError('');
+    }
+  }, [submitError]);
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-4 py-10">
@@ -199,17 +210,27 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
                   id="confirm-delete-text"
                   name="confirm-delete-text"
                   autoComplete="off"
+                  autoCapitalize="characters"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  inputMode="text"
+                  enterKeyHint="done"
                   placeholder="DELETE"
                   value={confirmationText}
-                  onChange={(e) => setConfirmationText(e.target.value)}
+                  onChange={(e) => handleConfirmationInput(e.currentTarget.value)}
+                  onInput={(e) => handleConfirmationInput((e.target as HTMLInputElement).value)}
                   className="border-rose-300 bg-white text-slate-900 placeholder:text-slate-500 dark:border-rose-700 dark:bg-slate-950 dark:text-slate-100"
                 />
               </div>
               <Button
                 type="button"
-                variant="destructive"
-                className={`w-full min-h-11 touch-manipulation ${canConfirmDelete ? 'opacity-100' : 'opacity-60'}`}
-                disabled={!canConfirmDelete}
+                variant="default"
+                className={`w-full min-h-11 touch-manipulation transition-colors ${
+                  canDelete
+                    ? 'bg-indigo-600 text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:text-white dark:hover:bg-indigo-400'
+                    : 'bg-slate-300 text-slate-700 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-700'
+                }`}
+                disabled={!canDelete}
                 onClick={() => void handleConfirm()}
               >
                 {submitting ? 'Deleting account…' : done ? 'Account deleted' : 'Confirm Permanent Account Deletion'}
