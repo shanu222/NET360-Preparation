@@ -79,7 +79,7 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
 
   const handleConfirm = useCallback(async () => {
     if (!rawToken || verify.status !== 'ready' || done) return;
-    if (confirmationText.trim() !== 'DELETE') {
+    if (confirmationText.trim().toUpperCase() !== 'DELETE') {
       setSubmitError('Type DELETE exactly to confirm permanent account deletion.');
       return;
     }
@@ -112,7 +112,18 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
         navigate('/', { replace: true });
       }, 2200);
     } catch (error) {
-      const message = String((error as Error)?.message || 'Could not complete account deletion.');
+      const rawMessage = String((error as Error)?.message || 'Could not complete account deletion.');
+      const lowered = rawMessage.toLowerCase();
+      let message = rawMessage;
+      if (lowered.includes('expired')) {
+        message = 'This deletion link has expired. Request a new link from your profile.';
+      } else if (lowered.includes('already been used') || lowered.includes('already used')) {
+        message = 'This deletion link was already used. Request a new link from your profile.';
+      } else if (lowered.includes('invalid')) {
+        message = 'This deletion link is invalid. Request a new link from your profile.';
+      } else if (lowered.includes('network') || lowered.includes('failed to fetch')) {
+        message = 'Network issue detected. Please check your connection and try again.';
+      }
       setSubmitError(message);
       showErrorToast(message);
     } finally {
@@ -125,19 +136,15 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
     : '';
   const tokenValid = verify.status === 'ready';
   const isSubmitting = submitting;
-  const canDelete = confirmationText.trim() === 'DELETE'
+  const normalizedConfirmation = confirmationText.trim().toUpperCase();
+  const canDelete = normalizedConfirmation === 'DELETE'
     && !isSubmitting
     && tokenValid;
 
-  console.log('confirmationText:', confirmationText);
-  console.log('canDelete:', canDelete);
-
-  const handleConfirmationInput = useCallback((value: string) => {
+  const handleConfirmationChange = (value: string) => {
     setConfirmationText(value);
-    if (submitError) {
-      setSubmitError('');
-    }
-  }, [submitError]);
+    if (submitError) setSubmitError('');
+  };
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-4 py-10">
@@ -217,18 +224,18 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
                   enterKeyHint="done"
                   placeholder="DELETE"
                   value={confirmationText}
-                  onChange={(e) => handleConfirmationInput(e.currentTarget.value)}
-                  onInput={(e) => handleConfirmationInput((e.target as HTMLInputElement).value)}
+                  onChange={(e) => handleConfirmationChange(e.target.value)}
+                  onInput={(e) => handleConfirmationChange((e.target as HTMLInputElement).value)}
                   className="border-rose-300 bg-white text-slate-900 placeholder:text-slate-500 dark:border-rose-700 dark:bg-slate-950 dark:text-slate-100"
                 />
               </div>
               <Button
                 type="button"
                 variant="default"
-                className={`w-full min-h-11 touch-manipulation transition-colors ${
+                className={`relative z-10 w-full min-h-11 touch-manipulation transition-colors ${
                   canDelete
-                    ? 'bg-indigo-600 text-white hover:bg-indigo-500 dark:bg-indigo-500 dark:text-white dark:hover:bg-indigo-400'
-                    : 'bg-slate-300 text-slate-700 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-700'
+                    ? 'bg-gradient-to-r from-indigo-600 to-violet-600 text-white hover:from-indigo-500 hover:to-violet-500 dark:from-indigo-500 dark:to-violet-500 dark:hover:from-indigo-400 dark:hover:to-violet-400'
+                    : 'cursor-not-allowed bg-slate-300 text-slate-700 opacity-50 hover:bg-slate-300 dark:bg-slate-700 dark:text-slate-200 dark:hover:bg-slate-700'
                 }`}
                 disabled={!canDelete}
                 onClick={() => void handleConfirm()}
@@ -248,9 +255,6 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
             </div>
           ) : null}
 
-          <Button type="button" variant="outline" className="w-full" onClick={() => navigate('/', { replace: true })}>
-            Cancel and return home
-          </Button>
         </CardContent>
       </Card>
     </div>
