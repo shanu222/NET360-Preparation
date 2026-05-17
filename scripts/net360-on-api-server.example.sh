@@ -27,6 +27,9 @@ npm ci
 echo "== build validation (abort restart on failure) =="
 npm run build
 
+echo "== server syntax validation (abort restart on failure) =="
+node --check server/index.js
+
 echo "== npm ci (production deps only) =="
 npm ci --omit=dev
 
