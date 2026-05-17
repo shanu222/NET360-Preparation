@@ -95,6 +95,7 @@ import { PremiumSubscriptionRequestModel } from './models/PremiumSubscriptionReq
 import { PremiumActivationTokenModel } from './models/PremiumActivationToken.js';
 import { PasswordRecoveryRequestModel } from './models/PasswordRecoveryRequest.js';
 import { SupportChatMessageModel } from './models/SupportChatMessage.js';
+import { AccountDeletionTokenModel } from './models/AccountDeletionToken.js';
 import { SecurityAuditEventModel } from './models/SecurityAuditEvent.js';
 import { RuntimeConfigModel } from './models/RuntimeConfig.js';
 import {
@@ -1080,6 +1081,42 @@ app.use(
     legacyHeaders: false,
     skip: skipOptionsPreflightForRateLimit,
     message: { error: 'Too many delete-account attempts. Please try again later.' },
+  }),
+);
+
+app.use(
+  '/api/auth/request-delete-link',
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 8,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
+    message: { error: 'Too many account deletion link requests. Please try again later.' },
+  }),
+);
+
+app.use(
+  '/api/auth/verify-delete-token',
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
+    message: { error: 'Too many token verification attempts. Please try again later.' },
+  }),
+);
+
+app.use(
+  '/api/auth/confirm-delete',
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 12,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
+    message: { error: 'Too many account deletion confirmations. Please try again later.' },
   }),
 );
 
@@ -3789,6 +3826,265 @@ async function sendRecoveryEmail(destination, token, expiresInMinutes = 30) {
       detail: error instanceof Error ? error.message : 'Email provider error.',
     };
   }
+}
+
+const ACCOUNT_DELETION_LINK_TTL_MS = 15 * 60 * 1000;
+const NET360_SUPPORT_EMAIL = 'support@net360preparation.com';
+
+function hashAccountDeletionRawToken(rawToken) {
+  return crypto.createHash('sha256').update(String(rawToken || ''), 'utf8').digest('hex');
+}
+
+function generateAccountDeletionRawToken() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+
+function resolveNet360PublicWebBaseUrl() {
+  const raw = String(process.env.NET360_PUBLIC_APP_URL || process.env.PUBLIC_APP_URL || '').trim().replace(/\/+$/, '');
+  if (raw) {
+    try {
+      const u = new URL(raw.includes('://') ? raw : `https://${raw}`);
+      if (IS_PRODUCTION && u.protocol !== 'https:') {
+        return `https://${u.host}`;
+      }
+      return `${u.protocol}//${u.host}`.replace(/\/+$/, '');
+    } catch {
+      /* fall through */
+    }
+  }
+  if (IS_PRODUCTION) {
+    return 'https://net360preparation.com';
+  }
+  return 'http://localhost:5173';
+}
+
+function buildAccountDeletionSessionFingerprint(req, user) {
+  const sid = String(user?.activeSession?.sessionId || '').trim();
+  const did = String(req.body?.deviceId || req.get('x-net360-device-id') || '').trim().slice(0, 120);
+  const ua = getUserAgent(req);
+  const combined = `session:${sid}|device:${did}|ua:${ua}`;
+  return crypto.createHash('sha256').update(combined, 'utf8').digest('hex').slice(0, 48);
+}
+
+function isGoogleManagedAuthProvider(authProvider, firebaseUid) {
+  const p = String(authProvider || 'local').trim().toLowerCase();
+  return p === 'firebase' || p === 'google' || Boolean(String(firebaseUid || '').trim());
+}
+
+function isPasswordManagedAuthProvider(authProvider) {
+  const p = String(authProvider || 'local').trim().toLowerCase();
+  return p === 'local' || p === 'password';
+}
+
+async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, expiresAt }) {
+  if (!isValidEmail(toEmail)) {
+    return { status: 'failed', detail: 'Invalid destination email.' };
+  }
+  if (!smtpTransporter || !SMTP_FROM_EMAIL) {
+    return { status: 'failed', detail: 'SMTP provider not configured.' };
+  }
+  const greetingName = String(firstName || '').trim() || 'NET360 student';
+  const expiryLabel = expiresAt.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  const subject = 'Confirm NET360 account deletion';
+  const text = [
+    `Hi ${greetingName},`,
+    '',
+    'We received a request to permanently delete your NET360 account.',
+    '',
+    `This confirmation link expires at ${expiryLabel} (about 15 minutes from when it was sent).`,
+    '',
+    `Open this link to review and confirm deletion: ${deleteUrl}`,
+    '',
+    'If you did not request account deletion, ignore this email. Your account will stay active.',
+    '',
+    `Questions? Contact ${NET360_SUPPORT_EMAIL}`,
+    '',
+    '— NET360 Preparation',
+  ].join('\n');
+
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f8;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1e1b4b;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f4f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="600" cellspacing="0" cellpadding="0" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 12px 40px rgba(30,27,75,0.12);">
+        <tr><td style="padding:28px 28px 8px;font-size:20px;font-weight:700;color:#312e81;">NET360 Preparation</td></tr>
+        <tr><td style="padding:8px 28px 20px;font-size:14px;color:#64748b;">Account deletion request</td></tr>
+        <tr><td style="padding:0 28px 16px;font-size:15px;line-height:1.6;color:#334155;">
+          Hi <strong>${escapeHtml(greetingName)}</strong>,
+        </td></tr>
+        <tr><td style="padding:0 28px 16px;font-size:15px;line-height:1.6;color:#334155;">
+          We received a request to <strong>permanently delete</strong> your NET360 account. This action cannot be undone and will remove your access, subscriptions, and associated study data on the platform.
+        </td></tr>
+        <tr><td style="padding:0 28px 16px;font-size:14px;line-height:1.6;color:#b45309;background:#fffbeb;border-radius:12px;margin:0 20px;">
+          <div style="padding:14px 16px;"><strong>Link expires:</strong> ${escapeHtml(expiryLabel)} (15 minutes from send). Each link is single-use.</div>
+        </td></tr>
+        <tr><td style="padding:24px 28px 8px;" align="center">
+          <a href="${escapeHtml(deleteUrl)}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 28px;border-radius:12px;">Delete My NET360 Account</a>
+        </td></tr>
+        <tr><td style="padding:8px 28px 24px;font-size:13px;line-height:1.5;color:#64748b;" align="center">
+          If the button does not work, copy and paste this URL into your browser (HTTPS only):<br/>
+          <span style="word-break:break-all;color:#4338ca;">${escapeHtml(deleteUrl)}</span>
+        </td></tr>
+        <tr><td style="padding:0 28px 24px;font-size:14px;line-height:1.6;color:#334155;">
+          If you did <strong>not</strong> request deletion, you can safely ignore this message — your account will remain active.
+        </td></tr>
+        <tr><td style="padding:16px 28px 28px;font-size:13px;color:#64748b;border-top:1px solid #e2e8f0;">
+          Support: <a href="mailto:${escapeHtml(NET360_SUPPORT_EMAIL)}" style="color:#4f46e5;">${escapeHtml(NET360_SUPPORT_EMAIL)}</a>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
+
+  try {
+    await smtpTransporter.sendMail({
+      from: SMTP_FROM_EMAIL,
+      to: toEmail,
+      subject,
+      text,
+      html,
+    });
+    return { status: 'sent', detail: 'Deletion email sent.' };
+  } catch (error) {
+    return { status: 'failed', detail: error instanceof Error ? error.message : 'Email provider error.' };
+  }
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+async function executePermanentStudentAccountDeletion(req, res, user) {
+  const userId = user._id;
+  const userIdString = String(userId);
+  const email = normalizeEmail(user.email || '');
+  const compactPhone = compactMobile(user.phone || '');
+  const firebaseUid = String(user.firebaseUid || '').trim();
+  const activeSessionId = String(user.activeSession?.sessionId || '').trim();
+
+  await logSecurityEvent(req, {
+    eventType: 'auth.delete_account_started',
+    severity: 'warning',
+    actorUserId: userId,
+    actorEmail: email,
+  });
+
+  if (activeSessionId) {
+    notifyRevokedStudentSession(userIdString, activeSessionId);
+  }
+  if (isRedisConfigured()) {
+    await cacheDel(cacheKey(`studentSession:${userIdString}`));
+  }
+  await invalidateUserSubscriptionCache(userId);
+  emitSubscriptionRefresh(userIdString, { reason: 'account_deleted' });
+
+  await Promise.all([
+    AttemptModel.deleteMany({ userId }),
+    TestSessionModel.deleteMany({ userId }),
+    AIUsageModel.deleteMany({ userId }),
+    PasswordRecoveryRequestModel.deleteMany({
+      $or: [
+        { userId },
+        ...(email ? [{ email }] : []),
+        ...(compactPhone ? [{ mobileNumber: compactPhone }] : []),
+      ],
+    }),
+    SignupRequestModel.deleteMany({ email }),
+    SignupTokenModel.deleteMany({ email }),
+    PremiumSubscriptionRequestModel.deleteMany({ userId }),
+    PremiumActivationTokenModel.deleteMany({
+      $or: [{ userId }, ...(email ? [{ email }] : [])],
+    }),
+    CommunityProfileModel.deleteMany({ userId }),
+    CommunityConnectionRequestModel.deleteMany({
+      $or: [{ fromUserId: userId }, { toUserId: userId }],
+    }),
+    CommunityConnectionModel.deleteMany({
+      $or: [{ participantA: userId }, { participantB: userId }],
+    }),
+    CommunityMessageModel.deleteMany({ senderUserId: userId }),
+    CommunityReportModel.deleteMany({
+      $or: [{ reporterUserId: userId }, { reportedUserId: userId }],
+    }),
+    CommunityBlockModel.deleteMany({ userId }),
+    CommunityRoomPostModel.deleteMany({ authorUserId: userId }),
+    CommunityQuizChallengeModel.deleteMany({
+      $or: [{ challengerUserId: userId }, { opponentUserId: userId }],
+    }),
+    SupportChatMessageModel.deleteMany({
+      $or: [{ userId }, { senderUserId: userId }, { 'reactions.senderUserId': userId }],
+    }),
+    SecurityAuditEventModel.updateMany(
+      { actorUserId: userId },
+      {
+        $set: {
+          actorUserId: null,
+          actorEmail: 'deleted-user',
+        },
+      },
+    ),
+    ...(email
+      ? [
+          SecurityAuditEventModel.updateMany(
+            { actorEmail: email },
+            {
+              $set: {
+                actorEmail: 'deleted-user',
+              },
+            },
+          ),
+        ]
+      : []),
+    PaymentTransactionModel.updateMany(
+      { userId },
+      {
+        $set: {
+          gatewayResponse: null,
+        },
+      },
+    ),
+  ]);
+
+  await Promise.all([
+    invalidateCommunityLeaderboardCache(),
+    invalidateQuizLeaderboardCache(),
+  ]);
+
+  await AccountDeletionTokenModel.deleteMany({ userId });
+
+  await UserModel.deleteOne({ _id: userId });
+
+  if (firebaseUid && firebaseAdminAuth) {
+    try {
+      await firebaseAdminAuth.deleteUser(firebaseUid);
+    } catch (firebaseDeleteError) {
+      console.error('[auth/delete-account] firebase user deletion failed', {
+        userId: userIdString,
+        firebaseUid,
+        message: firebaseDeleteError?.message || firebaseDeleteError,
+      });
+    }
+  }
+
+  clearAuthCookies(res);
+
+  await logSecurityEvent(req, {
+    eventType: 'auth.delete_account_success',
+    severity: 'warning',
+    actorUserId: userId,
+    actorEmail: email,
+  });
+
+  return {
+    message:
+      'Your NET360 account has been permanently deleted. Any active subscription access has been revoked. You must create a new account to use NET360 again.',
+  };
 }
 
 async function sendRecoverySms(destination, token, expiresInMinutes = 30) {
@@ -7775,7 +8071,6 @@ app.post('/api/auth/logout', async (req, res) => {
 app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
   try {
     const password = String(req.body?.password || '');
-    const firebaseIdToken = String(req.body?.firebaseIdToken || '').trim();
     const confirmationText = String(req.body?.confirmationText || '').trim();
 
     if (confirmationText !== 'DELETE') {
@@ -7783,7 +8078,7 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const user = await UserModel.findById(req.user._id).select('_id passwordHash role email phone firebaseUid authProvider activeSession');
+    const user = await UserModel.findById(req.user._id).select('_id passwordHash role email phone firebaseUid authProvider activeSession firstName');
     if (!user) {
       res.status(404).json({ error: 'Account not found.' });
       return;
@@ -7794,182 +8089,224 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const userId = user._id;
-    const userIdString = String(userId);
-    const email = normalizeEmail(user.email || '');
-    const compactPhone = compactMobile(user.phone || '');
-    const firebaseUid = String(user.firebaseUid || '').trim();
     const authProvider = String(user.authProvider || 'local').trim().toLowerCase();
-    const isFirebaseManagedAccount = authProvider === 'firebase' || authProvider === 'google' || Boolean(firebaseUid);
-    const activeSessionId = String(user.activeSession?.sessionId || '').trim();
-
-    if (isFirebaseManagedAccount) {
-      if (!firebaseIdToken) {
-        res.status(400).json({ error: 'Google account verification is required to delete this account.' });
-        return;
-      }
-      let firebaseIdentity;
-      try {
-        firebaseIdentity = await verifyFirebaseUserToken(firebaseIdToken);
-      } catch (firebaseTokenError) {
-        res.status(401).json({ error: 'Google verification failed. Please sign in again and retry.' });
-        return;
-      }
-
-      if (firebaseUid && firebaseIdentity.uid !== firebaseUid) {
-        res.status(403).json({ error: 'Verified Google account does not match this NET360 account.' });
-        return;
-      }
-      if (!firebaseUid && firebaseIdentity.email !== email) {
-        res.status(403).json({ error: 'Verified Google account email does not match this NET360 account.' });
-        return;
-      }
-
-      const REAUTH_MAX_AGE_MS = 5 * 60 * 1000;
-      const authAgeMs = firebaseIdentity.authTimeMs > 0
-        ? Math.max(0, Date.now() - firebaseIdentity.authTimeMs)
-        : Number.POSITIVE_INFINITY;
-      if (!Number.isFinite(authAgeMs) || authAgeMs > REAUTH_MAX_AGE_MS) {
-        res.status(401).json({ error: 'Google verification expired. Please verify your Google account again.' });
-        return;
-      }
+    const firebaseUid = String(user.firebaseUid || '').trim();
+    if (isGoogleManagedAuthProvider(authProvider, firebaseUid)) {
+      res.status(400).json({
+        error:
+          'This account uses Google Sign-In. Use the secure deletion link sent to your email, or tap “Send Account Deletion Link” in your profile.',
+      });
+      return;
     }
 
-    if (!isFirebaseManagedAccount) {
-      if (!password) {
-        res.status(400).json({ error: 'Password is required to delete account.' });
-        return;
-      }
-      const passwordMatches = await bcrypt.compare(password, String(user.passwordHash || ''));
-      if (!passwordMatches) {
-        await logSecurityEvent(req, {
-          eventType: 'auth.delete_account_wrong_password',
-          severity: 'warning',
-          actorUserId: user._id,
-          actorEmail: user.email,
-        });
-        res.status(401).json({ error: 'Incorrect password. Account deletion cancelled.' });
-        return;
-      }
+    if (!isPasswordManagedAuthProvider(authProvider)) {
+      res.status(400).json({ error: 'This account cannot be deleted with a password on this endpoint.' });
+      return;
     }
 
-    await logSecurityEvent(req, {
-      eventType: 'auth.delete_account_started',
-      severity: 'warning',
-      actorUserId: userId,
-      actorEmail: email,
-    });
-
-    if (activeSessionId) {
-      notifyRevokedStudentSession(userIdString, activeSessionId);
-    }
-    if (isRedisConfigured()) {
-      await cacheDel(cacheKey(`studentSession:${userIdString}`));
-    }
-    await invalidateUserSubscriptionCache(userId);
-    emitSubscriptionRefresh(userIdString, { reason: 'account_deleted' });
-
-    await Promise.all([
-      AttemptModel.deleteMany({ userId }),
-      TestSessionModel.deleteMany({ userId }),
-      AIUsageModel.deleteMany({ userId }),
-      PasswordRecoveryRequestModel.deleteMany({
-        $or: [
-          { userId },
-          ...(email ? [{ email }] : []),
-          ...(compactPhone ? [{ mobileNumber: compactPhone }] : []),
-        ],
-      }),
-      SignupRequestModel.deleteMany({ email }),
-      SignupTokenModel.deleteMany({ email }),
-      PremiumSubscriptionRequestModel.deleteMany({ userId }),
-      PremiumActivationTokenModel.deleteMany({
-        $or: [{ userId }, ...(email ? [{ email }] : [])],
-      }),
-      CommunityProfileModel.deleteMany({ userId }),
-      CommunityConnectionRequestModel.deleteMany({
-        $or: [{ fromUserId: userId }, { toUserId: userId }],
-      }),
-      CommunityConnectionModel.deleteMany({
-        $or: [{ participantA: userId }, { participantB: userId }],
-      }),
-      CommunityMessageModel.deleteMany({ senderUserId: userId }),
-      CommunityReportModel.deleteMany({
-        $or: [{ reporterUserId: userId }, { reportedUserId: userId }],
-      }),
-      CommunityBlockModel.deleteMany({ userId }),
-      CommunityRoomPostModel.deleteMany({ authorUserId: userId }),
-      CommunityQuizChallengeModel.deleteMany({
-        $or: [{ challengerUserId: userId }, { opponentUserId: userId }],
-      }),
-      SupportChatMessageModel.deleteMany({
-        $or: [{ userId }, { senderUserId: userId }, { 'reactions.senderUserId': userId }],
-      }),
-      SecurityAuditEventModel.updateMany(
-        { actorUserId: userId },
-        {
-          $set: {
-            actorUserId: null,
-            actorEmail: 'deleted-user',
-          },
-        },
-      ),
-      ...(email
-        ? [
-            SecurityAuditEventModel.updateMany(
-              { actorEmail: email },
-              {
-                $set: {
-                  actorEmail: 'deleted-user',
-                },
-              },
-            ),
-          ]
-        : []),
-      // Keep legally required billing metadata while redacting provider payload.
-      PaymentTransactionModel.updateMany(
-        { userId },
-        {
-          $set: {
-            gatewayResponse: null,
-          },
-        },
-      ),
-    ]);
-
-    await Promise.all([
-      invalidateCommunityLeaderboardCache(),
-      invalidateQuizLeaderboardCache(),
-    ]);
-
-    await UserModel.deleteOne({ _id: userId });
-
-    if (firebaseUid && firebaseAdminAuth) {
-      try {
-        await firebaseAdminAuth.deleteUser(firebaseUid);
-      } catch (firebaseDeleteError) {
-        console.error('[auth/delete-account] firebase user deletion failed', {
-          userId: userIdString,
-          firebaseUid,
-          message: firebaseDeleteError?.message || firebaseDeleteError,
-        });
-      }
+    if (!password) {
+      res.status(400).json({ error: 'Password is required to delete account.' });
+      return;
     }
 
-    clearAuthCookies(res);
+    const passwordMatches = await bcrypt.compare(password, String(user.passwordHash || ''));
+    if (!passwordMatches) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.delete_account_wrong_password',
+        severity: 'warning',
+        actorUserId: user._id,
+        actorEmail: user.email,
+      });
+      res.status(401).json({ error: 'Incorrect password. Account deletion cancelled.' });
+      return;
+    }
 
-    await logSecurityEvent(req, {
-      eventType: 'auth.delete_account_success',
-      severity: 'warning',
-      actorUserId: userId,
-      actorEmail: email,
-    });
-
-    res.json({
-      message: 'Your NET360 account has been permanently deleted. Any active subscription access has been revoked. You must create a new account to use NET360 again.',
-    });
+    const payload = await executePermanentStudentAccountDeletion(req, res, user);
+    res.json(payload);
   } catch (error) {
     console.error('[auth/delete-account] failed', error?.message || error);
+    res.status(500).json({ error: 'Could not delete account. Please try again.' });
+  }
+});
+
+app.post('/api/auth/request-delete-link', authMiddleware, async (req, res) => {
+  try {
+    const user = await UserModel.findById(req.user._id).select('_id role email firebaseUid authProvider activeSession firstName');
+    if (!user) {
+      res.status(404).json({ error: 'Account not found.' });
+      return;
+    }
+    if ((user.role || 'student') !== 'student') {
+      res.status(403).json({ error: 'Only student accounts can request account deletion.' });
+      return;
+    }
+
+    const authProvider = String(user.authProvider || 'local').trim().toLowerCase();
+    const firebaseUid = String(user.firebaseUid || '').trim();
+    if (!isGoogleManagedAuthProvider(authProvider, firebaseUid)) {
+      res.status(400).json({ error: 'Email deletion links are only for Google Sign-In accounts.' });
+      return;
+    }
+
+    const email = normalizeEmail(user.email || '');
+    if (!email) {
+      res.status(400).json({ error: 'No email is associated with this account.' });
+      return;
+    }
+
+    await AccountDeletionTokenModel.deleteMany({
+      userId: user._id,
+      usedAt: null,
+    });
+
+    const rawToken = generateAccountDeletionRawToken();
+    const tokenHash = hashAccountDeletionRawToken(rawToken);
+    const expiresAt = new Date(Date.now() + ACCOUNT_DELETION_LINK_TTL_MS);
+    const fingerprint = buildAccountDeletionSessionFingerprint(req, user);
+
+    await AccountDeletionTokenModel.create({
+      userId: user._id,
+      tokenHash,
+      emailNormalized: email,
+      authProviderSnapshot: authProvider,
+      sessionFingerprint: fingerprint,
+      expiresAt,
+    });
+
+    const base = resolveNet360PublicWebBaseUrl();
+    const deleteUrl = `${base}/confirm-account-deletion?token=${encodeURIComponent(rawToken)}`;
+
+    const sendResult = await sendAccountDeletionLinkEmail({
+      toEmail: email,
+      firstName: user.firstName,
+      deleteUrl,
+      expiresAt,
+    });
+
+    await logSecurityEvent(req, {
+      eventType: 'auth.delete_link_requested',
+      severity: 'warning',
+      actorUserId: user._id,
+      actorEmail: email,
+      metadata: { emailDispatchStatus: sendResult.status },
+    });
+
+    if (sendResult.status !== 'sent') {
+      await AccountDeletionTokenModel.deleteOne({ tokenHash });
+      res.status(503).json({ error: 'Could not send deletion email. Please try again later or contact support.' });
+      return;
+    }
+
+    res.json({
+      message: `Deletion confirmation link sent to ${email}. The link expires in 15 minutes.`,
+      expiresAt: expiresAt.toISOString(),
+    });
+  } catch (error) {
+    console.error('[auth/request-delete-link] failed', error?.message || error);
+    res.status(500).json({ error: 'Could not send deletion link. Please try again.' });
+  }
+});
+
+app.get('/api/auth/verify-delete-token', async (req, res) => {
+  try {
+    const raw = String(req.query?.token || '').trim();
+    if (!raw || raw.length > 512) {
+      res.status(400).json({ valid: false, error: 'Invalid deletion link.' });
+      return;
+    }
+    const tokenHash = hashAccountDeletionRawToken(raw);
+    const doc = await AccountDeletionTokenModel.findOne({ tokenHash }).lean();
+    const now = Date.now();
+    if (!doc || doc.usedAt) {
+      res.json({ valid: false, error: 'This deletion link is invalid or has already been used.' });
+      return;
+    }
+    if (new Date(doc.expiresAt).getTime() <= now) {
+      res.json({ valid: false, error: 'This deletion link has expired. Request a new link from your NET360 profile.' });
+      return;
+    }
+
+    const u = await UserModel.findById(doc.userId).select('email firstName authProvider firebaseUid role').lean();
+    if (!u || (u.role || 'student') !== 'student') {
+      res.json({ valid: false, error: 'This deletion link is no longer valid.' });
+      return;
+    }
+    if (normalizeEmail(u.email || '') !== doc.emailNormalized) {
+      res.json({ valid: false, error: 'This deletion link is no longer valid.' });
+      return;
+    }
+    const ap = String(u.authProvider || 'local').toLowerCase();
+    const uid = String(u.firebaseUid || '').trim();
+    if (!isGoogleManagedAuthProvider(ap, uid)) {
+      res.json({ valid: false, error: 'This deletion link is no longer valid.' });
+      return;
+    }
+
+    res.json({
+      valid: true,
+      email: normalizeEmail(u.email || ''),
+      firstName: String(u.firstName || '').trim(),
+      expiresAt: new Date(doc.expiresAt).toISOString(),
+    });
+  } catch (error) {
+    console.error('[auth/verify-delete-token] failed', error?.message || error);
+    res.status(500).json({ valid: false, error: 'Could not verify deletion link.' });
+  }
+});
+
+app.post('/api/auth/confirm-delete', async (req, res) => {
+  try {
+    const raw = String(req.body?.token || '').trim();
+    if (!raw || raw.length > 512) {
+      res.status(400).json({ error: 'Invalid deletion link.' });
+      return;
+    }
+    const tokenHash = hashAccountDeletionRawToken(raw);
+    const now = new Date();
+    const claimed = await AccountDeletionTokenModel.findOneAndUpdate(
+      { tokenHash, usedAt: null, expiresAt: { $gt: now } },
+      { $set: { usedAt: now } },
+      { new: true },
+    );
+    if (!claimed) {
+      res.status(400).json({ error: 'This deletion link is invalid, expired, or has already been used.' });
+      return;
+    }
+
+    const user = await UserModel.findById(claimed.userId).select('_id passwordHash role email phone firebaseUid authProvider activeSession firstName');
+    if (!user) {
+      res.status(400).json({ error: 'This account no longer exists.' });
+      return;
+    }
+    if ((user.role || 'student') !== 'student') {
+      res.status(403).json({ error: 'This deletion link cannot be used for this account.' });
+      return;
+    }
+    const email = normalizeEmail(user.email || '');
+    if (email !== claimed.emailNormalized) {
+      res.status(400).json({ error: 'This deletion link does not match this account.' });
+      return;
+    }
+    const ap = String(user.authProvider || 'local').toLowerCase();
+    const uid = String(user.firebaseUid || '').trim();
+    if (!isGoogleManagedAuthProvider(ap, uid)) {
+      res.status(400).json({ error: 'This deletion link is no longer valid for this account.' });
+      return;
+    }
+    if (String(claimed.authProviderSnapshot || '').toLowerCase() !== ap) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.delete_token_provider_mismatch',
+        severity: 'warning',
+        actorUserId: user._id,
+        actorEmail: email,
+        metadata: { snapshot: claimed.authProviderSnapshot, current: ap },
+      });
+    }
+
+    const payload = await executePermanentStudentAccountDeletion(req, res, user);
+    res.json(payload);
+  } catch (error) {
+    console.error('[auth/confirm-delete] failed', error?.message || error);
     res.status(500).json({ error: 'Could not delete account. Please try again.' });
   }
 });
