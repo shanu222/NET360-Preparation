@@ -181,43 +181,61 @@ export function DeleteAccountHelpPage() {
   return (
     <LegalShell
       title="How To Delete Your NET360 Account"
-      description="Users can permanently delete their NET360 Preparation account directly from the Profile/Settings section inside the app."
+      description="NET360 supports secure account deletion for both password and Google sign-in users from Profile/Settings."
     >
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">Process to delete account</h2>
+        <h2 className="text-lg font-semibold">Password account deletion</h2>
         <ul className="list-disc space-y-1 pl-5">
           <li>Open Profile / Settings.</li>
           <li>Open Danger Zone: Delete Account.</li>
-          <li>Type DELETE in uppercase.</li>
-          <li>Enter your registration password.</li>
-          <li>Click &quot;Delete Account Permanently&quot;.</li>
+          <li>Type DELETE in uppercase exactly.</li>
+          <li>Enter your current account password.</li>
+          <li>Click &quot;Delete Account Permanently&quot; to complete deletion immediately.</li>
         </ul>
       </section>
 
       <section className="space-y-2">
-        <h2 className="text-lg font-semibold">Deleted data may include</h2>
+        <h2 className="text-lg font-semibold">Google sign-in account deletion</h2>
         <ul className="list-disc space-y-1 pl-5">
-          <li>Profile information</li>
-          <li>Test history</li>
-          <li>Community profile</li>
-          <li>Analytics associated with the account</li>
+          <li>Open Profile / Settings and go to Danger Zone.</li>
+          <li>Type DELETE in uppercase and click &quot;Send Verification Link&quot;.</li>
+          <li>Open the secure deletion link from your email.</li>
+          <li>On the confirmation page, type DELETE again.</li>
+          <li>Click &quot;Confirm Permanent Account Deletion&quot;.</li>
+          <li>The deletion link expires in about 15 minutes and is single-use.</li>
+        </ul>
+      </section>
+
+      <section className="space-y-2">
+        <h2 className="text-lg font-semibold">What data is removed</h2>
+        <ul className="list-disc space-y-1 pl-5">
+          <li>Profile information and authentication access.</li>
+          <li>Practice/test progress and related study records.</li>
+          <li>Community/support records linked to the account.</li>
+          <li>Session tokens and active login sessions.</li>
         </ul>
       </section>
 
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">Data retention notice</h2>
         <p>
-          Some records related to billing, security, or legal compliance may be retained temporarily for up to 90 days.
+          Some billing, compliance, and security records may be retained for a limited period where legally required
+          or needed for abuse prevention and audit obligations.
         </p>
       </section>
 
       <section className="space-y-2">
         <h2 className="text-lg font-semibold">For assistance contact</h2>
-        <p>
-          <a className="text-indigo-700 underline underline-offset-2" href="mailto:shanu1998end@gmail.com">
-            shanu1998end@gmail.com
-          </a>
-        </p>
+        <ul className="list-disc space-y-1 pl-5">
+          {SUPPORT_EMAILS.map((email) => (
+            <li key={email}>
+              <a className="text-indigo-700 underline underline-offset-2" href={`mailto:${email}`}>
+                {email}
+              </a>
+            </li>
+          ))}
+          <li>Phone support (if needed): {SUPPORT_PHONE}</li>
+        </ul>
       </section>
     </LegalShell>
   );

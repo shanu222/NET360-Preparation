@@ -3833,41 +3833,90 @@ async function sendRecoveryEmail(destination, token, expiresInMinutes = 30) {
     };
   }
 
-  if (!smtpTransporter || !SMTP_FROM_EMAIL) {
+  const readiness = await ensureSmtpEmailDeliveryReady('password-recovery');
+  if (!readiness.ok || !smtpTransporter || !SMTP_FROM_EMAIL) {
     return {
       channel: 'email',
       destination,
       status: 'failed',
       provider: 'smtp-gmail',
-      detail: 'SMTP provider not configured.',
+      detail: readiness.detail || 'Email delivery is temporarily unavailable.',
     };
   }
 
-  try {
-    await smtpTransporter.sendMail({
-      from: SMTP_FROM_EMAIL,
-      to: destination,
-      subject: 'NET360 Password Recovery Token',
-      text: `Your NET360 reset token is: ${token}. It expires in ${expiresInMinutes} minutes.`,
-      html: `<p>Your NET360 reset token is: <strong>${token}</strong></p><p>This token expires in ${expiresInMinutes} minutes.</p>`,
-    });
+  const code = String(token || '').trim();
+  const expiresText = `${Math.max(1, Math.floor(expiresInMinutes))} minutes`;
+  const subject = 'NET360 password recovery verification code';
+  const text = [
+    'NET360 Password Recovery',
+    '',
+    'Use the verification code below to continue resetting your password:',
+    code,
+    '',
+    `This code expires in ${expiresText}.`,
+    '',
+    'If you did not request password recovery, you can safely ignore this email.',
+    `Support: ${NET360_SUPPORT_EMAIL}`,
+  ].join('\n');
+  const html = `<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+<body style="margin:0;padding:0;background:#f4f4f8;font-family:Segoe UI,Roboto,Helvetica,Arial,sans-serif;color:#1e1b4b;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f4f4f8;padding:24px 12px;">
+    <tr><td align="center">
+      <table role="presentation" width="560" cellspacing="0" cellpadding="0" style="max-width:560px;background:#ffffff;border-radius:14px;overflow:hidden;border:1px solid #e2e8f0;">
+        <tr><td style="padding:24px 24px 10px;font-size:20px;font-weight:700;color:#312e81;">NET360 Preparation</td></tr>
+        <tr><td style="padding:0 24px 12px;font-size:14px;color:#475569;">Password recovery verification</td></tr>
+        <tr><td style="padding:0 24px 12px;font-size:15px;color:#334155;line-height:1.6;">
+          Use this verification code to continue resetting your password:
+        </td></tr>
+        <tr><td style="padding:0 24px 12px;">
+          <div style="display:inline-block;padding:12px 18px;border-radius:10px;border:1px solid #cbd5e1;background:#f8fafc;font-size:24px;letter-spacing:3px;font-weight:700;color:#0f172a;">${escapeHtml(code)}</div>
+        </td></tr>
+        <tr><td style="padding:0 24px 12px;font-size:14px;color:#334155;">
+          This code expires in <strong>${escapeHtml(expiresText)}</strong>.
+        </td></tr>
+        <tr><td style="padding:0 24px 20px;font-size:13px;color:#64748b;line-height:1.6;">
+          If you did not request password recovery, you can ignore this email.
+        </td></tr>
+        <tr><td style="padding:14px 24px 20px;font-size:13px;color:#64748b;border-top:1px solid #e2e8f0;">
+          Support: <a href="mailto:${escapeHtml(NET360_SUPPORT_EMAIL)}" style="color:#4f46e5;">${escapeHtml(NET360_SUPPORT_EMAIL)}</a>
+        </td></tr>
+      </table>
+    </td></tr>
+  </table>
+</body></html>`;
 
+  const appBase = resolveNet360PublicWebBaseUrl();
+  const unsubscribeUrl = `${appBase}/privacy-policy`;
+  const sendResult = await sendTransactionalEmailWithRetry({
+    from: SMTP_FROM_EMAIL,
+    to: destination,
+    subject,
+    text,
+    html,
+    headers: buildTransactionalEmailHeaders({
+      messageIdSeed: 'net360-recovery',
+      unsubscribeUrl,
+    }),
+  });
+
+  if (sendResult.ok) {
     return {
       channel: 'email',
       destination,
       status: 'sent',
       provider: 'smtp-gmail',
-      detail: 'Recovery token sent.',
-    };
-  } catch (error) {
-    return {
-      channel: 'email',
-      destination,
-      status: 'failed',
-      provider: 'smtp-gmail',
-      detail: error instanceof Error ? error.message : 'Email provider error.',
+      detail: sendResult.attempts > 1 ? `Recovery code sent after ${sendResult.attempts} attempts.` : 'Recovery code sent.',
     };
   }
+
+  return {
+    channel: 'email',
+    destination,
+    status: 'failed',
+    provider: 'smtp-gmail',
+    detail: sendResult.error,
+  };
 }
 
 const ACCOUNT_DELETION_LINK_TTL_MS = 15 * 60 * 1000;
@@ -3920,6 +3969,58 @@ async function ensureDeletionEmailDeliveryReady() {
   return { ok: true, detail: '' };
 }
 
+async function ensureSmtpEmailDeliveryReady(reason = 'transactional-email') {
+  if (!smtpRuntime.enabled || !smtpTransporter) {
+    return {
+      ok: false,
+      detail: 'Email delivery is temporarily unavailable.',
+    };
+  }
+  if (smtpRuntime.verified) {
+    return { ok: true, detail: '' };
+  }
+  const verified = await verifySmtpTransport(reason);
+  if (!verified) {
+    return {
+      ok: false,
+      detail: 'Email delivery is temporarily unavailable.',
+    };
+  }
+  return { ok: true, detail: '' };
+}
+
+function buildTransactionalEmailHeaders({ messageIdSeed, unsubscribeUrl }) {
+  const seed = String(messageIdSeed || 'mail');
+  const domain = SMTP_FROM_EMAIL.includes('@') ? SMTP_FROM_EMAIL.split('@').pop() : 'net360preparation.com';
+  return {
+    'Message-ID': `<${seed}-${Date.now()}-${crypto.randomBytes(6).toString('hex')}@${domain}>`,
+    'Reply-To': NET360_SUPPORT_EMAIL,
+    'List-Unsubscribe': `<mailto:${NET360_SUPPORT_EMAIL}>${unsubscribeUrl ? `, <${unsubscribeUrl}>` : ''}`,
+    'MIME-Version': '1.0',
+    'X-Mailer': 'NET360 Mailer',
+  };
+}
+
+async function sendTransactionalEmailWithRetry(mailOptions, maxAttempts = 2) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await smtpTransporter.sendMail(mailOptions);
+      return { ok: true, attempts: attempt, error: '' };
+    } catch (error) {
+      lastError = error;
+      if (attempt < maxAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, 500 * attempt));
+      }
+    }
+  }
+  return {
+    ok: false,
+    attempts: maxAttempts,
+    error: lastError instanceof Error ? lastError.message : 'Email provider error.',
+  };
+}
+
 function buildAccountDeletionSessionFingerprint(req, user) {
   const sid = String(user?.activeSession?.sessionId || '').trim();
   const did = String(req.body?.deviceId || req.get('x-net360-device-id') || '').trim().slice(0, 120);
@@ -3946,6 +4047,21 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
   if (!readiness.ok || !smtpTransporter || !SMTP_FROM_EMAIL) {
     return { status: 'failed', detail: readiness.detail || 'Email delivery is temporarily unavailable.' };
   }
+  const normalizedDeleteUrl = (() => {
+    try {
+      const u = new URL(String(deleteUrl || ''));
+      if (IS_PRODUCTION && u.protocol !== 'https:') {
+        return '';
+      }
+      return u.toString();
+    } catch {
+      return '';
+    }
+  })();
+  if (!normalizedDeleteUrl) {
+    return { status: 'failed', detail: 'Deletion link is not HTTPS-safe.' };
+  }
+
   const greetingName = String(firstName || '').trim() || 'NET360 student';
   const expiryLabel = expiresAt.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
   const subject = 'Confirm NET360 account deletion';
@@ -3956,7 +4072,7 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
     '',
     `This confirmation link expires at ${expiryLabel} (about 15 minutes from when it was sent).`,
     '',
-    `Open this link to review and confirm deletion: ${deleteUrl}`,
+    `Open this link to review and confirm deletion: ${normalizedDeleteUrl}`,
     '',
     'If you did not request account deletion, ignore this email. Your account will stay active.',
     '',
@@ -3983,11 +4099,11 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
           <div style="padding:14px 16px;"><strong>Link expires:</strong> ${escapeHtml(expiryLabel)} (15 minutes from send). Each link is single-use.</div>
         </td></tr>
         <tr><td style="padding:24px 28px 8px;" align="center">
-          <a href="${escapeHtml(deleteUrl)}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 28px;border-radius:12px;">Delete My NET360 Account</a>
+          <a href="${escapeHtml(normalizedDeleteUrl)}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;font-weight:600;font-size:15px;padding:14px 28px;border-radius:12px;">Delete My NET360 Account</a>
         </td></tr>
         <tr><td style="padding:8px 28px 24px;font-size:13px;line-height:1.5;color:#64748b;" align="center">
           If the button does not work, copy and paste this URL into your browser (HTTPS only):<br/>
-          <span style="word-break:break-all;color:#4338ca;">${escapeHtml(deleteUrl)}</span>
+          <span style="word-break:break-all;color:#4338ca;">${escapeHtml(normalizedDeleteUrl)}</span>
         </td></tr>
         <tr><td style="padding:0 28px 24px;font-size:14px;line-height:1.6;color:#334155;">
           If you did <strong>not</strong> request deletion, you can safely ignore this message — your account will remain active.
@@ -4000,18 +4116,23 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
   </table>
 </body></html>`;
 
-  try {
-    await smtpTransporter.sendMail({
-      from: SMTP_FROM_EMAIL,
-      to: toEmail,
-      subject,
-      text,
-      html,
-    });
+  const unsubscribeUrl = `${resolveNet360PublicWebBaseUrl()}/privacy-policy`;
+  const sendResult = await sendTransactionalEmailWithRetry({
+    from: SMTP_FROM_EMAIL,
+    to: toEmail,
+    subject,
+    text,
+    html,
+    headers: buildTransactionalEmailHeaders({
+      messageIdSeed: 'net360-delete',
+      unsubscribeUrl,
+    }),
+  });
+
+  if (sendResult.ok) {
     return { status: 'sent', detail: 'Deletion email sent.' };
-  } catch (error) {
-    return { status: 'failed', detail: error instanceof Error ? error.message : 'Email provider error.' };
   }
+  return { status: 'failed', detail: sendResult.error };
 }
 
 function escapeHtml(value) {

@@ -175,7 +175,7 @@ const PATH_BY_SECTION: Record<SectionId, string> = {
   subscription: '/subscription',
   'privacy-policy': '/privacy-policy',
   terms: '/terms',
-  'delete-account': '/delete-account',
+  'delete-account': '/how-to-delete-account',
   'physics-mcqs-net': '/physics-mcqs-net',
   'math-mcqs-net': '/math-mcqs-net',
   'net-preparation-pakistan': '/net-preparation-pakistan',
@@ -270,6 +270,7 @@ function resolveSectionFromPath(pathname: string): SectionId | null {
   const aliasMap: Record<string, SectionId> = {
     '/preparation-material': 'preparation',
     '/mock-test': 'tests',
+    '/delete-account': 'delete-account',
   };
   if (aliasMap[normalized]) return aliasMap[normalized];
   const entry = (Object.entries(PATH_BY_SECTION) as Array<[SectionId, string]>).find(([, path]) => path === normalized);
