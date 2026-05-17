@@ -1,0 +1,16 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.net360prep.app",
+      "sha256_cert_fingerprints": [
+        "3B:B4:4B:89:72:A0:1F:64:43:DA:BA:C7:CE:D6:14:95:21:84:34:B4",
+        "3D:0B:A7:AA:36:3F:08:F1:67:70:0C:2C:D6:57:FB:00:3C:80:CD:31",
+        "78:9B:70:0B:98:84:21:5A:14:23:70:62:5F:FA:FC:7F:B7:38:4D:0B"
+      ]
+    }
+  }
+]

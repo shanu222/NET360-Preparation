@@ -44,6 +44,7 @@ const publicDir = path.resolve(__dirname, '../public');
 const googleVerificationFile = 'google408182c27152cb87.html';
 const sitemapFile = 'sitemap.xml';
 const robotsFile = 'robots.txt';
+const assetLinksFile = path.join('.well-known', 'assetlinks.json');
 
 app.disable('x-powered-by');
 app.set('trust proxy', 1);
@@ -205,6 +206,26 @@ app.get('/robots.txt', (_req, res) => {
   }
 
   res.status(404).send('Robots file not found.');
+});
+
+app.get('/.well-known/assetlinks.json', (_req, res) => {
+  const distFilePath = path.join(distDir, assetLinksFile);
+  if (fs.existsSync(distFilePath)) {
+    res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
+    res.type('application/json');
+    res.sendFile(distFilePath);
+    return;
+  }
+
+  const publicFilePath = path.join(publicDir, assetLinksFile);
+  if (fs.existsSync(publicFilePath)) {
+    res.setHeader('Cache-Control', 'public, max-age=300, must-revalidate');
+    res.type('application/json');
+    res.sendFile(publicFilePath);
+    return;
+  }
+
+  res.status(404).json({ error: 'assetlinks.json not found.' });
 });
 
 app.get('*', (_req, res) => {

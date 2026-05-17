@@ -29,9 +29,20 @@
       "headers": [
         { "key": "Cache-Control", "value": "public, max-age=3600, stale-while-revalidate=86400" }
       ]
+    },
+    {
+      "source": "/.well-known/assetlinks.json",
+      "headers": [
+        { "key": "Cache-Control", "value": "public, max-age=300, must-revalidate" },
+        { "key": "Content-Type", "value": "application/json; charset=utf-8" }
+      ]
     }
   ],
   "rewrites": [
+    {
+      "source": "/.well-known/assetlinks.json",
+      "destination": "/.well-known/assetlinks.json"
+    },
     {
       "source": "/api/(.*)",
       "destination": "https://api.net360preparation.com/api/$1"
