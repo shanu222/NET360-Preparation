@@ -160,6 +160,14 @@ export function audienceFriendlyError(error: unknown, fallback = 'Something went
   if (Number.isFinite(status) && status > 0) {
     const msg = String(err?.message || '').trim();
     if (status === 401) {
+      const lowerMsg = msg.toLowerCase();
+      // Keep account-deletion failures explicit instead of mapping to sign-in copy.
+      if (
+        lowerMsg.includes('account deletion')
+        || (lowerMsg.includes('incorrect password') && lowerMsg.includes('delete account'))
+      ) {
+        return isLikelySafeServerMessage(msg) ? msg : 'Incorrect password. Account deletion cancelled.';
+      }
       if (/password|credential|invalid|wrong|sign.?in|authentication|firebase/i.test(msg) && !/session|expired|token/i.test(msg)) {
         return 'Unable to sign you in. Please check your email and password.';
       }
