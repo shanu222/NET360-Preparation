@@ -3446,9 +3446,14 @@ async function verifyFirebaseUserToken(idToken) {
   if (!decoded.uid || !email) {
     throw new Error('Invalid Firebase token payload.');
   }
+  const authTimeSeconds = Number(decoded.auth_time || 0);
+  const authTimeMs = Number.isFinite(authTimeSeconds) && authTimeSeconds > 0
+    ? Math.floor(authTimeSeconds * 1000)
+    : 0;
   return {
     uid: String(decoded.uid),
     email,
+    authTimeMs,
   };
 }
 
@@ -7770,6 +7775,7 @@ app.post('/api/auth/logout', async (req, res) => {
 app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
   try {
     const password = String(req.body?.password || '');
+    const firebaseIdToken = String(req.body?.firebaseIdToken || '').trim();
     const confirmationText = String(req.body?.confirmationText || '').trim();
 
     if (confirmationText !== 'DELETE') {
@@ -7794,8 +7800,40 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
     const compactPhone = compactMobile(user.phone || '');
     const firebaseUid = String(user.firebaseUid || '').trim();
     const authProvider = String(user.authProvider || 'local').trim().toLowerCase();
-    const isFirebaseManagedAccount = authProvider === 'firebase' || Boolean(firebaseUid);
+    const isFirebaseManagedAccount = authProvider === 'firebase' || authProvider === 'google' || Boolean(firebaseUid);
     const activeSessionId = String(user.activeSession?.sessionId || '').trim();
+
+    if (isFirebaseManagedAccount) {
+      if (!firebaseIdToken) {
+        res.status(400).json({ error: 'Google account verification is required to delete this account.' });
+        return;
+      }
+      let firebaseIdentity;
+      try {
+        firebaseIdentity = await verifyFirebaseUserToken(firebaseIdToken);
+      } catch (firebaseTokenError) {
+        res.status(401).json({ error: 'Google verification failed. Please sign in again and retry.' });
+        return;
+      }
+
+      if (firebaseUid && firebaseIdentity.uid !== firebaseUid) {
+        res.status(403).json({ error: 'Verified Google account does not match this NET360 account.' });
+        return;
+      }
+      if (!firebaseUid && firebaseIdentity.email !== email) {
+        res.status(403).json({ error: 'Verified Google account email does not match this NET360 account.' });
+        return;
+      }
+
+      const REAUTH_MAX_AGE_MS = 5 * 60 * 1000;
+      const authAgeMs = firebaseIdentity.authTimeMs > 0
+        ? Math.max(0, Date.now() - firebaseIdentity.authTimeMs)
+        : Number.POSITIVE_INFINITY;
+      if (!Number.isFinite(authAgeMs) || authAgeMs > REAUTH_MAX_AGE_MS) {
+        res.status(401).json({ error: 'Google verification expired. Please verify your Google account again.' });
+        return;
+      }
+    }
 
     if (!isFirebaseManagedAccount) {
       if (!password) {

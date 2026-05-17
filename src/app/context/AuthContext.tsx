@@ -2,6 +2,8 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, 
 import { apiRequest } from '../lib/api';
 import {
   createUserWithEmailAndPassword,
+  reauthenticateWithCredential,
+  reauthenticateWithPopup,
   getRedirectResult,
   deleteUser,
   GoogleAuthProvider,
@@ -54,7 +56,8 @@ interface AuthContextValue {
     lastName?: string;
   }) => Promise<void>;
   sendRecoveryEmail: (email: string) => Promise<void>;
-  deleteAccount: (params: { password: string; confirmationText: string }) => Promise<{ message: string }>;
+  confirmGoogleDeleteReauth: () => Promise<{ firebaseIdToken: string }>;
+  deleteAccount: (params: { password: string; confirmationText: string; firebaseIdToken?: string | null }) => Promise<{ message: string }>;
   logout: () => void;
 }
 
@@ -1052,6 +1055,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await sendPasswordResetEmail(activeAuth, email);
   }, []);
 
+  const confirmGoogleDeleteReauth = useCallback<AuthContextValue['confirmGoogleDeleteReauth']>(async () => {
+    if (!isFirebaseConfigured()) {
+      throw new Error('Google verification is not configured.');
+    }
+    const auth = await ensureFirebaseAuthReady();
+    const activeAuth = auth || firebaseAuth;
+    const currentUser = activeAuth?.currentUser || null;
+    if (!activeAuth || !currentUser) {
+      throw new Error('Session expired. Please log in again before deleting your account.');
+    }
+
+    const provider = new GoogleAuthProvider();
+    provider.addScope('profile');
+    provider.addScope('email');
+    provider.setCustomParameters({ prompt: 'select_account' });
+
+    if (isAndroidNative) {
+      const { idToken, accessToken } = await signInWithGoogleAndroidNative();
+      const claims = decodeJwtClaims(idToken);
+      if (claims.sub && claims.sub !== currentUser.uid) {
+        throw new Error('Selected Google account does not match your NET360 account.');
+      }
+      const credential = GoogleAuthProvider.credential(idToken, accessToken || undefined);
+      await reauthenticateWithCredential(currentUser, credential);
+      const firebaseIdToken = await currentUser.getIdToken(true);
+      return { firebaseIdToken };
+    }
+
+    if (isNativeRuntime) {
+      throw new Error('Google verification is not available on this device. Please sign in again and retry.');
+    }
+
+    await reauthenticateWithPopup(currentUser, provider);
+    const firebaseIdToken = await currentUser.getIdToken(true);
+    return { firebaseIdToken };
+  }, [isAndroidNative, isNativeRuntime]);
+
   const clearClientAuthState = useCallback(() => {
     setToken(null);
     setRefreshToken(null);
@@ -1073,10 +1113,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [clearClientAuthState, refreshToken]);
 
-  const deleteAccount = useCallback<AuthContextValue['deleteAccount']>(async ({ password, confirmationText }) => {
+  const deleteAccount = useCallback<AuthContextValue['deleteAccount']>(async ({ password, confirmationText, firebaseIdToken }) => {
+    const verifiedFirebaseToken = String(firebaseIdToken || '').trim();
     const payload = await apiRequest<{ message: string }>('/api/auth/delete-account', {
       method: 'POST',
-      body: JSON.stringify({ password, confirmationText }),
+      body: JSON.stringify({
+        password,
+        confirmationText,
+        ...(verifiedFirebaseToken ? { firebaseIdToken: verifiedFirebaseToken } : {}),
+      }),
       timeoutMs: 60_000,
       retryCount: 0,
     });
@@ -1111,10 +1156,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       loginWithGoogle,
       registerWithToken,
       sendRecoveryEmail,
+      confirmGoogleDeleteReauth,
       deleteAccount,
       logout,
     }),
-    [token, user, loading, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, deleteAccount, logout],
+    [
+      token,
+      user,
+      loading,
+      login,
+      loginWithGoogle,
+      registerWithToken,
+      sendRecoveryEmail,
+      confirmGoogleDeleteReauth,
+      deleteAccount,
+      logout,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -170,7 +170,7 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
 }
 
 export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
-  const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, deleteAccount, logout } = useAuth();
+  const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, confirmGoogleDeleteReauth, deleteAccount, logout } = useAuth();
   const { surface } = useSubscription();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
   const [localProfile, setLocalProfile] = useState(profile);
@@ -202,6 +202,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
   const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState('');
   const [deleteAccountAttempted, setDeleteAccountAttempted] = useState(false);
+  const [deleteFirebaseReauthToken, setDeleteFirebaseReauthToken] = useState('');
+  const [isVerifyingDeleteGoogle, setIsVerifyingDeleteGoogle] = useState(false);
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isPersonalInfoExpanded, setIsPersonalInfoExpanded] = useState(true);
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
@@ -239,6 +241,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     setShowDeleteAccountPanel(false);
     setDeleteAccountConfirmationText('');
     setDeleteAccountPassword('');
+    setDeleteFirebaseReauthToken('');
     setDeleteAccountAttempted(false);
   }, [user?.id]);
 
@@ -553,14 +556,43 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   };
 
   const isDeleteConfirmationValid = deleteAccountConfirmationText.trim() === 'DELETE';
-  const isFirebaseManagedAuth = String(user?.authProvider || '').toLowerCase() === 'firebase';
-  const isDeletePasswordProvided = isFirebaseManagedAuth || deleteAccountPassword.trim().length > 0;
-  const canSubmitDeleteAccount = isDeleteConfirmationValid && isDeletePasswordProvided && !isDeletingAccount;
+  const authProvider = String(user?.authProvider || '').toLowerCase();
+  const isFirebaseManagedAuth = authProvider === 'firebase' || authProvider === 'google';
+  const isDeletePasswordProvided = deleteAccountPassword.trim().length > 0;
+  const isDeleteGoogleVerified = deleteFirebaseReauthToken.trim().length > 0;
+  const canSubmitDeleteAccount = isDeleteConfirmationValid
+    && (isFirebaseManagedAuth ? isDeleteGoogleVerified : isDeletePasswordProvided)
+    && !isVerifyingDeleteGoogle
+    && !isDeletingAccount;
+
+  const handleGoogleDeleteVerification = async () => {
+    try {
+      setIsVerifyingDeleteGoogle(true);
+      const verified = await confirmGoogleDeleteReauth();
+      setDeleteFirebaseReauthToken(String(verified?.firebaseIdToken || '').trim());
+      showSuccessToast('Google account verified. You can now delete your account.');
+    } catch (error) {
+      const code = String((error as { code?: string })?.code || '').trim();
+      if (code === 'USER_CANCELLED') {
+        showNeutralToast('Google verification was cancelled.');
+      } else {
+        handleApiError(error, 'Could not verify your Google account.');
+      }
+      setDeleteFirebaseReauthToken('');
+    } finally {
+      setIsVerifyingDeleteGoogle(false);
+    }
+  };
 
   const handleDeleteAccount = async () => {
     setDeleteAccountAttempted(true);
     if (!isFirebaseManagedAuth && !isDeletePasswordProvided) {
       showErrorToast('Enter your registration password to confirm account deletion.');
+      return;
+    }
+
+    if (isFirebaseManagedAuth && !isDeleteGoogleVerified) {
+      showErrorToast('Verify your Google account before deleting your NET360 account.');
       return;
     }
 
@@ -579,6 +611,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       const result = await deleteAccount({
         password: deleteAccountPassword,
         confirmationText: deleteAccountConfirmationText.trim(),
+        firebaseIdToken: isFirebaseManagedAuth ? deleteFirebaseReauthToken.trim() : undefined,
       });
       showSuccessToast(
         result?.message
@@ -590,6 +623,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       );
       setDeleteAccountPassword('');
       setDeleteAccountConfirmationText('');
+      setDeleteFirebaseReauthToken('');
       setDeleteAccountAttempted(false);
       window.location.assign('/?tab=profile');
     } catch (error) {
@@ -606,6 +640,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       if (next) {
         setDeleteAccountConfirmationText('');
         setDeleteAccountPassword('');
+        setDeleteFirebaseReauthToken('');
         setDeleteAccountAttempted(false);
       }
       return next;
@@ -1369,26 +1404,45 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               ) : null}
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="delete-account-password">Confirm with your registration password</Label>
-              <PasswordInput
-                id="delete-account-password"
-                name="delete-account-password"
-                autoComplete="new-password"
-                value={deleteAccountPassword}
-                onChange={(e) => setDeleteAccountPassword(e.target.value)}
-                placeholder="Enter password to confirm"
-                className="border-red-200 bg-white"
-              />
-              {isFirebaseManagedAuth ? (
+            {isFirebaseManagedAuth ? (
+              <div className="space-y-2">
+                <Label>Google account verification</Label>
                 <p className="text-xs text-red-700/90">
-                  Firebase session verification is active for this account. Password entry is optional.
+                  This account uses Google Sign-In. Please confirm your Google account to continue.
                 </p>
-              ) : null}
-              {deleteAccountAttempted && !isDeletePasswordProvided ? (
-                <p className="text-xs font-medium text-red-700">Password is required for secure account deletion.</p>
-              ) : null}
-            </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-fit border-red-300 bg-white text-red-700 hover:bg-red-50"
+                  disabled={isVerifyingDeleteGoogle || isDeletingAccount}
+                  onClick={() => void handleGoogleDeleteVerification()}
+                >
+                  {isVerifyingDeleteGoogle ? 'Verifying Google Account...' : 'Verify Google Account'}
+                </Button>
+                {isDeleteGoogleVerified ? (
+                  <p className="text-xs font-medium text-emerald-700">Google account verified. You can now delete your account.</p>
+                ) : null}
+                {deleteAccountAttempted && !isDeleteGoogleVerified ? (
+                  <p className="text-xs font-medium text-red-700">Google verification is required for secure account deletion.</p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Label htmlFor="delete-account-password">Confirm with your registration password</Label>
+                <PasswordInput
+                  id="delete-account-password"
+                  name="delete-account-password"
+                  autoComplete="new-password"
+                  value={deleteAccountPassword}
+                  onChange={(e) => setDeleteAccountPassword(e.target.value)}
+                  placeholder="Enter password to confirm"
+                  className="border-red-200 bg-white"
+                />
+                {deleteAccountAttempted && !isDeletePasswordProvided ? (
+                  <p className="text-xs font-medium text-red-700">Password is required for secure account deletion.</p>
+                ) : null}
+              </div>
+            )}
             <Button
               variant="destructive"
               onClick={() => void handleDeleteAccount()}
