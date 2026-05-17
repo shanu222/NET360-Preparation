@@ -553,12 +553,13 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   };
 
   const isDeleteConfirmationValid = deleteAccountConfirmationText.trim() === 'DELETE';
-  const isDeletePasswordProvided = deleteAccountPassword.trim().length > 0;
+  const isFirebaseManagedAuth = String(user?.authProvider || '').toLowerCase() === 'firebase';
+  const isDeletePasswordProvided = isFirebaseManagedAuth || deleteAccountPassword.trim().length > 0;
   const canSubmitDeleteAccount = isDeleteConfirmationValid && isDeletePasswordProvided && !isDeletingAccount;
 
   const handleDeleteAccount = async () => {
     setDeleteAccountAttempted(true);
-    if (!isDeletePasswordProvided) {
+    if (!isFirebaseManagedAuth && !isDeletePasswordProvided) {
       showErrorToast('Enter your registration password to confirm account deletion.');
       return;
     }
@@ -583,9 +584,14 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         result?.message
         || 'Your NET360 account has been permanently deleted. Any active subscription access has been revoked. You must create a new account to use NET360 again.',
       );
+      window.alert(
+        result?.message
+        || 'Your NET360 account has been permanently deleted. Any active subscription access has been revoked. You must create a new account to use NET360 again.',
+      );
       setDeleteAccountPassword('');
       setDeleteAccountConfirmationText('');
       setDeleteAccountAttempted(false);
+      window.location.assign('/?tab=profile');
     } catch (error) {
       handleApiError(error, 'Could not delete account.');
     } finally {
@@ -1374,6 +1380,11 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 placeholder="Enter password to confirm"
                 className="border-red-200 bg-white"
               />
+              {isFirebaseManagedAuth ? (
+                <p className="text-xs text-red-700/90">
+                  Firebase session verification is active for this account. Password entry is optional.
+                </p>
+              ) : null}
               {deleteAccountAttempted && !isDeletePasswordProvided ? (
                 <p className="text-xs font-medium text-red-700">Password is required for secure account deletion.</p>
               ) : null}

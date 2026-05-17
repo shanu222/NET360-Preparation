@@ -36,6 +36,7 @@ interface AuthUser {
   firstName: string;
   lastName: string;
   role?: 'student' | 'admin';
+  authProvider?: string;
   /** Present on `/api/auth/me` for students; used for session diagnostics only. */
   activeSessionId?: string;
 }
@@ -1083,7 +1084,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (firebaseAuth) {
       await signOut(firebaseAuth).catch(() => undefined);
     }
-    redirectToLoginScreen();
     return payload;
   }, [clearClientAuthState]);
 

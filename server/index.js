@@ -5149,6 +5149,7 @@ function userPublic(user) {
     hsscPercentage: user.hsscPercentage || '',
     testDate: user.testDate || '',
     role: user.role || 'student',
+    authProvider: String(user.authProvider || 'local'),
     preferences: { ...defaultPreferences(), ...(user.preferences || {}) },
     progress,
     subscription: {
@@ -7770,17 +7771,13 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
   try {
     const password = String(req.body?.password || '');
     const confirmationText = String(req.body?.confirmationText || '').trim();
-    if (!password) {
-      res.status(400).json({ error: 'Password is required to delete account.' });
-      return;
-    }
 
     if (confirmationText !== 'DELETE') {
       res.status(400).json({ error: 'Type DELETE to confirm permanent account deletion.' });
       return;
     }
 
-    const user = await UserModel.findById(req.user._id).select('_id passwordHash role email phone firebaseUid activeSession');
+    const user = await UserModel.findById(req.user._id).select('_id passwordHash role email phone firebaseUid authProvider activeSession');
     if (!user) {
       res.status(404).json({ error: 'Account not found.' });
       return;
@@ -7791,24 +7788,32 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const passwordMatches = await bcrypt.compare(password, String(user.passwordHash || ''));
-    if (!passwordMatches) {
-      await logSecurityEvent(req, {
-        eventType: 'auth.delete_account_wrong_password',
-        severity: 'warning',
-        actorUserId: user._id,
-        actorEmail: user.email,
-      });
-      res.status(401).json({ error: 'Incorrect password. Account deletion cancelled.' });
-      return;
-    }
-
     const userId = user._id;
     const userIdString = String(userId);
     const email = normalizeEmail(user.email || '');
     const compactPhone = compactMobile(user.phone || '');
     const firebaseUid = String(user.firebaseUid || '').trim();
+    const authProvider = String(user.authProvider || 'local').trim().toLowerCase();
+    const isFirebaseManagedAccount = authProvider === 'firebase' || Boolean(firebaseUid);
     const activeSessionId = String(user.activeSession?.sessionId || '').trim();
+
+    if (!isFirebaseManagedAccount) {
+      if (!password) {
+        res.status(400).json({ error: 'Password is required to delete account.' });
+        return;
+      }
+      const passwordMatches = await bcrypt.compare(password, String(user.passwordHash || ''));
+      if (!passwordMatches) {
+        await logSecurityEvent(req, {
+          eventType: 'auth.delete_account_wrong_password',
+          severity: 'warning',
+          actorUserId: user._id,
+          actorEmail: user.email,
+        });
+        res.status(401).json({ error: 'Incorrect password. Account deletion cancelled.' });
+        return;
+      }
+    }
 
     await logSecurityEvent(req, {
       eventType: 'auth.delete_account_started',
