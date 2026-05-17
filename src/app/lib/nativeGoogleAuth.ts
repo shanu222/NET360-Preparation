@@ -42,14 +42,56 @@ function peekJwtPayload(token: string): { aud?: string; iss?: string; exp?: numb
 function serializeNativeError(e: unknown): Record<string, unknown> {
   if (e == null) return { kind: 'nullish' };
   if (typeof e === 'string') return { message: e };
-  const err = e as Error & { code?: string; data?: unknown };
+  const err = e as Error & { code?: string; data?: unknown; status?: number; statusCode?: number };
   const out: Record<string, unknown> = {
     name: err.name,
     message: err.message,
     code: err.code,
+    status: err.status,
+    statusCode: err.statusCode,
   };
+  if (err.data != null) out.data = err.data;
   if (typeof err.stack === 'string') out.stackHead = err.stack.slice(0, 500);
+  for (const [k, v] of Object.entries(err as Record<string, unknown>)) {
+    if (k in out) continue;
+    if (v == null) continue;
+    if (typeof v === 'function') continue;
+    out[k] = v;
+  }
   return out;
+}
+
+function readNativeStatusCode(e: unknown): number | null {
+  const anyErr = e as {
+    status?: unknown;
+    statusCode?: unknown;
+    nativeStatusCode?: unknown;
+    data?: { status?: unknown; statusCode?: unknown; code?: unknown };
+  };
+  const candidates = [
+    anyErr?.status,
+    anyErr?.statusCode,
+    anyErr?.nativeStatusCode,
+    anyErr?.data?.status,
+    anyErr?.data?.statusCode,
+    anyErr?.data?.code,
+  ];
+  for (const c of candidates) {
+    const n = Number(c);
+    if (Number.isFinite(n)) return n;
+  }
+  return null;
+}
+
+function isLikelyAndroidOauthMisconfig(code: string, statusCode: number | null, message: string): boolean {
+  const msg = String(message || '').toLowerCase();
+  if (statusCode === 10 || statusCode === 12500 || statusCode === 12501) return true;
+  if (msg.includes('developer_error')) return true;
+  if (msg.includes('status: 10')) return true;
+  if (msg.includes('oauth')) return true;
+  if (msg.includes('sha-1') || msg.includes('sha1') || msg.includes('certificate')) return true;
+  if (code === 'USER_CANCELLED' && (msg.includes('failed') || msg.includes('misconfig'))) return true;
+  return false;
 }
 
 /**
@@ -82,12 +124,26 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
   const webClientId = resolveGoogleWebClientId();
   androidNativeLog('google-native-start', {
     webClientId: maskClientId(webClientId),
-    packageHint: 'com.net360.preparation',
+    packageHint: 'com.net360prep.app',
   });
 
-  let SocialLogin: typeof import('@capgo/capacitor-social-login').SocialLogin;
+  let SocialLogin: {
+    initialize: (options: unknown) => Promise<void>;
+    login: (options: unknown) => Promise<{
+      provider: string;
+      result: {
+        responseType?: string;
+        idToken?: string;
+        accessToken?: { token?: string };
+        profile?: { email?: string };
+      };
+    }>;
+  };
   try {
-    ({ SocialLogin } = await import('@capgo/capacitor-social-login'));
+    const importDynamic = new Function('specifier', 'return import(specifier)') as
+      (specifier: string) => Promise<Record<string, unknown>>;
+    const mod = await importDynamic('@capgo/capacitor-social-login');
+    SocialLogin = mod.SocialLogin as typeof SocialLogin;
   } catch (e) {
     androidNativeLog('plugin-import-failed', { error: serializeNativeError(e) });
     throw e;
@@ -135,10 +191,21 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
     });
   } catch (e) {
     const code = String((e as { code?: string })?.code || '').trim();
+    const statusCode = readNativeStatusCode(e);
+    const message = String((e as Error)?.message || '');
     androidNativeLog('social-login-login-failed', {
       code: code || undefined,
+      statusCode: statusCode ?? undefined,
       error: serializeNativeError(e),
     });
+    if (isLikelyAndroidOauthMisconfig(code, statusCode, message)) {
+      const err = new Error(
+        'Android Google OAuth is misconfigured for this package/signing key. ' +
+          'Verify Firebase Android app package, SHA-1/SHA-256, and Android OAuth client.',
+      ) as Error & { code?: string };
+      err.code = 'GOOGLE_OAUTH_ANDROID_MISCONFIG';
+      throw err;
+    }
     throw e;
   }
 

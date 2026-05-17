@@ -5262,15 +5262,6 @@ function buildStructuredDocumentPdfBuffer({ title, subtitle = '', sections = [] 
   });
 }
 
-function escapeHtml(value) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
 async function buildStructuredWordBuffer({ title, subtitle = '', sections = [] }) {
   const document = new Document({
     sections: [
