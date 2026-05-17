@@ -4,6 +4,7 @@ import {
   createUserWithEmailAndPassword,
   reauthenticateWithCredential,
   reauthenticateWithPopup,
+  reauthenticateWithRedirect,
   getRedirectResult,
   deleteUser,
   GoogleAuthProvider,
@@ -161,21 +162,54 @@ function isLikelyTransientAuthFailure(error: unknown): boolean {
   );
 }
 
-function decodeJwtClaims(token: string): { aud?: string; iss?: string; sub?: string } {
+/** Session flag for Google delete reauth via redirect (web + iOS WebView). */
+const DELETE_GOOGLE_REAUTH_SESSION_KEY = 'net360:google-delete-reauth';
+
+const FIREBASE_DELETE_REAUTH_MAX_AGE_MS = 5 * 60 * 1000;
+const FIREBASE_DELETE_REAUTH_CLIENT_SKEW_MS = 45 * 1000;
+
+function decodeJwtClaims(token: string): { aud?: string; iss?: string; sub?: string; auth_time?: number } {
   try {
     const payloadPart = String(token || '').split('.')[1] || '';
     if (!payloadPart) return {};
     const normalized = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
     const pad = normalized.length % 4 === 0 ? '' : '='.repeat(4 - (normalized.length % 4));
-    const parsed = JSON.parse(atob(normalized + pad)) as { aud?: string; iss?: string; sub?: string };
+    const parsed = JSON.parse(atob(normalized + pad)) as { aud?: string; iss?: string; sub?: string; auth_time?: number };
     return {
       aud: String(parsed.aud || ''),
       iss: String(parsed.iss || ''),
       sub: String(parsed.sub || ''),
+      auth_time: typeof parsed.auth_time === 'number' && Number.isFinite(parsed.auth_time) ? parsed.auth_time : undefined,
     };
   } catch {
     return {};
   }
+}
+
+function firebaseDeleteIdTokenNeedsReauth(firebaseIdToken: string): boolean {
+  const claims = decodeJwtClaims(firebaseIdToken);
+  const authTimeSeconds = Number(claims.auth_time || 0);
+  if (!Number.isFinite(authTimeSeconds) || authTimeSeconds <= 0) return true;
+  const authTimeMs = Math.floor(authTimeSeconds * 1000);
+  const ageMs = Math.max(0, Date.now() - authTimeMs);
+  return ageMs > FIREBASE_DELETE_REAUTH_MAX_AGE_MS - FIREBASE_DELETE_REAUTH_CLIENT_SKEW_MS;
+}
+
+function createDeleteReauthRedirectError(): Error {
+  const err = new Error(
+    'Continue Google verification in your browser. When you return to NET360, verification will finish automatically.',
+  );
+  (err as Error & { code?: string }).code = 'DELETE_REAUTH_REDIRECT';
+  return err;
+}
+
+function isDeleteAccountFirebaseReauthError(error: unknown): boolean {
+  const status = Number((error as { status?: number })?.status || 0);
+  const msg = String((error as Error)?.message || '').toLowerCase();
+  if (status !== 401) return false;
+  return msg.includes('verification expired')
+    || msg.includes('verification failed')
+    || msg.includes('google verification');
 }
 
 function extractAuthErrorCode(error: unknown): string {
@@ -962,10 +996,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const auth = await ensureFirebaseAuthReady();
         if (!auth) return;
         logNativeEvent('auth', 'google-redirect-init', { ready: true });
+        let deleteReauthPending = false;
+        try {
+          deleteReauthPending = sessionStorage.getItem(DELETE_GOOGLE_REAUTH_SESSION_KEY) === 'pending';
+        } catch {
+          deleteReauthPending = false;
+        }
         let result = await getRedirectResult(auth);
         if (!result?.user) {
           await delay(220);
           result = await getRedirectResult(auth);
+        }
+        if (deleteReauthPending) {
+          try {
+            sessionStorage.removeItem(DELETE_GOOGLE_REAUTH_SESSION_KEY);
+          } catch {
+            // ignore
+          }
+          if (result?.user && !cancelled) {
+            const firebaseIdToken = await result.user.getIdToken(true);
+            window.dispatchEvent(
+              new CustomEvent('net360:google-delete-reauth-token', { detail: { firebaseIdToken } }),
+            );
+            showSuccessToast('Google account verified. You can now delete your account.');
+          }
+          return;
         }
         if (!result?.user || cancelled) return;
         const firebaseIdToken = await result.user.getIdToken();
@@ -994,6 +1049,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
     };
   }, [isAndroidNative, isNativeRuntime, upsertSocialAuthSession]);
+
+  useEffect(() => {
+    if (isNativeRuntime || !isFirebaseConfigured()) return;
+    let cancelled = false;
+
+    void (async () => {
+      let deleteReauthPending = false;
+      try {
+        deleteReauthPending = sessionStorage.getItem(DELETE_GOOGLE_REAUTH_SESSION_KEY) === 'pending';
+      } catch {
+        return;
+      }
+      if (!deleteReauthPending) return;
+
+      try {
+        const auth = await ensureFirebaseAuthReady();
+        if (!auth || cancelled) return;
+        let result = await getRedirectResult(auth);
+        if (!result?.user) {
+          await delay(220);
+          result = await getRedirectResult(auth);
+        }
+        try {
+          sessionStorage.removeItem(DELETE_GOOGLE_REAUTH_SESSION_KEY);
+        } catch {
+          // ignore
+        }
+        if (!result?.user || cancelled) return;
+        const firebaseIdToken = await result.user.getIdToken(true);
+        window.dispatchEvent(
+          new CustomEvent('net360:google-delete-reauth-token', { detail: { firebaseIdToken } }),
+        );
+        showSuccessToast('Google account verified. You can now delete your account.');
+      } catch (error) {
+        try {
+          sessionStorage.removeItem(DELETE_GOOGLE_REAUTH_SESSION_KEY);
+        } catch {
+          // ignore
+        }
+        if (!cancelled && !isLikelyTransientAuthFailure(error)) {
+          showWarningToast((error as Error)?.message || 'Google verification could not be completed.');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isNativeRuntime]);
 
   const registerWithToken = useCallback<AuthContextValue['registerWithToken']>(async ({
     email,
@@ -1083,11 +1187,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return { firebaseIdToken };
     }
 
-    if (isNativeRuntime) {
-      throw new Error('Google verification is not available on this device. Please sign in again and retry.');
+    if (isNativeRuntime && !isAndroidNative) {
+      try {
+        await reauthenticateWithPopup(currentUser, provider);
+      } catch (err) {
+        const code = String((err as { code?: string })?.code || '').trim();
+        if (
+          code === 'auth/popup-closed-by-user'
+          || code === 'auth/cancelled-popup-request'
+          || code === 'auth/user-cancelled'
+        ) {
+          throw err;
+        }
+        try {
+          sessionStorage.setItem(DELETE_GOOGLE_REAUTH_SESSION_KEY, 'pending');
+        } catch {
+          throw new Error('Google verification could not start. Enable browser storage and try again.');
+        }
+        await reauthenticateWithRedirect(currentUser, provider);
+        throw createDeleteReauthRedirectError();
+      }
+      const firebaseIdToken = await currentUser.getIdToken(true);
+      return { firebaseIdToken };
     }
 
-    await reauthenticateWithPopup(currentUser, provider);
+    try {
+      await reauthenticateWithPopup(currentUser, provider);
+    } catch (err) {
+      const code = String((err as { code?: string })?.code || '').trim();
+      if (
+        code === 'auth/popup-closed-by-user'
+        || code === 'auth/cancelled-popup-request'
+        || code === 'auth/user-cancelled'
+      ) {
+        throw err;
+      }
+      if (code === 'auth/popup-blocked' || code === 'auth/operation-not-supported-in-this-environment') {
+        try {
+          sessionStorage.setItem(DELETE_GOOGLE_REAUTH_SESSION_KEY, 'pending');
+        } catch {
+          throw new Error('Google sign-in was blocked. Allow pop-ups for this site or enable browser storage and try again.');
+        }
+        await reauthenticateWithRedirect(currentUser, provider);
+        throw createDeleteReauthRedirectError();
+      }
+      throw err;
+    }
     const firebaseIdToken = await currentUser.getIdToken(true);
     return { firebaseIdToken };
   }, [isAndroidNative, isNativeRuntime]);
@@ -1114,23 +1259,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [clearClientAuthState, refreshToken]);
 
   const deleteAccount = useCallback<AuthContextValue['deleteAccount']>(async ({ password, confirmationText, firebaseIdToken }) => {
-    const verifiedFirebaseToken = String(firebaseIdToken || '').trim();
-    const payload = await apiRequest<{ message: string }>('/api/auth/delete-account', {
-      method: 'POST',
-      body: JSON.stringify({
-        password,
-        confirmationText,
-        ...(verifiedFirebaseToken ? { firebaseIdToken: verifiedFirebaseToken } : {}),
-      }),
-      timeoutMs: 60_000,
-      retryCount: 0,
-    });
-    clearClientAuthState();
-    if (firebaseAuth) {
-      await signOut(firebaseAuth).catch(() => undefined);
+    const authProvider = String(user?.authProvider || '').toLowerCase();
+    const isFirebaseManaged = authProvider === 'firebase' || authProvider === 'google';
+
+    const finalizeSuccess = async (payload: { message: string }) => {
+      clearClientAuthState();
+      if (firebaseAuth) {
+        await signOut(firebaseAuth).catch(() => undefined);
+      }
+      return payload;
+    };
+
+    const postDelete = (token?: string) =>
+      apiRequest<{ message: string }>('/api/auth/delete-account', {
+        method: 'POST',
+        body: JSON.stringify({
+          password,
+          confirmationText,
+          ...(token ? { firebaseIdToken: token } : {}),
+        }),
+        timeoutMs: 60_000,
+        retryCount: 0,
+      });
+
+    if (!isFirebaseManaged) {
+      return finalizeSuccess(await postDelete());
     }
-    return payload;
-  }, [clearClientAuthState]);
+
+    let token = String(firebaseIdToken || '').trim();
+    if (!token || firebaseDeleteIdTokenNeedsReauth(token)) {
+      const refreshed = await confirmGoogleDeleteReauth();
+      token = String(refreshed.firebaseIdToken || '').trim();
+    }
+    if (!token) {
+      throw new Error('Google verification did not return a valid token.');
+    }
+
+    try {
+      return finalizeSuccess(await postDelete(token));
+    } catch (error) {
+      if (!isDeleteAccountFirebaseReauthError(error)) {
+        throw error;
+      }
+      const refreshed = await confirmGoogleDeleteReauth();
+      const retryToken = String(refreshed.firebaseIdToken || '').trim();
+      if (!retryToken) {
+        throw error;
+      }
+      return finalizeSuccess(await postDelete(retryToken));
+    }
+  }, [clearClientAuthState, confirmGoogleDeleteReauth, user?.authProvider]);
 
   useEffect(() => {
     const onRevoked = (ev: Event) => {

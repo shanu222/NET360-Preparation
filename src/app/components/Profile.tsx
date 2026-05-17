@@ -252,6 +252,18 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   }, []);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const onDeleteReauthToken = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ firebaseIdToken?: string }>).detail;
+      const next = String(detail?.firebaseIdToken || '').trim();
+      if (!next) return;
+      setDeleteFirebaseReauthToken(next);
+    };
+    window.addEventListener('net360:google-delete-reauth-token', onDeleteReauthToken);
+    return () => window.removeEventListener('net360:google-delete-reauth-token', onDeleteReauthToken);
+  }, []);
+
+  useEffect(() => {
     if (!showAuthDebugPanel) return;
     return subscribeAuthDebug((next) => {
       setAuthDebugSnapshot(next);
@@ -561,7 +573,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const isDeletePasswordProvided = deleteAccountPassword.trim().length > 0;
   const isDeleteGoogleVerified = deleteFirebaseReauthToken.trim().length > 0;
   const canSubmitDeleteAccount = isDeleteConfirmationValid
-    && (isFirebaseManagedAuth ? isDeleteGoogleVerified : isDeletePasswordProvided)
+    && (isFirebaseManagedAuth || isDeletePasswordProvided)
     && !isVerifyingDeleteGoogle
     && !isDeletingAccount;
 
@@ -575,6 +587,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       const code = String((error as { code?: string })?.code || '').trim();
       if (code === 'USER_CANCELLED') {
         showNeutralToast('Google verification was cancelled.');
+      } else if (code === 'DELETE_REAUTH_REDIRECT') {
+        showNeutralToast((error as Error).message);
       } else {
         handleApiError(error, 'Could not verify your Google account.');
       }
@@ -588,11 +602,6 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     setDeleteAccountAttempted(true);
     if (!isFirebaseManagedAuth && !isDeletePasswordProvided) {
       showErrorToast('Enter your registration password to confirm account deletion.');
-      return;
-    }
-
-    if (isFirebaseManagedAuth && !isDeleteGoogleVerified) {
-      showErrorToast('Verify your Google account before deleting your NET360 account.');
       return;
     }
 
@@ -611,7 +620,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       const result = await deleteAccount({
         password: deleteAccountPassword,
         confirmationText: deleteAccountConfirmationText.trim(),
-        firebaseIdToken: isFirebaseManagedAuth ? deleteFirebaseReauthToken.trim() : undefined,
+        firebaseIdToken: isFirebaseManagedAuth
+          ? (deleteFirebaseReauthToken.trim() || undefined)
+          : undefined,
       });
       showSuccessToast(
         result?.message
@@ -627,7 +638,12 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       setDeleteAccountAttempted(false);
       window.location.assign('/?tab=profile');
     } catch (error) {
-      handleApiError(error, 'Could not delete account.');
+      const code = String((error as { code?: string })?.code || '').trim();
+      if (code === 'DELETE_REAUTH_REDIRECT') {
+        showNeutralToast((error as Error).message);
+      } else {
+        handleApiError(error, 'Could not delete account.');
+      }
     } finally {
       setIsDeletingAccount(false);
     }
@@ -1408,7 +1424,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               <div className="space-y-2">
                 <Label>Google account verification</Label>
                 <p className="text-xs text-red-700/90">
-                  This account uses Google Sign-In. Please confirm your Google account to continue.
+                  This account uses Google Sign-In. You will be prompted to verify with Google when you delete (unless you verified below recently). You can also verify ahead of time using the button below.
                 </p>
                 <Button
                   type="button"
@@ -1421,9 +1437,6 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 </Button>
                 {isDeleteGoogleVerified ? (
                   <p className="text-xs font-medium text-emerald-700">Google account verified. You can now delete your account.</p>
-                ) : null}
-                {deleteAccountAttempted && !isDeleteGoogleVerified ? (
-                  <p className="text-xs font-medium text-red-700">Google verification is required for secure account deletion.</p>
                 ) : null}
               </div>
             ) : (
