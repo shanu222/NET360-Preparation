@@ -59,7 +59,7 @@ import {
   premiumSurfaceBypassEnabled,
   DEFAULT_MANUAL_SUBSCRIPTION_WHATSAPP_DIGITS,
 } from './lib/subscriptionAccess.js';
-import { grantTrialIfFirstTime, grantPaidPlanAfterPayment } from './lib/subscriptionPayments.js';
+import { grantTrialIfFirstTime, grantPaidPlanAfterPayment, syncTrialStateFromLedger } from './lib/subscriptionPayments.js';
 import {
   payfastConfigured,
   payfastGetBearer,
@@ -96,6 +96,7 @@ import { PremiumActivationTokenModel } from './models/PremiumActivationToken.js'
 import { PasswordRecoveryRequestModel } from './models/PasswordRecoveryRequest.js';
 import { SupportChatMessageModel } from './models/SupportChatMessage.js';
 import { AccountDeletionTokenModel } from './models/AccountDeletionToken.js';
+import { FreeTrialLedgerModel } from './models/FreeTrialLedger.js';
 import { SecurityAuditEventModel } from './models/SecurityAuditEvent.js';
 import { RuntimeConfigModel } from './models/RuntimeConfig.js';
 import {
@@ -4039,6 +4040,18 @@ function isPasswordManagedAuthProvider(authProvider) {
   return p === 'local' || p === 'password';
 }
 
+function resolveTrialIdentitySignals(req, user) {
+  const email = normalizeEmail(user?.email || '');
+  const firebaseUid = String(user?.firebaseUid || '').trim();
+  const headerDevice = String(req.get('x-net360-device-id') || req.get('x-device-id') || '').trim();
+  const bodyDevice = String(req.body?.deviceId || '').trim();
+  const sessionDevice = String(user?.activeSession?.deviceId || '').trim();
+  const fallbackDevice = String(req.headers['user-agent'] || '').trim();
+  const deviceId = sessionDevice || bodyDevice || headerDevice || fallbackDevice;
+  const ipAddress = String(req.ip || req.headers['x-forwarded-for'] || '').split(',')[0].trim().slice(0, 45);
+  return { email, firebaseUid, deviceId, ipAddress };
+}
+
 async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, expiresAt }) {
   if (!isValidEmail(toEmail)) {
     return { status: 'failed', detail: 'Invalid destination email.' };
@@ -4151,6 +4164,9 @@ async function executePermanentStudentAccountDeletion(req, res, user) {
   const compactPhone = compactMobile(user.phone || '');
   const firebaseUid = String(user.firebaseUid || '').trim();
   const activeSessionId = String(user.activeSession?.sessionId || '').trim();
+  const trialDeviceHash = String(user.activeSession?.deviceId || '').trim()
+    ? crypto.createHash('sha256').update(String(user.activeSession?.deviceId || '').trim(), 'utf8').digest('hex')
+    : '';
 
   await logSecurityEvent(req, {
     eventType: 'auth.delete_account_started',
@@ -4164,6 +4180,26 @@ async function executePermanentStudentAccountDeletion(req, res, user) {
   }
   if (isRedisConfigured()) {
     await cacheDel(cacheKey(`studentSession:${userIdString}`));
+  }
+  try {
+    const trialLedgerOr = [];
+    if (email) trialLedgerOr.push({ emailHistory: email });
+    if (firebaseUid) trialLedgerOr.push({ firebaseUidHistory: firebaseUid });
+    if (trialDeviceHash) trialLedgerOr.push({ deviceFingerprintHistory: trialDeviceHash });
+    if (trialLedgerOr.length) {
+      await FreeTrialLedgerModel.updateMany(
+        { $or: trialLedgerOr },
+        {
+          $addToSet: { linkedDeletedAccountIds: userIdString },
+          $set: { latestAccountId: null },
+        },
+      );
+    }
+  } catch (error) {
+    console.warn('[trial-ledger] failed to link deleted account', {
+      userId: userIdString,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
   await invalidateUserSubscriptionCache(userId);
   emitSubscriptionRefresh(userIdString, { reason: 'account_deleted' });
@@ -7729,6 +7765,13 @@ async function createDirectStudentAccount(req, res) {
       lastIp,
     };
     await user.save();
+    const syncedTrial = await syncTrialStateFromLedger(UserModel, user._id, {
+      trialLedgerModel: FreeTrialLedgerModel,
+      identity: resolveTrialIdentitySignals(req, user),
+    });
+    if (syncedTrial?.subscription) {
+      user.subscription = syncedTrial.subscription;
+    }
 
     const payload = await issueAuthPayload(user, req);
     setAuthCookies(res, payload.token, payload.refreshToken);
@@ -7764,6 +7807,13 @@ async function createDirectStudentAccount(req, res) {
     preferences: defaultPreferences(),
     progress: defaultProgress(),
   });
+  const syncedTrial = await syncTrialStateFromLedger(UserModel, user._id, {
+    trialLedgerModel: FreeTrialLedgerModel,
+    identity: resolveTrialIdentitySignals(req, user),
+  });
+  if (syncedTrial?.subscription) {
+    user.subscription = syncedTrial.subscription;
+  }
 
   const payload = await issueAuthPayload(user, req);
   setAuthCookies(res, payload.token, payload.refreshToken);
@@ -8034,6 +8084,14 @@ app.post('/api/auth/login', async (req, res) => {
 
       if (conflictingDevice) {
         user.refreshTokens = [];
+      }
+
+      const syncedTrial = await syncTrialStateFromLedger(UserModel, user._id, {
+        trialLedgerModel: FreeTrialLedgerModel,
+        identity: resolveTrialIdentitySignals(req, user),
+      });
+      if (syncedTrial?.subscription) {
+        user.subscription = syncedTrial.subscription;
       }
 
       const payload = await issueAuthPayload(user, req);
@@ -11921,7 +11979,10 @@ async function handlePremiumStartTrial(req, res) {
     return;
   }
   await finalizeStaleSubscription(UserModel, req.user._id);
-  const r = await grantTrialIfFirstTime(UserModel, req.user._id);
+  const r = await grantTrialIfFirstTime(UserModel, req.user._id, {
+    trialLedgerModel: FreeTrialLedgerModel,
+    identity: resolveTrialIdentitySignals(req, req.user),
+  });
   if (!r.ok) {
     if (r.code === 'TRIAL_ALREADY_USED') {
       res.status(409).json({ code: 'TRIAL_ALREADY_USED', error: 'Your free trial has already been used.' });
