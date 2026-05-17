@@ -572,13 +572,24 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     try {
       setIsRequestingDeletionLink(true);
       setDeletionLinkFeedback('');
-      const result = await requestAccountDeletionLink();
+      const result = await requestAccountDeletionLink({
+        confirmationText: deleteAccountConfirmationText.trim(),
+      });
       const msg = String(result?.message || '').trim()
         || 'Deletion confirmation link sent to your Google email.';
       setDeletionLinkFeedback(msg);
       showSuccessToast(msg);
     } catch (error) {
-      handleApiError(error, 'Could not send deletion link.');
+      const message = String((error as Error)?.message || '').toLowerCase();
+      if (message.includes('temporarily unavailable') || message.includes('smtp')) {
+        showErrorToast('Email delivery is temporarily unavailable. Please try again shortly.');
+      } else if (message.includes('google sign-in accounts')) {
+        showErrorToast('This option is only available for Google Sign-In accounts.');
+      } else if (message.includes('type delete')) {
+        showErrorToast('Type DELETE exactly before sending the verification link.');
+      } else {
+        handleApiError(error, 'Could not send deletion link.');
+      }
     } finally {
       setIsRequestingDeletionLink(false);
     }
