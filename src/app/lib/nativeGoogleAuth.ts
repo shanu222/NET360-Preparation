@@ -85,9 +85,23 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
     packageHint: 'com.net360.preparation',
   });
 
-  let SocialLogin: typeof import('@capgo/capacitor-social-login').SocialLogin;
+  let SocialLogin: {
+    initialize: (options: unknown) => Promise<void>;
+    login: (options: unknown) => Promise<{
+      provider: string;
+      result: {
+        responseType?: string;
+        idToken?: string;
+        accessToken?: { token?: string };
+        profile?: { email?: string };
+      };
+    }>;
+  };
   try {
-    ({ SocialLogin } = await import('@capgo/capacitor-social-login'));
+    const importDynamic = new Function('specifier', 'return import(specifier)') as
+      (specifier: string) => Promise<Record<string, unknown>>;
+    const mod = await importDynamic('@capgo/capacitor-social-login');
+    SocialLogin = mod.SocialLogin as typeof SocialLogin;
   } catch (e) {
     androidNativeLog('plugin-import-failed', { error: serializeNativeError(e) });
     throw e;

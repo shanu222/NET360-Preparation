@@ -21,7 +21,13 @@ echo "== repo: ${REPO_DIR} =="
 echo "== git pull =="
 git pull
 
-echo "== npm ci (production deps — includes 'serve' for static frontend) =="
+echo "== npm ci (full deps for build validation) =="
+npm ci
+
+echo "== build validation (abort restart on failure) =="
+npm run build
+
+echo "== npm ci (production deps only) =="
 npm ci --omit=dev
 
 if [[ ! -f node_modules/serve/build/main.js ]] && [[ ! -f node_modules/serve/package.json ]]; then
@@ -30,8 +36,8 @@ if [[ ! -f node_modules/serve/build/main.js ]] && [[ ! -f node_modules/serve/pac
 fi
 
 if [[ ! -d dist ]] || [[ ! -f dist/index.html ]]; then
-  echo "WARN: dist/ missing — PM2 'frontend' (serve) needs a build. On a dev machine run 'npm run build', commit dist OR run full install+build on server:"
-  echo "  npm ci && npm run build && npm ci --omit=dev"
+  echo "ERROR: dist/ missing after build validation. Aborting before PM2 restart."
+  exit 1
 fi
 
 echo "== Redis placeholder check (.env) =="
