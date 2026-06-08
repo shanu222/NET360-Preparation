@@ -35,7 +35,8 @@ import multer from 'multer';
 import * as cheerio from 'cheerio';
 import mongoose from 'mongoose';
 import http from 'node:http';
-import { connectMongo } from './lib/mongo.js';
+import { connectMongo, getMongoHealth } from './lib/mongo.js';
+import { getBuildInfo } from './lib/buildInfo.js';
 import { getRedisMain, isRedisConfigured } from './services/redis.js';
 import { cacheGetJson, cacheSetJson, cacheKey, cacheDel, invalidateCommunityLeaderboardCache, invalidateQuizLeaderboardCache, invalidateUserSubscriptionCache } from './utils/cache.js';
 import {
@@ -7389,6 +7390,9 @@ async function refreshUserProgress(userId) {
 }
 
 app.get('/api/health', async (_req, res) => {
+  const build = getBuildInfo();
+  const mongo = getMongoHealth();
+  const memory = process.memoryUsage();
   let redisPing = false;
   try {
     const r = await getRedisMain();
@@ -7399,9 +7403,13 @@ app.get('/api/health', async (_req, res) => {
   } catch {
     redisPing = false;
   }
-  res.json({
+
+  const payload = {
     status: 'ok',
     message: 'Backend is live',
+    uptimeSec: Math.floor(process.uptime()),
+    build,
+    mongo,
     firebaseAdminConfigured: Boolean(firebaseAdminAuth),
     firebaseAdminMissingEnv: getMissingFirebaseAdminEnvVars(),
     redis: {
@@ -7411,6 +7419,50 @@ app.get('/api/health', async (_req, res) => {
     socketIo: {
       enabled: Boolean(getIo()),
     },
+    process: {
+      pid: process.pid,
+      memoryMb: {
+        rss: Math.round(memory.rss / 1024 / 1024),
+        heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
+        heapTotal: Math.round(memory.heapTotal / 1024 / 1024),
+      },
+    },
+    checkedAt: new Date().toISOString(),
+  };
+
+  res.json(payload);
+});
+
+app.get('/api/health/ready', async (_req, res) => {
+  const mongo = getMongoHealth();
+  const build = getBuildInfo();
+  const ready = !mongo.configured || mongo.connected;
+
+  res.status(ready ? 200 : 503).json({
+    status: ready ? 'ready' : 'not_ready',
+    mongo,
+    build: {
+      commit: build.commit,
+      commitShort: build.commitShort,
+      deployedAt: build.deployedAt,
+    },
+    checkedAt: new Date().toISOString(),
+  });
+});
+
+app.get('/api/version', (_req, res) => {
+  const build = getBuildInfo();
+  res.json({
+    service: build.service,
+    commit: build.commit,
+    commitShort: build.commitShort,
+    branch: build.branch,
+    deployedAt: build.deployedAt,
+    buildHost: build.buildHost,
+    nodeVersion: build.nodeVersion,
+    env: build.env,
+    pid: build.pid,
+    pm2Instance: build.pm2Instance,
   });
 });
 
@@ -16583,7 +16635,33 @@ async function bootstrap() {
     if (NODE_ENV) {
       console.log(`[server] NODE_ENV=${NODE_ENV}`);
     }
+    const build = getBuildInfo();
+    if (build.commit && build.commit !== 'unknown') {
+      console.log(`[server] build commit=${build.commitShort} branch=${build.branch} deployedAt=${build.deployedAt || 'n/a'}`);
+    }
+    if (typeof process.send === 'function') {
+      process.send('ready');
+    }
   });
+
+  let shuttingDown = false;
+  const gracefulShutdown = async (signal) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    console.warn(`[server] ${signal} received — closing HTTP server`);
+    server.close(() => {
+      console.log('[server] HTTP server closed');
+    });
+    try {
+      await mongoose.connection.close(false);
+      console.log('[mongo] connection closed');
+    } catch (error) {
+      console.error('[mongo] close error:', error?.message || error);
+    }
+    setTimeout(() => process.exit(0), 10_000).unref();
+  };
+  process.on('SIGTERM', () => { void gracefulShutdown('SIGTERM'); });
+  process.on('SIGINT', () => { void gracefulShutdown('SIGINT'); });
 
   server.on('error', (error) => {
     console.error('[server] HTTP server error:', error?.message || error);

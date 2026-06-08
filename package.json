@@ -24,7 +24,14 @@
     "android:open": "npx cap open android",
     "android:run": "npx cap run android",
     "android:keystore": "node scripts/create-android-keystore.mjs",
-    "android:release": "node scripts/build-android-release.mjs"
+    "android:release": "node scripts/build-android-release.mjs",
+    "ops:setup-pm2": "bash scripts/setup-pm2-production.sh",
+    "ops:deploy-api": "bash scripts/deploy-api-production.sh",
+    "ops:verify-routes": "bash scripts/verify-post-deploy-routes.sh",
+    "ops:rollback-api": "bash scripts/rollback-api-production.sh",
+    "ops:health-monitor": "bash scripts/pm2-health-monitor.sh",
+    "ops:backup-mongo": "bash scripts/mongodb-backup-daily.sh",
+    "ops:verify-precommit": "node scripts/verify-ops-precommit.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1041.0",
