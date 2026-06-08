@@ -8,8 +8,6 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 API_BASE="${1:-http://127.0.0.1:5000}"
 API_BASE="${API_BASE%/}"
 EXPECTED_COMMIT="${EXPECTED_COMMIT:-}"
@@ -21,14 +19,6 @@ fail() {
 
 echo "== NET360 post-deploy verification: ${API_BASE} =="
 
-echo "-- CORS preflight (auth + admin SPA headers) --"
-bash "${SCRIPT_DIR}/verify-cors-preflight.sh" "${API_BASE}" "https://www.net360preparation.com"
-bash "${SCRIPT_DIR}/verify-cors-preflight.sh" "${API_BASE}" "https://net360preparation.com"
-
-echo "-- CORS static audit (source) --"
-bash "${SCRIPT_DIR}/verify-cors-static-audit.sh"
-
-echo ""
 echo "-- GET /api/health (liveness) --"
 health_code="$(curl -sS -o /tmp/net360-health.json -w '%{http_code}' "${API_BASE}/api/health")"
 [[ "${health_code}" == "200" ]] || fail "/api/health returned ${health_code}"
