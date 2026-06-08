@@ -5111,18 +5111,23 @@ function isSubscriptionActive(subscription) {
 }
 
 async function getGlobalAccessGrantSnapshot() {
-  const key = cacheKey('global-access-grants:all');
-  const cached = await cacheGetJson(key);
-  if (cached && typeof cached === 'object') {
-    return buildGlobalGrantMap([cached.mentor, cached.preparation]);
+  try {
+    const key = cacheKey('global-access-grants:all');
+    const cached = await cacheGetJson(key);
+    if (cached && typeof cached === 'object') {
+      return buildGlobalGrantMap([cached.mentor, cached.preparation]);
+    }
+    await finalizeExpiredGlobalAccess(GlobalAccessGrantModel);
+    const rows = await GlobalAccessGrantModel.find({
+      accessType: { $in: [ACCESS_TYPES.mentor, ACCESS_TYPES.preparation] },
+    }).lean();
+    const map = buildGlobalGrantMap(rows);
+    await cacheSetJson(key, map, 30);
+    return map;
+  } catch (error) {
+    console.error('[global-access-grants] snapshot failed:', error);
+    return buildGlobalGrantMap([]);
   }
-  await finalizeExpiredGlobalAccess(GlobalAccessGrantModel);
-  const rows = await GlobalAccessGrantModel.find({
-    accessType: { $in: [ACCESS_TYPES.mentor, ACCESS_TYPES.preparation] },
-  }).lean();
-  const map = buildGlobalGrantMap(rows);
-  await cacheSetJson(key, map, 30);
-  return map;
 }
 
 async function invalidateGlobalAccessGrantSnapshot() {
@@ -13761,136 +13766,146 @@ function normalizeSelectedPaidServices(payload) {
 }
 
 app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async (_req, res) => {
-  const now = new Date();
-  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
-  await finalizeExpiredGlobalAccess(GlobalAccessGrantModel);
-  const globalGrants = await getGlobalAccessGrantSnapshot();
-  const mentorGlobalActive = isGrantActive(globalGrants.mentor, now.getTime());
-  const preparationGlobalActive = isGrantActive(globalGrants.preparation, now.getTime());
+  try {
+    const now = new Date();
+    const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+    await finalizeExpiredGlobalAccess(GlobalAccessGrantModel);
+    const globalGrants = await getGlobalAccessGrantSnapshot();
+    const mentorGlobalActive = isGrantActive(globalGrants.mentor, now.getTime());
+    const preparationGlobalActive = isGrantActive(globalGrants.preparation, now.getTime());
 
-  const [activeUsers, expiredUsers, totalUsers, dailyUsage, mentorManualUsers, prepManualUsers, prepLegacyUsers] = await Promise.all([
-    UserModel.countDocuments({ ...managedUserFilter, 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } }),
-    UserModel.countDocuments({ ...managedUserFilter, 'subscription.status': { $in: ['expired', 'cancelled'] } }),
-    UserModel.countDocuments(managedUserFilter),
-    AIUsageModel.aggregate([
-      { $group: { _id: '$day', chatCount: { $sum: '$chatCount' }, solverCount: { $sum: '$solverCount' }, tokenConsumed: { $sum: '$tokenConsumed' } } },
-      { $sort: { _id: -1 } },
-      { $limit: 14 },
-    ]),
-    UserModel.countDocuments({
-      ...managedUserFilter,
-      'accessControls.mentorManual.status': 'active',
-      'accessControls.mentorManual.expiresAt': { $gt: now },
-    }),
-    UserModel.countDocuments({
-      ...managedUserFilter,
-      'accessControls.preparationManual.status': 'active',
-      'accessControls.preparationManual.expiresAt': { $gt: now },
-    }),
-    UserModel.countDocuments({
-      ...managedUserFilter,
-      $or: [
-        { 'subscription.status': 'trial', 'subscription.trialEndsAt': { $gt: now } },
-        { 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } },
-      ],
-    }),
-  ]);
-
-  const mentorActiveUsers = mentorGlobalActive ? totalUsers : Math.min(totalUsers, activeUsers + mentorManualUsers);
-  const preparationActiveUsers = preparationGlobalActive
-    ? totalUsers
-    : Math.min(totalUsers, prepLegacyUsers + prepManualUsers);
-  const mentorInactiveUsers = Math.max(0, totalUsers - mentorActiveUsers);
-  const preparationInactiveUsers = Math.max(0, totalUsers - preparationActiveUsers);
-
-  res.json({
-    totalUsers,
-    activeUsers,
-    expiredUsers,
-    mentorAccess: {
-      activeUsers: mentorActiveUsers,
-      inactiveUsers: mentorInactiveUsers,
-      global: accessStatusPayload({
-        ...globalGrants.mentor,
-        allowed: mentorGlobalActive,
-        source: mentorGlobalActive ? 'global' : 'none',
+    const [activeUsers, expiredUsers, totalUsers, dailyUsage, mentorManualUsers, prepManualUsers, prepLegacyUsers] = await Promise.all([
+      UserModel.countDocuments({ ...managedUserFilter, 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } }),
+      UserModel.countDocuments({ ...managedUserFilter, 'subscription.status': { $in: ['expired', 'cancelled'] } }),
+      UserModel.countDocuments(managedUserFilter),
+      AIUsageModel.aggregate([
+        { $group: { _id: '$day', chatCount: { $sum: '$chatCount' }, solverCount: { $sum: '$solverCount' }, tokenConsumed: { $sum: '$tokenConsumed' } } },
+        { $sort: { _id: -1 } },
+        { $limit: 14 },
+      ]).catch(() => []),
+      UserModel.countDocuments({
+        ...managedUserFilter,
+        'accessControls.mentorManual.status': 'active',
+        'accessControls.mentorManual.expiresAt': { $gt: now },
       }),
-    },
-    preparationAccess: {
-      activeUsers: preparationActiveUsers,
-      inactiveUsers: preparationInactiveUsers,
-      global: accessStatusPayload({
-        ...globalGrants.preparation,
-        allowed: preparationGlobalActive,
-        source: preparationGlobalActive ? 'global' : 'none',
+      UserModel.countDocuments({
+        ...managedUserFilter,
+        'accessControls.preparationManual.status': 'active',
+        'accessControls.preparationManual.expiresAt': { $gt: now },
       }),
-    },
-    plans: Object.values(SUBSCRIPTION_PLANS),
-    dailyUsage: dailyUsage.map((item) => ({
-      day: item._id,
-      chatCount: item.chatCount || 0,
-      solverCount: item.solverCount || 0,
-      tokenConsumed: item.tokenConsumed || 0,
-    })),
-  });
+      UserModel.countDocuments({
+        ...managedUserFilter,
+        $or: [
+          { 'subscription.status': 'trial', 'subscription.trialEndsAt': { $gt: now } },
+          { 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } },
+        ],
+      }),
+    ]);
+
+    const mentorActiveUsers = mentorGlobalActive ? totalUsers : Math.min(totalUsers, activeUsers + mentorManualUsers);
+    const preparationActiveUsers = preparationGlobalActive
+      ? totalUsers
+      : Math.min(totalUsers, prepLegacyUsers + prepManualUsers);
+    const mentorInactiveUsers = Math.max(0, totalUsers - mentorActiveUsers);
+    const preparationInactiveUsers = Math.max(0, totalUsers - preparationActiveUsers);
+
+    res.json({
+      totalUsers,
+      activeUsers,
+      expiredUsers,
+      mentorAccess: {
+        activeUsers: mentorActiveUsers,
+        inactiveUsers: mentorInactiveUsers,
+        global: accessStatusPayload({
+          ...globalGrants.mentor,
+          allowed: mentorGlobalActive,
+          source: mentorGlobalActive ? 'global' : 'none',
+        }),
+      },
+      preparationAccess: {
+        activeUsers: preparationActiveUsers,
+        inactiveUsers: preparationInactiveUsers,
+        global: accessStatusPayload({
+          ...globalGrants.preparation,
+          allowed: preparationGlobalActive,
+          source: preparationGlobalActive ? 'global' : 'none',
+        }),
+      },
+      plans: Object.values(SUBSCRIPTION_PLANS),
+      dailyUsage: (dailyUsage || []).map((item) => ({
+        day: item._id,
+        chatCount: item.chatCount || 0,
+        solverCount: item.solverCount || 0,
+        tokenConsumed: item.tokenConsumed || 0,
+      })),
+    });
+  } catch (error) {
+    console.error('[admin-subscriptions] overview failed:', error);
+    res.status(200).json(emptyAdminSubscriptionOverviewFallback());
+  }
 });
 
 app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (req, res) => {
-  const status = String(req.query?.status || 'all').toLowerCase();
-  const accessType = String(req.query?.accessType || '').trim().toLowerCase();
-  const filter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
-  if (status !== 'all' && (!accessType || accessType === 'mentor')) {
-    filter['subscription.status'] = status;
-  }
-
-  const users = await UserModel.find(filter, {
-    email: 1,
-    firstName: 1,
-    lastName: 1,
-    subscription: 1,
-    accessControls: 1,
-  }).sort({ updatedAt: -1 }).limit(500).lean();
-  const globalGrants = await getGlobalAccessGrantSnapshot();
-  const now = Date.now();
-
-  const rows = users.map((item) => {
-    const entitlement = resolveUserEntitlements(item, globalGrants, now);
-    const mentor = accessStatusPayload(entitlement.mentor);
-    const preparation = accessStatusPayload(entitlement.preparation);
-    return { item, entitlement, mentor, preparation };
-  }).filter(({ mentor, preparation }) => {
-    if (status === 'all') return true;
-    const target = accessType === 'preparation' ? preparation : mentor;
-    if (status === 'active') return target.allowed;
-    if (status === 'inactive') return !target.allowed;
-    if (status === 'expired' || status === 'cancelled') {
-      return !target.allowed && ['expired', 'inactive', 'revoked', 'cancelled'].includes(target.status);
+  try {
+    const status = String(req.query?.status || 'all').toLowerCase();
+    const accessType = String(req.query?.accessType || '').trim().toLowerCase();
+    const filter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+    if (status !== 'all' && (!accessType || accessType === 'mentor')) {
+      filter['subscription.status'] = status;
     }
-    return true;
-  });
 
-  res.json({
-    users: rows.map(({ item, mentor, preparation }) => {
-      const subscription = normalizeSubscription(item);
-      const plan = resolveSubscriptionPlan(subscription.planId);
-      return {
-        id: String(item._id),
-        email: item.email,
-        firstName: item.firstName || '',
-        lastName: item.lastName || '',
-        subscription: {
-          ...subscription,
-          isActive: isSubscriptionActive(subscription),
-          planName: plan?.name || '',
-          dailyAiLimit: plan?.dailyAiLimit || 0,
-        },
-        access: {
-          mentor,
-          preparation,
-        },
-      };
-    }),
-  });
+    const users = await UserModel.find(filter, {
+      email: 1,
+      firstName: 1,
+      lastName: 1,
+      subscription: 1,
+      accessControls: 1,
+    }).sort({ updatedAt: -1 }).limit(500).lean();
+    const globalGrants = await getGlobalAccessGrantSnapshot();
+    const now = Date.now();
+
+    const rows = users.map((item) => {
+      const entitlement = resolveUserEntitlements(item, globalGrants, now);
+      const mentor = accessStatusPayload(entitlement.mentor);
+      const preparation = accessStatusPayload(entitlement.preparation);
+      return { item, entitlement, mentor, preparation };
+    }).filter(({ mentor, preparation }) => {
+      if (status === 'all') return true;
+      const target = accessType === 'preparation' ? preparation : mentor;
+      if (status === 'active') return target.allowed;
+      if (status === 'inactive') return !target.allowed;
+      if (status === 'expired' || status === 'cancelled') {
+        return !target.allowed && ['expired', 'inactive', 'revoked', 'cancelled'].includes(target.status);
+      }
+      return true;
+    });
+
+    res.json({
+      users: rows.map(({ item, mentor, preparation }) => {
+        const subscription = normalizeSubscription(item);
+        const plan = resolveSubscriptionPlan(subscription.planId);
+        return {
+          id: String(item._id),
+          email: item.email,
+          firstName: item.firstName || '',
+          lastName: item.lastName || '',
+          subscription: {
+            ...subscription,
+            isActive: isSubscriptionActive(subscription),
+            planName: plan?.name || '',
+            dailyAiLimit: plan?.dailyAiLimit || 0,
+          },
+          access: {
+            mentor,
+            preparation,
+          },
+        };
+      }),
+    });
+  } catch (error) {
+    console.error('[admin-subscriptions] users list failed:', error);
+    res.status(200).json(emptyAdminSubscriptionUsersFallback());
+  }
 });
 
 app.get('/api/admin/paid-services/overview', authMiddleware, requireAdmin, async (_req, res) => {
@@ -14324,83 +14339,87 @@ async function syncMissingFirebaseUsersToBackend() {
   let nextPageToken = undefined;
   let synced = 0;
   let scanned = 0;
-  do {
-    const page = await firebaseAdminAuth.listUsers(limit, nextPageToken);
-    const batch = Array.isArray(page?.users) ? page.users : [];
-    scanned += batch.length;
-    for (const fbUser of batch) {
-      const uid = String(fbUser?.uid || '').trim();
-      const email = normalizeEmail(fbUser?.email || '');
-      if (!uid || !email) continue;
+  try {
+    do {
+      const page = await firebaseAdminAuth.listUsers(limit, nextPageToken);
+      const batch = Array.isArray(page?.users) ? page.users : [];
+      scanned += batch.length;
+      for (const fbUser of batch) {
+        const uid = String(fbUser?.uid || '').trim();
+        const email = normalizeEmail(fbUser?.email || '');
+        if (!uid || !email) continue;
 
-      const providerCandidates = Array.isArray(fbUser?.providerData) ? fbUser.providerData : [];
-      const providerIdRaw = String(providerCandidates[0]?.providerId || '').trim().toLowerCase();
-      const provider = providerIdRaw === 'google.com'
-        ? 'google'
-        : providerIdRaw === 'password'
-          ? 'password'
-          : 'unknown';
-      const displayName = String(fbUser?.displayName || '').trim();
-      const { firstName, lastName } = splitDisplayNameParts(displayName);
-      const photoURL = String(fbUser?.photoURL || '').trim();
-      const createdAtRaw = String(fbUser?.metadata?.creationTime || '').trim();
-      const lastSignInRaw = String(fbUser?.metadata?.lastSignInTime || '').trim();
-      const createdAt = createdAtRaw ? new Date(createdAtRaw) : new Date();
-      const lastLoginAt = lastSignInRaw ? new Date(lastSignInRaw) : null;
+        const providerCandidates = Array.isArray(fbUser?.providerData) ? fbUser.providerData : [];
+        const providerIdRaw = String(providerCandidates[0]?.providerId || '').trim().toLowerCase();
+        const provider = providerIdRaw === 'google.com'
+          ? 'google'
+          : providerIdRaw === 'password'
+            ? 'password'
+            : 'unknown';
+        const displayName = String(fbUser?.displayName || '').trim();
+        const { firstName, lastName } = splitDisplayNameParts(displayName);
+        const photoURL = String(fbUser?.photoURL || '').trim();
+        const createdAtRaw = String(fbUser?.metadata?.creationTime || '').trim();
+        const lastSignInRaw = String(fbUser?.metadata?.lastSignInTime || '').trim();
+        const createdAt = createdAtRaw ? new Date(createdAtRaw) : new Date();
+        const lastLoginAt = lastSignInRaw ? new Date(lastSignInRaw) : null;
 
-      const existing = await UserModel.findOne({
-        $or: [
-          { firebaseUid: uid },
-          { email: { $regex: `^${escapeRegexLiteral(email, 254)}$`, $options: 'i' } },
-        ],
-      }).select('_id email authProvider role firebaseUid firstName lastName displayName profilePhotoUrl authProviderDetail').lean();
+        const existing = await UserModel.findOne({
+          $or: [
+            { firebaseUid: uid },
+            { email: { $regex: `^${escapeRegexLiteral(email, 254)}$`, $options: 'i' } },
+          ],
+        }).select('_id email authProvider role firebaseUid firstName lastName displayName profilePhotoUrl authProviderDetail').lean();
 
-      if (!existing) {
-        const passwordHash = await hashPassword(`firebase:${uid}:${crypto.randomUUID()}`);
-        await UserModel.create({
-          email,
-          passwordHash,
-          firstName: firstName || '',
-          lastName: lastName || '',
-          displayName: displayName || `${firstName} ${lastName}`.trim(),
-          profilePhotoUrl: photoURL,
-          role: 'student',
-          authProvider: 'firebase',
-          authProviderDetail: normalizeAuthProviderDetail(provider),
-          firebaseUid: uid,
-          lastLoginAt,
-          createdAt,
-          preferences: defaultPreferences(),
-          progress: defaultProgress(),
-          platformUsage: {
-            lastPlatform: 'unknown',
-            lastSeenAt: lastLoginAt,
-            androidLogins: 0,
-            webLogins: 0,
-            unknownLogins: 0,
-          },
-        });
-        synced += 1;
-        continue;
+        if (!existing) {
+          const passwordHash = await hashPassword(`firebase:${uid}:${crypto.randomUUID()}`);
+          await UserModel.create({
+            email,
+            passwordHash,
+            firstName: firstName || '',
+            lastName: lastName || '',
+            displayName: displayName || `${firstName} ${lastName}`.trim(),
+            profilePhotoUrl: photoURL,
+            role: 'student',
+            authProvider: 'firebase',
+            authProviderDetail: normalizeAuthProviderDetail(provider),
+            firebaseUid: uid,
+            lastLoginAt,
+            createdAt,
+            preferences: defaultPreferences(),
+            progress: defaultProgress(),
+            platformUsage: {
+              lastPlatform: 'unknown',
+              lastSeenAt: lastLoginAt,
+              androidLogins: 0,
+              webLogins: 0,
+              unknownLogins: 0,
+            },
+          });
+          synced += 1;
+          continue;
+        }
+
+        const updates = {};
+        if (existing.role === 'admin') continue;
+        if (String(existing.authProvider || '') !== 'firebase') updates.authProvider = 'firebase';
+        if (String(existing.firebaseUid || '') !== uid) updates.firebaseUid = uid;
+        if (!String(existing.authProviderDetail || '').trim()) updates.authProviderDetail = normalizeAuthProviderDetail(provider);
+        if (!String(existing.firstName || '').trim() && firstName) updates.firstName = firstName;
+        if (!String(existing.lastName || '').trim() && lastName) updates.lastName = lastName;
+        if (!String(existing.displayName || '').trim() && displayName) updates.displayName = displayName;
+        if (!String(existing.profilePhotoUrl || '').trim() && photoURL) updates.profilePhotoUrl = photoURL;
+        if (!existing.lastLoginAt && lastLoginAt) updates.lastLoginAt = lastLoginAt;
+        if (Object.keys(updates).length) {
+          await UserModel.updateOne({ _id: existing._id }, { $set: updates }, { runValidators: true });
+          synced += 1;
+        }
       }
-
-      const updates = {};
-      if (existing.role === 'admin') continue;
-      if (String(existing.authProvider || '') !== 'firebase') updates.authProvider = 'firebase';
-      if (String(existing.firebaseUid || '') !== uid) updates.firebaseUid = uid;
-      if (!String(existing.authProviderDetail || '').trim()) updates.authProviderDetail = normalizeAuthProviderDetail(provider);
-      if (!String(existing.firstName || '').trim() && firstName) updates.firstName = firstName;
-      if (!String(existing.lastName || '').trim() && lastName) updates.lastName = lastName;
-      if (!String(existing.displayName || '').trim() && displayName) updates.displayName = displayName;
-      if (!String(existing.profilePhotoUrl || '').trim() && photoURL) updates.profilePhotoUrl = photoURL;
-      if (!existing.lastLoginAt && lastLoginAt) updates.lastLoginAt = lastLoginAt;
-      if (Object.keys(updates).length) {
-        await UserModel.updateOne({ _id: existing._id }, { $set: updates }, { runValidators: true });
-        synced += 1;
-      }
-    }
-    nextPageToken = String(page?.pageToken || '').trim() || undefined;
-  } while (nextPageToken);
+      nextPageToken = String(page?.pageToken || '').trim() || undefined;
+    } while (nextPageToken);
+  } catch (error) {
+    console.error('[admin-user-sync] Firebase user sync failed:', error);
+  }
 
   return { synced, scanned };
 }
@@ -14412,24 +14431,33 @@ const adminUserSyncState = {
 };
 
 async function ensureCentralizedAppUsersSync(options = {}) {
-  const force = Boolean(options?.force);
-  if (!firebaseAdminAuth) return { synced: 0, scanned: 0, skipped: true };
-  const now = Date.now();
-  if (!force && adminUserSyncState.lastSyncedAt > 0 && (now - adminUserSyncState.lastSyncedAt) < ADMIN_USER_SYNC_MAX_AGE_MS) {
-    return { synced: 0, scanned: 0, skipped: true };
-  }
-  if (adminUserSyncState.inFlight) {
+  try {
+    const force = Boolean(options?.force);
+    if (!firebaseAdminAuth) return { synced: 0, scanned: 0, skipped: true };
+    const now = Date.now();
+    if (!force && adminUserSyncState.lastSyncedAt > 0 && (now - adminUserSyncState.lastSyncedAt) < ADMIN_USER_SYNC_MAX_AGE_MS) {
+      return { synced: 0, scanned: 0, skipped: true };
+    }
+    if (adminUserSyncState.inFlight) {
+      return adminUserSyncState.inFlight;
+    }
+    adminUserSyncState.inFlight = syncMissingFirebaseUsersToBackend()
+      .then((result) => {
+        adminUserSyncState.lastSyncedAt = Date.now();
+        return result;
+      })
+      .catch((error) => {
+        console.error('[admin-user-sync] ensureCentralizedAppUsersSync failed:', error);
+        return { synced: 0, scanned: 0, skipped: true, error: String(error?.message || error) };
+      })
+      .finally(() => {
+        adminUserSyncState.inFlight = null;
+      });
     return adminUserSyncState.inFlight;
+  } catch (error) {
+    console.error('[admin-user-sync] ensureCentralizedAppUsersSync failed:', error);
+    return { synced: 0, scanned: 0, skipped: true, error: String(error?.message || error) };
   }
-  adminUserSyncState.inFlight = syncMissingFirebaseUsersToBackend()
-    .then((result) => {
-      adminUserSyncState.lastSyncedAt = Date.now();
-      return result;
-    })
-    .finally(() => {
-      adminUserSyncState.inFlight = null;
-    });
-  return adminUserSyncState.inFlight;
 }
 
 function calculateRemainingDays(expiresAt, nowMs = Date.now()) {
@@ -14498,6 +14526,49 @@ function buildManagedServiceDetail({
   };
 }
 
+function emptyAdminSubscriptionOverviewFallback(warning = 'temporary backend issue') {
+  return {
+    totalUsers: 0,
+    activeUsers: 0,
+    expiredUsers: 0,
+    mentorAccess: {
+      activeUsers: 0,
+      inactiveUsers: 0,
+      global: accessStatusPayload({ allowed: false, status: 'inactive', source: 'none' }),
+    },
+    preparationAccess: {
+      activeUsers: 0,
+      inactiveUsers: 0,
+      global: accessStatusPayload({ allowed: false, status: 'inactive', source: 'none' }),
+    },
+    plans: Object.values(SUBSCRIPTION_PLANS || {}),
+    dailyUsage: [],
+    warning,
+  };
+}
+
+function emptyAdminSubscriptionUsersFallback(warning = 'temporary backend issue') {
+  return { users: [], warning };
+}
+
+function emptyAdminManagedUsersFallback({
+  page = 1,
+  pageSize = 25,
+  showAll = false,
+  warning = 'temporary backend issue',
+} = {}) {
+  return {
+    users: [],
+    totalMatched: 0,
+    page,
+    pageSize,
+    totalPages: 0,
+    hasMore: false,
+    showAll,
+    warning,
+  };
+}
+
 async function fetchAdminManagedUsers({
   q,
   page,
@@ -14505,13 +14576,15 @@ async function fetchAdminManagedUsers({
   showAll,
   forceSync = false,
 }) {
-  const normalizedQuery = normalizeSubscriptionSearch(q);
-  const managedUserFilter = { role: { $ne: 'admin' } };
-  const nowMs = Date.now();
-  const globalGrants = await getGlobalAccessGrantSnapshot();
-  if (showAll || forceSync || !normalizedQuery) {
-    await ensureCentralizedAppUsersSync({ force: forceSync });
-  }
+  try {
+    const normalizedQuery = normalizeSubscriptionSearch(q);
+    const managedUserFilter = { role: { $ne: 'admin' } };
+    const nowMs = Date.now();
+    const globalGrants = await getGlobalAccessGrantSnapshot();
+    // Only block the request when admin explicitly requests sync=true or uses the sync endpoint.
+    if (forceSync) {
+      await ensureCentralizedAppUsersSync({ force: true });
+    }
   const searchFilter = buildSubscriptionManagementSearchFilter(normalizedQuery);
   if (searchFilter.blocked) {
     return {
@@ -14644,22 +14717,33 @@ async function fetchAdminManagedUsers({
     hasMore: skip + mapped.length < totalMatched,
     showAll,
   };
+  } catch (error) {
+    console.error('[admin-subscriptions] fetchAdminManagedUsers failed:', error);
+    return emptyAdminManagedUsersFallback({ page, pageSize, showAll });
+  }
 }
 
 app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmin, async (req, res) => {
-  const q = normalizeSubscriptionSearch(req.query?.q);
-  const showAll = String(req.query?.showAll || '').trim().toLowerCase() === 'true';
-  const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || (showAll ? 100 : 25)) || (showAll ? 100 : 25)));
-  const page = Math.max(1, Number(req.query?.page || 1) || 1);
-  const syncRequested = String(req.query?.sync || '').trim().toLowerCase() === 'true';
-  const payload = await fetchAdminManagedUsers({
-    q,
-    page,
-    pageSize,
-    showAll,
-    forceSync: syncRequested,
-  });
-  res.json(payload);
+  try {
+    const q = normalizeSubscriptionSearch(req.query?.q);
+    const showAll = String(req.query?.showAll || '').trim().toLowerCase() === 'true';
+    const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || (showAll ? 100 : 25)) || (showAll ? 100 : 25)));
+    const page = Math.max(1, Number(req.query?.page || 1) || 1);
+    const syncRequested = String(req.query?.sync || '').trim().toLowerCase() === 'true';
+    const payload = await fetchAdminManagedUsers({
+      q,
+      page,
+      pageSize,
+      showAll,
+      forceSync: syncRequested,
+    });
+    res.json(payload);
+  } catch (error) {
+    console.error('[admin-subscriptions] management users failed:', error);
+    const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || 25) || 25));
+    const page = Math.max(1, Number(req.query?.page || 1) || 1);
+    res.status(200).json(emptyAdminManagedUsersFallback({ page, pageSize }));
+  }
 });
 
 app.get('/api/admin/users/search', authMiddleware, requireAdmin, async (req, res) => {
