@@ -26,3 +26,6 @@ android/app/*.jks
 
 # API service account JSON path — keep files under this directory out of git (GOOGLE_APPLICATION_CREDENTIALS)
 secrets/
+logs/
+deploy/build-info.json
+.deploy-rollback-*

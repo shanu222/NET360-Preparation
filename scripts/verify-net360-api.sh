@@ -11,7 +11,19 @@ API_BASE="${API_BASE%/}"
 echo "== NET360 API checks against ${API_BASE} =="
 
 echo ""
-echo "-- Public: subscription plans (expect 200) --"
+echo "-- Health + version --"
+curl -sS "${API_BASE}/api/health" | head -c 500 || true
+echo ""
+curl -sS "${API_BASE}/api/version" || true
+echo ""
+
+echo ""
+echo "-- Full post-deploy route verification --"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+bash "${SCRIPT_DIR}/verify-post-deploy-routes.sh" "${API_BASE}"
+
+echo ""
+echo "-- Legacy smoke checks --"
 curl -sS -o /dev/null -w "%{http_code}\n" "${API_BASE}/api/subscriptions/plans" | tee /tmp/net360_plans.code
 code="$(cat /tmp/net360_plans.code)"
 if [[ "${code}" != "200" ]]; then

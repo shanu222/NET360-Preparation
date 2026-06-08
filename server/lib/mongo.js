@@ -146,3 +146,22 @@ export async function connectMongo(uri) {
 
   return mongoose.connection;
 }
+
+const MONGO_READY_STATES = {
+  0: 'disconnected',
+  1: 'connected',
+  2: 'connecting',
+  3: 'disconnecting',
+};
+
+export function getMongoHealth() {
+  const readyState = mongoose.connection.readyState;
+  return {
+    configured: Boolean(lastUri),
+    connected: readyState === 1,
+    readyState,
+    state: MONGO_READY_STATES[readyState] || 'unknown',
+    reconnectScheduled: Boolean(reconnectTimer),
+    reconnectInFlight,
+  };
+}
