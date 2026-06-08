@@ -249,6 +249,22 @@ async function main() {
       } else {
         fail('health-endpoints', JSON.stringify({ health: health.status, ready: ready.status, version: version.json }));
       }
+
+      const corsPreflight = spawnSync(
+        BASH,
+        [
+          path.join(REPO_DIR, 'scripts/verify-cors-preflight.sh').replace(/\\/g, '/'),
+          testBase,
+          'https://www.net360preparation.com',
+        ],
+        { cwd: REPO_DIR, encoding: 'utf8', timeout: 60_000 },
+      );
+      const corsPreflightOut = `${corsPreflight.stdout || ''}${corsPreflight.stderr || ''}`;
+      if (corsPreflight.status === 0) {
+        pass('cors-preflight-local', '/api/auth/login and /api/admin/system-status OPTIONS include x-net360-client-platform');
+      } else {
+        fail('cors-preflight-local', corsPreflightOut.slice(-500));
+      }
     }
   } catch (error) {
     fail('health-endpoints', `${error.message}\n${serverLog.slice(-400)}`);
@@ -273,6 +289,14 @@ async function main() {
     pass('ecosystem-config', 'ecosystem.config.cjs loads');
   } catch (error) {
     fail('ecosystem-config', error.message);
+  }
+
+  // 10. CORS static audit (no duplicate bare cors() handlers)
+  const corsAudit = runBash('scripts/verify-cors-static-audit.sh');
+  if (corsAudit.ok) {
+    pass('cors-static-audit', 'single canonical corsMiddleware; no bare app.options(cors())');
+  } else {
+    fail('cors-static-audit', corsAudit.stdout.slice(-400));
   }
 
   // Report

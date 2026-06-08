@@ -21,9 +21,12 @@ fail() {
 
 echo "== NET360 post-deploy verification: ${API_BASE} =="
 
-echo "-- CORS preflight (admin SPA headers) --"
+echo "-- CORS preflight (auth + admin SPA headers) --"
 bash "${SCRIPT_DIR}/verify-cors-preflight.sh" "${API_BASE}" "https://www.net360preparation.com"
 bash "${SCRIPT_DIR}/verify-cors-preflight.sh" "${API_BASE}" "https://net360preparation.com"
+
+echo "-- CORS static audit (source) --"
+bash "${SCRIPT_DIR}/verify-cors-static-audit.sh"
 
 echo ""
 echo "-- GET /api/health (liveness) --"
