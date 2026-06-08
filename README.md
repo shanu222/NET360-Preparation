@@ -122,12 +122,32 @@ If admin/client requests fail with network errors in production:
 
 3. Verify API routes and health
 - Admin AI generation route: `POST /api/admin/ai-generate-mcq`
-- Health route: `GET /api/health` (must return JSON)
+- Health routes: `GET /api/health`, `GET /api/health/ready`, `GET /api/version`
 
 4. Free-tier sleep/wake behavior
 - First request can take longer while backend wakes up
 - Frontend includes retry/backoff for transient timeouts and `5xx` responses
 - If wake-up delays are frequent, consider an always-on plan for API service
+
+## Production operations (EC2 + PM2)
+
+Full runbooks: [`docs/ops/README.md`](docs/ops/README.md)
+
+```bash
+# One-time EC2 setup (PM2 startup, log rotation, health cron, backups)
+sudo bash scripts/setup-pm2-production.sh
+
+# Deploy API
+bash scripts/deploy-api-production.sh main
+
+# Verify health + routes
+bash scripts/verify-post-deploy-routes.sh https://api.net360preparation.com
+
+# Rollback
+bash scripts/rollback-api-production.sh .deploy-rollback-YYYYMMDD-HHMMSS
+```
+
+CloudWatch setup: `deploy/cloudwatch/install-cloudwatch-agent.sh`
 
 ## New Production Features Added
 
