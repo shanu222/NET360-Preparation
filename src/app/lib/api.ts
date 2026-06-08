@@ -1,8 +1,16 @@
 import {
+  ADMIN_ACCESS_KEY,
+  ADMIN_REFRESH_KEY,
+  clearPersistedAdminTokens,
   COOKIE_SESSION_API_MARKER,
+  hasStoredAdminCredentials,
   hasStoredAuthCredentials,
+  isAdminPanelRoute,
   isCookieSessionApiMarker,
+  persistAdminTokens,
   persistStudentTokens,
+  readPersistedAdminAccessToken,
+  readPersistedAdminRefreshToken,
   shouldPersistAuthTokens,
 } from './authSession';
 import { isNativeRuntime, logNativeEvent } from './nativeDiagnostics';
@@ -114,8 +122,8 @@ if (!API_BASE.startsWith('https') && import.meta.env.PROD) {
 
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 const REFRESH_TOKEN_STORAGE_KEY = 'net360-auth-refresh-token';
-const ADMIN_TOKEN_STORAGE_KEY = 'net360-admin-access-token';
-const ADMIN_REFRESH_TOKEN_STORAGE_KEY = 'net360-admin-refresh-token';
+const ADMIN_TOKEN_STORAGE_KEY = ADMIN_ACCESS_KEY;
+const ADMIN_REFRESH_TOKEN_STORAGE_KEY = ADMIN_REFRESH_KEY;
 const DEFAULT_API_TIMEOUT_MS = 35_000;
 const AI_PARSE_API_TIMEOUT_MS = 120_000;
 const MAX_API_TIMEOUT_MS = 240_000;
@@ -363,11 +371,24 @@ export function buildSseStreamUrl(authToken?: string | null): string {
   return base;
 }
 
-function readStoredAccessToken() {
-  const adminToken = localStorage.getItem(ADMIN_TOKEN_STORAGE_KEY);
-  if (adminToken) return adminToken;
+function isAdminApiPath(path: string) {
+  return String(path || '').startsWith('/api/admin/');
+}
+
+function readStoredAccessToken(path = '') {
+  const adminToken = readPersistedAdminAccessToken();
+  const studentToken = shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+  const adminContext = isAdminApiPath(path) || isAdminPanelRoute();
+
+  if (adminContext) {
+    if (adminToken) return adminToken;
+    if (!shouldPersistAuthTokens()) return null;
+    return studentToken;
+  }
+
   if (!shouldPersistAuthTokens()) return null;
-  return localStorage.getItem(TOKEN_STORAGE_KEY);
+  if (studentToken) return studentToken;
+  return adminToken;
 }
 
 /** True if an httpOnly cookie session is active (no bearer token required). */
@@ -421,13 +442,14 @@ export async function resolveLaunchAuthToken(contextToken: string | null | undef
   }
 }
 
-function readStoredRefreshCandidates() {
+function readStoredRefreshCandidates(path = '') {
   const seen = new Set<string>();
   const candidates: Array<{ key: string; value: string }> = [];
-  const keys = [ADMIN_REFRESH_TOKEN_STORAGE_KEY];
-  if (shouldPersistAuthTokens()) {
-    keys.unshift(REFRESH_TOKEN_STORAGE_KEY);
-  }
+  const adminContext = isAdminApiPath(path) || isAdminPanelRoute();
+  const keys = adminContext
+    ? [ADMIN_REFRESH_TOKEN_STORAGE_KEY, ...(shouldPersistAuthTokens() ? [REFRESH_TOKEN_STORAGE_KEY] : [])]
+    : [...(shouldPersistAuthTokens() ? [REFRESH_TOKEN_STORAGE_KEY] : []), ADMIN_REFRESH_TOKEN_STORAGE_KEY];
+
   keys.forEach((key) => {
     const value = localStorage.getItem(key);
     if (!value) return;
@@ -440,13 +462,30 @@ function readStoredRefreshCandidates() {
 
 function clearStoredTokenPair(refreshKey: string) {
   if (refreshKey === ADMIN_REFRESH_TOKEN_STORAGE_KEY) {
-    localStorage.removeItem(ADMIN_REFRESH_TOKEN_STORAGE_KEY);
-    localStorage.removeItem(ADMIN_TOKEN_STORAGE_KEY);
+    clearPersistedAdminTokens();
     return;
   }
 
   localStorage.removeItem(REFRESH_TOKEN_STORAGE_KEY);
   localStorage.removeItem(TOKEN_STORAGE_KEY);
+}
+
+function persistRefreshedTokens(
+  refreshKey: string,
+  payload: { token?: string; refreshToken?: string },
+) {
+  if (refreshKey === ADMIN_REFRESH_TOKEN_STORAGE_KEY) {
+    if (!payload?.token) return false;
+    persistAdminTokens(payload.token, payload.refreshToken ?? null);
+    return true;
+  }
+
+  if (payload?.token && shouldPersistAuthTokens()) {
+    persistStudentTokens(payload.token, payload.refreshToken ?? null);
+    return true;
+  }
+
+  return false;
 }
 
 function parseRetryAfterSeconds(headerValue: string | null): number | undefined {
@@ -530,7 +569,10 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       headers.set('Authorization', `Bearer ${authToken}`);
     }
     if (!headers.has('X-Net360-Client-Platform')) {
-      headers.set('X-Net360-Client-Platform', resolveClientPlatformHeaderValue());
+      const platform = isAdminApiPath(path) || isAdminPanelRoute()
+        ? 'admin-web'
+        : resolveClientPlatformHeaderValue();
+      headers.set('X-Net360-Client-Platform', platform);
     }
     if (isNativeCapacitorRuntime() && !headers.has('X-Net360-Auth-Transport-Preference')) {
       headers.set('X-Net360-Auth-Transport-Preference', 'body-token-preferred');
@@ -586,8 +628,10 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       return refreshInFlight;
     }
 
+    const adminContext = isAdminApiPath(path) || isAdminPanelRoute();
+
     refreshInFlight = (async () => {
-      const refreshCandidates = readStoredRefreshCandidates();
+      const refreshCandidates = readStoredRefreshCandidates(path);
       const tryCookieRefresh = async () => {
         const response = await fetchRefreshWithRetry({});
 
@@ -602,22 +646,20 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
         };
 
         const role = String(payload?.user?.role || '').toLowerCase();
+        if (adminContext && role !== 'admin') {
+          return null;
+        }
+
         if (role === 'admin') {
           if (payload?.token) {
-            localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, payload.token);
-            if (payload.refreshToken) {
-              localStorage.setItem(ADMIN_REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
-            }
+            persistAdminTokens(payload.token, payload.refreshToken ?? null);
             return payload.token;
           }
           return COOKIE_SESSION_API_MARKER;
         }
 
         if (payload?.token && shouldPersistAuthTokens()) {
-          localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
-          if (payload.refreshToken) {
-            localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
-          }
+          persistStudentTokens(payload.token, payload.refreshToken ?? null);
           return payload.token;
         }
 
@@ -662,23 +704,21 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
             continue;
           }
 
+          const role = String(payload?.user?.role || '').toLowerCase();
+          if (adminContext && candidate.key !== ADMIN_REFRESH_TOKEN_STORAGE_KEY && role !== 'admin') {
+            continue;
+          }
+
           if (candidate.key === ADMIN_REFRESH_TOKEN_STORAGE_KEY) {
-            if (!payload?.token) continue;
-            localStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, payload.token);
-            if (payload.refreshToken) {
-              localStorage.setItem(ADMIN_REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
-            }
+            if (!payload?.token || role !== 'admin') continue;
+            persistAdminTokens(payload.token, payload.refreshToken ?? null);
             refreshBlockedUntil = 0;
             return payload.token;
           }
 
-          if (payload?.token && shouldPersistAuthTokens()) {
-            localStorage.setItem(TOKEN_STORAGE_KEY, payload.token);
-            if (payload.refreshToken) {
-              localStorage.setItem(REFRESH_TOKEN_STORAGE_KEY, payload.refreshToken);
-            }
+          if (persistRefreshedTokens(candidate.key, payload)) {
             refreshBlockedUntil = 0;
-            return payload.token;
+            return payload.token || null;
           }
 
           if (!shouldPersistAuthTokens()) {
@@ -714,7 +754,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   };
 
   const explicitToken = token && String(token).trim() ? token : null;
-  const initialToken = explicitToken || readStoredAccessToken();
+  const initialToken = explicitToken || readStoredAccessToken(path);
 
   let response: Response;
   let attempt = 0;
@@ -821,7 +861,7 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
       }
     }
 
-    if (response.status === 401) {
+    if (response.status === 401 || (response.status === 403 && isAdminApiPath(path))) {
       const refreshedToken = await tryRefreshAccessToken();
       if (refreshedToken) {
         const retryResponse = await fetchWithTimeout(resolvedPath, {
@@ -1046,4 +1086,53 @@ export async function ensureStudentBearerTokenFromRefresh(
   })();
 
   await ensureBearerPrimeInFlight.catch(() => undefined);
+}
+
+/**
+ * Admin panel: persist bearer JWTs when login used httpOnly cookies only, or refresh an expired admin session.
+ */
+export async function ensureAdminBearerTokenFromRefresh(
+  contextToken?: string | null,
+): Promise<string | null> {
+  if (!hasStoredAdminCredentials() && !contextToken) return null;
+
+  const stored = readPersistedAdminAccessToken() || contextToken || null;
+  if (stored && !isCookieSessionApiMarker(stored)) return stored;
+
+  const refreshToken = readPersistedAdminRefreshToken();
+  try {
+    const out = await apiRequest<{ token?: string; refreshToken?: string; user?: { role?: string } }>(
+      '/api/auth/refresh',
+      {
+        method: 'POST',
+        body: JSON.stringify(refreshToken ? { refreshToken } : {}),
+      },
+      contextToken ?? undefined,
+    );
+    if (String(out?.user?.role || '').toLowerCase() !== 'admin') {
+      return null;
+    }
+    if (out?.token) {
+      persistAdminTokens(out.token, out.refreshToken ?? null);
+      return out.token;
+    }
+    if (out?.user) {
+      persistAdminTokens(COOKIE_SESSION_API_MARKER, null);
+      return COOKIE_SESSION_API_MARKER;
+    }
+  } catch {
+    // Fall through to /me probe for cookie-only cross-origin sessions.
+  }
+
+  try {
+    const me = await apiRequest<{ user?: { role?: string } }>('/api/auth/me', { method: 'GET' }, COOKIE_SESSION_API_MARKER);
+    if (String(me?.user?.role || '').toLowerCase() === 'admin') {
+      persistAdminTokens(COOKIE_SESSION_API_MARKER, null);
+      return COOKIE_SESSION_API_MARKER;
+    }
+  } catch {
+    // Session not restorable.
+  }
+
+  return null;
 }

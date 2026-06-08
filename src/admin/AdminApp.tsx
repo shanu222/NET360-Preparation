@@ -29,11 +29,17 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { apiRequest, API_BASE, buildApiUrl, buildSseStreamUrl, buildUrl } from '../app/lib/api';
+import { apiRequest, API_BASE, buildApiUrl, buildSseStreamUrl, buildUrl, ensureAdminBearerTokenFromRefresh } from '../app/lib/api';
 import { uploadMediaToS3 } from '../app/lib/uploadMedia';
 import { brandLogoUrl, getMediaUrl } from '../app/lib/publicMedia';
 import { fetchAndApplyPublicMediaConfig } from '../app/lib/publicMediaRuntime';
-import { COOKIE_SESSION_API_MARKER } from '../app/lib/authSession';
+import {
+  clearPersistedAdminTokens,
+  COOKIE_SESSION_API_MARKER,
+  isCookieSessionApiMarker,
+  persistAdminTokens,
+  readPersistedAdminRefreshToken,
+} from '../app/lib/authSession';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../app/lib/hierarchyDedup';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
 import { Button } from '../app/components/ui/button';
@@ -3235,11 +3241,28 @@ export default function AdminApp() {
   const clearAdminSession = () => {
     setToken(null);
     setRefreshToken(null);
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(REFRESH_TOKEN_KEY);
+    clearPersistedAdminTokens();
     if (typeof window !== 'undefined' && String(window.location.pathname || '').toLowerCase() !== '/admin') {
       window.location.assign('/admin');
     }
+  };
+
+  const syncAdminTokenState = (nextToken: string | null, nextRefreshToken: string | null = readPersistedAdminRefreshToken()) => {
+    if (nextToken) {
+      persistAdminTokens(nextToken, nextRefreshToken);
+      setToken(nextToken);
+      setRefreshToken(nextRefreshToken);
+      return nextToken;
+    }
+    clearAdminSession();
+    return null;
+  };
+
+  const restoreAdminSession = async (storedToken: string | null) => {
+    if (!storedToken) return null;
+    const resolved = await ensureAdminBearerTokenFromRefresh(storedToken);
+    if (!resolved) return null;
+    return syncAdminTokenState(resolved, readPersistedAdminRefreshToken());
   };
 
   const navigateToSection = (section: AdminSection, replace = false) => {
@@ -3648,14 +3671,20 @@ export default function AdminApp() {
       setReady(true);
       return;
     }
-    const currentToken: string = authToken;
-    const currentRefreshToken: string | null = refreshToken;
 
     let cancelled = false;
 
     async function bootstrap() {
       try {
-        await loadAdminData(currentToken);
+        const activeToken = await restoreAdminSession(authToken);
+        if (!activeToken || cancelled) {
+          if (!cancelled && authToken) {
+            clearAdminSession();
+          }
+          return;
+        }
+
+        await loadAdminData(activeToken);
         if (!cancelled) {
           setAdminLoadError('');
         }
@@ -3665,7 +3694,10 @@ export default function AdminApp() {
           console.error('Admin data load failed:', error);
 
           if (status === 401 || status === 403) {
-            clearAdminSession();
+            const recovered = await restoreAdminSession(authToken).catch(() => null);
+            if (!recovered) {
+              clearAdminSession();
+            }
           } else {
             const friendly = audienceFriendlyError(error, 'Could not load admin data. Try Refresh or sign in again.');
             setAdminLoadError(friendly);
@@ -3887,26 +3919,24 @@ export default function AdminApp() {
         return;
       }
 
-      // Production API often omits JWTs from JSON (`ISSUE_AUTH_BODY_TOKENS=false`) and uses httpOnly cookies instead.
-      if (payload.token) {
-        localStorage.setItem(TOKEN_KEY, payload.token);
-        if (payload.refreshToken) {
-          localStorage.setItem(REFRESH_TOKEN_KEY, payload.refreshToken);
-        } else {
-          localStorage.removeItem(REFRESH_TOKEN_KEY);
+      let tokenForAdminRequests = payload.token ?? COOKIE_SESSION_API_MARKER;
+      let refreshForAdminRequests = payload.refreshToken ?? null;
+      persistAdminTokens(tokenForAdminRequests, refreshForAdminRequests);
+      setToken(tokenForAdminRequests);
+      setRefreshToken(refreshForAdminRequests);
+
+      if (!payload.token || isCookieSessionApiMarker(tokenForAdminRequests)) {
+        const bearer = await ensureAdminBearerTokenFromRefresh(tokenForAdminRequests);
+        if (bearer) {
+          tokenForAdminRequests = bearer;
+          refreshForAdminRequests = readPersistedAdminRefreshToken();
+          syncAdminTokenState(bearer, refreshForAdminRequests);
         }
-        setToken(payload.token);
-        setRefreshToken(payload.refreshToken ?? null);
-      } else {
-        localStorage.setItem(TOKEN_KEY, COOKIE_SESSION_API_MARKER);
-        localStorage.removeItem(REFRESH_TOKEN_KEY);
-        setToken(COOKIE_SESSION_API_MARKER);
-        setRefreshToken(null);
       }
+
       navigateToSection('dashboard');
       showSuccessToast('Admin login successful.');
 
-      const tokenForAdminRequests = payload.token ?? COOKIE_SESSION_API_MARKER;
       void loadAdminData(tokenForAdminRequests).catch((error) => {
         const status = Number((error as { status?: number } | null)?.status || 0);
         if (status === 401 || status === 403) {
@@ -4370,20 +4400,25 @@ export default function AdminApp() {
   }, [supportMessages]);
 
   useEffect(() => {
-    if (!authToken) return;
+    if (!authToken || !ready) return;
 
     const timer = window.setInterval(() => {
-      void apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations', {}, authToken)
+      void apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations')
         .then((payload) => setSupportConversations(payload.conversations || []))
-        .catch(() => undefined);
+        .catch((error) => {
+          const status = Number((error as { status?: number } | null)?.status || 0);
+          if (status === 401 || status === 403) {
+            void restoreAdminSession(authToken).catch(() => clearAdminSession());
+          }
+        });
 
       if (selectedSupportUserId) {
-        void loadSupportThread(selectedSupportUserId, authToken);
+        void loadSupportThread(selectedSupportUserId);
       }
     }, 5000);
 
     return () => window.clearInterval(timer);
-  }, [authToken, selectedSupportUserId]);
+  }, [authToken, ready, selectedSupportUserId]);
 
   useEffect(() => {
     setBulkAnalysisReady(false);

@@ -234,6 +234,14 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     return () => document.removeEventListener('visibilitychange', onVis);
   }, [refresh]);
 
+  useEffect(() => {
+    const onSubscriptionRefresh = () => {
+      void refresh();
+    };
+    window.addEventListener('net360:subscription-refresh', onSubscriptionRefresh);
+    return () => window.removeEventListener('net360:subscription-refresh', onSubscriptionRefresh);
+  }, [refresh]);
+
   const surface = useMemo(() => {
     const base = me?.premiumSurface || emptySurface;
     const off = serverOffsetRef.current;
