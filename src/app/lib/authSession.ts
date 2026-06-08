@@ -15,6 +15,8 @@ export function isCookieSessionApiMarker(value: string | null | undefined): bool
 
 const STUDENT_ACCESS_KEY = 'net360-auth-token';
 const STUDENT_REFRESH_KEY = 'net360-auth-refresh-token';
+export const ADMIN_ACCESS_KEY = 'net360-admin-access-token';
+export const ADMIN_REFRESH_KEY = 'net360-admin-refresh-token';
 
 function lsGet(key: string): string | null {
   try {
@@ -130,4 +132,40 @@ export function clearPersistedStudentTokens() {
 export function bearerForLaunchUrl(authToken: string | null | undefined): string | null {
   if (!authToken || isCookieSessionApiMarker(authToken)) return null;
   return authToken;
+}
+
+export function readPersistedAdminAccessToken(): string | null {
+  return lsGet(ADMIN_ACCESS_KEY);
+}
+
+export function readPersistedAdminRefreshToken(): string | null {
+  return lsGet(ADMIN_REFRESH_KEY);
+}
+
+export function hasStoredAdminCredentials(): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  const access = lsGet(ADMIN_ACCESS_KEY);
+  const refresh = lsGet(ADMIN_REFRESH_KEY);
+  return Boolean((access && access.trim()) || (refresh && refresh.trim()));
+}
+
+export function persistAdminTokens(access: string | null, refresh: string | null) {
+  if (access) lsSet(ADMIN_ACCESS_KEY, access);
+  else lsRemove(ADMIN_ACCESS_KEY);
+  if (refresh) lsSet(ADMIN_REFRESH_KEY, refresh);
+  else lsRemove(ADMIN_REFRESH_KEY);
+}
+
+export function clearPersistedAdminTokens() {
+  lsRemove(ADMIN_ACCESS_KEY);
+  lsRemove(ADMIN_REFRESH_KEY);
+}
+
+/** True when the SPA is on an admin route (used for token routing, not security). */
+export function isAdminPanelRoute(): boolean {
+  if (typeof window === 'undefined') return false;
+  const path = String(window.location.pathname || '').toLowerCase();
+  if (path.startsWith('/admin')) return true;
+  const host = String(window.location.hostname || '').toLowerCase();
+  return host.includes('net360-admin') || host.startsWith('admin.');
 }
