@@ -1,0 +1,22 @@
+[Unit]
+Description=PM2 process manager for NET360 API
+Documentation=https://pm2.keymetrics.io/
+After=network.target
+
+[Service]
+Type=fork
+User=root
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=PM2_HOME=/root/.pm2
+PIDFile=/root/.pm2/pm2.pid
+Restart=on-failure
+
+ExecStart=/usr/local/bin/pm2 resurrect
+ExecReload=/usr/local/bin/pm2 reload all
+ExecStop=/usr/local/bin/pm2 kill
+
+[Install]
+WantedBy=multi-user.target
