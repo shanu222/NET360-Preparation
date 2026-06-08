@@ -375,6 +375,10 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             window.dispatchEvent(new CustomEvent('net360:session-revoked', { detail: data }));
             return;
           }
+          if (data?.type === 'subscription.refresh') {
+            window.dispatchEvent(new CustomEvent('net360:subscription-refresh', { detail: data }));
+            return;
+          }
         } catch {
           /* fall through */
         }
