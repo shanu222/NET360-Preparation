@@ -8,6 +8,24 @@
   "http://127.0.0.1"
 ];
 
+/** Required on every credentialed preflight — must match headers sent by src/app/lib/api.ts */
+const NET360_CORS_ALLOWED_HEADERS = [
+  'Origin',
+  'X-Requested-With',
+  'Content-Type',
+  'Accept',
+  'Authorization',
+  'x-net360-client-platform',
+  'x-net360-client-version',
+  'X-Net360-Auth-Transport-Preference',
+  'x-net360-auth-transport-preference',
+];
+
+const PRODUCTION_WEB_ORIGINS = [
+  'https://net360preparation.com',
+  'https://www.net360preparation.com',
+];
+
 import dotenv from 'dotenv';
 import express from 'express';
 import compression from 'compression';
@@ -484,87 +502,6 @@ const PAYFAST_WALLET_ACCOUNT_TYPE_ID = String(process.env.PAYFAST_WALLET_ACCOUNT
 
 const app = express();
 
-
-
-app.use(cors({
-  origin: function(origin, callback) {
-
-    if (!origin) {
-      return callback(null, true);
-    }
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    console.log("Blocked by CORS:", origin);
-
-    return callback(null, true);
-  },
-
-  credentials: true,
-
-  methods: [
-    "GET",
-    "POST",
-    "PUT",
-    "PATCH",
-    "DELETE",
-    "OPTIONS"
-  ],
-
-  allowedHeaders: [
-    "Origin",
-    "X-Requested-With",
-    "Content-Type",
-    "Accept",
-    "Authorization",
-    "x-net360-client-platform",
-    "x-net360-client-version",
-    "X-Net360-Auth-Transport-Preference",
-    "x-net360-auth-transport-preference",
-  ]
-}));
-
-app.options("*", cors());
-
-
-app.use((req, res, next) => {
-  
-
-  const origin = req.headers.origin;
-
-  if (origin && allowedOrigins.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
-  }
-
-  res.header(
-    'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-net360-client-platform, x-net360-client-version, X-Net360-Auth-Transport-Preference, x-net360-auth-transport-preference',
-  );
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Credentials', 'true');
-
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
-
-  next();
-});
-
-
-
-
-
-
-
-
-
-
-
-
-app.options('*', cors());
-
 const aiParseUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: AI_PARSE_MAX_FILE_BYTES },
@@ -849,7 +786,10 @@ function expandWwwApexCorsOrigins(list) {
 
 const corsAllowedOriginsListRaw = parseCorsAllowedOriginsList();
 const corsAllowedOriginsList = corsAllowedOriginsListRaw
-  ? expandWwwApexCorsOrigins(corsAllowedOriginsListRaw)
+  ? Array.from(new Set([
+    ...expandWwwApexCorsOrigins(corsAllowedOriginsListRaw),
+    ...PRODUCTION_WEB_ORIGINS,
+  ]))
   : null;
 
 /**
@@ -899,8 +839,9 @@ const corsOriginResolver = corsAllowedOriginsList
         callback(null, true);
         return;
       }
-      if (IS_PRODUCTION) {
-      } else {
+      if (PRODUCTION_WEB_ORIGINS.includes(origin)) {
+        callback(null, true);
+        return;
       }
       callback(null, false);
     }
@@ -930,21 +871,11 @@ const corsMiddleware = cors({
   origin: corsOriginResolver,
   credentials: true,
   methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: [
-      'Origin',
-      'X-Requested-With',
-      'Content-Type',
-      'Accept',
-      'Authorization',
-      'x-net360-client-platform',
-      'x-net360-client-version',
-      'x-requested-with',
-      'X-Net360-Auth-Transport-Preference',
-      'x-net360-auth-transport-preference',
-    ],
+  allowedHeaders: NET360_CORS_ALLOWED_HEADERS,
   exposedHeaders: ['Content-Length', 'Content-Type', 'X-Net360-Auth-Transport', 'X-Net360-Auth-Cookies-Set'],
   maxAge: 86_400,
   optionsSuccessStatus: 204,
+  preflightContinue: false,
 });
 
 if (!expressCorsDisabled) {
