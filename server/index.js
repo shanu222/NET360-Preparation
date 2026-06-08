@@ -881,6 +881,10 @@ const corsMiddleware = cors({
 if (!expressCorsDisabled) {
   app.use(corsMiddleware);
   app.options('*', corsMiddleware);
+  console.log(
+    '[cors] Canonical middleware active; allowedHeaders=',
+    NET360_CORS_ALLOWED_HEADERS.join(', '),
+  );
 } else {
   console.warn(
     '[net360] Express CORS disabled (DISABLE_EXPRESS_CORS=true). Set Access-Control-* exactly once at your reverse proxy or you will break browsers.',
