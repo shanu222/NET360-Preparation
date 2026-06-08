@@ -174,10 +174,18 @@ function clearAuthCookies(res) {
   const expiredOptions = {
     ...buildAuthCookieOptions(1),
     maxAge: 0,
-    expires: new Date(0),
   };
   res.clearCookie(ACCESS_TOKEN_COOKIE_NAME, expiredOptions);
   res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, expiredOptions);
+}
+
+function isAdminPanelRequest(req) {
+  try {
+    const clientPlatform = String(req.headers['x-net360-client-platform'] || '').trim().toLowerCase();
+    return clientPlatform === 'admin-web';
+  } catch {
+    return false;
+  }
 }
 
 function isNativeAppRequest(req) {
@@ -205,8 +213,8 @@ function isNativeAppRequest(req) {
 
 function buildAuthJsonBody(req, payload) {
   if (!payload || typeof payload !== 'object') return payload;
-  // Native WebViews can intermittently drop cross-origin cookies. Always include body tokens for native clients.
-  if (ISSUE_AUTH_BODY_TOKENS || isNativeAppRequest(req)) return payload;
+  // Native WebViews and admin panel can intermittently drop cross-origin cookies. Always include body tokens.
+  if (ISSUE_AUTH_BODY_TOKENS || isNativeAppRequest(req) || isAdminPanelRequest(req)) return payload;
   return { user: payload.user };
 }
 
@@ -688,6 +696,15 @@ function broadcastCommunityEventsToUserIds(targetUserIds, data) {
       emitSocketSyncToStudentUser(uid, data);
     }
   }
+}
+
+/** Push subscription/access updates to a specific student (SSE + Socket.IO). */
+function notifySubscriptionRefresh(userId, payload = {}) {
+  const uid = String(userId || '').trim();
+  if (!uid) return;
+  const data = { type: 'subscription.refresh', ...payload };
+  broadcastCommunityEventsToUserIds([uid], data);
+  emitSubscriptionRefresh(uid, payload);
 }
 
 /** SSE + Socket.IO + disconnect stale sockets when sessionId rotates (new login / takeover). */
@@ -4202,7 +4219,7 @@ async function executePermanentStudentAccountDeletion(req, res, user) {
     });
   }
   await invalidateUserSubscriptionCache(userId);
-  emitSubscriptionRefresh(userIdString, { reason: 'account_deleted' });
+  notifySubscriptionRefresh(userIdString, { reason: 'account_deleted' });
 
   await Promise.all([
     AttemptModel.deleteMany({ userId }),
@@ -11999,7 +12016,7 @@ async function handlePremiumStartTrial(req, res) {
     return;
   }
   await invalidateUserSubscriptionCache(req.user._id);
-  emitSubscriptionRefresh(String(req.user._id), { reason: 'trial_started' });
+  notifySubscriptionRefresh(String(req.user._id), { reason: 'trial_started' });
   res.status(201).json({ ok: true, subscription: r.subscription });
 }
 
@@ -12090,7 +12107,7 @@ app.post('/api/payments/mock/complete', authMiddleware, subscriptionExpiryRefres
     paymentGateway: 'mock',
   });
   await invalidateUserSubscriptionCache(req.user._id);
-  emitSubscriptionRefresh(String(req.user._id), { reason: 'mock_payment' });
+  notifySubscriptionRefresh(String(req.user._id), { reason: 'mock_payment' });
   const updated = await UserModel.findById(req.user._id).lean();
   res.json({ ok: true, subscription: normalizeSubscription(updated) });
 });
@@ -12224,7 +12241,7 @@ app.post('/api/payments/payfast/pay', authMiddleware, subscriptionExpiryRefresh(
       paymentGateway: 'payfast',
     });
     await invalidateUserSubscriptionCache(req.user._id);
-    emitSubscriptionRefresh(String(req.user._id), { reason: 'payment_completed' });
+    notifySubscriptionRefresh(String(req.user._id), { reason: 'payment_completed' });
 
     const updated = await UserModel.findById(req.user._id).lean();
     res.json({
@@ -12617,7 +12634,7 @@ app.post('/api/subscriptions/activate-with-token', authMiddleware, async (req, r
 
   await invalidateUserSubscriptionCache(req.user._id);
   try {
-    emitSubscriptionRefresh(String(req.user._id), { reason: 'admin_token_activation' });
+    notifySubscriptionRefresh(String(req.user._id), { reason: 'admin_token_activation' });
   } catch {
     // ignore
   }
@@ -13940,7 +13957,7 @@ app.post('/api/admin/paid-services/:userId/grant', authMiddleware, requireAdmin,
   }
   await UserModel.updateOne({ _id: userId }, { $set: updates }, { runValidators: true });
   await invalidateUserSubscriptionCache(userId);
-  emitSubscriptionRefresh(String(userId), { reason: 'admin_paid_services_grant' });
+  notifySubscriptionRefresh(String(userId), { reason: 'admin_paid_services_grant' });
   const fresh = await UserModel.findById(userId).select('email firstName lastName paidServices subscription').lean();
   const paidServices = resolvePaidServices(fresh, Date.now());
   res.json({
@@ -13989,7 +14006,7 @@ app.post('/api/admin/paid-services/:userId/deactivate', authMiddleware, requireA
   }
   await UserModel.updateOne({ _id: userId }, { $set: updates }, { runValidators: true });
   await invalidateUserSubscriptionCache(userId);
-  emitSubscriptionRefresh(String(userId), { reason: 'admin_paid_services_deactivate' });
+  notifySubscriptionRefresh(String(userId), { reason: 'admin_paid_services_deactivate' });
   res.json({ ok: true, userId });
 });
 
@@ -14062,7 +14079,7 @@ app.post('/api/admin/subscriptions/access/:userId/grant', authMiddleware, requir
     { runValidators: true },
   );
   await invalidateUserSubscriptionCache(userId);
-  emitSubscriptionRefresh(String(userId), { reason: `admin_${accessType}_manual_grant` });
+  notifySubscriptionRefresh(String(userId), { reason: `admin_${accessType}_manual_grant` });
 
   const fresh = await UserModel.findById(userId).select('email firstName lastName subscription accessControls').lean();
   const entitlements = await resolveEntitlementsForUser(fresh);
@@ -14103,7 +14120,7 @@ app.post('/api/admin/subscriptions/access/:userId/revoke', authMiddleware, requi
   const nextGrant = buildRevokedManualGrant(existing, req.user, notes);
   await UserModel.updateOne({ _id: userId }, { $set: { [path]: nextGrant } }, { runValidators: true });
   await invalidateUserSubscriptionCache(userId);
-  emitSubscriptionRefresh(String(userId), { reason: `admin_${accessType}_manual_revoke` });
+  notifySubscriptionRefresh(String(userId), { reason: `admin_${accessType}_manual_revoke` });
   res.json({ ok: true, userId, accessType, access: accessStatusPayload(nextGrant) });
 });
 
