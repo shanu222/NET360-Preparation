@@ -3370,10 +3370,7 @@ export default function AdminApp() {
     ] = await Promise.all([
       apiRequest<AdminOverview>('/api/admin/overview', {}, activeToken),
       apiRequest<{ users: AdminUser[] }>('/api/admin/users', {}, activeToken),
-      // Legacy signup-request workflow is retired server-side (410); keep panel usable for Firebase-era admins.
-      apiRequest<{ requests: SignupRequest[] }>('/api/admin/signup-requests?status=all', {}, activeToken).catch(() => ({
-        requests: [],
-      })),
+      Promise.resolve({ requests: [] as SignupRequest[] }),
       apiRequest<{ mcqs: AdminMCQ[] }>('/api/admin/mcqs', {}, activeToken),
       apiRequest<{ questions: AdminPracticeBoardQuestion[] }>('/api/admin/practice-board/questions', {}, activeToken).catch(() => ({ questions: [] })),
       apiRequest<{ submissions: AdminQuestionSubmission[] }>('/api/admin/question-submissions?status=all', {}, activeToken).catch(() => ({ submissions: [] })),
@@ -3409,22 +3406,23 @@ export default function AdminApp() {
         activeToken,
       ).catch(() => ({ users: [] })),
       apiRequest<AdminSubscriptionManagementUsersPayload>(
-        subscriptionManagementShowAll
-          ? `/api/admin/users/all?page=${subscriptionManagementPage}&pageSize=${subscriptionManagementPageSize}`
-          : `/api/admin/users/search?q=${encodeURIComponent(subscriptionManagementDebouncedQuery.trim())}&page=${subscriptionManagementPage}&pageSize=${subscriptionManagementPageSize}`,
+        (() => {
+          const params = new URLSearchParams({
+            page: String(subscriptionManagementPage),
+            pageSize: String(subscriptionManagementPageSize),
+          });
+          if (subscriptionManagementShowAll) {
+            params.set('showAll', 'true');
+          } else if (subscriptionManagementDebouncedQuery.trim()) {
+            params.set('q', subscriptionManagementDebouncedQuery.trim());
+          }
+          return `/api/admin/subscriptions/management/users?${params.toString()}`;
+        })(),
         {},
         activeToken,
       ).catch(() => ({ users: [] })),
-      apiRequest<{ requests: PremiumSubscriptionRequest[] }>(
-        `/api/admin/subscriptions/requests?status=${premiumRequestStatusFilter}&q=${encodeURIComponent(premiumRequestQuery.trim())}`,
-        {},
-        activeToken,
-      ).catch(() => ({ requests: [] })),
-      apiRequest<{ requests: PasswordRecoveryRequest[] }>(
-        `/api/admin/password-recovery-requests?status=${passwordRecoveryStatusFilter}&q=${encodeURIComponent(passwordRecoveryQuery.trim())}`,
-        {},
-        activeToken,
-      ).catch(() => ({ requests: [] })),
+      Promise.resolve({ requests: [] as PremiumSubscriptionRequest[] }),
+      Promise.resolve({ requests: [] as PasswordRecoveryRequest[] }),
       apiRequest<{ reports: AdminCommunityReport[] }>('/api/admin/community/reports', {}, activeToken).catch(() => ({ reports: [] })),
       apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations', {}, activeToken).catch(() => ({ conversations: [] })),
       apiRequest<{ structure: AdminMcqBankStructureItem[] }>('/api/admin/mcq-bank/structure', {}, activeToken).catch(() => ({ structure: [] })),
