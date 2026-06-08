@@ -2305,6 +2305,78 @@ function adminEnvStatusBadgeClasses(status?: string) {
   }
 }
 
+/** Bootstrap must never block the admin shell — cap per-request wait and disable retries. */
+const ADMIN_BOOTSTRAP_REQUEST_TIMEOUT_MS = 25_000;
+const ADMIN_SESSION_RESTORE_TIMEOUT_MS = 15_000;
+
+const EMPTY_ADMIN_OVERVIEW: AdminOverview = {
+  usersCount: 0,
+  mcqCount: 0,
+  attemptsCount: 0,
+  averageScore: 0,
+  pendingSignupRequests: 0,
+  pendingPremiumRequests: 0,
+  pendingQuestionSubmissions: 0,
+  recoveryRequestCount: 0,
+  recoveryStatusCounts: { sent: 0, partial: 0, failed: 0, not_found: 0 },
+};
+
+const EMPTY_SUBSCRIPTION_OVERVIEW: AdminSubscriptionOverview = {
+  totalUsers: 0,
+  activeUsers: 0,
+  expiredUsers: 0,
+  plans: [],
+  dailyUsage: [],
+};
+
+const EMPTY_CONTRIBUTION_POLICY: AdminContributionPolicy = {
+  maxSubmissionsPerDay: 5,
+  maxFilesPerSubmission: 3,
+  maxFileSizeBytes: 1024 * 1024,
+  blockDurationMinutes: 180,
+};
+
+const EMPTY_SYSTEM_STATUS: AdminSystemStatus = {
+  openai: {
+    configured: false,
+    model: 'unknown',
+    keySource: 'missing',
+  },
+  serverTime: new Date().toISOString(),
+};
+
+async function fetchAdminBootstrapStep<T>(
+  label: string,
+  path: string,
+  token: string,
+  fallback: T,
+  options: { method?: string; timeoutMs?: number; retryCount?: number } = {},
+): Promise<T> {
+  const started = performance.now();
+  try {
+    const payload = await apiRequest<T>(
+      path,
+      {
+        ...options,
+        timeoutMs: options.timeoutMs ?? ADMIN_BOOTSTRAP_REQUEST_TIMEOUT_MS,
+        retryCount: options.retryCount ?? 0,
+      },
+      token,
+    );
+    console.info(`[admin-bootstrap] ${label} ok ${Math.round(performance.now() - started)}ms`);
+    return payload;
+  } catch (error) {
+    console.warn(`[admin-bootstrap] ${label} fail ${Math.round(performance.now() - started)}ms`, error);
+    return fallback;
+  }
+}
+
+function waitForBootstrapTimeout<T>(ms: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    window.setTimeout(() => resolve(fallback), ms);
+  });
+}
+
 export default function AdminApp() {
   const activeView = new URLSearchParams(window.location.search).get('view');
   const isQuestionBankView = activeView === 'question-bank';
@@ -2314,6 +2386,7 @@ export default function AdminApp() {
   const [refreshToken, setRefreshToken] = useState<string | null>(() => localStorage.getItem(REFRESH_TOKEN_KEY));
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(false);
+  const skipFilterReloadAfterBootstrap = useRef(false);
   const [activeSection, setActiveSection] = useState<AdminSection>(initialSection);
   const [isSidebarExpanded, setIsSidebarExpanded] = useState<boolean>(() => {
     if (typeof window !== 'undefined' && isTabletSidebarViewport(window.innerWidth)) {
@@ -3347,6 +3420,22 @@ export default function AdminApp() {
   };
 
   const loadAdminData = async (activeToken: string) => {
+    const bootstrapStarted = performance.now();
+    console.info('[admin-bootstrap] loadAdminData start');
+
+    const subscriptionManagementPath = (() => {
+      const params = new URLSearchParams({
+        page: String(subscriptionManagementPage),
+        pageSize: String(subscriptionManagementPageSize),
+      });
+      if (subscriptionManagementShowAll) {
+        params.set('showAll', 'true');
+      } else if (subscriptionManagementDebouncedQuery.trim()) {
+        params.set('q', subscriptionManagementDebouncedQuery.trim());
+      }
+      return `/api/admin/subscriptions/management/users?${params.toString()}`;
+    })();
+
     const [
       overviewPayload,
       usersPayload,
@@ -3368,77 +3457,53 @@ export default function AdminApp() {
       systemStatusPayload,
       configVariablesPayload,
     ] = await Promise.all([
-      apiRequest<AdminOverview>('/api/admin/overview', {}, activeToken),
-      apiRequest<{ users: AdminUser[] }>('/api/admin/users', {}, activeToken),
+      fetchAdminBootstrapStep('overview', '/api/admin/overview', activeToken, EMPTY_ADMIN_OVERVIEW),
+      fetchAdminBootstrapStep('users', '/api/admin/users', activeToken, { users: [] as AdminUser[] }),
       Promise.resolve({ requests: [] as SignupRequest[] }),
-      apiRequest<{ mcqs: AdminMCQ[] }>('/api/admin/mcqs', {}, activeToken),
-      apiRequest<{ questions: AdminPracticeBoardQuestion[] }>('/api/admin/practice-board/questions', {}, activeToken).catch(() => ({ questions: [] })),
-      apiRequest<{ submissions: AdminQuestionSubmission[] }>('/api/admin/question-submissions?status=all', {}, activeToken).catch(() => ({ submissions: [] })),
-      apiRequest<{ policy: AdminContributionPolicy }>('/api/admin/question-submissions/policy', {}, activeToken).catch(() => ({
-        policy: {
-          maxSubmissionsPerDay: 5,
-          maxFilesPerSubmission: 3,
-          maxFileSizeBytes: 1024 * 1024,
-          blockDurationMinutes: 180,
-        },
-      })),
-      apiRequest<AdminSubscriptionOverview>('/api/admin/subscriptions/overview', {}, activeToken).catch(() => ({
-        totalUsers: 0,
-        activeUsers: 0,
-        expiredUsers: 0,
-        plans: [],
-        dailyUsage: [],
-      })),
-      apiRequest<{ users: AdminSubscriptionUser[] }>(
+      fetchAdminBootstrapStep('mcqs', '/api/admin/mcqs', activeToken, { mcqs: [] as AdminMCQ[] }),
+      fetchAdminBootstrapStep('practice-board', '/api/admin/practice-board/questions', activeToken, { questions: [] as AdminPracticeBoardQuestion[] }),
+      fetchAdminBootstrapStep('question-submissions', '/api/admin/question-submissions?status=all', activeToken, { submissions: [] as AdminQuestionSubmission[] }),
+      fetchAdminBootstrapStep('contribution-policy', '/api/admin/question-submissions/policy', activeToken, { policy: EMPTY_CONTRIBUTION_POLICY }),
+      fetchAdminBootstrapStep('subscriptions-overview', '/api/admin/subscriptions/overview', activeToken, EMPTY_SUBSCRIPTION_OVERVIEW),
+      fetchAdminBootstrapStep(
+        'subscriptions-users',
         `/api/admin/subscriptions/users?status=${subscriptionFilter}&accessType=${accessTypeFilter}`,
-        {},
         activeToken,
-      ).catch(() => ({ users: [] })),
-      apiRequest<AdminPaidServicesOverview>('/api/admin/paid-services/overview', {}, activeToken).catch(() => ({
+        { users: [] as AdminSubscriptionUser[] },
+      ),
+      fetchAdminBootstrapStep('paid-services-overview', '/api/admin/paid-services/overview', activeToken, {
         totalUsers: 0,
         testsAccess: { activeUsers: 0, inactiveUsers: 0 },
         preparationAccess: { activeUsers: 0, inactiveUsers: 0 },
         communityAccess: { activeUsers: 0, inactiveUsers: 0 },
-      })),
-      apiRequest<{ users: AdminPaidServicesUser[] }>(
+      } as AdminPaidServicesOverview),
+      fetchAdminBootstrapStep(
+        'paid-services-users',
         `/api/admin/paid-services/users?q=${encodeURIComponent(paidServicesQuery.trim())}&status=${paidServicesStatusFilter}&serviceType=${paidServiceTypeFilter}`,
-        {},
         activeToken,
-      ).catch(() => ({ users: [] })),
-      apiRequest<AdminSubscriptionManagementUsersPayload>(
-        (() => {
-          const params = new URLSearchParams({
-            page: String(subscriptionManagementPage),
-            pageSize: String(subscriptionManagementPageSize),
-          });
-          if (subscriptionManagementShowAll) {
-            params.set('showAll', 'true');
-          } else if (subscriptionManagementDebouncedQuery.trim()) {
-            params.set('q', subscriptionManagementDebouncedQuery.trim());
-          }
-          return `/api/admin/subscriptions/management/users?${params.toString()}`;
-        })(),
-        {},
-        activeToken,
-      ).catch(() => ({ users: [] })),
+        { users: [] as AdminPaidServicesUser[] },
+      ),
+      fetchAdminBootstrapStep('subscriptions-management-users', subscriptionManagementPath, activeToken, {
+        users: [] as AdminSubscriptionManagementListUser[],
+        totalMatched: 0,
+        page: subscriptionManagementPage,
+        pageSize: subscriptionManagementPageSize,
+        totalPages: 0,
+        hasMore: false,
+      } as AdminSubscriptionManagementUsersPayload),
       Promise.resolve({ requests: [] as PremiumSubscriptionRequest[] }),
       Promise.resolve({ requests: [] as PasswordRecoveryRequest[] }),
-      apiRequest<{ reports: AdminCommunityReport[] }>('/api/admin/community/reports', {}, activeToken).catch(() => ({ reports: [] })),
-      apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations', {}, activeToken).catch(() => ({ conversations: [] })),
-      apiRequest<{ structure: AdminMcqBankStructureItem[] }>('/api/admin/mcq-bank/structure', {}, activeToken).catch(() => ({ structure: [] })),
-      apiRequest<AdminSystemStatus>('/api/admin/system-status', {}, activeToken).catch(() => ({
-        openai: {
-          configured: false,
-          model: 'unknown',
-          keySource: 'missing',
-        },
-        serverTime: new Date().toISOString(),
-      })),
-      apiRequest<AdminConfigurationListPayload>('/api/admin/configurations', {}, activeToken).catch(() => ({
+      fetchAdminBootstrapStep('community-reports', '/api/admin/community/reports', activeToken, { reports: [] as AdminCommunityReport[] }),
+      fetchAdminBootstrapStep('support-chat', '/api/admin/support-chat/conversations', activeToken, { conversations: [] as AdminSupportConversation[] }, { timeoutMs: 30_000 }),
+      fetchAdminBootstrapStep('mcq-bank-structure', '/api/admin/mcq-bank/structure', activeToken, { structure: [] as AdminMcqBankStructureItem[] }),
+      fetchAdminBootstrapStep('system-status', '/api/admin/system-status', activeToken, EMPTY_SYSTEM_STATUS),
+      fetchAdminBootstrapStep('configurations', '/api/admin/configurations', activeToken, {
         variables: [],
         infraSnapshot: { items: [] },
-      })),
+      } as AdminConfigurationListPayload),
     ]);
+
+    console.info(`[admin-bootstrap] loadAdminData complete ${Math.round(performance.now() - bootstrapStarted)}ms`);
 
     setOverview(overviewPayload);
     setUsers(usersPayload.users || []);
@@ -3446,12 +3511,7 @@ export default function AdminApp() {
     setMcqs((previous) => (selectedHierarchy ? previous : []));
     setPracticeQuestions(practicePayload.questions || []);
     setQuestionSubmissions(submissionPayload.submissions || []);
-    setContributionPolicy(policyPayload.policy || {
-      maxSubmissionsPerDay: 5,
-      maxFilesPerSubmission: 3,
-      maxFileSizeBytes: 1024 * 1024,
-      blockDurationMinutes: 180,
-    });
+    setContributionPolicy(policyPayload.policy || EMPTY_CONTRIBUTION_POLICY);
     setSubscriptionOverview(subscriptionOverviewPayload);
     setSubscriptionUsers(subscriptionUsersPayload.users || []);
     setPaidServicesOverview(paidServicesOverviewPayload);
@@ -3671,14 +3731,25 @@ export default function AdminApp() {
     }
 
     let cancelled = false;
+    const bootstrapStarted = performance.now();
+    console.info('[admin-bootstrap] session start');
 
     async function bootstrap() {
       try {
-        const activeToken = await restoreAdminSession(authToken);
-        if (!activeToken || cancelled) {
-          if (!cancelled && authToken) {
+        const sessionStarted = performance.now();
+        const activeToken = await Promise.race([
+          restoreAdminSession(authToken),
+          waitForBootstrapTimeout<string | null>(ADMIN_SESSION_RESTORE_TIMEOUT_MS, null),
+        ]);
+        console.info(`[admin-bootstrap] session-restore ${Math.round(performance.now() - sessionStarted)}ms`, activeToken ? 'ok' : 'fail');
+
+        if (!activeToken) {
+          if (!cancelled) {
             clearAdminSession();
           }
+          return;
+        }
+        if (cancelled) {
           return;
         }
 
@@ -3689,7 +3760,7 @@ export default function AdminApp() {
       } catch (error) {
         if (!cancelled) {
           const status = Number((error as { status?: number } | null)?.status || 0);
-          console.error('Admin data load failed:', error);
+          console.error('[admin-bootstrap] failed:', error);
 
           if (status === 401 || status === 403) {
             const recovered = await restoreAdminSession(authToken).catch(() => null);
@@ -3703,9 +3774,9 @@ export default function AdminApp() {
           }
         }
       } finally {
-        if (!cancelled) {
-          setReady(true);
-        }
+        console.info(`[admin-bootstrap] session complete ${Math.round(performance.now() - bootstrapStarted)}ms cancelled=${cancelled}`);
+        skipFilterReloadAfterBootstrap.current = true;
+        setReady(true);
       }
     }
 
@@ -3714,9 +3785,26 @@ export default function AdminApp() {
     return () => {
       cancelled = true;
     };
+  }, [authToken, refreshToken]);
+
+  useEffect(() => {
+    if (!authToken || !ready) {
+      return;
+    }
+    if (skipFilterReloadAfterBootstrap.current) {
+      skipFilterReloadAfterBootstrap.current = false;
+      return;
+    }
+
+    void loadAdminData(authToken)
+      .then(() => setAdminLoadError(''))
+      .catch((error) => {
+        console.error('[admin-bootstrap] filter reload failed:', error);
+        setAdminLoadError(audienceFriendlyError(error, 'Could not refresh admin data.'));
+      });
   }, [
     authToken,
-    refreshToken,
+    ready,
     subscriptionFilter,
     accessTypeFilter,
     subscriptionManagementDebouncedQuery,
