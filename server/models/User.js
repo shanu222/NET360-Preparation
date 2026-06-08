@@ -119,7 +119,23 @@ const userSchema = new mongoose.Schema(
     testDate: { type: String, default: '' },
     role: { type: String, enum: ['student', 'admin'], default: 'student', index: true },
     authProvider: { type: String, enum: ['local', 'firebase', 'google', 'password'], default: 'local', index: true },
+    authProviderDetail: { type: String, default: 'unknown', index: true },
     firebaseUid: { type: String, default: '', index: true },
+    displayName: { type: String, default: '' },
+    profilePhotoUrl: { type: String, default: '' },
+    platformUsage: {
+      type: {
+        lastPlatform: { type: String, default: 'unknown' },
+        lastSeenAt: { type: Date, default: null },
+        androidLogins: { type: Number, default: 0 },
+        webLogins: { type: Number, default: 0 },
+        unknownLogins: { type: Number, default: 0 },
+      },
+      default: () => ({}),
+      _id: false,
+    },
+    /** Last successful login timestamp (any provider). */
+    lastLoginAt: { type: Date, default: null },
     preferences: { type: preferencesSchema, default: () => ({}) },
     progress: { type: progressSchema, default: () => ({}) },
     subscription: { type: subscriptionSchema, default: () => ({}) },

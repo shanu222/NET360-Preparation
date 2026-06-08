@@ -3675,6 +3675,21 @@ function sanitizeHumanName(value, maxLen = 80) {
     .slice(0, maxLen);
 }
 
+function normalizeAuthProviderDetail(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'google' || normalized === 'password') return normalized;
+  return normalized || 'unknown';
+}
+
+function splitDisplayNameParts(displayName) {
+  const normalized = String(displayName || '').trim();
+  if (!normalized) return { firstName: '', lastName: '' };
+  const parts = normalized.split(/\s+/).filter(Boolean);
+  const firstName = sanitizeHumanName(parts[0] || '');
+  const lastName = sanitizeHumanName(parts.slice(1).join(' '));
+  return { firstName, lastName };
+}
+
 function sanitizePlainText(value, maxLen = 240) {
   return String(value || '')
     .replace(/[\u0000<>]/g, '')
@@ -14014,6 +14029,544 @@ app.post('/api/admin/subscriptions/access/global/revoke', authMiddleware, requir
   );
   await invalidateGlobalAccessGrantSnapshot();
   res.json({ ok: true, accessType, globalAccess: accessStatusPayload({ allowed: false, status: 'revoked', source: 'none' }) });
+});
+
+function normalizeSubscriptionSearch(input) {
+  return String(input || '').trim().toLowerCase();
+}
+
+function isStrictEmail(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
+}
+
+function isBlockedEmailFragmentSearch(value) {
+  const normalized = normalizeSubscriptionSearch(value);
+  if (!normalized) return false;
+  if (normalized.startsWith('@') || normalized.startsWith('.')) return true;
+  if (normalized.includes('@') && !isStrictEmail(normalized)) return true;
+  if (normalized.includes('.com') && !isStrictEmail(normalized)) return true;
+  if (normalized === 'gmail' || normalized === '@gmail' || normalized === '@gmail.com' || normalized === '.com') {
+    return true;
+  }
+  return false;
+}
+
+function buildSubscriptionManagementSearchFilter(value) {
+  const normalized = normalizeSubscriptionSearch(value);
+  if (!normalized) return { blocked: false, filter: {} };
+  if (isBlockedEmailFragmentSearch(normalized)) {
+    return { blocked: true, filter: {} };
+  }
+
+  const escaped = escapeRegexLiteral(normalized, 80);
+  if (!escaped) return { blocked: false, filter: {} };
+
+  if (isStrictEmail(normalized)) {
+    return {
+      blocked: false,
+      filter: {
+        email: { $regex: `^${escaped}$`, $options: 'i' },
+      },
+    };
+  }
+
+  return {
+    blocked: false,
+    filter: {
+      $or: [
+        { firstName: { $regex: escaped, $options: 'i' } },
+        { lastName: { $regex: escaped, $options: 'i' } },
+        { email: { $regex: `^${escaped}[^@]*@`, $options: 'i' } },
+      ],
+    },
+  };
+}
+
+async function syncMissingFirebaseUsersToBackend() {
+  if (!firebaseAdminAuth) return { synced: 0, scanned: 0 };
+  const limit = 500;
+  let nextPageToken = undefined;
+  let synced = 0;
+  let scanned = 0;
+  do {
+    const page = await firebaseAdminAuth.listUsers(limit, nextPageToken);
+    const batch = Array.isArray(page?.users) ? page.users : [];
+    scanned += batch.length;
+    for (const fbUser of batch) {
+      const uid = String(fbUser?.uid || '').trim();
+      const email = normalizeEmail(fbUser?.email || '');
+      if (!uid || !email) continue;
+
+      const providerCandidates = Array.isArray(fbUser?.providerData) ? fbUser.providerData : [];
+      const providerIdRaw = String(providerCandidates[0]?.providerId || '').trim().toLowerCase();
+      const provider = providerIdRaw === 'google.com'
+        ? 'google'
+        : providerIdRaw === 'password'
+          ? 'password'
+          : 'unknown';
+      const displayName = String(fbUser?.displayName || '').trim();
+      const { firstName, lastName } = splitDisplayNameParts(displayName);
+      const photoURL = String(fbUser?.photoURL || '').trim();
+      const createdAtRaw = String(fbUser?.metadata?.creationTime || '').trim();
+      const lastSignInRaw = String(fbUser?.metadata?.lastSignInTime || '').trim();
+      const createdAt = createdAtRaw ? new Date(createdAtRaw) : new Date();
+      const lastLoginAt = lastSignInRaw ? new Date(lastSignInRaw) : null;
+
+      const existing = await UserModel.findOne({
+        $or: [
+          { firebaseUid: uid },
+          { email: { $regex: `^${escapeRegexLiteral(email, 254)}$`, $options: 'i' } },
+        ],
+      }).select('_id email authProvider role firebaseUid firstName lastName displayName profilePhotoUrl authProviderDetail').lean();
+
+      if (!existing) {
+        const passwordHash = await hashPassword(`firebase:${uid}:${crypto.randomUUID()}`);
+        await UserModel.create({
+          email,
+          passwordHash,
+          firstName: firstName || '',
+          lastName: lastName || '',
+          displayName: displayName || `${firstName} ${lastName}`.trim(),
+          profilePhotoUrl: photoURL,
+          role: 'student',
+          authProvider: 'firebase',
+          authProviderDetail: normalizeAuthProviderDetail(provider),
+          firebaseUid: uid,
+          lastLoginAt,
+          createdAt,
+          preferences: defaultPreferences(),
+          progress: defaultProgress(),
+          platformUsage: {
+            lastPlatform: 'unknown',
+            lastSeenAt: lastLoginAt,
+            androidLogins: 0,
+            webLogins: 0,
+            unknownLogins: 0,
+          },
+        });
+        synced += 1;
+        continue;
+      }
+
+      const updates = {};
+      if (existing.role === 'admin') continue;
+      if (String(existing.authProvider || '') !== 'firebase') updates.authProvider = 'firebase';
+      if (String(existing.firebaseUid || '') !== uid) updates.firebaseUid = uid;
+      if (!String(existing.authProviderDetail || '').trim()) updates.authProviderDetail = normalizeAuthProviderDetail(provider);
+      if (!String(existing.firstName || '').trim() && firstName) updates.firstName = firstName;
+      if (!String(existing.lastName || '').trim() && lastName) updates.lastName = lastName;
+      if (!String(existing.displayName || '').trim() && displayName) updates.displayName = displayName;
+      if (!String(existing.profilePhotoUrl || '').trim() && photoURL) updates.profilePhotoUrl = photoURL;
+      if (!existing.lastLoginAt && lastLoginAt) updates.lastLoginAt = lastLoginAt;
+      if (Object.keys(updates).length) {
+        await UserModel.updateOne({ _id: existing._id }, { $set: updates }, { runValidators: true });
+        synced += 1;
+      }
+    }
+    nextPageToken = String(page?.pageToken || '').trim() || undefined;
+  } while (nextPageToken);
+
+  return { synced, scanned };
+}
+
+const ADMIN_USER_SYNC_MAX_AGE_MS = 5 * 60 * 1000;
+const adminUserSyncState = {
+  lastSyncedAt: 0,
+  inFlight: null,
+};
+
+async function ensureCentralizedAppUsersSync(options = {}) {
+  const force = Boolean(options?.force);
+  if (!firebaseAdminAuth) return { synced: 0, scanned: 0, skipped: true };
+  const now = Date.now();
+  if (!force && adminUserSyncState.lastSyncedAt > 0 && (now - adminUserSyncState.lastSyncedAt) < ADMIN_USER_SYNC_MAX_AGE_MS) {
+    return { synced: 0, scanned: 0, skipped: true };
+  }
+  if (adminUserSyncState.inFlight) {
+    return adminUserSyncState.inFlight;
+  }
+  adminUserSyncState.inFlight = syncMissingFirebaseUsersToBackend()
+    .then((result) => {
+      adminUserSyncState.lastSyncedAt = Date.now();
+      return result;
+    })
+    .finally(() => {
+      adminUserSyncState.inFlight = null;
+    });
+  return adminUserSyncState.inFlight;
+}
+
+function calculateRemainingDays(expiresAt, nowMs = Date.now()) {
+  if (!expiresAt) return 0;
+  const endMs = new Date(expiresAt).getTime();
+  if (!Number.isFinite(endMs) || endMs <= nowMs) return 0;
+  return Math.max(0, Math.ceil((endMs - nowMs) / (24 * 60 * 60 * 1000)));
+}
+
+function inferServiceLifecycleStatus(detail, nowMs = Date.now()) {
+  const access = detail || {};
+  if (access.allowed) {
+    if (access.source === 'legacy' && access.freeTrialActive) return 'free_trial';
+    return 'active';
+  }
+  if (String(access.status || '').toLowerCase() === 'expired') return 'expired';
+  if (access.expiresAt && new Date(access.expiresAt).getTime() <= nowMs) return 'expired';
+  return 'inactive';
+}
+
+function inferActivatedBy(access, manualGrant, subscription, serviceKey) {
+  const source = String(access?.source || '').toLowerCase();
+  if (source === 'global') return 'admin';
+  if (source === 'legacy') {
+    const sub = mergedSubscription({ subscription });
+    if (trialIsActive(sub)) return 'user';
+    if (isSubscriptionActive(sub)) return 'user';
+    return 'system';
+  }
+  if (source === 'manual') {
+    const grant = normalizeManualGrant(manualGrant);
+    const grantSource = String(grant?.source || '').toLowerCase();
+    if (grantSource.includes('admin') || grant?.grantedByEmail) return 'admin';
+    if (serviceKey === 'mentor' && grantSource === 'manual') return 'admin';
+    return 'user';
+  }
+  return 'system';
+}
+
+function buildManagedServiceDetail({
+  key,
+  label,
+  access,
+  manualGrant,
+  subscription,
+  nowMs,
+}) {
+  const sub = mergedSubscription({ subscription });
+  const trialActive = trialIsActive(sub);
+  const freeTrialActive = Boolean(access?.allowed && access?.source === 'legacy' && trialActive);
+  const active = Boolean(access?.allowed);
+  const lifecycleStatus = inferServiceLifecycleStatus({ ...access, freeTrialActive }, nowMs);
+  return {
+    key,
+    label,
+    active,
+    status: lifecycleStatus,
+    source: String(access?.source || 'none'),
+    freeTrialUsed: Boolean(sub?.hasUsedTrial),
+    freeTrialActive,
+    paidPlanActive: active && !freeTrialActive,
+    activatedBy: inferActivatedBy(access, manualGrant, sub, key),
+    startedAt: toIsoOrNull(access?.startsAt || manualGrant?.startsAt),
+    expiresAt: toIsoOrNull(access?.expiresAt || manualGrant?.expiresAt),
+    remainingDays: calculateRemainingDays(access?.expiresAt || manualGrant?.expiresAt, nowMs),
+  };
+}
+
+async function fetchAdminManagedUsers({
+  q,
+  page,
+  pageSize,
+  showAll,
+  forceSync = false,
+}) {
+  const normalizedQuery = normalizeSubscriptionSearch(q);
+  const managedUserFilter = { role: { $ne: 'admin' } };
+  const nowMs = Date.now();
+  const globalGrants = await getGlobalAccessGrantSnapshot();
+  if (showAll || forceSync || !normalizedQuery) {
+    await ensureCentralizedAppUsersSync({ force: forceSync });
+  }
+  const searchFilter = buildSubscriptionManagementSearchFilter(normalizedQuery);
+  if (searchFilter.blocked) {
+    return {
+      users: [],
+      totalMatched: 0,
+      page,
+      pageSize,
+      totalPages: 0,
+      hasMore: false,
+      showAll,
+    };
+  }
+
+  const skip = Math.max(0, (page - 1) * pageSize);
+  const combinedFilter = {
+    ...managedUserFilter,
+    ...(searchFilter.filter || {}),
+  };
+
+  const [users, totalMatched] = await Promise.all([
+    UserModel.find(
+      combinedFilter,
+      {
+        email: 1,
+        firstName: 1,
+        lastName: 1,
+        displayName: 1,
+        profilePhotoUrl: 1,
+        authProviderDetail: 1,
+        firebaseUid: 1,
+        createdAt: 1,
+        lastLoginAt: 1,
+        platformUsage: 1,
+        subscription: 1,
+        accessControls: 1,
+        paidServices: 1,
+      },
+    )
+      .sort({ lastLoginAt: -1, updatedAt: -1, createdAt: -1 })
+      .skip(skip)
+      .limit(pageSize)
+      .lean(),
+    UserModel.countDocuments(combinedFilter),
+  ]);
+
+  const userIds = users.map((item) => item?._id).filter(Boolean);
+  const profiles = userIds.length
+    ? await CommunityProfileModel.find({ userId: { $in: userIds } }).select('userId profilePictureUrl shareProfilePicture').lean()
+    : [];
+  const profileByUserId = new Map(
+    (profiles || []).map((item) => [String(item.userId), item]),
+  );
+
+  const mapped = users
+    .map((item) => {
+      const userId = String(item._id);
+      const fullName = `${item.firstName || ''} ${item.lastName || ''}`.trim();
+
+      const entitlements = resolveUserEntitlements(item, globalGrants, nowMs);
+      const paidServices = resolvePaidServices(item, nowMs);
+      const profile = profileByUserId.get(userId);
+      const sub = mergedSubscription(item);
+      const accountStatus = isSubscriptionActive(sub)
+        ? 'active'
+        : String(sub?.status || 'inactive').toLowerCase();
+
+      const mentorCard = buildManagedServiceDetail({
+        key: 'mentor',
+        label: 'Mentor',
+        access: accessStatusPayload(entitlements?.mentor),
+        manualGrant: normalizeManualGrant(item?.accessControls?.mentorManual),
+        subscription: sub,
+        nowMs,
+      });
+      const testsCard = buildManagedServiceDetail({
+        key: PAID_SERVICE_TYPES.tests,
+        label: 'Tests',
+        access: accessStatusPayload(paidServices?.tests),
+        manualGrant: normalizeManualGrant(item?.paidServices?.tests),
+        subscription: sub,
+        nowMs,
+      });
+      const preparationCard = buildManagedServiceDetail({
+        key: PAID_SERVICE_TYPES.preparation,
+        label: 'Preparation',
+        access: accessStatusPayload(paidServices?.preparation),
+        manualGrant: normalizeManualGrant(item?.paidServices?.preparation),
+        subscription: sub,
+        nowMs,
+      });
+      const communityCard = buildManagedServiceDetail({
+        key: PAID_SERVICE_TYPES.community,
+        label: 'Community',
+        access: accessStatusPayload(paidServices?.community),
+        manualGrant: normalizeManualGrant(item?.paidServices?.community),
+        subscription: sub,
+        nowMs,
+      });
+
+      return {
+        id: userId,
+        fullName: fullName || String(item.displayName || '').trim() || 'No name',
+        email: String(item.email || ''),
+        profileImageUrl: String(profile?.shareProfilePicture ? (profile?.profilePictureUrl || '') : (item.profilePhotoUrl || '')),
+        accountStatus,
+        provider: normalizeAuthProviderDetail(item.authProviderDetail),
+        firebaseUid: String(item.firebaseUid || ''),
+        joinedAt: toIsoOrNull(item.createdAt),
+        lastLoginAt: toIsoOrNull(item.lastLoginAt),
+        platformUsage: {
+          lastPlatform: String(item?.platformUsage?.lastPlatform || 'unknown'),
+          lastSeenAt: toIsoOrNull(item?.platformUsage?.lastSeenAt),
+        },
+        badges: {
+          tests: testsCard.status,
+          preparation: preparationCard.status,
+          community: communityCard.status,
+          mentor: mentorCard.status,
+        },
+      };
+    })
+    .filter(Boolean);
+
+  return {
+    users: mapped,
+    totalMatched,
+    page,
+    pageSize,
+    totalPages: Math.max(1, Math.ceil(totalMatched / pageSize)),
+    hasMore: skip + mapped.length < totalMatched,
+    showAll,
+  };
+}
+
+app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmin, async (req, res) => {
+  const q = normalizeSubscriptionSearch(req.query?.q);
+  const showAll = String(req.query?.showAll || '').trim().toLowerCase() === 'true';
+  const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || (showAll ? 100 : 25)) || (showAll ? 100 : 25)));
+  const page = Math.max(1, Number(req.query?.page || 1) || 1);
+  const syncRequested = String(req.query?.sync || '').trim().toLowerCase() === 'true';
+  const payload = await fetchAdminManagedUsers({
+    q,
+    page,
+    pageSize,
+    showAll,
+    forceSync: syncRequested,
+  });
+  res.json(payload);
+});
+
+app.get('/api/admin/users/search', authMiddleware, requireAdmin, async (req, res) => {
+  const q = normalizeSubscriptionSearch(req.query?.q);
+  const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || 25) || 25));
+  const page = Math.max(1, Number(req.query?.page || 1) || 1);
+  const payload = await fetchAdminManagedUsers({
+    q,
+    page,
+    pageSize,
+    showAll: false,
+    forceSync: false,
+  });
+  res.json(payload);
+});
+
+app.get('/api/admin/users/all', authMiddleware, requireAdmin, async (req, res) => {
+  const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || 100) || 100));
+  const page = Math.max(1, Number(req.query?.page || 1) || 1);
+  const payload = await fetchAdminManagedUsers({
+    q: '',
+    page,
+    pageSize,
+    showAll: true,
+    forceSync: false,
+  });
+  res.json(payload);
+});
+
+app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, requireAdmin, async (req, res) => {
+  const userId = String(req.params.userId || '').trim();
+  if (!userId) {
+    res.status(400).json({ error: 'userId is required.' });
+    return;
+  }
+  const user = await UserModel.findById(userId).lean();
+  if (!user || user.role === 'admin') {
+    res.status(404).json({ error: 'Managed user not found.' });
+    return;
+  }
+
+  const profile = await CommunityProfileModel.findOne({ userId }).select('profilePictureUrl shareProfilePicture').lean();
+  const nowMs = Date.now();
+  const globalGrants = await getGlobalAccessGrantSnapshot();
+  const sub = mergedSubscription(user);
+  const normalizedSub = normalizeSubscription(user);
+  const entitlements = resolveUserEntitlements(user, globalGrants, nowMs);
+  const paidServices = resolvePaidServices(user, nowMs);
+  const mentorAccess = accessStatusPayload(entitlements?.mentor);
+  const testsAccess = accessStatusPayload(paidServices?.tests);
+  const prepAccess = accessStatusPayload(paidServices?.preparation);
+  const communityAccess = accessStatusPayload(paidServices?.community);
+  const activeSession = user?.activeSession || null;
+  const activeUserAgent = String(activeSession?.userAgent || '').toLowerCase();
+
+  const services = {
+    tests: buildManagedServiceDetail({
+      key: PAID_SERVICE_TYPES.tests,
+      label: 'Tests Access',
+      access: testsAccess,
+      manualGrant: normalizeManualGrant(user?.paidServices?.tests),
+      subscription: sub,
+      nowMs,
+    }),
+    preparation: buildManagedServiceDetail({
+      key: PAID_SERVICE_TYPES.preparation,
+      label: 'Preparation Materials Access',
+      access: prepAccess,
+      manualGrant: normalizeManualGrant(user?.paidServices?.preparation),
+      subscription: sub,
+      nowMs,
+    }),
+    community: buildManagedServiceDetail({
+      key: PAID_SERVICE_TYPES.community,
+      label: 'Community Access',
+      access: communityAccess,
+      manualGrant: normalizeManualGrant(user?.paidServices?.community),
+      subscription: sub,
+      nowMs,
+    }),
+    mentor: {
+      ...buildManagedServiceDetail({
+        key: 'mentor',
+        label: 'Smart Study Mentor',
+        access: mentorAccess,
+        manualGrant: normalizeManualGrant(user?.accessControls?.mentorManual),
+        subscription: sub,
+        nowMs,
+      }),
+      subscriptionStatus: String(normalizedSub?.status || 'inactive'),
+      planId: String(normalizedSub?.planId || ''),
+      billingCycle: String(normalizedSub?.billingCycle || ''),
+    },
+  };
+
+  const currentPlan = resolveSubscriptionPlan(normalizedSub.planId);
+  res.json({
+    user: {
+      id: String(user._id),
+      fullName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'No name',
+      firstName: String(user.firstName || ''),
+      lastName: String(user.lastName || ''),
+      email: String(user.email || ''),
+      firebaseUid: String(user.firebaseUid || ''),
+      joinedAt: toIsoOrNull(user.createdAt),
+      profileImageUrl: profile?.shareProfilePicture ? String(profile?.profilePictureUrl || '') : '',
+      syncStatus: {
+        firebaseLinked: Boolean(user.firebaseUid),
+        android: activeUserAgent.includes('android') || activeUserAgent.includes(' wv') ? 'active' : 'not_detected',
+        web: activeUserAgent.includes('mozilla') || activeUserAgent.includes('chrome') ? 'active' : 'not_detected',
+        lastLoginAt: toIsoOrNull(user.lastLoginAt),
+        provider: normalizeAuthProviderDetail(user.authProviderDetail),
+        platformUsage: {
+          lastPlatform: String(user?.platformUsage?.lastPlatform || 'unknown'),
+          lastSeenAt: toIsoOrNull(user?.platformUsage?.lastSeenAt),
+          androidLogins: Number(user?.platformUsage?.androidLogins || 0),
+          webLogins: Number(user?.platformUsage?.webLogins || 0),
+          unknownLogins: Number(user?.platformUsage?.unknownLogins || 0),
+        },
+      },
+      mentorPlan: {
+        status: String(normalizedSub.status || 'inactive'),
+        planId: String(normalizedSub.planId || ''),
+        planName: String(currentPlan?.name || ''),
+        billingCycle: String(normalizedSub.billingCycle || ''),
+        expiresAt: toIsoOrNull(normalizedSub.expiresAt),
+      },
+    },
+    services,
+    availableMentorPlans: Object.values(SUBSCRIPTION_PLANS),
+  });
+});
+
+app.post('/api/admin/subscriptions/management/sync-firebase-users', authMiddleware, requireAdmin, async (_req, res) => {
+  try {
+    const result = await ensureCentralizedAppUsersSync({ force: true });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    console.error('Admin Firebase user sync failed:', error);
+    res.status(500).json({ error: 'Could not sync Firebase users.' });
+  }
 });
 
 app.get('/api/admin/subscriptions/requests', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
