@@ -3,7 +3,9 @@ import {
   hasPremiumSurfaceAccess,
   mergedSubscription,
   premiumSurfaceBypassEnabled,
+  trialIsActive,
 } from '../lib/subscriptionAccess.js';
+import { logAuthDebug, normalizeAuthDebugRoute } from '../lib/authDebug.js';
 
 /**
  * After auth: sync trial/paid expiry in Mongo, then require tests/community/study-plan access.
@@ -30,6 +32,7 @@ export function subscriptionExpiryRefresh(UserModel) {
 
 export function requireTrialOrPremiumContent(UserModel, resolveEntitlements) {
   return async (req, res, next) => {
+    const route = normalizeAuthDebugRoute(req);
     try {
       if (req.user?.role === 'admin') {
         next();
@@ -55,8 +58,25 @@ export function requireTrialOrPremiumContent(UserModel, resolveEntitlements) {
         : serviceType === 'tests'
           ? entitlementSnapshot?.paidServices?.tests
           : entitlementSnapshot?.paidServices?.preparation;
-      const allowed = Boolean(serviceAccess?.allowed) || hasPremiumSurfaceAccess(sub);
+      const legacyAllowed = hasPremiumSurfaceAccess(sub);
+      const allowed = Boolean(serviceAccess?.allowed) || legacyAllowed;
       if (!allowed) {
+        logAuthDebug(req, {
+          userId: String(req.user?._id || ''),
+          tokenPresent: true,
+          tokenValid: true,
+          sessionFound: Boolean(req.user?.activeSession?.sessionId),
+          sessionActive: Boolean(req.user?.activeSession?.sessionId),
+          deviceMatch: null,
+          failureReason: 'premium_content_locked',
+          serviceType,
+          subscriptionStatus: String(sub?.status || 'inactive'),
+          trialActive: trialIsActive(sub),
+          legacyAllowed,
+          serviceAccessAllowed: Boolean(serviceAccess?.allowed),
+          serviceAccessSource: serviceAccess?.source || 'none',
+          httpStatus: 403,
+        });
         res.status(403).json({
           code: 'PREMIUM_CONTENT_LOCKED',
           error: 'Subscribe or start your free trial to unlock this area.',
@@ -70,8 +90,35 @@ export function requireTrialOrPremiumContent(UserModel, resolveEntitlements) {
       req.studentPreparationAccess = entitlementSnapshot?.paidServices?.preparation || null;
       req.studentTestsAccess = entitlementSnapshot?.paidServices?.tests || null;
       req.studentCommunityAccess = entitlementSnapshot?.paidServices?.community || null;
+      if (route === '/api/tests/attempts') {
+        logAuthDebug(req, {
+          userId: String(req.user?._id || ''),
+          tokenPresent: true,
+          tokenValid: true,
+          sessionFound: Boolean(req.user?.activeSession?.sessionId),
+          sessionActive: Boolean(req.user?.activeSession?.sessionId),
+          deviceMatch: null,
+          failureReason: null,
+          serviceType,
+          subscriptionStatus: String(sub?.status || 'inactive'),
+          trialActive: trialIsActive(sub),
+          legacyAllowed,
+          serviceAccessAllowed: Boolean(serviceAccess?.allowed),
+        });
+      }
       next();
-    } catch {
+    } catch (error) {
+      logAuthDebug(req, {
+        userId: String(req.user?._id || ''),
+        tokenPresent: Boolean(req.user),
+        tokenValid: Boolean(req.user),
+        sessionFound: Boolean(req.user?.activeSession?.sessionId),
+        sessionActive: Boolean(req.user?.activeSession?.sessionId),
+        deviceMatch: null,
+        failureReason: 'subscription_check_failed',
+        error: String(error?.message || error || 'unknown'),
+        httpStatus: 500,
+      });
       res.status(500).json({ error: 'Could not verify subscription.', code: 'SUBSCRIPTION_CHECK_FAILED' });
     }
   };

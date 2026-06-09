@@ -212,11 +212,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const promise = (async () => {
       const refreshTag = Date.now();
       const [payload, countPayload] = await Promise.all([
-
-
         apiRequest<{ mcqs: MCQ[] }>(
           `/api/mcqs?subject=${encodeURIComponent(selectedSubject)}&part=${encodeURIComponent(selectedPart)}&chapter=${encodeURIComponent(selectedChapter)}&section=${encodeURIComponent(selectedSection)}&topic=${encodeURIComponent(selectedTopic)}&limit=20&t=${refreshTag}`,
-          { cache: 'no-store' }
+          { cache: 'no-store' },
+        ),
+        apiRequest<{ counts: Partial<Record<SubjectKey, number>> }>(
+          `/api/mcqs/counts?t=${refreshTag}`,
+          { cache: 'no-store' },
         ),
       ]);
       setMcqs(payload.mcqs || []);
