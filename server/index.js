@@ -5110,19 +5110,118 @@ function isSubscriptionActive(subscription) {
   return new Date(subscription.expiresAt).getTime() > Date.now();
 }
 
+const ADMIN_SUBSCRIPTION_MONGO_MAX_MS = 10_000;
+const ADMIN_SUBSCRIPTION_OP_TIMEOUT_MS = 12_000;
+const ADMIN_SUBSCRIPTION_ROUTE_TIMEOUT_MS = 25_000;
+
+function logAdminSubscriptionRoute(routeTag, event, details = {}) {
+  const payload = {
+    ts: new Date().toISOString(),
+    route: routeTag,
+    event,
+    ...details,
+  };
+  if (event === 'failure' || event === 'timeout') {
+    console.error(JSON.stringify(payload));
+  } else {
+    console.log(JSON.stringify(payload));
+  }
+}
+
+async function withAdminSubscriptionTimeout(stepLabel, run, timeoutMs, fallback) {
+  let timer;
+  try {
+    return await Promise.race([
+      Promise.resolve().then(run),
+      new Promise((resolve) => {
+        timer = setTimeout(() => {
+          console.warn(`[admin-subscriptions] ${stepLabel} timed out after ${timeoutMs}ms`);
+          resolve(typeof fallback === 'function' ? fallback() : fallback);
+        }, timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    console.warn(`[admin-subscriptions] ${stepLabel} failed:`, error?.message || error);
+    return typeof fallback === 'function' ? fallback(error) : fallback;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function safeAdminSubscriptionCount(model, filter, stepLabel) {
+  return withAdminSubscriptionTimeout(
+    stepLabel,
+    () => model.countDocuments(filter).maxTimeMS(ADMIN_SUBSCRIPTION_MONGO_MAX_MS),
+    ADMIN_SUBSCRIPTION_OP_TIMEOUT_MS,
+    0,
+  );
+}
+
+function createAdminSubscriptionRouteGuard(res, routeTag, fallbackFactory) {
+  const startedAt = Date.now();
+  let responded = false;
+  logAdminSubscriptionRoute(routeTag, 'entry');
+
+  const routeTimer = setTimeout(() => {
+    if (responded || res.headersSent) return;
+    logAdminSubscriptionRoute(routeTag, 'timeout', {
+      durationMs: Date.now() - startedAt,
+      reason: 'route_deadline',
+    });
+    send(200, fallbackFactory('request timed out'));
+  }, ADMIN_SUBSCRIPTION_ROUTE_TIMEOUT_MS);
+
+  function send(status, body) {
+    if (responded || res.headersSent) return;
+    responded = true;
+    clearTimeout(routeTimer);
+    res.status(status).json(body);
+    logAdminSubscriptionRoute(routeTag, 'exit', {
+      durationMs: Date.now() - startedAt,
+      status,
+      warning: body?.warning || null,
+    });
+  }
+
+  function fail(error, warning = 'temporary backend issue') {
+    logAdminSubscriptionRoute(routeTag, 'failure', {
+      durationMs: Date.now() - startedAt,
+      error: String(error?.message || error || 'unknown'),
+    });
+    send(200, fallbackFactory(warning));
+  }
+
+  return { send, fail, finish: () => clearTimeout(routeTimer) };
+}
+
 async function getGlobalAccessGrantSnapshot() {
   try {
     const key = cacheKey('global-access-grants:all');
-    const cached = await cacheGetJson(key);
+    const cached = await withAdminSubscriptionTimeout(
+      'global-access-grants:cache-get',
+      () => cacheGetJson(key),
+      3_000,
+      null,
+    );
     if (cached && typeof cached === 'object') {
       return buildGlobalGrantMap([cached.mentor, cached.preparation]);
     }
-    await finalizeExpiredGlobalAccess(GlobalAccessGrantModel);
-    const rows = await GlobalAccessGrantModel.find({
-      accessType: { $in: [ACCESS_TYPES.mentor, ACCESS_TYPES.preparation] },
-    }).lean();
+    await withAdminSubscriptionTimeout(
+      'global-access-grants:finalize-expired',
+      () => finalizeExpiredGlobalAccess(GlobalAccessGrantModel),
+      ADMIN_SUBSCRIPTION_OP_TIMEOUT_MS,
+      undefined,
+    );
+    const rows = await withAdminSubscriptionTimeout(
+      'global-access-grants:find',
+      () => GlobalAccessGrantModel.find({
+        accessType: { $in: [ACCESS_TYPES.mentor, ACCESS_TYPES.preparation] },
+      }).maxTimeMS(ADMIN_SUBSCRIPTION_MONGO_MAX_MS).lean(),
+      ADMIN_SUBSCRIPTION_OP_TIMEOUT_MS,
+      [],
+    );
     const map = buildGlobalGrantMap(rows);
-    await cacheSetJson(key, map, 30);
+    cacheSetJson(key, map, 30).catch(() => {});
     return map;
   } catch (error) {
     console.error('[global-access-grants] snapshot failed:', error);
@@ -13766,40 +13865,66 @@ function normalizeSelectedPaidServices(payload) {
 }
 
 app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async (_req, res) => {
+  const routeTag = 'subscriptions-overview';
+  const guard = createAdminSubscriptionRouteGuard(res, routeTag, emptyAdminSubscriptionOverviewFallback);
   try {
     const now = new Date();
     const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
-    await finalizeExpiredGlobalAccess(GlobalAccessGrantModel);
     const globalGrants = await getGlobalAccessGrantSnapshot();
     const mentorGlobalActive = isGrantActive(globalGrants.mentor, now.getTime());
     const preparationGlobalActive = isGrantActive(globalGrants.preparation, now.getTime());
 
     const [activeUsers, expiredUsers, totalUsers, dailyUsage, mentorManualUsers, prepManualUsers, prepLegacyUsers] = await Promise.all([
-      UserModel.countDocuments({ ...managedUserFilter, 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } }),
-      UserModel.countDocuments({ ...managedUserFilter, 'subscription.status': { $in: ['expired', 'cancelled'] } }),
-      UserModel.countDocuments(managedUserFilter),
-      AIUsageModel.aggregate([
-        { $group: { _id: '$day', chatCount: { $sum: '$chatCount' }, solverCount: { $sum: '$solverCount' }, tokenConsumed: { $sum: '$tokenConsumed' } } },
-        { $sort: { _id: -1 } },
-        { $limit: 14 },
-      ]).catch(() => []),
-      UserModel.countDocuments({
-        ...managedUserFilter,
-        'accessControls.mentorManual.status': 'active',
-        'accessControls.mentorManual.expiresAt': { $gt: now },
-      }),
-      UserModel.countDocuments({
-        ...managedUserFilter,
-        'accessControls.preparationManual.status': 'active',
-        'accessControls.preparationManual.expiresAt': { $gt: now },
-      }),
-      UserModel.countDocuments({
-        ...managedUserFilter,
-        $or: [
-          { 'subscription.status': 'trial', 'subscription.trialEndsAt': { $gt: now } },
-          { 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } },
-        ],
-      }),
+      safeAdminSubscriptionCount(
+        UserModel,
+        { ...managedUserFilter, 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } },
+        `${routeTag}:count-active`,
+      ),
+      safeAdminSubscriptionCount(
+        UserModel,
+        { ...managedUserFilter, 'subscription.status': { $in: ['expired', 'cancelled'] } },
+        `${routeTag}:count-expired`,
+      ),
+      safeAdminSubscriptionCount(UserModel, managedUserFilter, `${routeTag}:count-total`),
+      withAdminSubscriptionTimeout(
+        `${routeTag}:ai-usage-aggregate`,
+        () => AIUsageModel.aggregate([
+          { $group: { _id: '$day', chatCount: { $sum: '$chatCount' }, solverCount: { $sum: '$solverCount' }, tokenConsumed: { $sum: '$tokenConsumed' } } },
+          { $sort: { _id: -1 } },
+          { $limit: 14 },
+        ]).option({ maxTimeMS: ADMIN_SUBSCRIPTION_MONGO_MAX_MS }),
+        ADMIN_SUBSCRIPTION_OP_TIMEOUT_MS,
+        [],
+      ),
+      safeAdminSubscriptionCount(
+        UserModel,
+        {
+          ...managedUserFilter,
+          'accessControls.mentorManual.status': 'active',
+          'accessControls.mentorManual.expiresAt': { $gt: now },
+        },
+        `${routeTag}:count-mentor-manual`,
+      ),
+      safeAdminSubscriptionCount(
+        UserModel,
+        {
+          ...managedUserFilter,
+          'accessControls.preparationManual.status': 'active',
+          'accessControls.preparationManual.expiresAt': { $gt: now },
+        },
+        `${routeTag}:count-prep-manual`,
+      ),
+      safeAdminSubscriptionCount(
+        UserModel,
+        {
+          ...managedUserFilter,
+          $or: [
+            { 'subscription.status': 'trial', 'subscription.trialEndsAt': { $gt: now } },
+            { 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } },
+          ],
+        },
+        `${routeTag}:count-prep-legacy`,
+      ),
     ]);
 
     const mentorActiveUsers = mentorGlobalActive ? totalUsers : Math.min(totalUsers, activeUsers + mentorManualUsers);
@@ -13809,7 +13934,7 @@ app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async
     const mentorInactiveUsers = Math.max(0, totalUsers - mentorActiveUsers);
     const preparationInactiveUsers = Math.max(0, totalUsers - preparationActiveUsers);
 
-    res.json({
+    guard.send(200, {
       totalUsers,
       activeUsers,
       expiredUsers,
@@ -13840,12 +13965,15 @@ app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async
       })),
     });
   } catch (error) {
-    console.error('[admin-subscriptions] overview failed:', error);
-    res.status(200).json(emptyAdminSubscriptionOverviewFallback());
+    guard.fail(error);
+  } finally {
+    guard.finish();
   }
 });
 
 app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (req, res) => {
+  const routeTag = 'subscriptions-users';
+  const guard = createAdminSubscriptionRouteGuard(res, routeTag, emptyAdminSubscriptionUsersFallback);
   try {
     const status = String(req.query?.status || 'all').toLowerCase();
     const accessType = String(req.query?.accessType || '').trim().toLowerCase();
@@ -13854,17 +13982,24 @@ app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (r
       filter['subscription.status'] = status;
     }
 
-    const users = await UserModel.find(filter, {
-      email: 1,
-      firstName: 1,
-      lastName: 1,
-      subscription: 1,
-      accessControls: 1,
-    }).sort({ updatedAt: -1 }).limit(500).lean();
-    const globalGrants = await getGlobalAccessGrantSnapshot();
+    const [users, globalGrants] = await Promise.all([
+      withAdminSubscriptionTimeout(
+        `${routeTag}:find-users`,
+        () => UserModel.find(filter, {
+          email: 1,
+          firstName: 1,
+          lastName: 1,
+          subscription: 1,
+          accessControls: 1,
+        }).sort({ updatedAt: -1 }).limit(500).maxTimeMS(ADMIN_SUBSCRIPTION_MONGO_MAX_MS).lean(),
+        ADMIN_SUBSCRIPTION_OP_TIMEOUT_MS,
+        [],
+      ),
+      getGlobalAccessGrantSnapshot(),
+    ]);
     const now = Date.now();
 
-    const rows = users.map((item) => {
+    const rows = (users || []).map((item) => {
       const entitlement = resolveUserEntitlements(item, globalGrants, now);
       const mentor = accessStatusPayload(entitlement.mentor);
       const preparation = accessStatusPayload(entitlement.preparation);
@@ -13880,7 +14015,7 @@ app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (r
       return true;
     });
 
-    res.json({
+    guard.send(200, {
       users: rows.map(({ item, mentor, preparation }) => {
         const subscription = normalizeSubscription(item);
         const plan = resolveSubscriptionPlan(subscription.planId);
@@ -13903,8 +14038,9 @@ app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (r
       }),
     });
   } catch (error) {
-    console.error('[admin-subscriptions] users list failed:', error);
-    res.status(200).json(emptyAdminSubscriptionUsersFallback());
+    guard.fail(error);
+  } finally {
+    guard.finish();
   }
 });
 
@@ -14575,148 +14711,167 @@ async function fetchAdminManagedUsers({
   pageSize,
   showAll,
   forceSync = false,
+  routeTag = 'subscriptions-management',
 }) {
   try {
     const normalizedQuery = normalizeSubscriptionSearch(q);
     const managedUserFilter = { role: { $ne: 'admin' } };
     const nowMs = Date.now();
     const globalGrants = await getGlobalAccessGrantSnapshot();
-    // Only block the request when admin explicitly requests sync=true or uses the sync endpoint.
     if (forceSync) {
-      await ensureCentralizedAppUsersSync({ force: true });
+      await withAdminSubscriptionTimeout(
+        `${routeTag}:firebase-sync`,
+        () => ensureCentralizedAppUsersSync({ force: true }),
+        ADMIN_SUBSCRIPTION_ROUTE_TIMEOUT_MS,
+        { synced: 0, scanned: 0, skipped: true },
+      );
     }
-  const searchFilter = buildSubscriptionManagementSearchFilter(normalizedQuery);
-  if (searchFilter.blocked) {
+    const searchFilter = buildSubscriptionManagementSearchFilter(normalizedQuery);
+    if (searchFilter.blocked) {
+      return {
+        users: [],
+        totalMatched: 0,
+        page,
+        pageSize,
+        totalPages: 0,
+        hasMore: false,
+        showAll,
+      };
+    }
+
+    const skip = Math.max(0, (page - 1) * pageSize);
+    const combinedFilter = {
+      ...managedUserFilter,
+      ...(searchFilter.filter || {}),
+    };
+
+    const [users, totalMatched] = await Promise.all([
+      withAdminSubscriptionTimeout(
+        `${routeTag}:find-page`,
+        () => UserModel.find(
+          combinedFilter,
+          {
+            email: 1,
+            firstName: 1,
+            lastName: 1,
+            displayName: 1,
+            profilePhotoUrl: 1,
+            authProviderDetail: 1,
+            firebaseUid: 1,
+            createdAt: 1,
+            lastLoginAt: 1,
+            platformUsage: 1,
+            subscription: 1,
+            accessControls: 1,
+            paidServices: 1,
+          },
+        )
+          .sort({ lastLoginAt: -1, updatedAt: -1, createdAt: -1 })
+          .skip(skip)
+          .limit(pageSize)
+          .maxTimeMS(ADMIN_SUBSCRIPTION_MONGO_MAX_MS)
+          .lean(),
+        ADMIN_SUBSCRIPTION_OP_TIMEOUT_MS,
+        [],
+      ),
+      safeAdminSubscriptionCount(UserModel, combinedFilter, `${routeTag}:count-matched`),
+    ]);
+
+    const userIds = (users || []).map((item) => item?._id).filter(Boolean);
+    const profiles = userIds.length
+      ? await withAdminSubscriptionTimeout(
+        `${routeTag}:community-profiles`,
+        () => CommunityProfileModel.find({ userId: { $in: userIds } })
+          .select('userId profilePictureUrl shareProfilePicture')
+          .maxTimeMS(ADMIN_SUBSCRIPTION_MONGO_MAX_MS)
+          .lean(),
+        ADMIN_SUBSCRIPTION_OP_TIMEOUT_MS,
+        [],
+      )
+      : [];
+    const profileByUserId = new Map(
+      (profiles || []).map((item) => [String(item.userId), item]),
+    );
+
+    const mapped = (users || [])
+      .map((item) => {
+        const userId = String(item._id);
+        const fullName = `${item.firstName || ''} ${item.lastName || ''}`.trim();
+
+        const entitlements = resolveUserEntitlements(item, globalGrants, nowMs);
+        const paidServices = resolvePaidServices(item, nowMs);
+        const profile = profileByUserId.get(userId);
+        const sub = mergedSubscription(item);
+        const accountStatus = isSubscriptionActive(sub)
+          ? 'active'
+          : String(sub?.status || 'inactive').toLowerCase();
+
+        const mentorCard = buildManagedServiceDetail({
+          key: 'mentor',
+          label: 'Mentor',
+          access: accessStatusPayload(entitlements?.mentor),
+          manualGrant: normalizeManualGrant(item?.accessControls?.mentorManual),
+          subscription: sub,
+          nowMs,
+        });
+        const testsCard = buildManagedServiceDetail({
+          key: PAID_SERVICE_TYPES.tests,
+          label: 'Tests',
+          access: accessStatusPayload(paidServices?.tests),
+          manualGrant: normalizeManualGrant(item?.paidServices?.tests),
+          subscription: sub,
+          nowMs,
+        });
+        const preparationCard = buildManagedServiceDetail({
+          key: PAID_SERVICE_TYPES.preparation,
+          label: 'Preparation',
+          access: accessStatusPayload(paidServices?.preparation),
+          manualGrant: normalizeManualGrant(item?.paidServices?.preparation),
+          subscription: sub,
+          nowMs,
+        });
+        const communityCard = buildManagedServiceDetail({
+          key: PAID_SERVICE_TYPES.community,
+          label: 'Community',
+          access: accessStatusPayload(paidServices?.community),
+          manualGrant: normalizeManualGrant(item?.paidServices?.community),
+          subscription: sub,
+          nowMs,
+        });
+
+        return {
+          id: userId,
+          fullName: fullName || String(item.displayName || '').trim() || 'No name',
+          email: String(item.email || ''),
+          profileImageUrl: String(profile?.shareProfilePicture ? (profile?.profilePictureUrl || '') : (item.profilePhotoUrl || '')),
+          accountStatus,
+          provider: normalizeAuthProviderDetail(item.authProviderDetail),
+          firebaseUid: String(item.firebaseUid || ''),
+          joinedAt: toIsoOrNull(item.createdAt),
+          lastLoginAt: toIsoOrNull(item.lastLoginAt),
+          platformUsage: {
+            lastPlatform: String(item?.platformUsage?.lastPlatform || 'unknown'),
+            lastSeenAt: toIsoOrNull(item?.platformUsage?.lastSeenAt),
+          },
+          badges: {
+            tests: testsCard.status,
+            preparation: preparationCard.status,
+            community: communityCard.status,
+            mentor: mentorCard.status,
+          },
+        };
+      })
+      .filter(Boolean);
+
     return {
-      users: [],
-      totalMatched: 0,
+      users: mapped,
+      totalMatched,
       page,
       pageSize,
-      totalPages: 0,
-      hasMore: false,
+      totalPages: Math.max(1, Math.ceil(totalMatched / pageSize)),
+      hasMore: skip + mapped.length < totalMatched,
       showAll,
     };
-  }
-
-  const skip = Math.max(0, (page - 1) * pageSize);
-  const combinedFilter = {
-    ...managedUserFilter,
-    ...(searchFilter.filter || {}),
-  };
-
-  const [users, totalMatched] = await Promise.all([
-    UserModel.find(
-      combinedFilter,
-      {
-        email: 1,
-        firstName: 1,
-        lastName: 1,
-        displayName: 1,
-        profilePhotoUrl: 1,
-        authProviderDetail: 1,
-        firebaseUid: 1,
-        createdAt: 1,
-        lastLoginAt: 1,
-        platformUsage: 1,
-        subscription: 1,
-        accessControls: 1,
-        paidServices: 1,
-      },
-    )
-      .sort({ lastLoginAt: -1, updatedAt: -1, createdAt: -1 })
-      .skip(skip)
-      .limit(pageSize)
-      .lean(),
-    UserModel.countDocuments(combinedFilter),
-  ]);
-
-  const userIds = users.map((item) => item?._id).filter(Boolean);
-  const profiles = userIds.length
-    ? await CommunityProfileModel.find({ userId: { $in: userIds } }).select('userId profilePictureUrl shareProfilePicture').lean()
-    : [];
-  const profileByUserId = new Map(
-    (profiles || []).map((item) => [String(item.userId), item]),
-  );
-
-  const mapped = users
-    .map((item) => {
-      const userId = String(item._id);
-      const fullName = `${item.firstName || ''} ${item.lastName || ''}`.trim();
-
-      const entitlements = resolveUserEntitlements(item, globalGrants, nowMs);
-      const paidServices = resolvePaidServices(item, nowMs);
-      const profile = profileByUserId.get(userId);
-      const sub = mergedSubscription(item);
-      const accountStatus = isSubscriptionActive(sub)
-        ? 'active'
-        : String(sub?.status || 'inactive').toLowerCase();
-
-      const mentorCard = buildManagedServiceDetail({
-        key: 'mentor',
-        label: 'Mentor',
-        access: accessStatusPayload(entitlements?.mentor),
-        manualGrant: normalizeManualGrant(item?.accessControls?.mentorManual),
-        subscription: sub,
-        nowMs,
-      });
-      const testsCard = buildManagedServiceDetail({
-        key: PAID_SERVICE_TYPES.tests,
-        label: 'Tests',
-        access: accessStatusPayload(paidServices?.tests),
-        manualGrant: normalizeManualGrant(item?.paidServices?.tests),
-        subscription: sub,
-        nowMs,
-      });
-      const preparationCard = buildManagedServiceDetail({
-        key: PAID_SERVICE_TYPES.preparation,
-        label: 'Preparation',
-        access: accessStatusPayload(paidServices?.preparation),
-        manualGrant: normalizeManualGrant(item?.paidServices?.preparation),
-        subscription: sub,
-        nowMs,
-      });
-      const communityCard = buildManagedServiceDetail({
-        key: PAID_SERVICE_TYPES.community,
-        label: 'Community',
-        access: accessStatusPayload(paidServices?.community),
-        manualGrant: normalizeManualGrant(item?.paidServices?.community),
-        subscription: sub,
-        nowMs,
-      });
-
-      return {
-        id: userId,
-        fullName: fullName || String(item.displayName || '').trim() || 'No name',
-        email: String(item.email || ''),
-        profileImageUrl: String(profile?.shareProfilePicture ? (profile?.profilePictureUrl || '') : (item.profilePhotoUrl || '')),
-        accountStatus,
-        provider: normalizeAuthProviderDetail(item.authProviderDetail),
-        firebaseUid: String(item.firebaseUid || ''),
-        joinedAt: toIsoOrNull(item.createdAt),
-        lastLoginAt: toIsoOrNull(item.lastLoginAt),
-        platformUsage: {
-          lastPlatform: String(item?.platformUsage?.lastPlatform || 'unknown'),
-          lastSeenAt: toIsoOrNull(item?.platformUsage?.lastSeenAt),
-        },
-        badges: {
-          tests: testsCard.status,
-          preparation: preparationCard.status,
-          community: communityCard.status,
-          mentor: mentorCard.status,
-        },
-      };
-    })
-    .filter(Boolean);
-
-  return {
-    users: mapped,
-    totalMatched,
-    page,
-    pageSize,
-    totalPages: Math.max(1, Math.ceil(totalMatched / pageSize)),
-    hasMore: skip + mapped.length < totalMatched,
-    showAll,
-  };
   } catch (error) {
     console.error('[admin-subscriptions] fetchAdminManagedUsers failed:', error);
     return emptyAdminManagedUsersFallback({ page, pageSize, showAll });
@@ -14724,25 +14879,36 @@ async function fetchAdminManagedUsers({
 }
 
 app.get('/api/admin/subscriptions/management/users', authMiddleware, requireAdmin, async (req, res) => {
+  const routeTag = 'subscriptions-management';
+  const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || 25) || 25));
+  const page = Math.max(1, Number(req.query?.page || 1) || 1);
+  const showAll = String(req.query?.showAll || '').trim().toLowerCase() === 'true';
+  const guard = createAdminSubscriptionRouteGuard(
+    res,
+    routeTag,
+    (warning) => emptyAdminManagedUsersFallback({ page, pageSize, showAll, warning }),
+  );
   try {
     const q = normalizeSubscriptionSearch(req.query?.q);
-    const showAll = String(req.query?.showAll || '').trim().toLowerCase() === 'true';
-    const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || (showAll ? 100 : 25)) || (showAll ? 100 : 25)));
-    const page = Math.max(1, Number(req.query?.page || 1) || 1);
+    const resolvedPageSize = Math.max(
+      10,
+      Math.min(200, Number(req.query?.pageSize || (showAll ? 100 : 25)) || (showAll ? 100 : 25)),
+    );
+    const resolvedPage = Math.max(1, Number(req.query?.page || 1) || 1);
     const syncRequested = String(req.query?.sync || '').trim().toLowerCase() === 'true';
     const payload = await fetchAdminManagedUsers({
       q,
-      page,
-      pageSize,
+      page: resolvedPage,
+      pageSize: resolvedPageSize,
       showAll,
       forceSync: syncRequested,
+      routeTag,
     });
-    res.json(payload);
+    guard.send(200, payload);
   } catch (error) {
-    console.error('[admin-subscriptions] management users failed:', error);
-    const pageSize = Math.max(10, Math.min(200, Number(req.query?.pageSize || 25) || 25));
-    const page = Math.max(1, Number(req.query?.page || 1) || 1);
-    res.status(200).json(emptyAdminManagedUsersFallback({ page, pageSize }));
+    guard.fail(error);
+  } finally {
+    guard.finish();
   }
 });
 
