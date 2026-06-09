@@ -37,6 +37,7 @@ import mongoose from 'mongoose';
 import http from 'node:http';
 import { connectMongo, getMongoHealth } from './lib/mongo.js';
 import { getBuildInfo } from './lib/buildInfo.js';
+import { logAuthDebug, normalizeAuthDebugRoute, shouldAuthDebugRoute } from './lib/authDebug.js';
 import { getRedisMain, isRedisConfigured } from './services/redis.js';
 import { cacheGetJson, cacheSetJson, cacheKey, cacheDel, invalidateCommunityLeaderboardCache, invalidateQuizLeaderboardCache, invalidateUserSubscriptionCache } from './utils/cache.js';
 import {
@@ -7220,9 +7221,20 @@ async function resolveAuthenticatedUserFromToken(token) {
 }
 
 async function authMiddleware(req, res, next) {
+  const route = normalizeAuthDebugRoute(req);
   const token = extractAccessToken(req);
+  const requestDeviceId = sanitizeDeviceId(req.get('x-net360-device-id') || req.headers['user-agent'] || '');
 
   if (!token) {
+    logAuthDebug(req, {
+      userId: null,
+      tokenPresent: false,
+      tokenValid: false,
+      sessionFound: false,
+      sessionActive: false,
+      deviceMatch: null,
+      failureReason: 'missing_token',
+    });
     await logSecurityEvent(req, {
       eventType: 'auth.missing_token',
       severity: 'warning',
@@ -7234,6 +7246,15 @@ async function authMiddleware(req, res, next) {
   try {
     const { user, payload } = await resolveAuthenticatedUserFromToken(token);
     if (!user) {
+      logAuthDebug(req, {
+        userId: String(payload?.userId || ''),
+        tokenPresent: true,
+        tokenValid: true,
+        sessionFound: false,
+        sessionActive: false,
+        deviceMatch: null,
+        failureReason: 'user_not_found',
+      });
       await logSecurityEvent(req, {
         eventType: 'auth.user_not_found',
         severity: 'warning',
@@ -7243,11 +7264,57 @@ async function authMiddleware(req, res, next) {
     }
 
     const role = user.role || 'student';
+    const userId = String(user._id || '');
 
     if (role === 'student') {
-      const tokenSessionId = String(payload.sessionId || '');
-      const activeSessionId = String(user.activeSession?.sessionId || '');
+      let tokenSessionId = String(payload.sessionId || '');
+      let activeSessionId = String(user.activeSession?.sessionId || '');
+      const sessionDeviceId = String(user.activeSession?.deviceId || '').trim();
+      const deviceMatch = !sessionDeviceId || !requestDeviceId || sessionDeviceId === requestDeviceId;
+
+      if (!activeSessionId) {
+        user.activeSession = {
+          sessionId: crypto.randomUUID(),
+          deviceId: requestDeviceId,
+          startedAt: new Date(),
+          lastSeenAt: new Date(),
+          userAgent: String(req.headers['user-agent'] || '').slice(0, 250),
+          lastIp: String(req.ip || req.headers['x-forwarded-for'] || '').split(',')[0].trim().slice(0, 45),
+        };
+        await UserModel.updateOne({ _id: user._id }, { $set: { activeSession: user.activeSession } });
+        activeSessionId = String(user.activeSession.sessionId || '');
+        if (!tokenSessionId) {
+          tokenSessionId = activeSessionId;
+        }
+        logAuthDebug(req, {
+          userId,
+          tokenPresent: true,
+          tokenValid: true,
+          sessionFound: true,
+          sessionActive: true,
+          deviceMatch,
+          failureReason: null,
+          note: 'legacy_session_bootstrapped',
+        });
+      }
+
+      if (!tokenSessionId && activeSessionId) {
+        res.setHeader('X-Net360-Session-Refresh', 'required');
+        tokenSessionId = activeSessionId;
+      }
+
       if (!tokenSessionId || !activeSessionId || tokenSessionId !== activeSessionId) {
+        logAuthDebug(req, {
+          userId,
+          tokenPresent: true,
+          tokenValid: true,
+          sessionFound: Boolean(activeSessionId),
+          sessionActive: Boolean(activeSessionId),
+          deviceMatch,
+          failureReason: 'session_mismatch',
+          tokenSessionFp: authDeviceFingerprint(tokenSessionId),
+          activeSessionFp: authDeviceFingerprint(activeSessionId),
+        });
         await logSecurityEvent(req, {
           eventType: 'auth.session_mismatch',
           severity: 'warning',
@@ -7272,11 +7339,33 @@ async function authMiddleware(req, res, next) {
         );
         user.activeSession.lastSeenAt = new Date();
       }
+
+      if (shouldAuthDebugRoute(req)) {
+        logAuthDebug(req, {
+          userId,
+          tokenPresent: true,
+          tokenValid: true,
+          sessionFound: true,
+          sessionActive: true,
+          deviceMatch,
+          failureReason: null,
+        });
+      }
     }
 
     req.user = user;
     next();
-  } catch {
+  } catch (error) {
+    logAuthDebug(req, {
+      userId: null,
+      tokenPresent: true,
+      tokenValid: false,
+      sessionFound: false,
+      sessionActive: false,
+      deviceMatch: null,
+      failureReason: 'invalid_token',
+      error: String(error?.message || error || 'unknown'),
+    });
     await logSecurityEvent(req, {
       eventType: 'auth.invalid_token',
       severity: 'warning',
@@ -11666,7 +11755,7 @@ app.get('/api/mcqs/counts', mcqsReadLimiter, async (_req, res) => {
     });
 
     const out = { counts };
-    await cacheSetJson(ck, out, 90);
+    cacheSetJson(ck, out, 90).catch(() => {});
     res.set('Cache-Control', 'private, max-age=30');
     res.json(out);
   } catch {
@@ -12475,6 +12564,7 @@ app.get('/api/payments/history', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
+  try {
   if (req.user.role !== 'admin') {
     await finalizeStaleSubscription(UserModel, req.user._id);
     await finalizeExpiredManualAccess(UserModel, req.user._id);
@@ -12492,7 +12582,7 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
   let premiumSurface = await cacheGetJson(cachedKey);
   if (!premiumSurface) {
     premiumSurface = buildPreparationSurfaceForClient(entitlements, subPlain, serverNow);
-    await cacheSetJson(cachedKey, premiumSurface, 8);
+    cacheSetJson(cachedKey, premiumSurface, 8).catch(() => {});
   }
 
   const day = new Date().toISOString().slice(0, 10);
@@ -12610,6 +12700,21 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
       remainingToday: Math.max(0, (mentorPlan?.dailyAiLimit || 0) - ((usage?.chatCount || 0) + (usage?.solverCount || 0))),
     },
   });
+  } catch (error) {
+    logAuthDebug(req, {
+      userId: String(req.user?._id || ''),
+      tokenPresent: true,
+      tokenValid: true,
+      sessionFound: Boolean(req.user?.activeSession?.sessionId),
+      sessionActive: Boolean(req.user?.activeSession?.sessionId),
+      deviceMatch: null,
+      failureReason: 'handler_error',
+      error: String(error?.message || error || 'unknown'),
+      httpStatus: 500,
+    });
+    console.error('[subscriptions/me] failed:', error);
+    res.status(500).json({ error: 'Could not load subscription state.', code: 'SUBSCRIPTION_ME_FAILED' });
+  }
 });
 
 app.post('/api/subscriptions/purchase', authMiddleware, async (_req, res) => {

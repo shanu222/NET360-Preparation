@@ -8,8 +8,13 @@
  * module top level would miss values from .env and disable Redis permanently.
  */
 import { createClient } from 'redis';
+import dns from 'node:dns/promises';
 
 const PLACEHOLDER_REDIS_HOST = 'your-redis-host';
+
+const CACHE_CONNECT_TIMEOUT_MS = Number(process.env.REDIS_CACHE_CONNECT_TIMEOUT_MS || 2_000);
+const REDIS_CIRCUIT_OPEN_MS = Number(process.env.REDIS_CIRCUIT_OPEN_MS || 5 * 60 * 1000);
+const REDIS_DNS_PROBE_TIMEOUT_MS = Number(process.env.REDIS_DNS_PROBE_TIMEOUT_MS || 1_500);
 
 function normalizeRedisUrl(url) {
   const u = String(url || '').trim();
@@ -40,11 +45,16 @@ function hostLooksLikeManagedRedisTls(host) {
 }
 
 const SOCKET_OPTIONS = {
-  connectTimeout: 15_000,
+  connectTimeout: CACHE_CONNECT_TIMEOUT_MS,
 };
 
 let loggedPlaceholder = false;
 let loggedAutoTls = false;
+let loggedRedisDisabled = false;
+let redisCircuitOpenUntil = 0;
+let redisHostProbePromise = null;
+/** After DNS/connect failure, skip Redis until process restart or env fix. */
+let redisDisabledForProcess = false;
 
 /**
  * Fresh read of Redis-related env (call after dotenv has loaded).
@@ -91,18 +101,82 @@ function readRedisEnvFromProcess() {
   };
 }
 
+function redisHostFromEnv() {
+  const { REDIS_URL, REDIS_HOST } = readRedisEnvFromProcess();
+  if (REDIS_HOST) return REDIS_HOST;
+  if (!REDIS_URL) return '';
+  try {
+    return new URL(REDIS_URL).hostname || '';
+  } catch {
+    return '';
+  }
+}
+
+function disableRedisGracefully(reason, errorMessage = '') {
+  redisDisabledForProcess = true;
+  redisCircuitOpenUntil = Date.now() + REDIS_CIRCUIT_OPEN_MS;
+  mainClient = null;
+  mainConnectPromise = null;
+  if (!loggedRedisDisabled) {
+    loggedRedisDisabled = true;
+    console.warn('[redis] disabled — using Mongo-only fallback.', {
+      reason,
+      error: errorMessage || undefined,
+    });
+  }
+}
+
+function openRedisCircuit(reason, errorMessage = '') {
+  redisCircuitOpenUntil = Date.now() + REDIS_CIRCUIT_OPEN_MS;
+  mainClient = null;
+  mainConnectPromise = null;
+  console.warn('[redis] circuit open — cache skipped temporarily.', {
+    reason,
+    error: errorMessage || undefined,
+    retryAfterMs: REDIS_CIRCUIT_OPEN_MS,
+  });
+}
+
+async function ensureRedisHostResolvable() {
+  if (redisHostProbePromise) return redisHostProbePromise;
+
+  redisHostProbePromise = (async () => {
+    const host = redisHostFromEnv();
+    if (!host) return true;
+    if (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(host) || host === 'localhost' || host === '127.0.0.1') {
+      return true;
+    }
+    try {
+      await Promise.race([
+        dns.lookup(host),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('DNS probe timeout')), REDIS_DNS_PROBE_TIMEOUT_MS);
+        }),
+      ]);
+      return true;
+    } catch (error) {
+      disableRedisGracefully('host_unresolvable', error?.message || String(error));
+      return false;
+    } finally {
+      redisHostProbePromise = null;
+    }
+  })();
+
+  return redisHostProbePromise;
+}
+
 /** Whether Redis host or URL is configured (after .env load). */
 export function isRedisConfigured() {
+  if (redisDisabledForProcess) return false;
   const { REDIS_URL, REDIS_HOST } = readRedisEnvFromProcess();
   return Boolean(REDIS_URL || REDIS_HOST);
 }
 
 function reconnectStrategy(retries) {
-  if (retries > 50) {
-    console.warn('[redis] Giving up reconnect after 50 attempts');
+  if (retries > 3) {
     return new Error('Redis reconnect limit');
   }
-  return Math.min(500 + retries * 200, 10_000);
+  return Math.min(200 + retries * 100, 1_000);
 }
 
 /** @param {string} redisHost */
@@ -161,30 +235,51 @@ let mainConnectPromise = null;
 
 /**
  * Shared client for GET/SET cache operations (not used for Socket.IO adapter).
+ * Never blocks request handlers for long — fails fast and opens a circuit on errors.
  * @returns {Promise<import('redis').RedisClientType | null>}
  */
 export async function getRedisMain() {
+  if (redisDisabledForProcess) return null;
+  if (Date.now() < redisCircuitOpenUntil) return null;
   if (!isRedisConfigured()) return null;
   if (mainClient?.isOpen) return mainClient;
   if (mainConnectPromise) return mainConnectPromise;
 
   mainConnectPromise = (async () => {
     try {
+      const hostOk = await ensureRedisHostResolvable();
+      if (!hostOk) return null;
+
       const opts = buildClientOptions();
       if (!opts) return null;
       const client = createClient(opts);
       client.on('error', (err) => {
         console.error('[redis] Client error:', err?.message || err);
+        openRedisCircuit('client_error', err?.message || String(err));
       });
       client.on('reconnecting', () => {
         console.warn('[redis] Reconnecting…');
       });
-      await client.connect();
+
+      await Promise.race([
+        client.connect(),
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error(`connect timeout after ${CACHE_CONNECT_TIMEOUT_MS}ms`)), CACHE_CONNECT_TIMEOUT_MS);
+        }),
+      ]);
+
       mainClient = client;
+      redisCircuitOpenUntil = 0;
       console.log('[redis] connected successfully');
       return client;
     } catch (err) {
-      console.error('[redis] connection failed', err?.message || err);
+      const message = err?.message || String(err);
+      console.error('[redis] connection failed', message);
+      if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|timeout|getaddrinfo/i.test(message)) {
+        disableRedisGracefully('connect_failed', message);
+      } else {
+        openRedisCircuit('connect_failed', message);
+      }
       mainClient = null;
       return null;
     } finally {
@@ -197,7 +292,7 @@ export async function getRedisMain() {
 
 /** True when cache/commands can run */
 export function isRedisReady() {
-  return Boolean(mainClient?.isOpen);
+  return Boolean(mainClient?.isOpen) && !redisDisabledForProcess && Date.now() >= redisCircuitOpenUntil;
 }
 
 /** Single in-process attempt: dedicated pub/sub pair for Socket.IO (must not share with blocking commands). */
@@ -213,6 +308,9 @@ function attachRedisClientHandlers(client) {
 async function connectSocketIoAdapterPairOnce() {
   if (!isRedisConfigured()) return null;
 
+  const hostOk = await ensureRedisHostResolvable();
+  if (!hostOk) return null;
+
   const opts = buildClientOptions();
   if (!opts) {
     console.warn('[redis] Socket.IO adapter skipped: could not build Redis client options (check REDIS_HOST / REDIS_URL).');
@@ -226,11 +324,17 @@ async function connectSocketIoAdapterPairOnce() {
     sub = createClient(structuredClone(opts));
     attachRedisClientHandlers(pub);
     attachRedisClientHandlers(sub);
-    await Promise.all([pub.connect(), sub.connect()]);
+    await Promise.race([
+      Promise.all([pub.connect(), sub.connect()]),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error(`Socket.IO adapter connect timeout after ${CACHE_CONNECT_TIMEOUT_MS}ms`)), CACHE_CONNECT_TIMEOUT_MS);
+      }),
+    ]);
     console.log('[redis] connected successfully');
     return { pub, sub };
   } catch (err) {
     console.error('[redis] connection failed', err?.message || err);
+    openRedisCircuit('socket_adapter_connect_failed', err?.message || String(err));
     try {
       sub?.disconnect?.();
     } catch {
