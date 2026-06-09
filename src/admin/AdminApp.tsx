@@ -2306,7 +2306,7 @@ function adminEnvStatusBadgeClasses(status?: string) {
 }
 
 /** Bootstrap must never block the admin shell — cap per-request wait and disable retries. */
-const ADMIN_BOOTSTRAP_REQUEST_TIMEOUT_MS = 25_000;
+const ADMIN_BOOTSTRAP_REQUEST_TIMEOUT_MS = 8_000;
 const ADMIN_SESSION_RESTORE_TIMEOUT_MS = 15_000;
 
 const EMPTY_ADMIN_OVERVIEW: AdminOverview = {
@@ -3419,9 +3419,9 @@ export default function AdminApp() {
     }
   };
 
-  const loadAdminData = async (activeToken: string) => {
+  const loadAdminData = async (activeToken: string, options: { deferredOnly?: boolean; criticalOnly?: boolean } = {}) => {
     const bootstrapStarted = performance.now();
-    console.info('[admin-bootstrap] loadAdminData start');
+    console.info('[admin-bootstrap] loadAdminData start', options.deferredOnly ? 'deferred' : options.criticalOnly ? 'critical' : 'full');
 
     const subscriptionManagementPath = (() => {
       const params = new URLSearchParams({
@@ -3436,35 +3436,18 @@ export default function AdminApp() {
       return `/api/admin/subscriptions/management/users?${params.toString()}`;
     })();
 
-    const [
-      overviewPayload,
-      usersPayload,
-      requestPayload,
-      mcqPayload,
-      practicePayload,
-      submissionPayload,
-      policyPayload,
-      subscriptionOverviewPayload,
-      subscriptionUsersPayload,
-      paidServicesOverviewPayload,
-      paidServicesUsersPayload,
-      subscriptionManagementUsersPayload,
-      premiumRequestsPayload,
-      passwordRecoveryPayload,
-      communityReportsPayload,
-      supportConversationsPayload,
-      structurePayload,
-      systemStatusPayload,
-      configVariablesPayload,
-    ] = await Promise.all([
+    const criticalSteps = [
       fetchAdminBootstrapStep('overview', '/api/admin/overview', activeToken, EMPTY_ADMIN_OVERVIEW),
+      fetchAdminBootstrapStep('system-status', '/api/admin/system-status', activeToken, EMPTY_SYSTEM_STATUS),
+      fetchAdminBootstrapStep('subscriptions-overview', '/api/admin/subscriptions/overview', activeToken, EMPTY_SUBSCRIPTION_OVERVIEW),
+    ] as const;
+
+    const deferredSteps = Promise.all([
       fetchAdminBootstrapStep('users', '/api/admin/users', activeToken, { users: [] as AdminUser[] }),
-      Promise.resolve({ requests: [] as SignupRequest[] }),
       fetchAdminBootstrapStep('mcqs', '/api/admin/mcqs', activeToken, { mcqs: [] as AdminMCQ[] }),
       fetchAdminBootstrapStep('practice-board', '/api/admin/practice-board/questions', activeToken, { questions: [] as AdminPracticeBoardQuestion[] }),
       fetchAdminBootstrapStep('question-submissions', '/api/admin/question-submissions?status=all', activeToken, { submissions: [] as AdminQuestionSubmission[] }),
       fetchAdminBootstrapStep('contribution-policy', '/api/admin/question-submissions/policy', activeToken, { policy: EMPTY_CONTRIBUTION_POLICY }),
-      fetchAdminBootstrapStep('subscriptions-overview', '/api/admin/subscriptions/overview', activeToken, EMPTY_SUBSCRIPTION_OVERVIEW),
       fetchAdminBootstrapStep(
         'subscriptions-users',
         `/api/admin/subscriptions/users?status=${subscriptionFilter}&accessType=${accessTypeFilter}`,
@@ -3491,28 +3474,96 @@ export default function AdminApp() {
         totalPages: 0,
         hasMore: false,
       } as AdminSubscriptionManagementUsersPayload),
-      Promise.resolve({ requests: [] as PremiumSubscriptionRequest[] }),
-      Promise.resolve({ requests: [] as PasswordRecoveryRequest[] }),
       fetchAdminBootstrapStep('community-reports', '/api/admin/community/reports', activeToken, { reports: [] as AdminCommunityReport[] }),
-      fetchAdminBootstrapStep('support-chat', '/api/admin/support-chat/conversations', activeToken, { conversations: [] as AdminSupportConversation[] }, { timeoutMs: 30_000 }),
+      fetchAdminBootstrapStep('support-chat', '/api/admin/support-chat/conversations', activeToken, { conversations: [] as AdminSupportConversation[] }, { timeoutMs: 12_000 }),
       fetchAdminBootstrapStep('mcq-bank-structure', '/api/admin/mcq-bank/structure', activeToken, { structure: [] as AdminMcqBankStructureItem[] }),
-      fetchAdminBootstrapStep('system-status', '/api/admin/system-status', activeToken, EMPTY_SYSTEM_STATUS),
       fetchAdminBootstrapStep('configurations', '/api/admin/configurations', activeToken, {
         variables: [],
         infraSnapshot: { items: [] },
       } as AdminConfigurationListPayload),
     ]);
 
-    console.info(`[admin-bootstrap] loadAdminData complete ${Math.round(performance.now() - bootstrapStarted)}ms`);
+    if (options.deferredOnly) {
+      const [
+        usersPayload,
+        mcqPayload,
+        practicePayload,
+        submissionPayload,
+        policyPayload,
+        subscriptionUsersPayload,
+        paidServicesOverviewPayload,
+        paidServicesUsersPayload,
+        subscriptionManagementUsersPayload,
+        communityReportsPayload,
+        supportConversationsPayload,
+        structurePayload,
+        configVariablesPayload,
+      ] = await deferredSteps;
+
+      setUsers(usersPayload.users || []);
+      setMcqs((previous) => (selectedHierarchy ? previous : []));
+      setPracticeQuestions(practicePayload.questions || []);
+      setQuestionSubmissions(submissionPayload.submissions || []);
+      setContributionPolicy(policyPayload.policy || EMPTY_CONTRIBUTION_POLICY);
+      setSubscriptionUsers(subscriptionUsersPayload.users || []);
+      setPaidServicesOverview(paidServicesOverviewPayload);
+      setPaidServicesUsers(paidServicesUsersPayload.users || []);
+      setSubscriptionManagementUsers(subscriptionManagementUsersPayload.users || []);
+      setSubscriptionManagementTotal(Number(subscriptionManagementUsersPayload.totalMatched || 0));
+      setSubscriptionManagementHasMore(Boolean(subscriptionManagementUsersPayload.hasMore));
+      setSubscriptionSearchSuggestions((subscriptionManagementUsersPayload.users || []).slice(0, 8));
+      setCommunityReports(communityReportsPayload.reports || []);
+      setSupportConversations(supportConversationsPayload.conversations || []);
+      setMcqStructure(structurePayload.structure || []);
+      setConfigVariables(configVariablesPayload.variables || []);
+      setConfigInfraSnapshot(configVariablesPayload.infraSnapshot?.items || []);
+      setConfigVerification(configVariablesPayload.verification ?? null);
+      console.info(`[admin-bootstrap] loadAdminData deferred complete ${Math.round(performance.now() - bootstrapStarted)}ms`);
+      return;
+    }
+
+    const [
+      overviewPayload,
+      systemStatusPayload,
+      subscriptionOverviewPayload,
+    ] = await Promise.all(criticalSteps);
 
     setOverview(overviewPayload);
+    setSystemStatus(systemStatusPayload);
+    setSubscriptionOverview(subscriptionOverviewPayload);
+    setSignupRequests([]);
+    setPremiumRequests([]);
+    setPasswordRecoveryRequests([]);
+
+    console.info(`[admin-bootstrap] loadAdminData critical complete ${Math.round(performance.now() - bootstrapStarted)}ms`);
+
+    if (options.criticalOnly) {
+      return;
+    }
+
+    const [
+      usersPayload,
+      mcqPayload,
+      practicePayload,
+      submissionPayload,
+      policyPayload,
+      subscriptionUsersPayload,
+      paidServicesOverviewPayload,
+      paidServicesUsersPayload,
+      subscriptionManagementUsersPayload,
+      communityReportsPayload,
+      supportConversationsPayload,
+      structurePayload,
+      configVariablesPayload,
+    ] = await deferredSteps;
+
+    console.info(`[admin-bootstrap] loadAdminData complete ${Math.round(performance.now() - bootstrapStarted)}ms`);
+
     setUsers(usersPayload.users || []);
-    setSignupRequests(requestPayload.requests || []);
     setMcqs((previous) => (selectedHierarchy ? previous : []));
     setPracticeQuestions(practicePayload.questions || []);
     setQuestionSubmissions(submissionPayload.submissions || []);
     setContributionPolicy(policyPayload.policy || EMPTY_CONTRIBUTION_POLICY);
-    setSubscriptionOverview(subscriptionOverviewPayload);
     setSubscriptionUsers(subscriptionUsersPayload.users || []);
     setPaidServicesOverview(paidServicesOverviewPayload);
     setPaidServicesUsers(paidServicesUsersPayload.users || []);
@@ -3520,12 +3571,9 @@ export default function AdminApp() {
     setSubscriptionManagementTotal(Number(subscriptionManagementUsersPayload.totalMatched || 0));
     setSubscriptionManagementHasMore(Boolean(subscriptionManagementUsersPayload.hasMore));
     setSubscriptionSearchSuggestions((subscriptionManagementUsersPayload.users || []).slice(0, 8));
-    setPremiumRequests(premiumRequestsPayload.requests || []);
-    setPasswordRecoveryRequests(passwordRecoveryPayload.requests || []);
     setCommunityReports(communityReportsPayload.reports || []);
     setSupportConversations(supportConversationsPayload.conversations || []);
     setMcqStructure(structurePayload.structure || []);
-    setSystemStatus(systemStatusPayload);
     setConfigVariables(configVariablesPayload.variables || []);
     setConfigInfraSnapshot(configVariablesPayload.infraSnapshot?.items || []);
     setConfigVerification(configVariablesPayload.verification ?? null);
@@ -3753,10 +3801,20 @@ export default function AdminApp() {
           return;
         }
 
-        await loadAdminData(activeToken);
-        if (!cancelled) {
-          setAdminLoadError('');
+        skipFilterReloadAfterBootstrap.current = true;
+        setReady(true);
+        setAdminLoadError('');
+
+        await loadAdminData(activeToken, { criticalOnly: true });
+        if (cancelled) {
+          return;
         }
+
+        void loadAdminData(activeToken, { deferredOnly: true }).catch((error) => {
+          if (!cancelled) {
+            console.warn('[admin-bootstrap] deferred load failed:', error);
+          }
+        });
       } catch (error) {
         if (!cancelled) {
           const status = Number((error as { status?: number } | null)?.status || 0);
