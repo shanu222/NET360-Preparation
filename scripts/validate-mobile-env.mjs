@@ -80,7 +80,20 @@ if (missingFirebaseVars.length) {
   process.exit(1);
 }
 
-const googleServicesPath = path.join(workspaceRoot, 'android', 'app', 'google-services.json');
+const googleServicesAppPath = path.join(workspaceRoot, 'android', 'app', 'google-services.json');
+const googleServicesRootPath = path.join(workspaceRoot, 'android', 'google-services.json');
+
+// Gradle reads android/app/google-services.json. Keep it identical to the Firebase download at android/google-services.json.
+if (fs.existsSync(googleServicesRootPath)) {
+  const rootRaw = fs.readFileSync(googleServicesRootPath);
+  const appRaw = fs.existsSync(googleServicesAppPath) ? fs.readFileSync(googleServicesAppPath) : null;
+  if (!appRaw || !rootRaw.equals(appRaw)) {
+    fs.copyFileSync(googleServicesRootPath, googleServicesAppPath);
+    console.log('[mobile:build] Synced android/google-services.json → android/app/google-services.json');
+  }
+}
+
+const googleServicesPath = googleServicesAppPath;
 if (!fs.existsSync(googleServicesPath)) {
   console.error(
     `[mobile:build] Missing ${googleServicesPath}. ` +
@@ -103,6 +116,36 @@ try {
     );
     process.exit(1);
   }
+
+  const projectId = String(parsed?.project_info?.project_id || '').trim();
+  if (projectId && projectId !== 'resilience360-27f15') {
+    console.error(`[mobile:build] Unexpected Firebase project_id in google-services.json: ${projectId}`);
+    process.exit(1);
+  }
+
+  const androidHashes = new Set(
+    (parsed?.client || [])
+      .flatMap((c) => c?.oauth_client || [])
+      .filter((o) => o?.client_type === 1 && o?.android_info?.certificate_hash)
+      .map((o) => String(o.android_info.certificate_hash).toLowerCase()),
+  );
+  const releaseSha1NoColons = '789b700b9884215a142370625ffafc7fb7384d0b';
+  if (!androidHashes.has(releaseSha1NoColons)) {
+    console.error(
+      '[mobile:build] google-services.json is missing the release keystore SHA-1 OAuth client ' +
+        `(${releaseSha1NoColons}). Re-download from Firebase after adding the fingerprint.`,
+    );
+    process.exit(1);
+  }
+
+  const webClient = (parsed?.client || [])
+    .flatMap((c) => c?.oauth_client || [])
+    .find((o) => o?.client_type === 3 && o?.client_id);
+  if (!webClient?.client_id) {
+    console.error('[mobile:build] google-services.json is missing Web OAuth client (client_type 3).');
+    process.exit(1);
+  }
+  console.log('[mobile:build] Firebase Android package OK; release SHA-1 OAuth client present; Web client ID OK.');
 } catch (error) {
   console.error('[mobile:build] Could not parse google-services.json:', error instanceof Error ? error.message : String(error));
   process.exit(1);
