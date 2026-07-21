@@ -2,9 +2,9 @@ import { apiRequest } from './api';
 
 /**
  * Legacy admin upload endpoint (POST /api/upload).
- * Hosted S3 uploads are retired — returns 410. Prefer MCQ data URLs in MongoDB.
+ * Hosted uploads are retired — returns 410. Prefer MCQ data URLs in MongoDB.
  */
-export async function uploadMediaToS3(
+export async function uploadRetiredMedia(
   file: File,
   authToken: string | null | undefined,
 ): Promise<{ url: string; key: string }> {

@@ -30,7 +30,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { apiRequest, API_BASE, buildApiUrl, buildSseStreamUrl, buildUrl, ensureAdminBearerTokenFromRefresh } from '../app/lib/api';
-import { uploadMediaToS3 } from '../app/lib/uploadMedia';
+import { uploadRetiredMedia } from '../app/lib/uploadMedia';
 import { brandLogoUrl, getMediaUrl } from '../app/lib/publicMedia';
 import { fetchAndApplyPublicMediaConfig } from '../app/lib/publicMediaRuntime';
 import {
@@ -4907,7 +4907,7 @@ export default function AdminApp() {
     if (!file || !authToken) return;
     try {
       setMcqS3UploadBusy(true);
-      const { url } = await uploadMediaToS3(file, authToken);
+      const { url } = await uploadRetiredMedia(file, authToken);
       const isVideo = /^video\//i.test(file.type) || /\.(mp4|webm|mov)$/i.test(file.name);
       setForm((prev) => ({
         ...prev,
@@ -6322,7 +6322,7 @@ export default function AdminApp() {
     if (!file || !authToken) return;
     try {
       setMcqS3UploadBusy(true);
-      const { url } = await uploadMediaToS3(file, authToken);
+      const { url } = await uploadRetiredMedia(file, authToken);
       const isVideo = /^video\//i.test(file.type) || /\.(mp4|webm|mov)$/i.test(file.name);
       updateBankEditDraft(mcqId, (prev) => ({
         ...prev,

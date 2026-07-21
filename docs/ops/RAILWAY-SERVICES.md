@@ -1,23 +1,33 @@
-# Railway services — Main vs Admin
+# Railway services — single-backend architecture
 
 ## Production backend (required)
 
 | Service | Role |
 |---------|------|
-| **`net360-preparation`** (Main) | Sole production Express API (`node server/index.js`). Custom domain: `api.net360preparation.com`. |
+| **`net360-preparation`** (Main) | Sole production Express API (`node server/index.js`). Intended custom domain: `api.net360preparation.com`. |
 
-Set **only backend** secrets on Main (`MONGODB_URI`, `JWT_*`, Firebase Admin, `ADMIN_LOGIN_*`, `CORS_*`, `ISSUE_AUTH_BODY_TOKENS`, `NODE_ENV=production`, etc.).  
-**Do not** rely on `VITE_*` on this service (Vite vars are build-time for the SPA).
+Set **only backend** secrets on Main. See `RAILWAY-ENV.md` / `docs/ops/SINGLE-BACKEND-CONSOLIDATION.md`.  
+**Do not** put `VITE_*` on this service.
 
-## `net360-admin` (idle / not required)
+Student + Admin APIs both live in this one Express process (`/api/auth/*`, `/api/admin/*`, MCQs, payments, community, support).
+
+## `net360-admin` — verified duplicate (safely removable)
 
 | Finding | Evidence |
 |---------|----------|
-| Same Express API as Main | Root returns `API is running`; `/api/health` reports `service: net360-api` |
-| Admin UI is in the Vite app | `src/main.tsx` — `/admin` path or host `admin.*` / `net360-admin` + optional `VITE_ADMIN_ONLY` |
-| Student + admin share one frontend | Deployed on **Vercel**; admin calls Main via `VITE_API_URL` |
+| Same Express API as Main | Historical live probe: root `API is running`; `/api/health` → `service: net360-api` (same as Main) |
+| Same codebase start command | `node server/index.js` / same repo |
+| Admin UI is not this service | Vite SPA on **Vercel** — `/admin` or host heuristics in `src/main.tsx`; calls Main via `VITE_API_URL` / `api.net360preparation.com` |
+| Not on production DNS | Production custom API domain targets Main only |
+| Current reachability (2026-07-22) | Prior host `net360-admin-production-7ac3.up.railway.app` **does not resolve** — unused for traffic |
 
-**Conclusion:** A second Railway service is **not required** for production.  
-**Do not delete** the Railway `net360-admin` service (ops preference). Keep it **idle** (paused or unused). Do not point production DNS at it. Do not duplicate Mongo/JWT secrets there unless you intentionally run a standby API.
+**Conclusion:** `net360-admin` is **not required**. It is a second deployment of the same Express server.
 
-If you later want a dedicated admin SPA host, that would be a **frontend** deploy (`VITE_ADMIN_ONLY=true` + `npm run build` + `node server/web.js` or Vercel), not a second Express API.
+### Operator action (dashboard — this agent has no Railway delete token)
+
+1. Confirm no custom domain points at `net360-admin`.
+2. Pause the service (optional interim).
+3. **Delete** `net360-admin` from the Railway project when ready.
+4. Keep secrets **only** on `net360-preparation`.
+
+Do **not** recreate a second Express API for “admin”.

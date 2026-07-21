@@ -8,7 +8,6 @@
 # Optional env:
 #   NET360_BACKUP_DIR   default /var/backups/net360
 #   BACKUP_RETENTION_DAYS default 14
-#   S3_BACKUP_BUCKET    if set, uploads archive with aws cli
 #
 # Usage:
 #   bash scripts/mongodb-backup-daily.sh
@@ -51,10 +50,6 @@ echo "Wrote ${ARCHIVE} ($(du -h "${ARCHIVE}" | awk '{print $1}'))"
 
 find "${BACKUP_DIR}" -name 'net360-mongo-*.gz' -type f -mtime +"${RETENTION_DAYS}" -delete
 echo "Retention: deleted backups older than ${RETENTION_DAYS} days"
-
-if [[ -n "${S3_BACKUP_BUCKET:-}" ]] && command -v aws >/dev/null 2>&1; then
-  aws s3 cp "${ARCHIVE}" "s3://${S3_BACKUP_BUCKET}/mongodb/$(basename "${ARCHIVE}")"
-  echo "Uploaded to s3://${S3_BACKUP_BUCKET}/mongodb/$(basename "${ARCHIVE}")"
-fi
+# Keep archives on local/attached storage only — no cloud object upload.
 
 echo "Backup complete."
