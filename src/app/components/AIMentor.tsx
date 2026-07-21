@@ -876,7 +876,7 @@ export function AIMentor({ onNavigate }: AIMentorProps) {
   return (
     <div className="space-y-5">
       <section className="relative overflow-hidden rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-[#ecefff] via-[#ece8ff] to-[#f5e6f8] p-5 sm:p-6">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_78%_18%,rgba(172,149,255,0.26),transparent_35%),radial-gradient(circle_at_16%_80%,rgba(129,180,255,0.18),transparent_30%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_78%_18%,rgba(172,149,255,0.26),transparent_35%),radial-gradient(circle_at_16%_80%,rgba(129,180,255,0.18),transparent_30%)]" aria-hidden />
         <div className="relative">
           <h1 className="inline-flex items-center gap-2 text-indigo-950">
             <Brain className="h-7 w-7" />

@@ -77,7 +77,7 @@ export function ProgramExplorer() {
   return (
     <div className="space-y-5">
       <section className="relative overflow-hidden rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-[#eef2ff] via-[#ebe8ff] to-[#e6ebff] p-5 sm:p-6">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_82%_20%,rgba(168,151,255,0.25),transparent_35%),radial-gradient(circle_at_12%_88%,rgba(140,186,255,0.2),transparent_30%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_20%,rgba(168,151,255,0.25),transparent_35%),radial-gradient(circle_at_12%_88%,rgba(140,186,255,0.2),transparent_30%)]" aria-hidden />
         <div className="relative">
           <h1 className="text-3xl text-indigo-950">Explore NUST Programs</h1>
           <p className="text-base text-slate-600">Updated view of NUST Schools, Colleges and Campuses with undergraduate programs</p>

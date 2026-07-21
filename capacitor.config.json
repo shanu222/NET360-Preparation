@@ -4,46 +4,23 @@
   "webDir": "dist",
   "bundledWebRuntime": false,
   "server": {
-    "androidScheme": "https",
-    "allowNavigation": [
-      "localhost",
-      "127.0.0.1",
-      "accounts.google.com",
-      "oauth2.googleapis.com",
-      "www.googleapis.com",
-      "apis.google.com",
-      "play.google.com",
-      "google.com",
-      "*.google.com",
-      "*.googleapis.com",
-      "*.gstatic.com",
-      "*.googleusercontent.com",
-      "*.firebaseapp.com",
-      "*.web.app"
-    ]
+    "androidScheme": "https"
   },
   "plugins": {
     "SplashScreen": {
       "launchShowDuration": 900,
       "launchAutoHide": true,
       "showSpinner": false,
-      "backgroundColor": "#eef0ff"
+      "backgroundColor": "#0A1630"
     },
     "StatusBar": {
       "overlaysWebView": false,
-      "style": "DARK",
-      "backgroundColor": "#eef0ff"
+      "style": "LIGHT",
+      "backgroundColor": "#0A1630"
     },
     "PushNotifications": {
-      "presentationOptions": ["badge", "sound", "alert"]
-    },
-    "SocialLogin": {
-      "providers": {
-        "google": true,
-        "facebook": false,
-        "apple": false,
-        "twitter": false
-      }
+      "presentationOptions": ["badge", "sound", "alert"],
+      "iconColor": "#5B8CFF"
     }
   }
 }
