@@ -3713,7 +3713,9 @@ function sanitizeHumanName(value, maxLen = 80) {
 
 function normalizeAuthProviderDetail(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'google' || normalized === 'password') return normalized;
+  if (normalized === 'google' || normalized === 'password' || normalized === 'firebase' || normalized === 'local') {
+    return normalized === 'firebase' ? 'password' : normalized;
+  }
   return normalized || 'unknown';
 }
 
@@ -13619,7 +13621,7 @@ app.get('/api/reports/export', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) => {
-  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+  const managedUserFilter = { role: { $ne: 'admin' } };
   const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingQuestionSubmissions] = await Promise.all([
     UserModel.countDocuments(managedUserFilter),
     MCQModel.countDocuments(),
@@ -13916,7 +13918,7 @@ app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async
   const guard = createAdminSubscriptionRouteGuard(res, routeTag, emptyAdminSubscriptionOverviewFallback);
   try {
     const now = new Date();
-    const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+    const managedUserFilter = { role: { $ne: 'admin' } };
     const globalGrants = await getGlobalAccessGrantSnapshot();
     const mentorGlobalActive = isGrantActive(globalGrants.mentor, now.getTime());
     const preparationGlobalActive = isGrantActive(globalGrants.preparation, now.getTime());
@@ -14024,7 +14026,7 @@ app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (r
   try {
     const status = String(req.query?.status || 'all').toLowerCase();
     const accessType = String(req.query?.accessType || '').trim().toLowerCase();
-    const filter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+    const filter = { role: { $ne: 'admin' } };
     if (status !== 'all' && (!accessType || accessType === 'mentor')) {
       filter['subscription.status'] = status;
     }
@@ -14510,7 +14512,9 @@ function buildSubscriptionManagementSearchFilter(value) {
       $or: [
         { firstName: { $regex: escaped, $options: 'i' } },
         { lastName: { $regex: escaped, $options: 'i' } },
-        { email: { $regex: `^${escaped}[^@]*@`, $options: 'i' } },
+        { displayName: { $regex: escaped, $options: 'i' } },
+        { email: { $regex: escaped, $options: 'i' } },
+        { firebaseUid: { $regex: `^${escaped}`, $options: 'i' } },
       ],
     },
   };
@@ -14762,17 +14766,31 @@ async function fetchAdminManagedUsers({
 }) {
   try {
     const normalizedQuery = normalizeSubscriptionSearch(q);
+    // Include every non-admin account (firebase / google / password / local legacy).
     const managedUserFilter = { role: { $ne: 'admin' } };
     const nowMs = Date.now();
+    const mongoHealth = getMongoHealth();
+    let degradedWarning = '';
+
     const globalGrants = await getGlobalAccessGrantSnapshot();
     if (forceSync) {
-      await withAdminSubscriptionTimeout(
+      const syncResult = await withAdminSubscriptionTimeout(
         `${routeTag}:firebase-sync`,
         () => ensureCentralizedAppUsersSync({ force: true }),
         ADMIN_SUBSCRIPTION_ROUTE_TIMEOUT_MS,
-        { synced: 0, scanned: 0, skipped: true },
+        { synced: 0, scanned: 0, skipped: true, timedOut: true },
       );
+      if (syncResult?.timedOut) {
+        degradedWarning = 'Firebase sync timed out; showing Mongo users only.';
+      } else {
+        console.info('[admin-subscriptions] firebase-sync', {
+          synced: Number(syncResult?.synced || 0),
+          scanned: Number(syncResult?.scanned || 0),
+          skipped: Boolean(syncResult?.skipped),
+        });
+      }
     }
+
     const searchFilter = buildSubscriptionManagementSearchFilter(normalizedQuery);
     if (searchFilter.blocked) {
       return {
@@ -14783,6 +14801,7 @@ async function fetchAdminManagedUsers({
         totalPages: 0,
         hasMore: false,
         showAll,
+        warning: 'Search blocked: use a full email, a name, or enable Show All Users.',
       };
     }
 
@@ -14792,7 +14811,10 @@ async function fetchAdminManagedUsers({
       ...(searchFilter.filter || {}),
     };
 
-    const [users, totalMatched] = await Promise.all([
+    const findTimeoutToken = Symbol('find-timeout');
+    const countTimeoutToken = Symbol('count-timeout');
+
+    const [usersRaw, totalRaw] = await Promise.all([
       withAdminSubscriptionTimeout(
         `${routeTag}:find-page`,
         () => UserModel.find(
@@ -14803,6 +14825,7 @@ async function fetchAdminManagedUsers({
             lastName: 1,
             displayName: 1,
             profilePhotoUrl: 1,
+            authProvider: 1,
             authProviderDetail: 1,
             firebaseUid: 1,
             createdAt: 1,
@@ -14819,12 +14842,47 @@ async function fetchAdminManagedUsers({
           .maxTimeMS(ADMIN_SUBSCRIPTION_MONGO_MAX_MS)
           .lean(),
         ADMIN_SUBSCRIPTION_OP_TIMEOUT_MS,
-        [],
+        findTimeoutToken,
       ),
-      safeAdminSubscriptionCount(UserModel, combinedFilter, `${routeTag}:count-matched`),
+      withAdminSubscriptionTimeout(
+        `${routeTag}:count-matched`,
+        () => UserModel.countDocuments(combinedFilter).maxTimeMS(ADMIN_SUBSCRIPTION_MONGO_MAX_MS),
+        ADMIN_SUBSCRIPTION_OP_TIMEOUT_MS,
+        countTimeoutToken,
+      ),
     ]);
 
-    const userIds = (users || []).map((item) => item?._id).filter(Boolean);
+    if (usersRaw === findTimeoutToken || totalRaw === countTimeoutToken) {
+      degradedWarning = degradedWarning || 'User query timed out. Retry Show All Users or narrow the search.';
+      console.error('[admin-subscriptions] managed-users-timeout', {
+        db: mongoHealth.dbName,
+        host: mongoHealth.host,
+        filter: combinedFilter,
+        showAll,
+        q: normalizedQuery || null,
+        findTimedOut: usersRaw === findTimeoutToken,
+        countTimedOut: totalRaw === countTimeoutToken,
+      });
+    }
+
+    const users = usersRaw === findTimeoutToken ? [] : (usersRaw || []);
+    const totalMatched = totalRaw === countTimeoutToken ? users.length : Number(totalRaw || 0);
+
+    console.info('[admin-subscriptions] managed-users', {
+      db: mongoHealth.dbName,
+      host: mongoHealth.host,
+      collection: UserModel.collection?.collectionName || 'users',
+      filter: combinedFilter,
+      showAll,
+      q: normalizedQuery || null,
+      page,
+      pageSize,
+      totalMatched,
+      returned: users.length,
+      warning: degradedWarning || null,
+    });
+
+    const userIds = users.map((item) => item?._id).filter(Boolean);
     const profiles = userIds.length
       ? await withAdminSubscriptionTimeout(
         `${routeTag}:community-profiles`,
@@ -14840,7 +14898,7 @@ async function fetchAdminManagedUsers({
       (profiles || []).map((item) => [String(item.userId), item]),
     );
 
-    const mapped = (users || [])
+    const mapped = users
       .map((item) => {
         const userId = String(item._id);
         const fullName = `${item.firstName || ''} ${item.lastName || ''}`.trim();
@@ -14892,7 +14950,7 @@ async function fetchAdminManagedUsers({
           email: String(item.email || ''),
           profileImageUrl: String(profile?.shareProfilePicture ? (profile?.profilePictureUrl || '') : (item.profilePhotoUrl || '')),
           accountStatus,
-          provider: normalizeAuthProviderDetail(item.authProviderDetail),
+          provider: normalizeAuthProviderDetail(item.authProviderDetail || item.authProvider),
           firebaseUid: String(item.firebaseUid || ''),
           joinedAt: toIsoOrNull(item.createdAt),
           lastLoginAt: toIsoOrNull(item.lastLoginAt),
@@ -14915,13 +14973,19 @@ async function fetchAdminManagedUsers({
       totalMatched,
       page,
       pageSize,
-      totalPages: Math.max(1, Math.ceil(totalMatched / pageSize)),
+      totalPages: totalMatched === 0 ? 0 : Math.max(1, Math.ceil(totalMatched / pageSize)),
       hasMore: skip + mapped.length < totalMatched,
       showAll,
+      ...(degradedWarning ? { warning: degradedWarning } : {}),
     };
   } catch (error) {
     console.error('[admin-subscriptions] fetchAdminManagedUsers failed:', error);
-    return emptyAdminManagedUsersFallback({ page, pageSize, showAll });
+    return emptyAdminManagedUsersFallback({
+      page,
+      pageSize,
+      showAll,
+      warning: `User list failed: ${String(error?.message || error || 'unknown')}`,
+    });
   }
 }
 
@@ -15121,10 +15185,12 @@ app.post('/api/admin/signup-requests/:requestId/reject', authMiddleware, require
 app.get('/api/admin/subscriptions/requests/:requestId/payment-proof', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
 app.get('/api/admin/users', authMiddleware, requireAdmin, async (req, res) => {
-  const users = await UserModel.find({ role: { $ne: 'admin' }, authProvider: 'firebase' }, {
+  const users = await UserModel.find({ role: { $ne: 'admin' } }, {
     email: 1,
     firstName: 1,
     lastName: 1,
+    authProvider: 1,
+    authProviderDetail: 1,
   })
     .sort({ firstName: 1, lastName: 1, email: 1 })
     .lean();

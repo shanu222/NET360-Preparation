@@ -97,7 +97,9 @@ function attachConnectionListeners() {
 
   mongoose.connection.on('connected', () => {
     clearReconnectTimer();
-    console.log('Mongo connected');
+    const dbName = String(mongoose.connection.name || '').trim() || '(unknown)';
+    const host = String(mongoose.connection.host || '').trim() || '(unknown)';
+    console.log(`[mongo] connected db=${dbName} host=${host} collections=users(+mongoose models)`);
   });
 
   mongoose.connection.on('disconnected', () => {
@@ -135,7 +137,9 @@ export async function connectMongo(uri) {
   try {
     await mongoose.connect(uri, MONGO_CONNECT_OPTIONS);
     attachMongoClientListeners();
-    console.log('[mongo] connected (mongoose.connect resolved)');
+    const dbName = String(mongoose.connection.name || '').trim() || '(unknown)';
+    const host = String(mongoose.connection.host || '').trim() || '(unknown)';
+    console.log(`[mongo] connected (mongoose.connect resolved) db=${dbName} host=${host}`);
   } catch (error) {
     const name = String(error?.name || 'Error');
     const message = String(error?.message || '').trim();
@@ -161,6 +165,8 @@ export function getMongoHealth() {
     connected: readyState === 1,
     readyState,
     state: MONGO_READY_STATES[readyState] || 'unknown',
+    dbName: String(mongoose.connection.name || '').trim() || null,
+    host: String(mongoose.connection.host || '').trim() || null,
     reconnectScheduled: Boolean(reconnectTimer),
     reconnectInFlight,
   };
