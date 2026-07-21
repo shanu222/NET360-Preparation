@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Bookmark, CircleHelp, FastForward, Rewind, Save, Send, SkipBack, SkipForward } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, ArrowRight, Bookmark, CircleHelp, FastForward, LogOut, Rewind, Save, Send, SkipBack, SkipForward } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
-import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
+import { showSuccessToast, showErrorToast, showNeutralToast, handleApiError } from '../lib/userToast';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest, probeAuthenticatedSession } from '../lib/api';
 import { COOKIE_SESSION_API_MARKER, readPersistedStudentAccessToken, shouldPersistAuthTokens } from '../lib/authSession';
@@ -9,6 +9,62 @@ import { McqMathText, normalizeMcqImageSrc } from './McqRender';
 import { getMediaUrl } from '../lib/publicMedia';
 import { fetchAndApplyPublicMediaConfig } from '../lib/publicMediaRuntime';
 import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
+import { CancelExamDialog, TabSwitchWarningDialog } from './ExamLifecycleDialogs';
+
+type ExamLifecycleStatus = 'idle' | 'active' | 'submitting' | 'completed' | 'submitted' | 'cancelled';
+type SubmitReason = 'manual' | 'timeout' | 'tab_switch' | 'cancel';
+
+const EXAM_ANSWERS_STORAGE_PREFIX = 'net360-exam-answers-';
+const TAB_VIOLATION_COALESCE_MS = 1500;
+const AUTOSAVE_INTERVAL_MS = 20_000;
+
+function getExamAnswersStorageKey(sessionOrChallengeId: string) {
+  return `${EXAM_ANSWERS_STORAGE_PREFIX}${sessionOrChallengeId}`;
+}
+
+function readExamAutosave(sessionOrChallengeId: string): {
+  answers: Record<string, string | null>;
+  markedForReview: Record<string, boolean>;
+} | null {
+  try {
+    const raw = localStorage.getItem(getExamAnswersStorageKey(sessionOrChallengeId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as {
+      answers?: Record<string, string | null>;
+      markedForReview?: Record<string, boolean>;
+    };
+    return {
+      answers: parsed.answers && typeof parsed.answers === 'object' ? parsed.answers : {},
+      markedForReview: parsed.markedForReview && typeof parsed.markedForReview === 'object' ? parsed.markedForReview : {},
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeExamAutosave(
+  sessionOrChallengeId: string,
+  answers: Record<string, string | null>,
+  markedForReview: Record<string, boolean>,
+) {
+  try {
+    localStorage.setItem(
+      getExamAnswersStorageKey(sessionOrChallengeId),
+      JSON.stringify({ answers, markedForReview, savedAt: Date.now() }),
+    );
+  } catch {
+    // Ignore quota / private mode failures — in-memory answers still submit.
+  }
+}
+
+function clearExamAutosave(sessionOrChallengeId: string | null | undefined) {
+  if (!sessionOrChallengeId) return;
+  try {
+    localStorage.removeItem(getExamAnswersStorageKey(sessionOrChallengeId));
+  } catch {
+    /* ignore */
+  }
+}
 
 type Difficulty = 'Easy' | 'Medium' | 'Hard';
 
@@ -305,9 +361,45 @@ export function TestInterfacePage() {
   const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [isPreviewReadOnly, setIsPreviewReadOnly] = useState(false);
 
+  const [examStatus, setExamStatus] = useState<ExamLifecycleStatus>('idle');
+  const [tabWarningLevel, setTabWarningLevel] = useState<1 | 2 | null>(null);
+  const [cancelDialogOpen, setCancelDialogOpen] = useState(false);
+  const [resultNotice, setResultNotice] = useState<string | null>(null);
+
+  const examStatusRef = useRef<ExamLifecycleStatus>('idle');
+  const answersRef = useRef<Record<string, string | null>>({});
+  const markedForReviewRef = useRef<Record<string, boolean>>({});
+  const isSubmittingRef = useRef(false);
   const violationCountRef = useRef(0);
   const violationDebounceAtRef = useRef(0);
-  const hasAutoCancelledRef = useRef(false);
+  const hasTerminalSubmitRef = useRef(false);
+  const examModalOpenRef = useRef(false);
+  const currentIndexRef = useRef(0);
+  const handleSubmitRef = useRef<(options?: { auto?: boolean; reason?: SubmitReason }) => Promise<void>>(async () => {});
+
+  useEffect(() => {
+    examStatusRef.current = examStatus;
+  }, [examStatus]);
+
+  useEffect(() => {
+    answersRef.current = answers;
+  }, [answers]);
+
+  useEffect(() => {
+    markedForReviewRef.current = markedForReview;
+  }, [markedForReview]);
+
+  useEffect(() => {
+    isSubmittingRef.current = isSubmitting;
+  }, [isSubmitting]);
+
+  useEffect(() => {
+    currentIndexRef.current = currentIndex;
+  }, [currentIndex]);
+
+  useEffect(() => {
+    examModalOpenRef.current = Boolean(tabWarningLevel) || cancelDialogOpen;
+  }, [tabWarningLevel, cancelDialogOpen]);
 
   const getLaunchFallback = () => {
     try {
@@ -430,6 +522,7 @@ export function TestInterfacePage() {
       setSession(previewSession);
       setAnswers(previewReadOnly ? prefilledAnswers : {});
       setRemainingSeconds(durationMinutes * 60);
+      setExamStatus('active');
       setLoading(false);
       setLaunchResolved(true);
       return;
@@ -538,64 +631,61 @@ export function TestInterfacePage() {
 
   const getChallengeAttemptStorageKey = (challengeId: string) => `net360-challenge-attempt-${challengeId}`;
 
-  const cancelActiveExam = async (trigger: string) => {
-    if (!resolvedToken || result || isSubmitting || hasAutoCancelledRef.current) return;
-
-    hasAutoCancelledRef.current = true;
-    const reason = 'Left secured test environment after warning.';
-
-    try {
-      if (isChallengeMode) {
-        if (resolvedChallengeId) {
-          await apiRequest(`/api/community/quiz-challenges/${resolvedChallengeId}/forfeit`, {
-            method: 'POST',
-            body: JSON.stringify({
-              reason,
-              trigger,
-              elapsedSeconds: challengeStartedAtMs ? Math.max(0, Math.floor((Date.now() - challengeStartedAtMs) / 1000)) : 0,
-            }),
-          }, resolvedToken);
-        }
-      } else if (resolvedSessionId) {
-        await apiRequest(`/api/tests/${resolvedSessionId}/cancel`, {
-          method: 'POST',
-          body: JSON.stringify({ reason, trigger }),
-        }, resolvedToken);
-      }
-    } catch {
-      // Best effort: redirect even if request fails.
-    } finally {
-      showErrorToast(
-        isChallengeMode
-          ? 'Challenge cancelled. You lost this challenge because you left the test environment.'
-          : 'Test cancelled because you left the secured test environment.',
-      );
-      window.setTimeout(() => {
-        leaveExamToApp(isChallengeMode ? '/?tab=community' : '/?tab=tests');
-      }, 700);
-    }
+  const getActiveExamStorageId = () => {
+    if (isPreviewMode) return null;
+    if (isChallengeMode) return resolvedChallengeId;
+    return resolvedSessionId || session?.id || null;
   };
 
-  const handleEnvironmentViolation = (trigger: string) => {
-    if (!resolvedToken || result || isSubmitting || hasAutoCancelledRef.current) return;
-    if (!isChallengeMode && !resolvedSessionId) return;
+  const persistExamProgress = useCallback((overrideAnswers?: Record<string, string | null>) => {
+    const storageId = getActiveExamStorageId();
+    if (!storageId || examStatusRef.current !== 'active') return;
+    writeExamAutosave(
+      storageId,
+      overrideAnswers || answersRef.current,
+      markedForReviewRef.current,
+    );
+  }, [isChallengeMode, isPreviewMode, resolvedChallengeId, resolvedSessionId, session?.id]);
+
+  const disarmExamGuards = useCallback((nextStatus: ExamLifecycleStatus) => {
+    setExamStatus(nextStatus);
+    examStatusRef.current = nextStatus;
+    setTabWarningLevel(null);
+    setCancelDialogOpen(false);
+  }, []);
+
+  const registerEnvironmentViolation = useCallback((trigger: string) => {
+    if (isPreviewMode) return;
+    if (examStatusRef.current !== 'active') return;
+    if (isSubmittingRef.current || hasTerminalSubmitRef.current) return;
+    if (!resolvedToken) return;
     if (isChallengeMode && !resolvedChallengeId) return;
+    if (!isChallengeMode && !resolvedSessionId) return;
+
+    // Opening our own dialogs can blur the window — ignore those.
+    if (examModalOpenRef.current && (trigger === 'blur' || trigger === 'focus')) return;
 
     const now = Date.now();
-    if (now - violationDebounceAtRef.current < 600) return;
+    if (now - violationDebounceAtRef.current < TAB_VIOLATION_COALESCE_MS) return;
     violationDebounceAtRef.current = now;
 
     violationCountRef.current += 1;
-    showWarningToast(
-      isChallengeMode
-        ? 'Warning: Leaving the test environment will cancel this challenge and you will lose.'
-        : 'Warning: Leaving the test environment will cancel this test.',
-    );
+    const count = violationCountRef.current;
 
-    if (violationCountRef.current >= 2) {
-      void cancelActiveExam(trigger);
+    if (count === 1) {
+      setTabWarningLevel(1);
+      return;
     }
-  };
+
+    if (count === 2) {
+      setTabWarningLevel(2);
+      return;
+    }
+
+    setTabWarningLevel(null);
+    persistExamProgress();
+    void handleSubmitRef.current({ auto: true, reason: 'tab_switch' });
+  }, [isChallengeMode, isPreviewMode, persistExamProgress, resolvedChallengeId, resolvedSessionId, resolvedToken]);
 
   const startedAtLabel = useMemo(() => {
     if (!session?.startedAt) return '--:--';
@@ -612,6 +702,12 @@ export function TestInterfacePage() {
     setReviewRows([]);
     setChallengeStartedAtMs(null);
     setChallengeLockedAnswers({});
+    setExamStatus('idle');
+    setTabWarningLevel(null);
+    setCancelDialogOpen(false);
+    setResultNotice(null);
+    violationCountRef.current = 0;
+    hasTerminalSubmitRef.current = false;
   };
 
   useEffect(() => {
@@ -670,7 +766,15 @@ export function TestInterfacePage() {
             acc[String(row.questionId || '')] = String(row.selectedOption || '');
             return acc;
           }, {} as Record<string, string | null>);
-          setAnswers(seededAnswers);
+
+          const autosave = readExamAutosave(String(challenge.id || resolvedChallengeId));
+          setAnswers({
+            ...(autosave?.answers || {}),
+            ...seededAnswers,
+          });
+          if (autosave?.markedForReview) {
+            setMarkedForReview(autosave.markedForReview);
+          }
 
           if (String(challenge.challengeType || '') === 'live') {
             const lockMap = (challenge.myResult?.answers || []).reduce((acc, row) => {
@@ -683,6 +787,9 @@ export function TestInterfacePage() {
           }
 
           setSession(mappedSession);
+          setExamStatus('active');
+          violationCountRef.current = 0;
+          hasTerminalSubmitRef.current = false;
 
           const totalDurationSeconds = Math.max(1, Number(challenge.durationSeconds || mappedSession.durationMinutes * 60));
           if (String(challenge.challengeType || '') === 'live') {
@@ -730,7 +837,15 @@ export function TestInterfacePage() {
           console.log('API response:', response);
         }
         setSession(payload as unknown as TestSession);
+        const autosave = readExamAutosave(String(payload.id || resolvedSessionId));
+        if (autosave) {
+          setAnswers(autosave.answers || {});
+          setMarkedForReview(autosave.markedForReview || {});
+        }
         setRemainingSeconds(Math.max(1, payload.durationMinutes * 60));
+        setExamStatus('active');
+        violationCountRef.current = 0;
+        hasTerminalSubmitRef.current = false;
       } catch (err) {
         if (import.meta.env.DEV) {
           console.error('Test loading error:', err);
@@ -784,7 +899,8 @@ export function TestInterfacePage() {
   useEffect(() => {
     if (isPreviewMode) return;
     if (!session || result || isSubmitting || remainingSeconds !== 0) return;
-    void handleSubmit(true);
+    if (examStatusRef.current !== 'active') return;
+    void handleSubmitRef.current({ auto: true, reason: 'timeout' });
   }, [isPreviewMode, session, result, isSubmitting, remainingSeconds]);
 
   const question = session?.questions[currentIndex] || null;
@@ -815,17 +931,25 @@ export function TestInterfacePage() {
     return sections;
   }, [session]);
 
+  const goToQuestion = useCallback((nextIndex: number) => {
+    persistExamProgress();
+    setCurrentIndex(nextIndex);
+  }, [persistExamProgress]);
+
   const goToNextSection = () => {
     const next = subjectSections.find((section) => section.start > currentIndex);
-    if (next) setCurrentIndex(next.start);
+    if (next) goToQuestion(next.start);
   };
 
   const goToPreviousSection = () => {
     const previous = [...subjectSections].reverse().find((section) => section.start < currentIndex);
-    if (previous) setCurrentIndex(previous.start);
+    if (previous) goToQuestion(previous.start);
   };
 
-  const handleSubmit = async (auto = false) => {
+  const handleSubmit = useCallback(async (options: { auto?: boolean; reason?: SubmitReason } = {}) => {
+    const auto = Boolean(options.auto);
+    const reason: SubmitReason = options.reason || (auto ? 'timeout' : 'manual');
+
     if (isPreviewMode) {
       if (auto) {
         showNeutralToast('Preview timer ended. Close this window to return to editor.');
@@ -833,13 +957,22 @@ export function TestInterfacePage() {
       return;
     }
 
-    if (!session || isSubmitting || result || !resolvedToken) return;
+    if (!session || !resolvedToken) return;
+    if (hasTerminalSubmitRef.current) return;
+    if (isSubmittingRef.current || result) return;
+    if (examStatusRef.current !== 'active') return;
 
+    hasTerminalSubmitRef.current = true;
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
+    disarmExamGuards(reason === 'cancel' ? 'cancelled' : 'submitting');
+    persistExamProgress();
+
     try {
+      const latestAnswers = answersRef.current;
       const payload = session.questions.map((item) => ({
         questionId: item.id,
-        selectedOption: answers[item.id] ?? null,
+        selectedOption: latestAnswers[item.id] ?? null,
       }));
 
       if (isChallengeMode) {
@@ -867,10 +1000,18 @@ export function TestInterfacePage() {
         });
 
         localStorage.removeItem(getChallengeAttemptStorageKey(resolvedChallengeId));
+        clearExamAutosave(resolvedChallengeId);
+        disarmExamGuards(reason === 'cancel' ? 'cancelled' : 'submitted');
 
-        if (auto) {
+        if (reason === 'tab_switch') {
+          setResultNotice('Your exam has been automatically submitted because you repeatedly left the exam window.');
+        } else if (reason === 'cancel') {
+          setResultNotice('Your exam was cancelled. Current progress has been submitted.');
+        } else if (reason === 'timeout') {
+          setResultNotice(null);
           showNeutralToast('Time is up. Challenge auto-submitted.');
         } else {
+          setResultNotice(null);
           showSuccessToast('Challenge submitted successfully.');
         }
         return;
@@ -900,47 +1041,105 @@ export function TestInterfacePage() {
         unanswered: attempt.unanswered,
       });
       setReviewRows(Array.isArray(response.review) ? response.review : []);
+      clearExamAutosave(session.id);
+      disarmExamGuards(reason === 'cancel' ? 'cancelled' : 'completed');
 
-      if (auto) {
+      if (reason === 'tab_switch') {
+        setResultNotice('Your exam has been automatically submitted because you repeatedly left the exam window.');
+      } else if (reason === 'cancel') {
+        setResultNotice('Your exam was cancelled. Current progress has been submitted.');
+      } else if (reason === 'timeout') {
+        setResultNotice(null);
         showNeutralToast('Time is up. Test auto-submitted.');
       } else {
+        setResultNotice(null);
         showSuccessToast('Test submitted successfully.');
       }
     } catch (err) {
+      hasTerminalSubmitRef.current = false;
+      disarmExamGuards('active');
       handleApiError(err, 'Could not submit your test. Please try again.');
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
-  };
+  }, [
+    challengeStartedAtMs,
+    disarmExamGuards,
+    isChallengeMode,
+    isPreviewMode,
+    persistExamProgress,
+    remainingSeconds,
+    resolvedChallengeId,
+    resolvedToken,
+    result,
+    session,
+  ]);
+
+  useEffect(() => {
+    handleSubmitRef.current = handleSubmit;
+  }, [handleSubmit]);
+
+  // Autosave every 20s and when the active question changes.
+  useEffect(() => {
+    if (isPreviewMode) return;
+    if (examStatus !== 'active' || !session) return;
+    persistExamProgress();
+  }, [currentIndex, examStatus, isPreviewMode, persistExamProgress, session]);
 
   useEffect(() => {
     if (isPreviewMode) return;
-    if (!session || !resolvedToken || result || hasAutoCancelledRef.current) return;
+    if (examStatus !== 'active' || !session) return;
+
+    const timer = window.setInterval(() => {
+      persistExamProgress();
+    }, AUTOSAVE_INTERVAL_MS);
+
+    return () => window.clearInterval(timer);
+  }, [examStatus, isPreviewMode, persistExamProgress, session]);
+
+  const requestLeaveOrCancel = useCallback(() => {
+    if (examStatusRef.current !== 'active') {
+      leaveExamToApp(isChallengeMode ? '/?tab=community' : '/?tab=tests');
+      return;
+    }
+    setCancelDialogOpen(true);
+  }, [isChallengeMode]);
+
+  const navigateAfterCompletion = useCallback((path: string) => {
+    disarmExamGuards(examStatusRef.current === 'cancelled' ? 'cancelled' : 'completed');
+    leaveExamToApp(path);
+  }, [disarmExamGuards]);
+
+  useEffect(() => {
+    if (isPreviewMode) return;
+    if (examStatus !== 'active') return;
+    if (!session || !resolvedToken) return;
     if (isChallengeMode && !resolvedChallengeId) return;
     if (!isChallengeMode && !resolvedSessionId) return;
 
     const onVisibilityChange = () => {
       if (document.hidden) {
-        handleEnvironmentViolation('visibilitychange');
+        registerEnvironmentViolation('visibilitychange');
       }
     };
 
     const onBlur = () => {
-      handleEnvironmentViolation('blur');
+      registerEnvironmentViolation('blur');
     };
 
     const onPopState = () => {
-      handleEnvironmentViolation('popstate');
-      window.history.pushState({ challengeGuard: true }, '', window.location.href);
+      window.history.pushState({ examGuard: true }, '', window.location.href);
+      setCancelDialogOpen(true);
     };
 
     const onBeforeUnload = (event: BeforeUnloadEvent) => {
-      handleEnvironmentViolation('beforeunload');
+      if (examStatusRef.current !== 'active') return;
       event.preventDefault();
-      event.returnValue = '';
+      event.returnValue = 'Leaving the test will cancel your test';
     };
 
-    window.history.pushState({ challengeGuard: true }, '', window.location.href);
+    window.history.pushState({ examGuard: true }, '', window.location.href);
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('blur', onBlur);
     window.addEventListener('popstate', onPopState);
@@ -955,11 +1154,11 @@ export function TestInterfacePage() {
       try {
         appStateListener = await CapacitorApp.addListener('appStateChange', ({ isActive }) => {
           if (!isActive) {
-            handleEnvironmentViolation('appStateChange');
+            registerEnvironmentViolation('appStateChange');
           }
         });
         backButtonListener = await CapacitorApp.addListener('backButton', () => {
-          handleEnvironmentViolation('hardwareBackButton');
+          setCancelDialogOpen(true);
         });
       } catch {
         // Non-native runtime or listener attach failure.
@@ -976,7 +1175,16 @@ export function TestInterfacePage() {
       appStateListener?.remove();
       backButtonListener?.remove();
     };
-  }, [isChallengeMode, isPreviewMode, resolvedChallengeId, resolvedSessionId, resolvedToken, result, session]);
+  }, [
+    examStatus,
+    isChallengeMode,
+    isPreviewMode,
+    registerEnvironmentViolation,
+    resolvedChallengeId,
+    resolvedSessionId,
+    resolvedToken,
+    session,
+  ]);
 
   if (loading) {
     return (
@@ -1094,7 +1302,12 @@ export function TestInterfacePage() {
                   onChange={() => {
                     if (isPreviewReadOnly) return;
                     if (!isChallengeMode || String(challengeType) !== 'live') {
-                      setAnswers((prev) => ({ ...prev, [question.id]: optionValue }));
+                      setAnswers((prev) => {
+                        const next = { ...prev, [question.id]: optionValue };
+                        answersRef.current = next;
+                        persistExamProgress(next);
+                        return next;
+                      });
                       return;
                     }
 
@@ -1119,7 +1332,12 @@ export function TestInterfacePage() {
                     )
                       .then(() => {
                         setChallengeLockedAnswers((prev) => ({ ...prev, [question.id]: optionValue }));
-                        setAnswers((prev) => ({ ...prev, [question.id]: optionValue }));
+                        setAnswers((prev) => {
+                          const next = { ...prev, [question.id]: optionValue };
+                          answersRef.current = next;
+                          persistExamProgress(next);
+                          return next;
+                        });
                       })
                       .catch((error) => {
                         handleApiError(error, 'Could not lock answer for live challenge.');
@@ -1151,16 +1369,57 @@ export function TestInterfacePage() {
           </div>
 
           <div className="min-w-0 max-lg:overflow-x-auto max-lg:pb-1 max-lg:[-webkit-overflow-scrolling:touch]">
-            <div className="grid min-w-0 grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-9">
-              <ExamButton label="Save" icon={Save} onClick={() => showSuccessToast('Answer saved for this question.')} />
-              <ExamButton label="Next" icon={ArrowRight} onClick={() => setCurrentIndex((prev) => Math.min(session.questionCount - 1, prev + 1))} />
-              <ExamButton label="Prev" icon={ArrowLeft} onClick={() => setCurrentIndex((prev) => Math.max(0, prev - 1))} />
-              <ExamButton label="Review" icon={Bookmark} onClick={() => setMarkedForReview((prev) => ({ ...prev, [question.id]: !prev[question.id] }))} />
-              <ExamButton label="Next Section" icon={SkipForward} onClick={goToNextSection} />
-              <ExamButton label="Prev Section" icon={SkipBack} onClick={goToPreviousSection} />
-              <ExamButton label="First" icon={Rewind} onClick={() => setCurrentIndex(0)} />
-              <ExamButton label="Last" icon={FastForward} onClick={() => setCurrentIndex(session.questionCount - 1)} />
-              <ExamButton label="Help" icon={CircleHelp} onClick={() => showNeutralToast('Use Next/Prev, section controls, and Submit when done.')} />
+            <div className="grid min-w-0 grid-cols-2 gap-1.5 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-10">
+              <ExamButton
+                label="Save"
+                icon={Save}
+                disabled={isSubmitting || Boolean(result)}
+                onClick={() => {
+                  persistExamProgress();
+                  showSuccessToast('Progress saved.');
+                }}
+              />
+              <ExamButton
+                label="Next"
+                icon={ArrowRight}
+                disabled={isSubmitting || Boolean(result)}
+                onClick={() => goToQuestion(Math.min(session.questionCount - 1, currentIndex + 1))}
+              />
+              <ExamButton
+                label="Prev"
+                icon={ArrowLeft}
+                disabled={isSubmitting || Boolean(result)}
+                onClick={() => goToQuestion(Math.max(0, currentIndex - 1))}
+              />
+              <ExamButton
+                label="Review"
+                icon={Bookmark}
+                disabled={isSubmitting || Boolean(result)}
+                onClick={() => {
+                  setMarkedForReview((prev) => {
+                    const next = { ...prev, [question.id]: !prev[question.id] };
+                    markedForReviewRef.current = next;
+                    persistExamProgress();
+                    return next;
+                  });
+                }}
+              />
+              <ExamButton label="Next Section" icon={SkipForward} disabled={isSubmitting || Boolean(result)} onClick={goToNextSection} />
+              <ExamButton label="Prev Section" icon={SkipBack} disabled={isSubmitting || Boolean(result)} onClick={goToPreviousSection} />
+              <ExamButton label="First" icon={Rewind} disabled={isSubmitting || Boolean(result)} onClick={() => goToQuestion(0)} />
+              <ExamButton label="Last" icon={FastForward} disabled={isSubmitting || Boolean(result)} onClick={() => goToQuestion(session.questionCount - 1)} />
+              <ExamButton
+                label="Exit Exam"
+                icon={LogOut}
+                disabled={isSubmitting || Boolean(result)}
+                onClick={requestLeaveOrCancel}
+              />
+              <ExamButton
+                label="Help"
+                icon={CircleHelp}
+                disabled={isSubmitting}
+                onClick={() => showNeutralToast('Use Next/Prev, section controls, and Finish when done. Leaving the exam window three times auto-submits.')}
+              />
             </div>
           </div>
         </section>
@@ -1184,8 +1443,11 @@ export function TestInterfacePage() {
             <button
               type="button"
               className="inline-flex w-full items-center justify-center gap-1 rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-1 text-blue-700 hover:bg-[#c9deff] disabled:opacity-60 sm:w-auto"
-              onClick={() => void handleSubmit(false)}
-              disabled={isSubmitting || Boolean(result)}
+              onClick={() => {
+                if (isSubmittingRef.current || result) return;
+                void handleSubmit({ auto: false, reason: 'manual' });
+              }}
+              disabled={isSubmitting || Boolean(result) || examStatus !== 'active'}
             >
               <Send className="h-4 w-4" />
               Click here to FINISH Your Test
@@ -1200,7 +1462,11 @@ export function TestInterfacePage() {
           type="button"
           className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
           onClick={() => {
-            leaveExamToApp('/');
+            if (examStatus === 'active') {
+              requestLeaveOrCancel();
+              return;
+            }
+            navigateAfterCompletion('/');
           }}
         >
           Go to Main Page
@@ -1210,22 +1476,43 @@ export function TestInterfacePage() {
           type="button"
           className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
           onClick={() => {
-            leaveExamToApp('/?tab=profile');
+            if (examStatus === 'active') {
+              requestLeaveOrCancel();
+              return;
+            }
+            navigateAfterCompletion('/?tab=profile');
           }}
         >
-          Go to Login Page
+          Go Home
         </button>
       </div>
 
+      <TabSwitchWarningDialog
+        open={tabWarningLevel === 1 || tabWarningLevel === 2}
+        level={tabWarningLevel === 2 ? 2 : 1}
+        onAcknowledge={() => setTabWarningLevel(null)}
+      />
+
+      <CancelExamDialog
+        open={cancelDialogOpen && examStatus === 'active'}
+        submitting={isSubmitting}
+        onContinue={() => setCancelDialogOpen(false)}
+        onCancelAndSubmit={() => {
+          setCancelDialogOpen(false);
+          void handleSubmit({ auto: false, reason: 'cancel' });
+        }}
+      />
+
       {result ? (
-        <div className="fixed inset-0 grid place-items-center bg-black/35 p-3">
+        <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/55 p-3">
           <div
             id="resultContainer"
             className="max-h-[min(90dvh,900px)] w-full max-w-[min(calc(100vw-1.5rem),28rem)] overflow-y-auto rounded border-2 border-[#2b5f9f] bg-white p-3 sm:p-4"
           >
             <h2 className="text-xl text-[#0d2c5a]">{isChallengeMode ? 'Challenge Submitted' : 'Test Submitted'}</h2>
             <p className="mt-1 text-sm text-slate-600">
-              {isChallengeMode ? 'Your challenge attempt has been recorded.' : 'Your attempt has been saved successfully.'}
+              {resultNotice
+                || (isChallengeMode ? 'Your challenge attempt has been recorded.' : 'Your attempt has been saved successfully.')}
             </p>
             <div className="mt-3 space-y-1 text-sm text-slate-700">
               <p>
@@ -1243,7 +1530,7 @@ export function TestInterfacePage() {
                 type="button"
                 className="w-full rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-2 text-sm text-blue-700 sm:w-auto sm:py-1"
                 onClick={() => {
-                  leaveExamToApp(isChallengeMode ? '/?tab=community' : '/?tab=tests');
+                  navigateAfterCompletion(isChallengeMode ? '/?tab=community' : '/?tab=tests');
                 }}
               >
                 {isChallengeMode ? 'Back to Community' : 'Back to Tests'}
@@ -1252,12 +1539,10 @@ export function TestInterfacePage() {
                 type="button"
                 className="w-full rounded border border-emerald-700 bg-emerald-100 px-3 py-2 text-sm text-emerald-800 sm:w-auto sm:py-1"
                 onClick={() => {
-                  setResult(null);
-                  setReviewRows([]);
-                  leaveExamToApp('/?tab=tests');
+                  navigateAfterCompletion('/?tab=tests');
                 }}
               >
-                Back to Dashboard
+                Dashboard
               </button>
               <button
                 id="fullscreenResultBtn"
@@ -1345,16 +1630,19 @@ function ExamButton({
   label,
   icon: Icon,
   onClick,
+  disabled = false,
 }: {
   label: string;
   icon: typeof Save;
   onClick: () => void;
+  disabled?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-10 min-w-0 w-full max-w-full items-center justify-center gap-1 rounded border border-[#3a5f8e] bg-gradient-to-b from-[#90b0d4] to-[#6f8eb8] px-1.5 text-[10px] text-white shadow hover:from-[#9db9d8] hover:to-[#7a99c0] sm:px-2 sm:text-[11px]"
+      disabled={disabled}
+      className="inline-flex h-10 min-w-0 w-full max-w-full items-center justify-center gap-1 rounded border border-[#3a5f8e] bg-gradient-to-b from-[#90b0d4] to-[#6f8eb8] px-1.5 text-[10px] text-white shadow hover:from-[#9db9d8] hover:to-[#7a99c0] disabled:cursor-not-allowed disabled:opacity-60 sm:px-2 sm:text-[11px]"
     >
       <Icon className="h-3.5 w-3.5" />
       {label}
