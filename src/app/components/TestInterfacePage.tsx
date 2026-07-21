@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, ArrowRight, Bookmark, CircleHelp, FastForward, LogOut, Rewind, Save, Send, SkipBack, SkipForward } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Bookmark, CircleHelp, FastForward, Loader2, LogOut, Rewind, Save, Send, SkipBack, SkipForward } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { showSuccessToast, showErrorToast, showNeutralToast, handleApiError } from '../lib/userToast';
 import { useAuth } from '../context/AuthContext';
@@ -1243,7 +1243,7 @@ export function TestInterfacePage() {
   const questionVideoSrc = getMediaUrl(String(question.videoUrl || '').trim());
 
   return (
-    <div className="min-h-dvh min-h-screen w-full max-w-full overflow-x-hidden bg-[#f2f6fb] p-1.5 text-[#0d2c5a] sm:p-2.5">
+    <div className="min-h-dvh min-h-screen w-full max-w-full overflow-x-hidden bg-[#f2f6fb] p-1.5 pb-[max(0.75rem,env(safe-area-inset-bottom,0px))] text-[#0d2c5a] sm:p-2.5">
       <div className="mx-auto w-full min-w-0 max-w-[min(100%,1200px)] rounded border-2 border-[#2b5f9f] bg-[#eef4fb] shadow-[0_12px_30px_rgba(5,32,71,0.15)]">
         <header className="grid gap-1.5 border-b border-[#2b5f9f] bg-white px-2 py-2 text-xs sm:gap-1 md:grid-cols-[1fr_auto_1fr] md:items-center md:gap-2 md:py-1 md:text-sm">
           <div className="font-semibold text-[#1f6b1f]">{formatSubject(question.subject)}</div>
@@ -1463,25 +1463,26 @@ export function TestInterfacePage() {
           ) : (
             <button
               type="button"
-              className="inline-flex w-full items-center justify-center gap-1 rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-1 text-blue-700 hover:bg-[#c9deff] disabled:opacity-60 sm:w-auto"
+              className="inline-flex min-h-11 w-full touch-manipulation items-center justify-center gap-1 rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-2 text-sm font-medium text-blue-700 transition active:scale-[0.98] hover:bg-[#c9deff] disabled:opacity-60 sm:w-auto sm:px-4"
               onClick={() => {
                 if (isSubmittingRef.current || result) return;
                 void handleSubmit({ auto: false, reason: 'manual' });
               }}
               disabled={isSubmitting || Boolean(result) || examStatus !== 'active'}
+              aria-busy={isSubmitting || undefined}
             >
-              <Send className="h-4 w-4" />
-              Click here to FINISH Your Test
+              {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+              {isSubmitting ? 'Submitting…' : 'Click here to FINISH Your Test'}
             </button>
           )}
         </footer>
       </div>
 
-      <div className="mt-1 bg-white px-2 py-2 text-center text-xs text-red-600 sm:text-sm">
+      <div className="mt-1 bg-white px-2 py-2 pb-[max(0.5rem,env(safe-area-inset-bottom,0px))] text-center text-xs text-red-600 sm:text-sm">
         {isPreviewMode ? 'Admin preview mode using student test layout' : 'NUST NET-style testing interface'}{' '}
         <button
           type="button"
-          className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
+          className="inline-block text-blue-600 underline underline-offset-2 hover:text-blue-800"
           onClick={() => {
             if (examStatus === 'active') {
               requestLeaveOrCancel();
@@ -1495,7 +1496,7 @@ export function TestInterfacePage() {
         {' | '}
         <button
           type="button"
-          className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
+          className="inline-block text-blue-600 underline underline-offset-2 hover:text-blue-800"
           onClick={() => {
             if (examStatus === 'active') {
               requestLeaveOrCancel();
@@ -1652,21 +1653,34 @@ function ExamButton({
   icon: Icon,
   onClick,
   disabled = false,
+  busy = false,
+  busyLabel,
 }: {
   label: string;
   icon: typeof Save;
   onClick: () => void;
   disabled?: boolean;
+  busy?: boolean;
+  busyLabel?: string;
 }) {
+  const [flashBusy, setFlashBusy] = useState(false);
+  const isBusy = busy || flashBusy;
+
   return (
     <button
       type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className="inline-flex h-10 min-w-0 w-full max-w-full items-center justify-center gap-1 rounded border border-[#3a5f8e] bg-gradient-to-b from-[#90b0d4] to-[#6f8eb8] px-1.5 text-[10px] text-white shadow hover:from-[#9db9d8] hover:to-[#7a99c0] disabled:cursor-not-allowed disabled:opacity-60 sm:px-2 sm:text-[11px]"
+      onClick={() => {
+        if (disabled || isBusy) return;
+        setFlashBusy(true);
+        window.setTimeout(() => setFlashBusy(false), 450);
+        onClick();
+      }}
+      disabled={disabled || isBusy}
+      aria-busy={isBusy || undefined}
+      className="inline-flex min-h-11 w-full max-w-full touch-manipulation flex-col items-center justify-center gap-0.5 rounded border border-[#3a5f8e] bg-gradient-to-b from-[#90b0d4] to-[#6f8eb8] px-1 py-1.5 text-[10px] leading-tight text-white shadow transition active:scale-[0.97] hover:from-[#9db9d8] hover:to-[#7a99c0] disabled:cursor-not-allowed disabled:opacity-60 sm:min-h-10 sm:flex-row sm:gap-1 sm:px-2 sm:text-[11px]"
     >
-      <Icon className="h-3.5 w-3.5" />
-      {label}
+      {isBusy ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" /> : <Icon className="h-3.5 w-3.5 shrink-0" />}
+      <span className="max-w-full whitespace-normal text-center">{isBusy ? busyLabel || 'Working…' : label}</span>
     </button>
   );
 }

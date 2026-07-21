@@ -27,11 +27,12 @@ android {
         }
     }
     defaultConfig {
-        applicationId "com.net360.preparation"
+        // Must match Firebase Android app + google-services.json (Google Sign-In SHA registration).
+        applicationId "com.net360prep.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 18
-        versionName "2.4.0"
+        versionCode 19
+        versionName "2.5.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

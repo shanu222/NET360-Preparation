@@ -1,5 +1,5 @@
 {
-  "appId": "com.net360.preparation",
+  "appId": "com.net360prep.app",
   "appName": "NET360 Preparation",
   "webDir": "dist",
   "bundledWebRuntime": false,

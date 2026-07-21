@@ -82,7 +82,7 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
   const webClientId = resolveGoogleWebClientId();
   androidNativeLog('google-native-start', {
     webClientId: maskClientId(webClientId),
-    packageHint: 'com.net360.preparation',
+    packageHint: 'com.net360prep.app',
   });
 
   let SocialLogin: {
