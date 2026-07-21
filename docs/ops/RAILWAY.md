@@ -25,6 +25,10 @@ Railway health checks were failing because:
 | Custom domain | `api.net360preparation.com` |
 | Node | 20 (`.nvmrc`) |
 
+**Main vs Admin:** See [RAILWAY-SERVICES.md](./RAILWAY-SERVICES.md). Production API is **Main only**. Keep `net360-admin` idle.
+
+After adding Variables in Railway, **Redeploy** so the running container picks them up. Confirm `/api/health` shows `env=production`, `mongo.configured=true`, `firebaseAdminConfigured=true`.
+
 ## DNS cutover
 
 1. Deploy Railway; confirm `https://<railway>/api/health` → 200.

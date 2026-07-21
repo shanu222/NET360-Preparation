@@ -127,7 +127,7 @@ Cron (from setup script):
 
 Backups: `/var/backups/net360/net360-mongo-*.gz`  
 Retention: 14 days (configurable via `BACKUP_RETENTION_DAYS`)  
-Optional S3: set `S3_BACKUP_BUCKET` + AWS CLI on host.
+Mongo backups: use Atlas scheduled backups or `scripts/mongodb-backup-daily.sh` (no AWS/S3 required).
 
 ## Dashboard layout (recommended)
 

@@ -6,6 +6,7 @@
 |-----|---------|
 | [RAILWAY.md](./RAILWAY.md) | Deploy, health check, DNS cutover, rollback |
 | [RAILWAY-ENV.md](./RAILWAY-ENV.md) | Environment variables for Railway / Vercel / Android |
+| [RAILWAY-SERVICES.md](./RAILWAY-SERVICES.md) | Main vs Admin — Admin is idle / not required |
 
 Topology: **Vercel (web) → Railway (API) → MongoDB Atlas**. Auth: Firebase + JWT.
 

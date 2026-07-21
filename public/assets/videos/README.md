@@ -1,7 +1,8 @@
 # User guide video
 
-Place `net360-guide.mp4` in this folder so it is bundled with the web and Android frontends:
+Bundled frontend asset (required):
 
 `public/assets/videos/net360-guide.mp4`
 
-Copy from the former S3 object `videos/net360-guide.mp4` if needed. Do not fetch from AWS at runtime.
+Served as `/assets/videos/net360-guide.mp4` on Vercel and in the Android Capacitor `www` bundle.
+Do not load this from S3, CloudFront, or Railway.

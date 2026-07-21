@@ -35,9 +35,9 @@ if (/^http:\/\//i.test(apiBaseUrl)) {
   console.warn('[mobile:build] Warning: non-HTTPS API URL detected. Prefer HTTPS for Android production builds.');
 }
 
-const mediaBase = String(process.env.VITE_S3_BASE_URL || process.env.VITE_PUBLIC_MEDIA_BASE_URL || '').trim();
+const mediaBase = String(process.env.VITE_PUBLIC_MEDIA_BASE_URL || '').trim();
 if (mediaBase) {
-  console.log('[mobile:build] Optional legacy media base URL present (bundled assets preferred):', mediaBase.replace(/\/+$/, ''));
+  console.log('[mobile:build] Optional media base override:', mediaBase.replace(/\/+$/, ''));
 } else {
   console.log('[mobile:build] Using bundled static media (schools/images/videos in dist).');
 }

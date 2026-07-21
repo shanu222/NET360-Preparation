@@ -1,20 +1,23 @@
 import { useMemo, useState } from 'react';
-import { shouldUseLocalMediaFallback, userGuideVideoUrl } from '../lib/publicMedia';
+import { userGuideVideoUrl } from '../lib/publicMedia';
 import { isNativeRuntime, logNativeEvent } from '../lib/nativeDiagnostics';
 
+const BUNDLED_GUIDE_VIDEO = '/assets/videos/net360-guide.mp4';
+
 /**
- * User guide video: primary URL from `userGuideVideoUrl()` (S3). Optional local `<source>` in dev or when
- * `VITE_MEDIA_LOCAL_FALLBACK=true`.
+ * User guide video — bundled at `public/assets/videos/net360-guide.mp4` (Vercel / Android).
+ * No S3 / CloudFront dependency.
  */
 export function Net360UserGuideVideoSection() {
-  const remote = userGuideVideoUrl();
-  const localFallback = shouldUseLocalMediaFallback() ? '/assets/videos/net360-guide.mp4' : null;
+  const primary = userGuideVideoUrl() || BUNDLED_GUIDE_VIDEO;
   const [retryCount, setRetryCount] = useState(0);
-  const remoteWithRetry = useMemo(() => {
-    if (!remote || retryCount <= 0 || !/^https?:\/\//i.test(remote)) return remote;
-    const sep = remote.includes('?') ? '&' : '?';
-    return `${remote}${sep}android_retry=${retryCount}`;
-  }, [remote, retryCount]);
+  const srcWithRetry = useMemo(() => {
+    if (!primary || retryCount <= 0 || !/^https?:\/\//i.test(primary)) return primary;
+    const sep = primary.includes('?') ? '&' : '?';
+    return `${primary}${sep}android_retry=${retryCount}`;
+  }, [primary, retryCount]);
+
+  const showBundledFallback = srcWithRetry !== BUNDLED_GUIDE_VIDEO;
 
   return (
     <div className="mx-auto mb-6 w-full max-w-[900px] px-1 text-center sm:mb-8">
@@ -31,7 +34,7 @@ export function Net360UserGuideVideoSection() {
           playsInline
           onError={() => {
             logNativeEvent('media', 'guide-video-error', {
-              remote,
+              primary,
               retryCount,
             }, 'warn');
             if (isNativeRuntime() && retryCount < 2) {
@@ -39,8 +42,8 @@ export function Net360UserGuideVideoSection() {
             }
           }}
         >
-          <source src={remoteWithRetry} type="video/mp4" />
-          {localFallback ? <source src={localFallback} type="video/mp4" /> : null}
+          <source src={srcWithRetry} type="video/mp4" />
+          {showBundledFallback ? <source src={BUNDLED_GUIDE_VIDEO} type="video/mp4" /> : null}
           Your browser does not support the video tag.
         </video>
       </div>
