@@ -1,6 +1,5 @@
 import {
   finalizeStaleSubscription,
-  hasPremiumSurfaceAccess,
   mergedSubscription,
   premiumSurfaceBypassEnabled,
   trialIsActive,
@@ -58,11 +57,12 @@ export function requireTrialOrPremiumContent(UserModel, resolveEntitlements) {
         : serviceType === 'tests'
           ? entitlementSnapshot?.paidServices?.tests
           : entitlementSnapshot?.paidServices?.preparation;
-      const preparationEntitlement = entitlementSnapshot?.preparation;
-      const legacyAllowed = hasPremiumSurfaceAccess(sub);
+      // Preparation also honors accessControls.preparationManual / global preparation grants.
+      const preparationEntitlement = serviceType === 'preparation'
+        ? entitlementSnapshot?.preparation
+        : null;
       const allowed = Boolean(serviceAccess?.allowed)
-        || Boolean(preparationEntitlement?.allowed)
-        || legacyAllowed;
+        || Boolean(preparationEntitlement?.allowed && preparationEntitlement.source !== 'legacy');
       if (!allowed) {
         logAuthDebug(req, {
           userId: String(req.user?._id || ''),
@@ -75,7 +75,7 @@ export function requireTrialOrPremiumContent(UserModel, resolveEntitlements) {
           serviceType,
           subscriptionStatus: String(sub?.status || 'inactive'),
           trialActive: trialIsActive(sub),
-          legacyAllowed,
+          legacyAllowed: false,
           serviceAccessAllowed: Boolean(serviceAccess?.allowed),
           serviceAccessSource: serviceAccess?.source || 'none',
           httpStatus: 403,
