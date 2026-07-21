@@ -41,11 +41,10 @@ import {
 import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from './components/ui/sheet';
 import { AppDataProvider } from './context/AppDataContext';
-import { AuthProvider, useAuth } from './context/AuthContext';
+import { useAuth } from './context/AuthContext';
 import { preloadCommunityCache } from './lib/communityPreload';
 import { prefetchStudentSection, scheduleIdleStudentPrefetch } from './lib/routePrefetch';
 import { showNeutralToast, showSuccessToast } from './lib/userToast';
-import { Toaster } from 'sonner';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -843,8 +842,9 @@ export default function App() {
   const pageDescription =
     'Practice MCQs and prepare for NUST entry test with high-quality questions, mock tests, analytics, and community features.';
 
+  // AuthProvider lives in main.tsx StudentAuthLayout so exam ↔ app navigations
+  // keep the session warm (no SessionReady flash / remount delay).
   return (
-    <AuthProvider>
       <SessionReady>
       {isConfirmAccountDeletionRoute ? (
         <>
@@ -858,7 +858,6 @@ export default function App() {
               <ConfirmAccountDeletionPageLazy />
             </Suspense>
           </div>
-          <Toaster richColors position="top-right" closeButton visibleToasts={4} expand={false} offset={16} />
         </>
       ) : (
       <SubscriptionProvider>
@@ -1004,13 +1003,11 @@ export default function App() {
         </div>
       </div>
 
-      <Toaster richColors position="top-right" closeButton visibleToasts={4} expand={false} offset={16} />
       <GlobalFreeAccessAnnouncement onStartLearning={() => navigate(PATH_BY_SECTION.tests)} />
       <DeferredSupportChat />
     </AppDataProvider>
       </SubscriptionProvider>
       )}
       </SessionReady>
-    </AuthProvider>
   );
 }

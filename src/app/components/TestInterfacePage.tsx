@@ -10,6 +10,9 @@ import { getMediaUrl } from '../lib/publicMedia';
 import { fetchAndApplyPublicMediaConfig } from '../lib/publicMediaRuntime';
 import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
 import { CancelExamDialog, TabSwitchWarningDialog } from './ExamLifecycleDialogs';
+import { leaveExamToApp, normalizeStudentAppPath } from '../lib/examWindowLaunch';
+import { prefetchStudentSection } from '../lib/routePrefetch';
+import { useNavigate } from 'react-router-dom';
 
 type ExamLifecycleStatus = 'idle' | 'active' | 'submitting' | 'completed' | 'submitted' | 'cancelled';
 type SubmitReason = 'manual' | 'timeout' | 'tab_switch' | 'cancel';
@@ -249,19 +252,6 @@ function buildOptionMedia(question: SessionQuestion) {
   }));
 }
 
-function leaveExamToApp(fallbackPath: string) {
-  try {
-    const ref = String(document.referrer || '');
-    if (ref && ref.startsWith(window.location.origin) && window.history.length > 1) {
-      window.history.back();
-      return;
-    }
-  } catch {
-    /* fall through */
-  }
-  window.location.assign(fallbackPath);
-}
-
 function formatSubject(value: SubjectKey) {
   return getSubjectLabel(value);
 }
@@ -277,6 +267,7 @@ const ADMIN_MCQ_TEST_PREVIEW_STORAGE_KEY = 'net360-admin-mcq-test-preview';
 
 export function TestInterfacePage() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [mediaRuntimeRev, setMediaRuntimeRev] = useState(0);
 
   useEffect(() => {
@@ -583,7 +574,7 @@ export function TestInterfacePage() {
         setError('Please sign in to take this test.');
         setLoading(false);
         window.setTimeout(() => {
-          leaveExamToApp('/?tab=profile');
+          leaveExamToApp('/profile');
         }, 900);
         return;
       }
@@ -595,7 +586,7 @@ export function TestInterfacePage() {
         setError('This challenge could not be opened.');
         setLoading(false);
         window.setTimeout(() => {
-          leaveExamToApp('/?tab=community');
+          leaveExamToApp('/community');
         }, 900);
         return;
       }
@@ -607,7 +598,7 @@ export function TestInterfacePage() {
         setError('This test could not be opened. Please start again from Tests.');
         setLoading(false);
         window.setTimeout(() => {
-          leaveExamToApp('/?tab=tests');
+          leaveExamToApp('/tests');
         }, 900);
         return;
       }
@@ -1100,16 +1091,46 @@ export function TestInterfacePage() {
 
   const requestLeaveOrCancel = useCallback(() => {
     if (examStatusRef.current !== 'active') {
-      leaveExamToApp(isChallengeMode ? '/?tab=community' : '/?tab=tests');
+      const target = normalizeStudentAppPath(isChallengeMode ? '/community' : '/tests');
+      navigate(target, { replace: true });
       return;
     }
     setCancelDialogOpen(true);
-  }, [isChallengeMode]);
+  }, [isChallengeMode, navigate]);
+
+  const flushExamRuntimeBeforeLeave = useCallback(() => {
+    hasTerminalSubmitRef.current = true;
+    disarmExamGuards(examStatusRef.current === 'cancelled' ? 'cancelled' : 'completed');
+    setTabWarningLevel(null);
+    setCancelDialogOpen(false);
+
+    const storageId = isChallengeMode ? resolvedChallengeId : (resolvedSessionId || session?.id || null);
+    clearExamAutosave(storageId);
+    try {
+      localStorage.removeItem('net360-exam-launch');
+    } catch {
+      /* ignore */
+    }
+
+    // Never block navigation on fullscreen teardown.
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => undefined);
+    }
+  }, [disarmExamGuards, isChallengeMode, resolvedChallengeId, resolvedSessionId, session?.id]);
 
   const navigateAfterCompletion = useCallback((path: string) => {
-    disarmExamGuards(examStatusRef.current === 'cancelled' ? 'cancelled' : 'completed');
-    leaveExamToApp(path);
-  }, [disarmExamGuards]);
+    flushExamRuntimeBeforeLeave();
+    // Immediate client-side route change — no API calls, no timers, no full reload.
+    navigate(normalizeStudentAppPath(path), { replace: true });
+  }, [flushExamRuntimeBeforeLeave, navigate]);
+
+  // Warm destination chunks while the result modal is visible.
+  useEffect(() => {
+    if (!result) return;
+    prefetchStudentSection('home');
+    prefetchStudentSection('tests');
+    if (isChallengeMode) prefetchStudentSection('community');
+  }, [isChallengeMode, result]);
 
   useEffect(() => {
     if (isPreviewMode) return;
@@ -1480,7 +1501,7 @@ export function TestInterfacePage() {
               requestLeaveOrCancel();
               return;
             }
-            navigateAfterCompletion('/?tab=profile');
+            navigateAfterCompletion('/');
           }}
         >
           Go Home
@@ -1530,7 +1551,7 @@ export function TestInterfacePage() {
                 type="button"
                 className="w-full rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-2 text-sm text-blue-700 sm:w-auto sm:py-1"
                 onClick={() => {
-                  navigateAfterCompletion(isChallengeMode ? '/?tab=community' : '/?tab=tests');
+                  navigateAfterCompletion(isChallengeMode ? '/community' : '/tests');
                 }}
               >
                 {isChallengeMode ? 'Back to Community' : 'Back to Tests'}
@@ -1539,7 +1560,7 @@ export function TestInterfacePage() {
                 type="button"
                 className="w-full rounded border border-emerald-700 bg-emerald-100 px-3 py-2 text-sm text-emerald-800 sm:w-auto sm:py-1"
                 onClick={() => {
-                  navigateAfterCompletion('/?tab=tests');
+                  navigateAfterCompletion('/');
                 }}
               >
                 Dashboard
