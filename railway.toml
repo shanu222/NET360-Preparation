@@ -2,14 +2,13 @@
 # Frontend (Vite) is hosted on Vercel — do not run vite on Railway.
 
 [build]
-# Prefer Railpack (Railway default). buildCommand overrides detected `npm run build`.
 builder = "RAILPACK"
-buildCommand = "node -e \"console.log('NET360 Railway API-only: skipping vite build (Vercel hosts the SPA)')\""
+# Never invoke vite. Safe even if dashboard still sets Build Command to npm run build
+# because package.json "build" → scripts/build-for-host.mjs skips when vite is absent.
+buildCommand = "node scripts/build-for-host.mjs"
 
 [deploy]
-# Must be the Express API — not server/web.js (SPA helper).
 startCommand = "node server/index.js"
-# Liveness only: must return 200 while Mongo/Redis are still connecting.
 healthcheckPath = "/api/health"
 healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"

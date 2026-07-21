@@ -26,9 +26,18 @@ Keep **Node 20** on Railway (`.nvmrc` / Nixpacks). Express API does not require 
 
 ## Defense in depth
 
-1. `railway.toml` `buildCommand` skips Vite.
-2. `nixpacks.toml` build phase skips Vite (if Nixpacks is selected).
-3. `npm run build` → `scripts/build-for-host.mjs` no-ops when any `RAILWAY_*` env is present (covers dashboard override of Build Command = `npm run build`).
-4. Vercel / local still run full Vite via the same script (no `RAILWAY_*`).
+1. `railway.toml` `buildCommand` = `node scripts/build-for-host.mjs`
+2. `nixpacks.toml` build phase same + `SKIP_VITE_BUILD=1`
+3. `scripts/build-for-host.mjs` skips when:
+   - any `RAILWAY_*` / `SKIP_VITE_BUILD` is set, **or**
+   - the `vite` package cannot be resolved (production `--omit=dev` install)
+4. Vercel installs `devDependencies` → Vite resolves → full SPA build runs
+5. Optional explicit web build: `npm run build:web`
 
-Optional explicit web build: `npm run build:web`.
+## Verify after redeploy
+
+- Build log shows `[build] Skipping vite` — **not** `vite: not found`
+- Start: `node server/index.js`
+- `/api/health` → `env=production`, mongo + firebase configured
+
+If the build log still shows `> vite build` (without `build-for-host.mjs`), Railway is deploying an **old commit** — connect the service to `main` (or latest) and redeploy.
