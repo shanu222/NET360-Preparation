@@ -7,7 +7,8 @@
     "node": ">=20 <23"
   },
   "scripts": {
-    "build": "vite build && node scripts/strip-bundled-cdn-media-from-dist.mjs",
+    "build": "node scripts/build-for-host.mjs",
+    "build:web": "vite build && node scripts/strip-bundled-cdn-media-from-dist.mjs",
     "serve:dist": "serve -s dist -l 3000",
     "dev": "vite",
     "start": "node server/index.js",

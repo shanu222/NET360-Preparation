@@ -2,9 +2,8 @@
 # Frontend (Vite) is hosted on Vercel — do not run vite on Railway.
 
 [build]
-builder = "NIXPACKS"
-# Override Nixpacks/Railpack default `npm run build` (vite). Vite is a
-# devDependency and is not installed when NODE_ENV=production → "vite: not found".
+# Prefer Railpack (Railway default). buildCommand overrides detected `npm run build`.
+builder = "RAILPACK"
 buildCommand = "node -e \"console.log('NET360 Railway API-only: skipping vite build (Vercel hosts the SPA)')\""
 
 [deploy]

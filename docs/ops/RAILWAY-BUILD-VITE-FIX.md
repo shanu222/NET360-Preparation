@@ -24,8 +24,11 @@ Vercel is unchanged — it still uses `npm run build` / Vite with `devDependenci
 
 Keep **Node 20** on Railway (`.nvmrc` / Nixpacks). Express API does not require Node 22. Warnings about Node 22 come from frontend/dev packages that Railway should not build.
 
-## Verify after redeploy
+## Defense in depth
 
-- Build log shows skip message, **not** `vite build`
-- `/api/health` → `env=production`, mongo + firebase configured
-- Start: `node server/index.js` only
+1. `railway.toml` `buildCommand` skips Vite.
+2. `nixpacks.toml` build phase skips Vite (if Nixpacks is selected).
+3. `npm run build` → `scripts/build-for-host.mjs` no-ops when any `RAILWAY_*` env is present (covers dashboard override of Build Command = `npm run build`).
+4. Vercel / local still run full Vite via the same script (no `RAILWAY_*`).
+
+Optional explicit web build: `npm run build:web`.
