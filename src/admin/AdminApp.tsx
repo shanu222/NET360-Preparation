@@ -6847,14 +6847,13 @@ export default function AdminApp() {
     try {
       setIsApplyingGlobalAccess(true);
       await apiRequest(
-        '/api/admin/subscriptions/access/global/grant',
+        '/api/admin/global-free-access/enable',
         {
           method: 'POST',
           body: JSON.stringify({
-            applyToAllPremiumSurfaces: true,
             startsAt: startsAtIso,
             expiresAt: endsAtIso,
-            notes: globalFreeAccessReason.trim(),
+            reason: globalFreeAccessReason.trim(),
             announcement: globalFreeAccessAnnouncement.trim(),
           }),
         },
@@ -6863,7 +6862,7 @@ export default function AdminApp() {
       showSuccessToast('Global Free Access is now enabled for every student.');
       await loadAdminData(authToken);
     } catch (error) {
-      handleApiError(error, 'Could not enable Global Free Access.');
+      handleApiError(error, 'Could not enable Global Free Access. Please try again.');
     } finally {
       setIsApplyingGlobalAccess(false);
     }
@@ -6874,12 +6873,11 @@ export default function AdminApp() {
     try {
       setIsApplyingGlobalAccess(true);
       await apiRequest(
-        '/api/admin/subscriptions/access/global/revoke',
+        '/api/admin/global-free-access/disable',
         {
           method: 'POST',
           body: JSON.stringify({
-            revokeAll: true,
-            notes: globalFreeAccessReason.trim() || 'Global Free Access disabled by admin',
+            reason: globalFreeAccessReason.trim() || 'Global Free Access disabled by admin',
           }),
         },
         authToken,
@@ -6887,7 +6885,7 @@ export default function AdminApp() {
       showSuccessToast('Global Free Access disabled. Individual subscriptions resume normally.');
       await loadAdminData(authToken);
     } catch (error) {
-      handleApiError(error, 'Could not disable Global Free Access.');
+      handleApiError(error, 'Could not disable Global Free Access. Please try again.');
     } finally {
       setIsApplyingGlobalAccess(false);
     }

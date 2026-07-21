@@ -10,16 +10,7 @@ import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
 import { Award, Bot, ChevronDown, ChevronUp, FlaskConical, GraduationCap, Loader2, LogOut, MessageCircle, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
 import { showSuccessToast, showErrorToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from './ui/alert-dialog';
+import { SessionConflictModal } from './SessionConflictModal';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
@@ -343,14 +334,14 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   };
 
   const confirmContinueOnOtherDevice = async () => {
-    setOtherDeviceDialogOpen(false);
     const method = pendingAuthMethod;
-    setPendingAuthMethod(null);
-    setSessionConflictInfo(null);
     if (method === 'password') {
       setAuthActionState('loggingIn');
       try {
         await login(authForm.email, authForm.password, { forceLogin: true, forceLogoutOtherDevice: true });
+        setPendingAuthMethod(null);
+        setSessionConflictInfo(null);
+        setOtherDeviceDialogOpen(false);
         showSuccessToast('Previous device was logged out successfully.');
       } catch (error) {
         showErrorToast(loginFriendlyAuthError(error, 'Unable to sign you in. Please check your email and password.'));
@@ -363,6 +354,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       setAuthActionState('loggingIn');
       try {
         await loginWithGoogle({ forceLogin: true, forceLogoutOtherDevice: true });
+        setPendingAuthMethod(null);
+        setSessionConflictInfo(null);
+        setOtherDeviceDialogOpen(false);
         if (!isNativeRuntimePlatform() || Capacitor.getPlatform() === 'android') {
           showSuccessToast('Previous device was logged out successfully.');
         } else {
@@ -907,8 +901,10 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
           </div>
         </div>
         </div>
-        <AlertDialog
+        <SessionConflictModal
           open={otherDeviceDialogOpen}
+          existingPlatform={sessionConflictInfo?.existingPlatform}
+          continuing={authActionState === 'loggingIn'}
           onOpenChange={(open) => {
             setOtherDeviceDialogOpen(open);
             if (!open) {
@@ -916,47 +912,15 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               setSessionConflictInfo(null);
             }
           }}
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Account already active</AlertDialogTitle>
-              <AlertDialogDescription className="space-y-2 text-left">
-                <span className="block">
-                  Your account is currently signed in on another device.
-                </span>
-                <span className="block">
-                  Choose one of the following:
-                </span>
-                <span className="block">
-                  • Continue here (this will securely sign you out from the previous device)
-                </span>
-                <span className="block">
-                  • Cancel
-                </span>
-                {sessionConflictInfo?.existingPlatform
-                  ? (
-                    <span className="block text-xs text-muted-foreground">
-                      Previous device type: {sessionConflictInfo.existingPlatform}
-                    </span>
-                  )
-                  : null}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel
-                onClick={() => {
-                  setPendingAuthMethod(null);
-                  setSessionConflictInfo(null);
-                }}
-              >
-                Cancel
-              </AlertDialogCancel>
-              <AlertDialogAction onClick={() => void confirmContinueOnOtherDevice()}>
-                Continue here
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
+          onCancel={() => {
+            setPendingAuthMethod(null);
+            setSessionConflictInfo(null);
+            setOtherDeviceDialogOpen(false);
+          }}
+          onContinue={() => {
+            void confirmContinueOnOtherDevice();
+          }}
+        />
         {showAuthDebugPanel ? (
           <Card className="border-amber-300 bg-amber-50/85">
             <CardHeader className="pb-3">
