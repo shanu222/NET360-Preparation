@@ -33,6 +33,9 @@ const viteEntrypoint = path.join(workspaceRoot, 'node_modules', 'vite', 'bin', '
 const capacitorCliEntrypoint = path.join(workspaceRoot, 'node_modules', '@capacitor', 'cli', 'bin', 'capacitor');
 
 run(nodeCommand, ['scripts/validate-mobile-env.mjs']);
+run(nodeCommand, ['scripts/patch-capgo-google-idtoken.mjs']);
 run(nodeCommand, [viteEntrypoint, 'build', '--mode', 'android']);
 run(nodeCommand, ['scripts/strip-bundled-cdn-media-from-dist.mjs']);
 run(nodeCommand, [capacitorCliEntrypoint, 'sync', 'android']);
+/* Cap sync may restore plugin sources from the package; re-apply the Firebase idToken patch. */
+run(nodeCommand, ['scripts/patch-capgo-google-idtoken.mjs']);
