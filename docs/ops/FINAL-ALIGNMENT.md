@@ -33,18 +33,25 @@ No exclusive backend/web/Railway/Mongo/Firebase Admin changes remain on `android
 | `NET360-admin-refactor` | **Deleted** |
 | `NET360-main-push` | **Locked by process** — delete after closing IDE handles |
 
-## Production verification snapshot
+## Production verification snapshot (2026-07-22)
 
 | Check | Result |
 |-------|--------|
+| Guide video on Vercel | **PASS** — `200` `video/mp4` (~18MB) |
+| www.net360preparation.com | **PASS** — `200` |
+| `api.net360preparation.com` | **FAIL** — connect timeout (DNS/cutover) |
+| `*.up.railway.app` default | **FAIL** — `Application not found` (service URL may have changed) |
 | Guide video in `main` tree | Present |
 | No `server/s3.js` on `main` | PASS |
-| Railway live secrets | Still needs redeploy (`env=development` historically) |
-| GitHub branch count | 2 |
+| GitHub branches | **PASS** — only `main` + `android-production` |
+| Local branches | **PASS** — only `main` + `android-production` |
+| Local folders | **PARTIAL** — empty locked stub `NET360-main-push` remains |
 
 ## Commits
 
 | Action | Hash |
 |--------|------|
-| `main` consolidation docs / FreeTrial / architecture | `af39763` (includes `4844d91`, `8d306a8`) |
+| `main` tip | `269b0d0` |
+| Prior consolidation / FreeTrial / architecture | `af39763`, `4844d91`, `8d306a8` |
 | `android-production` Android-only rebase | `e747b74` |
+| `android-production` tip (merged main docs) | `1cf30a4` |
