@@ -1207,6 +1207,8 @@ interface AdminSubscriptionManagementUsersPayload {
   pageSize?: number;
   totalPages?: number;
   hasMore?: boolean;
+  showAll?: boolean;
+  warning?: string;
 }
 
 interface AdminManagedServiceDetail {
@@ -2307,6 +2309,8 @@ function adminEnvStatusBadgeClasses(status?: string) {
 
 /** Bootstrap must never block the admin shell — cap per-request wait and disable retries. */
 const ADMIN_BOOTSTRAP_REQUEST_TIMEOUT_MS = 8_000;
+/** Subscription managed-user list is heavier; do not silently empty it under the short bootstrap budget. */
+const ADMIN_SUBSCRIPTION_USERS_TIMEOUT_MS = 30_000;
 const ADMIN_SESSION_RESTORE_TIMEOUT_MS = 15_000;
 
 const EMPTY_ADMIN_OVERVIEW: AdminOverview = {
@@ -3389,6 +3393,46 @@ export default function AdminApp() {
     setSubscriptionManagementPage(1);
   };
 
+  const buildSubscriptionManagementPath = useCallback(() => {
+    const params = new URLSearchParams({
+      page: String(subscriptionManagementPage),
+      pageSize: String(subscriptionManagementPageSize),
+    });
+    if (subscriptionManagementShowAll) {
+      params.set('showAll', 'true');
+    } else if (subscriptionManagementDebouncedQuery.trim()) {
+      params.set('q', subscriptionManagementDebouncedQuery.trim());
+    }
+    return `/api/admin/subscriptions/management/users?${params.toString()}`;
+  }, [
+    subscriptionManagementPage,
+    subscriptionManagementPageSize,
+    subscriptionManagementShowAll,
+    subscriptionManagementDebouncedQuery,
+  ]);
+
+  const applySubscriptionManagementPayload = useCallback((payload: AdminSubscriptionManagementUsersPayload) => {
+    setSubscriptionManagementUsers(payload.users || []);
+    setSubscriptionManagementTotal(Number(payload.totalMatched || 0));
+    setSubscriptionManagementHasMore(Boolean(payload.hasMore));
+    setSubscriptionSearchSuggestions((payload.users || []).slice(0, 8));
+    const warning = String((payload as { warning?: string }).warning || '').trim();
+    if (warning) {
+      showErrorToast(warning);
+    }
+  }, []);
+
+  const loadSubscriptionManagementUsers = useCallback(async (activeToken: string) => {
+    const path = buildSubscriptionManagementPath();
+    const payload = await apiRequest<AdminSubscriptionManagementUsersPayload>(
+      path,
+      { timeoutMs: ADMIN_SUBSCRIPTION_USERS_TIMEOUT_MS, retryCount: 1 },
+      activeToken,
+    );
+    applySubscriptionManagementPayload(payload);
+    return payload;
+  }, [applySubscriptionManagementPayload, buildSubscriptionManagementPath]);
+
   const openQuestionBankWindow = () => {
     const url = new URL(window.location.href);
     url.searchParams.set('view', 'question-bank');
@@ -3423,18 +3467,7 @@ export default function AdminApp() {
     const bootstrapStarted = performance.now();
     console.info('[admin-bootstrap] loadAdminData start', options.deferredOnly ? 'deferred' : options.criticalOnly ? 'critical' : 'full');
 
-    const subscriptionManagementPath = (() => {
-      const params = new URLSearchParams({
-        page: String(subscriptionManagementPage),
-        pageSize: String(subscriptionManagementPageSize),
-      });
-      if (subscriptionManagementShowAll) {
-        params.set('showAll', 'true');
-      } else if (subscriptionManagementDebouncedQuery.trim()) {
-        params.set('q', subscriptionManagementDebouncedQuery.trim());
-      }
-      return `/api/admin/subscriptions/management/users?${params.toString()}`;
-    })();
+    const subscriptionManagementPath = buildSubscriptionManagementPath();
 
     const criticalSteps = [
       fetchAdminBootstrapStep('overview', '/api/admin/overview', activeToken, EMPTY_ADMIN_OVERVIEW),
@@ -3473,7 +3506,7 @@ export default function AdminApp() {
         pageSize: subscriptionManagementPageSize,
         totalPages: 0,
         hasMore: false,
-      } as AdminSubscriptionManagementUsersPayload),
+      } as AdminSubscriptionManagementUsersPayload, { timeoutMs: ADMIN_SUBSCRIPTION_USERS_TIMEOUT_MS, retryCount: 1 }),
       fetchAdminBootstrapStep('community-reports', '/api/admin/community/reports', activeToken, { reports: [] as AdminCommunityReport[] }),
       fetchAdminBootstrapStep('support-chat', '/api/admin/support-chat/conversations', activeToken, { conversations: [] as AdminSupportConversation[] }, { timeoutMs: 12_000 }),
       fetchAdminBootstrapStep('mcq-bank-structure', '/api/admin/mcq-bank/structure', activeToken, { structure: [] as AdminMcqBankStructureItem[] }),
@@ -3508,10 +3541,7 @@ export default function AdminApp() {
       setSubscriptionUsers(subscriptionUsersPayload.users || []);
       setPaidServicesOverview(paidServicesOverviewPayload);
       setPaidServicesUsers(paidServicesUsersPayload.users || []);
-      setSubscriptionManagementUsers(subscriptionManagementUsersPayload.users || []);
-      setSubscriptionManagementTotal(Number(subscriptionManagementUsersPayload.totalMatched || 0));
-      setSubscriptionManagementHasMore(Boolean(subscriptionManagementUsersPayload.hasMore));
-      setSubscriptionSearchSuggestions((subscriptionManagementUsersPayload.users || []).slice(0, 8));
+      applySubscriptionManagementPayload(subscriptionManagementUsersPayload);
       setCommunityReports(communityReportsPayload.reports || []);
       setSupportConversations(supportConversationsPayload.conversations || []);
       setMcqStructure(structurePayload.structure || []);
@@ -3567,10 +3597,7 @@ export default function AdminApp() {
     setSubscriptionUsers(subscriptionUsersPayload.users || []);
     setPaidServicesOverview(paidServicesOverviewPayload);
     setPaidServicesUsers(paidServicesUsersPayload.users || []);
-    setSubscriptionManagementUsers(subscriptionManagementUsersPayload.users || []);
-    setSubscriptionManagementTotal(Number(subscriptionManagementUsersPayload.totalMatched || 0));
-    setSubscriptionManagementHasMore(Boolean(subscriptionManagementUsersPayload.hasMore));
-    setSubscriptionSearchSuggestions((subscriptionManagementUsersPayload.users || []).slice(0, 8));
+    applySubscriptionManagementPayload(subscriptionManagementUsersPayload);
     setCommunityReports(communityReportsPayload.reports || []);
     setSupportConversations(supportConversationsPayload.conversations || []);
     setMcqStructure(structurePayload.structure || []);
@@ -3583,13 +3610,16 @@ export default function AdminApp() {
     if (!authToken) return;
     setIsSyncingFirebaseUsers(true);
     try {
-      const payload = await apiRequest<{ ok: boolean; synced?: number; scanned?: number }>(
+      const payload = await apiRequest<{ ok: boolean; synced?: number; scanned?: number; skipped?: boolean }>(
         '/api/admin/subscriptions/management/sync-firebase-users',
-        { method: 'POST' },
+        { method: 'POST', timeoutMs: 120_000 },
         authToken,
       );
       showSuccessToast(`Firebase user sync completed. Synced ${Number(payload?.synced || 0)} of ${Number(payload?.scanned || 0)} scanned users.`);
-      await loadAdminData(authToken);
+      if (!subscriptionManagementShowAll && !subscriptionManagementDebouncedQuery.trim()) {
+        setSubscriptionManagementShowAll(true);
+      }
+      await loadSubscriptionManagementUsers(authToken);
     } catch (error) {
       handleApiError(error, 'Could not sync Firebase users.');
     } finally {
@@ -3865,10 +3895,6 @@ export default function AdminApp() {
     ready,
     subscriptionFilter,
     accessTypeFilter,
-    subscriptionManagementDebouncedQuery,
-    subscriptionManagementShowAll,
-    subscriptionManagementPage,
-    subscriptionManagementPageSize,
     paidServicesQuery,
     paidServicesStatusFilter,
     paidServiceTypeFilter,
@@ -3876,6 +3902,28 @@ export default function AdminApp() {
     premiumRequestQuery,
     passwordRecoveryStatusFilter,
     passwordRecoveryQuery,
+  ]);
+
+  useEffect(() => {
+    if (!authToken || !ready) {
+      return;
+    }
+    if (skipFilterReloadAfterBootstrap.current) {
+      return;
+    }
+
+    void loadSubscriptionManagementUsers(authToken).catch((error) => {
+      console.error('[admin-subscriptions] managed users reload failed:', error);
+      showErrorToast(audienceFriendlyError(error, 'Could not load managed users.'));
+    });
+  }, [
+    authToken,
+    ready,
+    subscriptionManagementDebouncedQuery,
+    subscriptionManagementShowAll,
+    subscriptionManagementPage,
+    subscriptionManagementPageSize,
+    loadSubscriptionManagementUsers,
   ]);
 
   useEffect(() => {
@@ -10764,7 +10812,9 @@ export default function AdminApp() {
                   </div>
                 ))}
                 {!subscriptionManagementUsers.length ? (
-                  <p className="text-sm text-muted-foreground">No managed users matched your search.</p>
+                  <p className="text-sm text-muted-foreground">
+                    No managed users matched your search. Enable &quot;Show All Users&quot;, search by email/name, or click Sync Firebase Users.
+                  </p>
                 ) : null}
               </div>
 
