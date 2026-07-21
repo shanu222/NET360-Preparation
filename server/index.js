@@ -5873,7 +5873,8 @@ async function repairCorruptMcqDocumentIds() {
   let scanned = 0;
   let repaired = 0;
   // Only load _id first so large embedded images do not stall startup repair.
-  const cursor = MCQModel.collection.find({}, { projection: { _id: 1 }, timeout: false });
+  // Do not pass `timeout: false` — Atlas shared tiers reject noTimeout cursors.
+  const cursor = MCQModel.collection.find({}, { projection: { _id: 1 } });
   const corruptIds = [];
   try {
     for await (const doc of cursor) {
