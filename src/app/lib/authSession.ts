@@ -128,6 +128,45 @@ export function clearPersistedStudentTokens() {
   lsRemove(STUDENT_REFRESH_KEY);
 }
 
+const STUDENT_USER_SNAPSHOT_KEY = 'net360-auth-user-snapshot';
+
+/** Persist a minimal user snapshot so UI can survive transient restore failures. */
+export function persistStudentUserSnapshot(user: unknown) {
+  if (!shouldPersistAuthTokens() || !user || typeof user !== 'object') return;
+  try {
+    lsSet(STUDENT_USER_SNAPSHOT_KEY, JSON.stringify(user));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function readStudentUserSnapshot<T = Record<string, unknown>>(): T | null {
+  if (!shouldPersistAuthTokens()) return null;
+  const raw = lsGet(STUDENT_USER_SNAPSHOT_KEY);
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+export function clearStudentUserSnapshot() {
+  lsRemove(STUDENT_USER_SNAPSHOT_KEY);
+}
+
+/** Clear only auth credential keys — never wipe the whole localStorage (theme, prefs, etc.). */
+export function clearAllAuthCredentialKeys() {
+  clearPersistedStudentTokens();
+  clearStudentUserSnapshot();
+  clearPersistedAdminTokens();
+  try {
+    lsRemove('net360-exam-launch');
+  } catch {
+    /* ignore */
+  }
+}
+
 /** Omit cookie-only sessions from query strings / launch payloads (avoid useless markers in URLs). */
 export function bearerForLaunchUrl(authToken: string | null | undefined): string | null {
   if (!authToken || isCookieSessionApiMarker(authToken)) return null;

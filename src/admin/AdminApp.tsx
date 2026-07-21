@@ -38,6 +38,7 @@ import {
   COOKIE_SESSION_API_MARKER,
   isCookieSessionApiMarker,
   persistAdminTokens,
+  readPersistedAdminAccessToken,
   readPersistedAdminRefreshToken,
 } from '../app/lib/authSession';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../app/lib/hierarchyDedup';
@@ -2308,10 +2309,11 @@ function adminEnvStatusBadgeClasses(status?: string) {
 }
 
 /** Bootstrap must never block the admin shell — cap per-request wait and disable retries. */
-const ADMIN_BOOTSTRAP_REQUEST_TIMEOUT_MS = 8_000;
+const ADMIN_BOOTSTRAP_REQUEST_TIMEOUT_MS = 20_000;
 /** Subscription managed-user list is heavier; do not silently empty it under the short bootstrap budget. */
 const ADMIN_SUBSCRIPTION_USERS_TIMEOUT_MS = 30_000;
-const ADMIN_SESSION_RESTORE_TIMEOUT_MS = 15_000;
+const ADMIN_SESSION_RESTORE_TIMEOUT_MS = 45_000;
+
 
 const EMPTY_ADMIN_OVERVIEW: AdminOverview = {
   usersCount: 0,
@@ -2363,7 +2365,7 @@ async function fetchAdminBootstrapStep<T>(
       {
         ...options,
         timeoutMs: options.timeoutMs ?? ADMIN_BOOTSTRAP_REQUEST_TIMEOUT_MS,
-        retryCount: options.retryCount ?? 0,
+        retryCount: options.retryCount ?? 1,
       },
       token,
     );
@@ -3821,15 +3823,42 @@ export default function AdminApp() {
     async function bootstrap() {
       try {
         const sessionStarted = performance.now();
-        const activeToken = await Promise.race([
-          restoreAdminSession(authToken),
-          waitForBootstrapTimeout<string | null>(ADMIN_SESSION_RESTORE_TIMEOUT_MS, null),
-        ]);
+        // Never treat a slow restore as logout — keep stored tokens and continue.
+        let activeToken: string | null = null;
+        try {
+          activeToken = await Promise.race([
+            restoreAdminSession(authToken),
+            waitForBootstrapTimeout<string | null>(ADMIN_SESSION_RESTORE_TIMEOUT_MS, '__TIMEOUT__' as unknown as string | null),
+          ]);
+        } catch (error) {
+          console.warn('[admin-bootstrap] session-restore threw:', error);
+          activeToken = null;
+        }
+
+        if (activeToken === ('__TIMEOUT__' as unknown as string | null)) {
+          console.warn(`[admin-bootstrap] session-restore timed out after ${ADMIN_SESSION_RESTORE_TIMEOUT_MS}ms — keeping stored credentials`);
+          activeToken = authToken;
+          void restoreAdminSession(authToken).then((resolved) => {
+            if (resolved) syncAdminTokenState(resolved, readPersistedAdminRefreshToken());
+          }).catch(() => undefined);
+        }
+
         console.info(`[admin-bootstrap] session-restore ${Math.round(performance.now() - sessionStarted)}ms`, activeToken ? 'ok' : 'fail');
 
         if (!activeToken) {
-          if (!cancelled) {
+          // Only clear when restore definitively failed with no usable token left.
+          const stillHasCreds = Boolean(readPersistedAdminAccessToken() || readPersistedAdminRefreshToken());
+          if (!stillHasCreds && !cancelled) {
             clearAdminSession();
+          } else if (!cancelled) {
+            setAdminLoadError('Could not verify admin session yet. Retrying in the background…');
+            setReady(true);
+            void restoreAdminSession(authToken).then((resolved) => {
+              if (!resolved || cancelled) return;
+              syncAdminTokenState(resolved, readPersistedAdminRefreshToken());
+              void loadAdminData(resolved, { criticalOnly: true });
+              void loadAdminData(resolved, { deferredOnly: true });
+            }).catch(() => undefined);
           }
           return;
         }
@@ -3880,6 +3909,26 @@ export default function AdminApp() {
       cancelled = true;
     };
   }, [authToken, refreshToken]);
+
+  // Keep admin modules fresh when returning to the tab — no manual refresh required.
+  useEffect(() => {
+    if (!authToken || !ready) return;
+    let lastRefreshAt = 0;
+    const refreshVisible = () => {
+      if (document.hidden) return;
+      const now = Date.now();
+      if (now - lastRefreshAt < 12_000) return;
+      lastRefreshAt = now;
+      void loadAdminData(authToken, { criticalOnly: true }).catch(() => undefined);
+      void loadAdminData(authToken, { deferredOnly: true }).catch(() => undefined);
+    };
+    document.addEventListener('visibilitychange', refreshVisible);
+    window.addEventListener('focus', refreshVisible);
+    return () => {
+      document.removeEventListener('visibilitychange', refreshVisible);
+      window.removeEventListener('focus', refreshVisible);
+    };
+  }, [authToken, ready]);
 
   useEffect(() => {
     if (!authToken || !ready) {

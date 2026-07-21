@@ -255,7 +255,7 @@ if (IS_PRODUCTION) {
   }
   console.log('[env] MONGODB_URI resolved:', MONGODB_URI ? 'yes' : 'MISSING');
 }
-const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '15m';
+const ACCESS_TOKEN_TTL = process.env.ACCESS_TOKEN_TTL || '12h';
 const REFRESH_TOKEN_TTL_DAYS = Number(process.env.REFRESH_TOKEN_TTL_DAYS || 30);
 const REFRESH_TOKEN_TTL_MS = REFRESH_TOKEN_TTL_DAYS * 24 * 60 * 60 * 1000;
 const ACCESS_TOKEN_COOKIE_MAX_AGE_MS = clamp(Number(process.env.ACCESS_TOKEN_COOKIE_MAX_AGE_MS || 15 * 60 * 1000), 60_000, 24 * 60 * 60 * 1000);

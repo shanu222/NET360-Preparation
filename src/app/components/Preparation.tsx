@@ -16,7 +16,7 @@ import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTimi
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../lib/hierarchyDedup';
 import { formatTestStartFailureToast } from '../lib/testStartToast';
-import { assignExamPopupLocation, openExamBlankPopup } from '../lib/examWindowLaunch';
+import { navigateToExamSameTab } from '../lib/examWindowLaunch';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
@@ -640,9 +640,8 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
 
   const resolveLaunchToken = async () => resolveLaunchAuthToken(authContextToken);
 
-  const openExamWindow = (params: { sessionId: string; token: string; examWindow: Window | null; sameTab?: boolean }) => {
-    const { sessionId, token: authToken, examWindow, sameTab } = params;
-    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+  const openExamWindow = (params: { sessionId: string; token: string }) => {
+    const { sessionId, token: authToken } = params;
     const urlAuth = bearerForLaunchUrl(authToken);
 
     localStorage.setItem(
@@ -659,17 +658,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       ? `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=topic&authToken=${encodeURIComponent(urlAuth)}`
       : `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=topic`;
 
-    if (isNativeRuntime || sameTab) {
-      window.location.href = url;
-      return;
-    }
-
-    if (!examWindow) {
-      showErrorToast('Popup blocked. Please allow popups and try again.');
-      return;
-    }
-
-    assignExamPopupLocation(examWindow, url);
+    navigateToExamSameTab(url);
   };
 
   const handleStartSectionTest = async (payload: {
@@ -723,17 +712,6 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       );
     }
 
-    // Desktop: open blank tab synchronously (popup stays tied to the user gesture). Mobile browser: defer until API succeeds (same-tab) to avoid a white blank tab.
-    let examWindow: Window | null = null;
-    if (!isNativeRuntime && !mobileBrowser) {
-      examWindow = openExamBlankPopup();
-      if (!examWindow) {
-        showErrorToast('Popup blocked. Please allow popups and try again.');
-        launchingRef.current = false;
-        return;
-      }
-    }
-
     if (mobileBrowser) {
       await new Promise((r) => setTimeout(r, 200));
     }
@@ -756,10 +734,9 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
 
       mobileSectionStartRetryRef.current = 0;
       const launchToken = (await resolveLaunchToken()) || authToken;
-      openExamWindow({ sessionId: session.id, token: launchToken, examWindow, sameTab: mobileBrowser });
-      showSuccessToast(isNativeRuntime ? 'Section test launched.' : 'Section test launched in a new window.');
+      openExamWindow({ sessionId: session.id, token: launchToken });
+      showSuccessToast('Section test launched.');
     } catch (error) {
-      if (examWindow) examWindow.close();
       if (import.meta.env.DEV) {
         console.error('Section test start error:', error);
       }
@@ -835,16 +812,6 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
       );
     }
 
-    let examWindow: Window | null = null;
-    if (!isNativeRuntime && !mobileBrowser) {
-      examWindow = openExamBlankPopup();
-      if (!examWindow) {
-        showErrorToast('Popup blocked. Please allow popups and try again.');
-        launchingRef.current = false;
-        return;
-      }
-    }
-
     if (mobileBrowser) {
       await new Promise((r) => setTimeout(r, 200));
     }
@@ -869,8 +836,8 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
 
           mobileFlatStartRetryRef.current = 0;
           const launchToken = (await resolveLaunchToken()) || authToken;
-          openExamWindow({ sessionId: session.id, token: launchToken, examWindow, sameTab: mobileBrowser });
-          showSuccessToast(isNativeRuntime ? 'Topic test launched.' : 'Topic test launched in a new window.');
+          openExamWindow({ sessionId: session.id, token: launchToken });
+          showSuccessToast('Topic test launched.');
           return;
         } catch (error) {
           lastError = error;
@@ -879,7 +846,6 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
 
       throw lastError instanceof Error ? lastError : new Error('No questions available for this topic.');
     } catch (error) {
-      if (examWindow) examWindow.close();
       if (import.meta.env.DEV) {
         console.error('Topic test start error:', error);
       }

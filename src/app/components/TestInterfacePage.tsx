@@ -193,6 +193,19 @@ function buildOptionMedia(question: SessionQuestion) {
   }));
 }
 
+function leaveExamToApp(fallbackPath: string) {
+  try {
+    const ref = String(document.referrer || '');
+    if (ref && ref.startsWith(window.location.origin) && window.history.length > 1) {
+      window.history.back();
+      return;
+    }
+  } catch {
+    /* fall through */
+  }
+  window.location.assign(fallbackPath);
+}
+
 function formatSubject(value: SubjectKey) {
   return getSubjectLabel(value);
 }
@@ -477,7 +490,7 @@ export function TestInterfacePage() {
         setError('Please sign in to take this test.');
         setLoading(false);
         window.setTimeout(() => {
-          window.location.href = '/?tab=profile';
+          leaveExamToApp('/?tab=profile');
         }, 900);
         return;
       }
@@ -489,7 +502,7 @@ export function TestInterfacePage() {
         setError('This challenge could not be opened.');
         setLoading(false);
         window.setTimeout(() => {
-          window.location.href = '/?tab=community';
+          leaveExamToApp('/?tab=community');
         }, 900);
         return;
       }
@@ -501,7 +514,7 @@ export function TestInterfacePage() {
         setError('This test could not be opened. Please start again from Tests.');
         setLoading(false);
         window.setTimeout(() => {
-          window.location.href = '/?tab=tests';
+          leaveExamToApp('/?tab=tests');
         }, 900);
         return;
       }
@@ -558,7 +571,7 @@ export function TestInterfacePage() {
           : 'Test cancelled because you left the secured test environment.',
       );
       window.setTimeout(() => {
-        window.location.href = isChallengeMode ? '/?tab=community' : '/?tab=tests';
+        leaveExamToApp(isChallengeMode ? '/?tab=community' : '/?tab=tests');
       }, 700);
     }
   };
@@ -1187,7 +1200,7 @@ export function TestInterfacePage() {
           type="button"
           className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
           onClick={() => {
-            window.location.href = '/';
+            leaveExamToApp('/');
           }}
         >
           Go to Main Page
@@ -1197,7 +1210,7 @@ export function TestInterfacePage() {
           type="button"
           className="text-blue-600 underline underline-offset-2 hover:text-blue-800"
           onClick={() => {
-            window.location.href = '/?tab=profile';
+            leaveExamToApp('/?tab=profile');
           }}
         >
           Go to Login Page
@@ -1230,14 +1243,10 @@ export function TestInterfacePage() {
                 type="button"
                 className="w-full rounded border border-[#1e3f6e] bg-[#d7e8ff] px-3 py-2 text-sm text-blue-700 sm:w-auto sm:py-1"
                 onClick={() => {
-                  if (isChallengeMode) {
-                    window.location.href = '/?tab=community';
-                    return;
-                  }
-                  window.close();
+                  leaveExamToApp(isChallengeMode ? '/?tab=community' : '/?tab=tests');
                 }}
               >
-                {isChallengeMode ? 'Back to Community' : 'Close Window'}
+                {isChallengeMode ? 'Back to Community' : 'Back to Tests'}
               </button>
               <button
                 type="button"
@@ -1245,7 +1254,7 @@ export function TestInterfacePage() {
                 onClick={() => {
                   setResult(null);
                   setReviewRows([]);
-                  window.location.href = '/';
+                  leaveExamToApp('/?tab=tests');
                 }}
               >
                 Back to Dashboard
