@@ -1091,6 +1091,7 @@ app.get('/api/public/media-config', (_req, res) => {
     : appPromoDefaultBase;
   res.json({
     mediaBaseUrl: mediaBaseUrl || '',
+    // Legacy client alias — same value as mediaBaseUrl (not AWS S3).
     s3BaseUrl: mediaBaseUrl || '',
     ...(mediaAssetVersion ? { mediaAssetVersion } : {}),
     brandLogoUrl: String(process.env.PUBLIC_BRAND_LOGO_URL || '').trim() || '/net360-logo.png',
@@ -4911,7 +4912,7 @@ function inferSessionPlatform(deviceId, userAgent) {
   return 'web';
 }
 
-/** When true, keep 409 SESSION_DISABLED_TEMP unless client sends forceLogin/forceLogoutOtherDevice. Default: true. */
+/** When true, keep 409 ACTIVE_SESSION_ELSEWHERE unless client sends forceLogin/forceLogoutOtherDevice. Default: true. */
 function shouldRequireDeviceLoginConfirmation() {
   const raw = String(process.env.REQUIRE_CONFIRM_FOR_DEVICE_LOGIN || '').toLowerCase().trim();
   if (raw === 'false' || raw === '0' || raw === 'no') return false;
@@ -5224,7 +5225,7 @@ async function resolveEntitlementsForUser(userLike) {
   const now = Date.now();
   return {
     ...resolveUserEntitlements(userLike, globalMap, now),
-    paidServices: resolvePaidServices(userLike, now),
+    paidServices: resolvePaidServices(userLike, globalMap, now),
   };
 }
 
@@ -8446,15 +8447,15 @@ app.post('/api/auth/login', async (req, res) => {
             attemptedDeviceFp: authDeviceFingerprint(deviceId),
           },
         });
-        console.warn('[auth/login] blocked device policy temp disabled', {
+        console.warn('[auth/login] blocked: active session on another device', {
           userId: String(user._id),
           email: redactEmailForLog(email),
-          code: 'SESSION_DISABLED_TEMP',
+          code: 'ACTIVE_SESSION_ELSEWHERE',
         });
         res.status(409).json({
           error: 'Your account is already active on another device.',
           message: 'Account already active on another device.',
-          code: 'SESSION_DISABLED_TEMP',
+          code: 'ACTIVE_SESSION_ELSEWHERE',
           canForceLogin: true,
           existingDevice: authDeviceFingerprint(activeSession?.deviceId),
           existingPlatform: inferSessionPlatform(activeSession?.deviceId, activeSession?.userAgent),
@@ -12826,6 +12827,21 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
     },
     premiumSurface,
     subscriptionBadge: premiumSurface?.badge || buildPremiumBadgeState(subPlain, serverNow),
+    globalFreeAccess: (() => {
+      const prep = entitlements?.preparation;
+      const active = Boolean(prep?.allowed && prep.source === 'global');
+      const grantMeta = entitlements?.global?.preparation || {};
+      return {
+        active,
+        startsAt: active ? (prep?.startsAt || null) : null,
+        expiresAt: active ? (prep?.expiresAt || null) : null,
+        announcement: active
+          ? String(grantMeta.announcement || '').trim()
+            || 'NET360 Premium is free for a limited time. Enjoy unlimited practice, mock tests, and premium resources.'
+          : '',
+        reason: active ? String(grantMeta.notes || '').trim() : '',
+      };
+    })(),
     activationRequest: latestActivationRequest
       ? serializePremiumSubscriptionRequest(latestActivationRequest, requestPlan?.name || '')
       : null,
@@ -14601,76 +14617,126 @@ app.post('/api/admin/subscriptions/access/:userId/revoke', authMiddleware, requi
 
 app.post('/api/admin/subscriptions/access/global/grant', authMiddleware, requireAdmin, async (req, res) => {
   const accessType = parseAccessType(req.body?.accessType);
-  const durationDays = Number(req.body?.durationDays || 0);
-  const notes = String(req.body?.notes || '').trim();
-  if (!accessType || !Number.isFinite(durationDays) || durationDays <= 0) {
-    res.status(400).json({ error: 'accessType and durationDays are required.' });
+  const notes = String(req.body?.notes || '').trim().slice(0, 300);
+  const announcement = String(req.body?.announcement || '').trim().slice(0, 600);
+  const applyToAllPremiumSurfaces = Boolean(req.body?.applyToAllPremiumSurfaces);
+  const now = new Date();
+
+  let startsAt = now;
+  let expiresAt = null;
+  let days = 0;
+
+  const startsAtRaw = String(req.body?.startsAt || '').trim();
+  const expiresAtRaw = String(req.body?.expiresAt || '').trim();
+  if (startsAtRaw) {
+    const parsedStart = new Date(startsAtRaw);
+    if (!Number.isNaN(parsedStart.getTime())) startsAt = parsedStart;
+  }
+  if (expiresAtRaw) {
+    const parsedEnd = new Date(expiresAtRaw);
+    if (!Number.isNaN(parsedEnd.getTime())) expiresAt = parsedEnd;
+  }
+
+  if (!expiresAt) {
+    const durationDays = Number(req.body?.durationDays || 0);
+    if (!Number.isFinite(durationDays) || durationDays <= 0) {
+      res.status(400).json({ error: 'Provide durationDays or a valid expiresAt date.' });
+      return;
+    }
+    days = Math.max(1, Math.min(3650, durationDays));
+    const existing = accessType ? await GlobalAccessGrantModel.findOne({ accessType }) : null;
+    const activeExisting = existing && existing.status === 'active' && existing.expiresAt && new Date(existing.expiresAt).getTime() > now.getTime();
+    const startMs = activeExisting ? new Date(existing.expiresAt).getTime() : startsAt.getTime();
+    if (activeExisting && existing.startsAt) startsAt = existing.startsAt;
+    expiresAt = new Date(startMs + (days * 24 * 60 * 60 * 1000));
+  } else {
+    if (expiresAt.getTime() <= startsAt.getTime()) {
+      res.status(400).json({ error: 'End date must be after the start date.' });
+      return;
+    }
+    days = Math.max(1, Math.ceil((expiresAt.getTime() - startsAt.getTime()) / (24 * 60 * 60 * 1000)));
+  }
+
+  const typesToGrant = applyToAllPremiumSurfaces || !accessType
+    ? [ACCESS_TYPES.preparation, ACCESS_TYPES.mentor]
+    : [accessType];
+
+  if (!typesToGrant.length) {
+    res.status(400).json({ error: 'accessType is required.' });
     return;
   }
-  const now = new Date();
-  const days = Math.max(1, Math.min(3650, durationDays));
-  const existing = await GlobalAccessGrantModel.findOne({ accessType });
-  const activeExisting = existing && existing.status === 'active' && existing.expiresAt && new Date(existing.expiresAt).getTime() > now.getTime();
-  const startMs = activeExisting ? new Date(existing.expiresAt).getTime() : now.getTime();
-  const startsAt = activeExisting ? existing.startsAt || now : now;
-  const expiresAt = new Date(startMs + (days * 24 * 60 * 60 * 1000));
-  await GlobalAccessGrantModel.updateOne(
-    { accessType },
-    {
-      $set: {
-        accessType,
-        status: 'active',
-        startsAt,
-        expiresAt,
-        durationDays: days,
-        grantedByUserId: String(req.user?._id || ''),
-        grantedByEmail: String(req.user?.email || ''),
-        lastActionByUserId: String(req.user?._id || ''),
-        lastActionByEmail: String(req.user?.email || ''),
-        lastActionAt: now,
-        notes: notes.slice(0, 300),
+
+  const results = {};
+  for (const type of typesToGrant) {
+    await GlobalAccessGrantModel.updateOne(
+      { accessType: type },
+      {
+        $set: {
+          accessType: type,
+          status: 'active',
+          startsAt,
+          expiresAt,
+          durationDays: days,
+          grantedByUserId: String(req.user?._id || ''),
+          grantedByEmail: String(req.user?.email || ''),
+          lastActionByUserId: String(req.user?._id || ''),
+          lastActionByEmail: String(req.user?.email || ''),
+          lastActionAt: now,
+          notes,
+          announcement,
+        },
       },
-    },
-    { upsert: true, runValidators: true },
-  );
-  await invalidateGlobalAccessGrantSnapshot();
-  res.json({
-    ok: true,
-    globalAccess: accessStatusPayload({
+      { upsert: true, runValidators: true },
+    );
+    results[type] = accessStatusPayload({
       allowed: true,
       status: 'active',
       source: 'global',
       startsAt,
       expiresAt,
       durationDays: days,
-    }),
+    });
+  }
+  await invalidateGlobalAccessGrantSnapshot();
+  res.json({
+    ok: true,
+    globalAccess: results.preparation || results.mentor || null,
+    grants: results,
+    announcement,
   });
 });
 
 app.post('/api/admin/subscriptions/access/global/revoke', authMiddleware, requireAdmin, async (req, res) => {
   const accessType = parseAccessType(req.body?.accessType);
   const notes = String(req.body?.notes || '').trim();
-  if (!accessType) {
+  const revokeAll = Boolean(req.body?.revokeAll || req.body?.applyToAllPremiumSurfaces);
+  const typesToRevoke = revokeAll || !accessType
+    ? [ACCESS_TYPES.preparation, ACCESS_TYPES.mentor]
+    : [accessType];
+  if (!typesToRevoke.length) {
     res.status(400).json({ error: 'accessType is required.' });
     return;
   }
   const now = new Date();
-  await GlobalAccessGrantModel.updateOne(
-    { accessType },
-    {
-      $set: {
-        accessType,
-        status: 'revoked',
-        lastActionByUserId: String(req.user?._id || ''),
-        lastActionByEmail: String(req.user?.email || ''),
-        lastActionAt: now,
-        notes: notes.slice(0, 300),
+  for (const type of typesToRevoke) {
+    await GlobalAccessGrantModel.updateOne(
+      { accessType: type },
+      {
+        $set: {
+          accessType: type,
+          status: 'revoked',
+          lastActionByUserId: String(req.user?._id || ''),
+          lastActionByEmail: String(req.user?.email || ''),
+          lastActionAt: now,
+          notes: notes.slice(0, 300),
+          announcement: '',
+        },
       },
-    },
-    { upsert: true, runValidators: true },
-  );
+      { upsert: true, runValidators: true },
+    );
+  }
   await invalidateGlobalAccessGrantSnapshot();
-  res.json({ ok: true, accessType, globalAccess: accessStatusPayload({ allowed: false, status: 'revoked', source: 'none' }) });
+  res.json({ ok: true, accessType: typesToRevoke[0], revoked: typesToRevoke, globalAccess: accessStatusPayload({ allowed: false, status: 'revoked', source: 'none' }) });
 });
 
 function normalizeSubscriptionSearch(input) {

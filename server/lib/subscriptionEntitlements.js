@@ -70,6 +70,7 @@ function normalizeGlobalGrant(value) {
     lastActionByEmail: '',
     lastActionAt: null,
     notes: '',
+    announcement: '',
     ...toPlain(value),
   };
 }
@@ -238,7 +239,7 @@ function resolveManualPaidService(serviceType, paidServices, sub, now) {
   };
 }
 
-export function resolvePaidServices(userLike, serverNow = Date.now()) {
+export function resolvePaidServices(userLike, globalGrantMap, serverNow = Date.now()) {
   const now = typeof serverNow === 'number' ? serverNow : new Date(serverNow).getTime();
   const user = toPlain(userLike);
   const sub = mergedSubscription(user);
@@ -246,10 +247,31 @@ export function resolvePaidServices(userLike, serverNow = Date.now()) {
   const tests = resolveManualPaidService(PAID_SERVICE_TYPES.tests, paidServices, sub, now);
   const preparation = resolveManualPaidService(PAID_SERVICE_TYPES.preparation, paidServices, sub, now);
   const community = resolveManualPaidService(PAID_SERVICE_TYPES.community, paidServices, sub, now);
+  const globals = buildGlobalGrantMap([globalGrantMap?.mentor, globalGrantMap?.preparation]);
+  const prepGlobal = globals.preparation;
+
+  const applyGlobalPremium = (service) => {
+    if (service?.allowed) return service;
+    if (!isGrantActive(prepGlobal, now)) return service;
+    return {
+      allowed: true,
+      source: 'global',
+      status: 'active',
+      startsAt: prepGlobal.startsAt ? new Date(prepGlobal.startsAt).toISOString() : null,
+      expiresAt: prepGlobal.expiresAt ? new Date(prepGlobal.expiresAt).toISOString() : null,
+      durationDays: Number(prepGlobal.durationDays || 0),
+      durationValue: Number(prepGlobal.durationDays || 0),
+      durationUnit: 'days',
+      legacyAllowed: Boolean(service?.legacyAllowed),
+      serviceType: service?.serviceType,
+      notes: String(prepGlobal.notes || ''),
+    };
+  };
+
   return {
-    tests,
-    preparation,
-    community,
+    tests: applyGlobalPremium(tests),
+    preparation: applyGlobalPremium(preparation),
+    community: applyGlobalPremium(community),
   };
 }
 
@@ -264,7 +286,15 @@ export function buildPreparationSurfaceForClient(entitlements, subscription, ser
   const sub = mergedSubscription({ subscription });
   const legacyDetail = surfaceAccessDetail(sub, serverNow);
   const legacyBadge = buildPremiumBadgeState(sub, serverNow);
-  const prep = entitlements?.paidServices?.preparation || entitlements?.preparation;
+  // Prefer preparation entitlement (manual/global) over paidServices row — paidServices alone
+  // historically omitted global grants and hid Global Free Access from the client surface.
+  const prepFromEntitlement = entitlements?.preparation;
+  const prepFromPaid = entitlements?.paidServices?.preparation;
+  const prep = (prepFromEntitlement?.allowed && prepFromEntitlement.source !== 'legacy')
+    ? prepFromEntitlement
+    : (prepFromPaid?.allowed && prepFromPaid.source !== 'legacy')
+      ? prepFromPaid
+      : (prepFromEntitlement || prepFromPaid);
   if (!prep?.allowed || prep.source === 'legacy') {
     return {
       ...legacyDetail,
@@ -286,7 +316,7 @@ export function buildPreparationSurfaceForClient(entitlements, subscription, ser
     hasSurfaceAccess: true,
     badge: {
       variant: msRemaining <= 3 * 24 * 60 * 60 * 1000 ? 'orange' : 'green',
-      label: prep.source === 'global' ? 'Preparation global access active' : 'Preparation access active',
+      label: prep.source === 'global' ? 'Premium free access active' : 'Preparation access active',
       endsAt: prep.expiresAt ? new Date(prep.expiresAt).toISOString() : null,
       source: prep.source,
     },

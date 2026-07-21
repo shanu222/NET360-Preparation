@@ -78,41 +78,14 @@ type SessionConflictInfo = {
   existingPlatform?: string;
 };
 
-function developerAuthErrorMessage(error: unknown): string {
-  const normalizedCode = String((error as { code?: string })?.code || '').trim();
-  if (normalizedCode === 'USER_CANCELLED') {
-    return 'Sign-in was cancelled.';
-  }
-  if (normalizedCode === 'GOOGLE_OAUTH_ANDROID_MISCONFIG') {
-    return 'Android Google Sign-In is not configured correctly for this app package/signing key yet.';
-  }
-  const typed = error as AuthErrorLike;
-  const code = String(typed?.code || typed?.payload?.code || '').trim() || 'none';
-  const status = Number(typed?.status);
-  const message = String(typed?.message || '').trim() || 'unknown';
-  const payloadMessage = String(typed?.payload?.message || '').trim();
-  const existingPlatform = String(typed?.payload?.existingPlatform || '').trim();
-  const existingDevice = String(typed?.payload?.existingDevice || '').trim();
-
-  const parts = [
-    'DEV LOGIN ERROR',
-    `code=${code}`,
-    `status=${Number.isFinite(status) ? status : 'none'}`,
-    `message=${message}`,
-  ];
-
-  if (payloadMessage) parts.push(`payloadMessage=${payloadMessage}`);
-  if (existingPlatform) parts.push(`existingPlatform=${existingPlatform}`);
-  if (existingDevice) parts.push(`existingDevice=${existingDevice}`);
-
-  return parts.join(' | ');
-}
-
 function extractSessionConflictInfo(error: unknown): SessionConflictInfo | null {
   const typed = error as AuthErrorLike;
   const payload = typed?.payload;
   if (!payload) return null;
-  if (String(payload.code || typed?.code || '').toUpperCase() !== 'ACTIVE_SESSION_ELSEWHERE') return null;
+  const code = String(payload.code || typed?.code || '').toUpperCase();
+  if (code !== 'ACTIVE_SESSION_ELSEWHERE' && code !== 'SESSION_DISABLED_TEMP' && code !== 'ACTIVE_SESSION_EXISTS') {
+    return null;
+  }
   return {
     existingDevice: String(payload.existingDevice || '').trim() || undefined,
     existingPlatform: String(payload.existingPlatform || '').trim() || undefined,
@@ -125,6 +98,7 @@ function isActiveSessionElsewhere(error: unknown): boolean {
   const message = String(e?.message || e?.payload?.message || '').toLowerCase();
   return code === 'ACTIVE_SESSION_ELSEWHERE'
     || code === 'ACTIVE_SESSION_EXISTS'
+    || code === 'SESSION_DISABLED_TEMP'
     || message.includes('active on another device');
 }
 
@@ -132,41 +106,28 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
   const typed = error as AuthErrorLike;
   const code = String(typed?.code || typed?.payload?.code || '').toUpperCase();
   const message = String(typed?.message || '').toLowerCase();
+  const rawCode = String(typed?.code || '').trim();
 
-  if (code === 'ACTIVE_SESSION_ELSEWHERE') {
-    return 'Active session exists on another device.';
+  if (rawCode === 'USER_CANCELLED') {
+    return 'Sign-in was cancelled.';
   }
-  if (code === 'SESSION_NO_LONGER_ACTIVE') {
-    return 'Session restore failed.';
+  if (rawCode === 'GOOGLE_OAUTH_ANDROID_MISCONFIG') {
+    return 'Google sign-in is not available for this app build yet. Please use email and password.';
   }
-  if (message.includes('firebase') && message.includes('token')) {
-    return 'Firebase token exchange failed.';
+  if (code === 'ACTIVE_SESSION_ELSEWHERE' || code === 'SESSION_DISABLED_TEMP' || code === 'ACTIVE_SESSION_EXISTS') {
+    return 'Your account is already signed in on another device.';
+  }
+  if (code === 'SESSION_NO_LONGER_ACTIVE' || code === 'SESSION_REVOKED') {
+    return 'Your account was signed in on another device. Please sign in again.';
   }
   if (message.includes('missing initial state') || message.includes('sessionstorage')) {
-    return 'Google sign-in redirect failed on this device. Please use email and password.';
+    return 'Google sign-in could not finish on this device. Please try again or use email and password.';
   }
   if (message.includes('google sign-in is not available in this android build')) {
-    return 'Google sign-in is not available in this Android app yet. Please use email and password.';
-  }
-  if (message.includes('session') && message.includes('mismatch')) {
-    return 'Device session mismatch detected.';
-  }
-  if (message.includes('backend') && message.includes('rejected')) {
-    return 'Backend rejected session token.';
+    return 'Google sign-in is not available in this app version. Please use email and password.';
   }
 
-  const friendly = audienceFriendlyError(error, fallback);
-  if (!isNativeRuntimePlatform()) return friendly;
-  const friendlyMessage = String(friendly || '').toLowerCase();
-  if (
-    friendlyMessage.includes('unable to connect')
-    || friendlyMessage.includes('network')
-    || friendlyMessage.includes('timed out')
-    || friendlyMessage.includes('could not start yet')
-  ) {
-    return 'Unable to sign in. Please try again.';
-  }
-  return friendly;
+  return audienceFriendlyError(error, fallback);
 }
 
 export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
@@ -348,9 +309,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     } catch (error) {
       const typed = error as Error & { status?: number };
       setAuthActionState('idle');
-      const friendly = isNativeRuntimePlatform() && !isRegisterMode
-        ? developerAuthErrorMessage(error)
-        : loginFriendlyAuthError(
+      const friendly = loginFriendlyAuthError(
           error,
           isRegisterMode ? 'Could not create your account. Please try again.' : 'Unable to sign you in. Please check your email and password.',
         );
@@ -394,9 +353,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         await login(authForm.email, authForm.password, { forceLogin: true, forceLogoutOtherDevice: true });
         showSuccessToast('Previous device was logged out successfully.');
       } catch (error) {
-        showErrorToast(isNativeRuntimePlatform()
-          ? developerAuthErrorMessage(error)
-          : loginFriendlyAuthError(error, 'Unable to sign you in. Please check your email and password.'));
+        showErrorToast(loginFriendlyAuthError(error, 'Unable to sign you in. Please check your email and password.'));
       } finally {
         setAuthActionState('idle');
       }
@@ -415,9 +372,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         if (String((error as { code?: string })?.code || '').trim() === 'USER_CANCELLED') {
           showNeutralToast('Google sign-in was cancelled.');
         } else {
-          showErrorToast(isNativeRuntimePlatform()
-            ? developerAuthErrorMessage(error)
-            : loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
+          showErrorToast(loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
         }
       } finally {
         setAuthActionState('idle');
@@ -447,9 +402,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         setOtherDeviceDialogOpen(true);
         return;
       }
-      showErrorToast(isNativeRuntimePlatform()
-        ? developerAuthErrorMessage(error)
-        : loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
+      showErrorToast(loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
     }
   };
 
@@ -966,15 +919,27 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         >
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Account active elsewhere</AlertDialogTitle>
-              <AlertDialogDescription>
-                Your account is already active on another device. Do you want to log out from the previous device and continue here?
+              <AlertDialogTitle>Account already active</AlertDialogTitle>
+              <AlertDialogDescription className="space-y-2 text-left">
+                <span className="block">
+                  Your account is currently signed in on another device.
+                </span>
+                <span className="block">
+                  Choose one of the following:
+                </span>
+                <span className="block">
+                  • Continue here (this will securely sign you out from the previous device)
+                </span>
+                <span className="block">
+                  • Cancel
+                </span>
                 {sessionConflictInfo?.existingPlatform
-                  ? ` Previous platform: ${sessionConflictInfo.existingPlatform}.`
-                  : ''}
-                {sessionConflictInfo?.existingDevice
-                  ? ` Device fingerprint: ${sessionConflictInfo.existingDevice}.`
-                  : ''}
+                  ? (
+                    <span className="block text-xs text-muted-foreground">
+                      Previous device type: {sessionConflictInfo.existingPlatform}
+                    </span>
+                  )
+                  : null}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
@@ -986,7 +951,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               >
                 Cancel
               </AlertDialogCancel>
-              <AlertDialogAction onClick={() => void confirmContinueOnOtherDevice()}>Continue Login</AlertDialogAction>
+              <AlertDialogAction onClick={() => void confirmContinueOnOtherDevice()}>
+                Continue here
+              </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>

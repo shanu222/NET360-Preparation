@@ -12,6 +12,7 @@ import {
   type ReactNode,
 } from 'react';
 import { PageRouteFallback } from './components/PageRouteFallback';
+import { GlobalFreeAccessAnnouncement } from './components/GlobalFreeAccessAnnouncement';
 import { SubscriptionProvider } from './context/SubscriptionContext';
 import { isChunkLoadFailure, lazyWithRetry, scheduleStaleChunkReload } from './lib/chunkLoadRecovery';
 
@@ -1004,6 +1005,7 @@ export default function App() {
       </div>
 
       <Toaster richColors position="top-right" closeButton visibleToasts={4} expand={false} offset={16} />
+      <GlobalFreeAccessAnnouncement onStartLearning={() => navigate(PATH_BY_SECTION.tests)} />
       <DeferredSupportChat />
     </AppDataProvider>
       </SubscriptionProvider>

@@ -58,8 +58,11 @@ export function requireTrialOrPremiumContent(UserModel, resolveEntitlements) {
         : serviceType === 'tests'
           ? entitlementSnapshot?.paidServices?.tests
           : entitlementSnapshot?.paidServices?.preparation;
+      const preparationEntitlement = entitlementSnapshot?.preparation;
       const legacyAllowed = hasPremiumSurfaceAccess(sub);
-      const allowed = Boolean(serviceAccess?.allowed) || legacyAllowed;
+      const allowed = Boolean(serviceAccess?.allowed)
+        || Boolean(preparationEntitlement?.allowed)
+        || legacyAllowed;
       if (!allowed) {
         logAuthDebug(req, {
           userId: String(req.user?._id || ''),

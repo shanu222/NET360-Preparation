@@ -76,19 +76,19 @@ export function showNeutralToast(message: string, options?: ExternalToast): void
 const FIREBASE_AUTH_USER_MESSAGES: Record<string, string> = {
   'auth/invalid-email': 'Please enter a valid email address.',
   'auth/user-disabled': 'This account is disabled. Please contact support.',
-  'auth/user-not-found': 'Incorrect email or password.',
-  'auth/wrong-password': 'Incorrect password. Please try again.',
-  'auth/invalid-credential': 'Incorrect email or password.',
-  'auth/email-already-in-use': 'Account already exists. Please log in.',
-  'auth/weak-password': 'Choose a stronger password and try again.',
+  'auth/user-not-found': "We couldn't find an account with this email. Create a new account to continue.",
+  'auth/wrong-password': 'Incorrect password. Please try again or reset your password.',
+  'auth/invalid-credential': 'Incorrect email or password. Please try again.',
+  'auth/email-already-in-use': 'An account with this email already exists. Please sign in instead.',
+  'auth/weak-password': 'Your password must contain at least 8 characters.',
   'auth/too-many-requests': 'Too many attempts. Please wait a moment and try again.',
-  'auth/network-request-failed': 'Unable to connect. Please check your internet.',
+  'auth/network-request-failed': 'Unable to connect. Please check your internet connection and try again.',
   'auth/popup-closed-by-user': 'Sign-in was cancelled.',
   'auth/argument-error':
     'Google sign-in could not start in this browser. Refresh the page, allow pop-ups, or use email sign-in.',
   'auth/popup-blocked': 'Pop-up was blocked. Please allow pop-ups for this site.',
   'auth/cancelled-popup-request': 'Sign-in was cancelled.',
-  'auth/account-exists-with-different-credential': 'An account already exists with this email. Try logging in with email and password.',
+  'auth/account-exists-with-different-credential': 'An account already exists with this email. Try signing in with email and password.',
   'auth/operation-not-allowed': 'This sign-in method is not available. Please contact support.',
   'auth/requires-recent-login': 'For your security, please sign in again and retry.',
   'auth/invalid-verification-code': 'That code is invalid or expired.',
@@ -103,16 +103,17 @@ function mapFirebaseCode(code: string): string | null {
 }
 
 function httpStatusUserMessage(status: number): string | null {
-  if (status === 400) return 'Invalid request. Check your input and try again.';
-  if (status === 401) return 'Session expired. Please log in again.';
-  if (status === 403) return 'You do not have permission to do that.';
+  if (status === 400) return 'Some information looks incomplete. Please check and try again.';
+  if (status === 401) return 'Your session has expired. Please sign in again.';
+  if (status === 402) return 'This feature is available for Premium members.';
+  if (status === 403) return 'This feature is available for Premium members.';
   if (status === 404) return 'We could not find what you requested.';
-  if (status === 409) return 'Account already exists. Please log in.';
+  if (status === 409) return 'An account with this email already exists. Please sign in instead.';
   if (status === 410) return 'That option is no longer available.';
   if (status === 413) return 'That file is too large. Try a smaller file.';
   if (status === 422) return 'Some information could not be processed. Check your input.';
   if (status === 429) return 'Too many requests. Please wait a moment and try again.';
-  if (status >= 500) return 'Something went wrong on our side. Please try again in a few minutes.';
+  if (status >= 500) return 'We are having trouble completing this request. Please try again in a few minutes.';
   return null;
 }
 
@@ -132,7 +133,7 @@ function isLikelySafeServerMessage(text: string): boolean {
 /**
  * Turns any thrown value into copy suitable for end users (no raw Firebase/Mongo/API internals).
  */
-export function audienceFriendlyError(error: unknown, fallback = 'Something went wrong. Please try again.'): string {
+export function audienceFriendlyError(error: unknown, fallback = 'We could not complete that request. Please try again.'): string {
   const err = error as Error & { status?: number; code?: string; message?: string };
 
   if (typeof error === 'string') {
@@ -143,20 +144,20 @@ export function audienceFriendlyError(error: unknown, fallback = 'Something went
   const firebaseMsg = mapFirebaseCode(code);
   if (firebaseMsg) return firebaseMsg;
 
-  if (code === 'PREMIUM_CONTENT_LOCKED' || code === 'TRIAL_ALREADY_USED') {
-    return 'This area needs an active trial or premium plan. Open Subscription to continue.';
+  if (code === 'PREMIUM_CONTENT_LOCKED' || code === 'TRIAL_ALREADY_USED' || code === 'SUBSCRIPTION_REQUIRED') {
+    return 'This feature is available for Premium members.';
   }
   if (code === 'PAYMENT_CHECKOUT_DISABLED') {
-    return 'JazzCash and Easypaisa automatic payments are coming soon. Use WhatsApp on the Subscription page for manual activation.';
+    return 'Online payments are coming soon. Use WhatsApp on the Subscription page for manual activation.';
   }
-  if (code === 'ACTIVE_SESSION_ELSEWHERE') {
-    return 'Your account is already active on another device.';
+  if (code === 'ACTIVE_SESSION_ELSEWHERE' || code === 'SESSION_DISABLED_TEMP' || code === 'ACTIVE_SESSION_EXISTS') {
+    return 'Your account is already signed in on another device.';
   }
   if (code === 'SESSION_NO_LONGER_ACTIVE') {
-    return 'You were signed out. Please log in again.';
+    return 'Your session has expired. Please sign in again.';
   }
   if (code === 'SESSION_REVOKED') {
-    return 'You were logged out because your account was signed in on another device.';
+    return 'Your account has been signed in on another device.';
   }
 
   const status = Number(err?.status);
@@ -230,6 +231,6 @@ export function audienceFriendlyError(error: unknown, fallback = 'Something went
   return fallback;
 }
 
-export function handleApiError(error: unknown, fallback = 'Something went wrong. Please try again.'): void {
+export function handleApiError(error: unknown, fallback = 'We could not complete that request. Please try again.'): void {
   showErrorToast(audienceFriendlyError(error, fallback));
 }
