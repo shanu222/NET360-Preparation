@@ -30,11 +30,39 @@ type ApiRequestOptions = RequestInit & {
 
 const env = ((import.meta as ImportMeta & { env?: RuntimeEnv }).env || {}) as RuntimeEnv;
 
+/**
+ * Production API hostname expected by Android + long-term web.
+ * As of 2026-07-22 DNS still resolves this to dead EC2 `13.233.216.163` (timeout).
+ * Live Railway public URL (temporary web bridge only — native keeps the canonical host).
+ */
+const CANONICAL_API_HOST = 'api.net360preparation.com';
+const RAILWAY_LIVE_API_BASE = 'https://net360-preparation-production-3682.up.railway.app';
+
 /** When the SPA is on these hosts, call the API host directly (Vercel /api rewrites + WS upgrades are unreliable on www). */
 const DEFAULT_PROD_API_BY_HOST: Record<string, string> = {
-  'www.net360preparation.com': 'https://api.net360preparation.com',
-  'net360preparation.com': 'https://api.net360preparation.com',
+  'www.net360preparation.com': `https://${CANONICAL_API_HOST}`,
+  'net360preparation.com': `https://${CANONICAL_API_HOST}`,
 };
+
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Web-only: if VITE_API_URL (or default) still points at the canonical API host while DNS
+ * is stuck on the retired EC2 A-record, route the browser to the live Railway URL.
+ * Capacitor/Android keeps `https://api.net360preparation.com` so the published app contract is unchanged.
+ */
+function resolveWebApiBaseAvoidingStaleDns(configured: string, browserOrigin: string): string | null {
+  if (isNativeCapacitorRuntime()) return null;
+  const target = configured || DEFAULT_PROD_API_BY_HOST[hostnameOf(browserOrigin)] || '';
+  if (hostnameOf(target) !== CANONICAL_API_HOST) return null;
+  return RAILWAY_LIVE_API_BASE;
+}
 
 function hostnameStartsWithApiSubdomain(url: string) {
   try {
@@ -57,6 +85,14 @@ function resolveApiBase() {
   const browserOrigin = typeof window !== 'undefined'
     ? String(window.location.origin || '').replace(/\/$/, '').trim()
     : '';
+
+  const staleDnsBridge = resolveWebApiBaseAvoidingStaleDns(configured, browserOrigin);
+  if (staleDnsBridge) {
+    if (import.meta.env.DEV) {
+      console.warn(`[net360] Temporary web API bridge → ${staleDnsBridge} (canonical DNS not on Railway yet)`);
+    }
+    return staleDnsBridge;
+  }
 
   // Native builds should always use explicit backend URL.
   if (isNativeCapacitorRuntime()) {

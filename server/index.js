@@ -8107,6 +8107,14 @@ app.post('/api/auth/login', async (req, res) => {
     if (!IS_PRODUCTION || String(process.env.NET360_AUTH_DEBUG || '').trim() === '1') {
       console.log('[auth/login] attempt', { email: req.body?.email });
     }
+    const mongoLoginHealth = getMongoHealth();
+    if (!mongoLoginHealth.configured || !mongoLoginHealth.connected) {
+      res.status(503).json({
+        error: 'Authentication service temporarily unavailable. Database is not connected.',
+        code: 'MONGO_UNAVAILABLE',
+      });
+      return;
+    }
     const parsed = loginBodySchema.safeParse(req.body || {});
     if (!parsed.success) {
       await logSecurityEvent(req, {
