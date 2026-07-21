@@ -5,8 +5,10 @@
 builder = "NIXPACKS"
 
 [deploy]
+# Must be the Express API — not server/web.js (SPA helper).
 startCommand = "node server/index.js"
-healthcheckPath = "/api/health/ready"
-healthcheckTimeout = 30
+# Liveness only: must return 200 while Mongo/Redis are still connecting.
+healthcheckPath = "/api/health"
+healthcheckTimeout = 100
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 5

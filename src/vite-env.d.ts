@@ -10,7 +10,7 @@ interface ImportMetaEnv {
   readonly VITE_FIREBASE_APP_ID?: string;
   readonly VITE_ENABLE_PUSH_NOTIFICATIONS?: string;
   readonly VITE_ADMIN_ONLY?: string;
-  /** S3 or CloudFront base for object keys (no trailing slash). Prefer over VITE_PUBLIC_MEDIA_BASE_URL. */
+  /** @deprecated Unused — static media is bundled under public/. */
   readonly VITE_S3_BASE_URL?: string;
   readonly VITE_PUBLIC_MEDIA_BASE_URL?: string;
   /** If `"true"` in production, allow same-origin fallbacks for built-in media (keep dist copies; not typical). */

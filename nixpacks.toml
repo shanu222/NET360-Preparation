@@ -1,0 +1,7 @@
+# API-only Railway image: skip Vite frontend build (Vercel hosts the SPA).
+
+[phases.build]
+cmds = ["echo 'Skipping vite build — Railway runs Express API only'"]
+
+[start]
+cmd = "node server/index.js"

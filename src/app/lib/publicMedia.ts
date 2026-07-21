@@ -74,13 +74,11 @@ export function shouldUseLocalMediaFallback(): boolean {
   return true;
 }
 
-/** Optional absolute CDN base (legacy). Prefer empty — use bundled assets. */
+/** Optional absolute media base. Prefer empty — use bundled same-origin assets. */
 export function getS3BaseUrl(): string {
   const fromApi = getRuntimeS3BaseOverride().trim();
   if (fromApi) return trimSlash(fromApi);
-  const fromEnv = String(
-    import.meta.env.VITE_S3_BASE_URL || import.meta.env.VITE_PUBLIC_MEDIA_BASE_URL || '',
-  ).trim();
+  const fromEnv = String(import.meta.env.VITE_PUBLIC_MEDIA_BASE_URL || '').trim();
   return trimSlash(fromEnv);
 }
 

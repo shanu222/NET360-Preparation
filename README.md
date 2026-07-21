@@ -129,25 +129,20 @@ If admin/client requests fail with network errors in production:
 - Frontend includes retry/backoff for transient timeouts and `5xx` responses
 - If wake-up delays are frequent, consider an always-on plan for API service
 
-## Production operations (EC2 + PM2)
+## Production operations (Railway)
 
-Full runbooks: [`docs/ops/README.md`](docs/ops/README.md)
+Primary API host: **Railway** → custom domain `api.net360preparation.com`.  
+Frontend: **Vercel**. Database: **MongoDB Atlas**.
+
+- [Railway deploy](docs/ops/RAILWAY.md)
+- [Railway environment variables](docs/ops/RAILWAY-ENV.md)
+- Legacy EC2/PM2 runbooks (historical): [`docs/ops/README.md`](docs/ops/README.md)
 
 ```bash
-# One-time EC2 setup (PM2 startup, log rotation, health cron, backups)
-sudo bash scripts/setup-pm2-production.sh
-
-# Deploy API
-bash scripts/deploy-api-production.sh main
-
-# Verify health + routes
-bash scripts/verify-post-deploy-routes.sh https://api.net360preparation.com
-
-# Rollback
-bash scripts/rollback-api-production.sh .deploy-rollback-YYYYMMDD-HHMMSS
+# After Railway deploy + DNS cutover
+curl -sS https://api.net360preparation.com/api/health
+curl -sS https://api.net360preparation.com/api/health/ready
 ```
-
-CloudWatch setup: `deploy/cloudwatch/install-cloudwatch-agent.sh`
 
 ## New Production Features Added
 

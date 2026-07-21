@@ -38,7 +38,7 @@ import http from 'node:http';
 import { connectMongo, getMongoHealth } from './lib/mongo.js';
 import { getBuildInfo } from './lib/buildInfo.js';
 import { logAuthDebug, normalizeAuthDebugRoute, shouldAuthDebugRoute } from './lib/authDebug.js';
-import { getRedisMain, isRedisConfigured } from './services/redis.js';
+import { getRedisMain, isRedisConfigured, isRedisReady } from './services/redis.js';
 import { cacheGetJson, cacheSetJson, cacheKey, cacheDel, invalidateCommunityLeaderboardCache, invalidateQuizLeaderboardCache, invalidateUserSubscriptionCache } from './utils/cache.js';
 import {
   initSocketIo,
@@ -1073,10 +1073,8 @@ app.get('/', (req, res) => res.send('API is running'));
 
 app.get('/api/public/media-config', (_req, res) => {
   // Static assets are bundled in the web/Android frontend (same-origin).
-  // Absolute URL overrides remain optional via env for emergency CDN use.
-  const mediaBaseUrl = String(
-    process.env.PUBLIC_MEDIA_BASE_URL || process.env.S3_BASE_URL || process.env.AWS_PUBLIC_BASE_URL || '',
-  )
+  // Optional absolute overrides via PUBLIC_* only — no AWS defaults.
+  const mediaBaseUrl = String(process.env.PUBLIC_MEDIA_BASE_URL || '')
     .trim()
     .replace(/\/+$/, '');
   const withBase = (suffix) => {
@@ -7621,17 +7619,7 @@ app.get('/api/health', async (_req, res) => {
   const build = getBuildInfo();
   const mongo = getMongoHealth();
   const memory = process.memoryUsage();
-  let redisPing = false;
-  try {
-    const r = await getRedisMain();
-    if (r?.isOpen) {
-      await r.ping();
-      redisPing = true;
-    }
-  } catch {
-    redisPing = false;
-  }
-
+  // Never block health on Redis connect — report in-process state only.
   const payload = {
     status: 'ok',
     message: 'Backend is live',
@@ -7642,7 +7630,7 @@ app.get('/api/health', async (_req, res) => {
     firebaseAdminMissingEnv: getMissingFirebaseAdminEnvVars(),
     redis: {
       configured: isRedisConfigured(),
-      pingOk: redisPing,
+      ready: isRedisReady(),
     },
     socketIo: {
       enabled: Boolean(getIo()),
@@ -7658,13 +7646,24 @@ app.get('/api/health', async (_req, res) => {
     checkedAt: new Date().toISOString(),
   };
 
-  res.json(payload);
+  res.status(200).json(payload);
+});
+
+app.get('/health', (_req, res) => {
+  res.status(200).json({ status: 'ok' });
 });
 
 app.get('/api/health/ready', async (_req, res) => {
   const mongo = getMongoHealth();
   const build = getBuildInfo();
-  const ready = !mongo.configured || mongo.connected;
+  // Accept connecting during Railway startup so health checks do not flap to 503
+  // while mongoose is establishing the first Atlas connection.
+  const mongoOk = !mongo.configured
+    || mongo.connected
+    || mongo.readyState === 2
+    || mongo.reconnectInFlight
+    || mongo.reconnectScheduled;
+  const ready = mongoOk;
 
   res.status(ready ? 200 : 503).json({
     status: ready ? 'ready' : 'not_ready',
@@ -17001,25 +17000,7 @@ async function bootstrap() {
 
   const httpServer = http.createServer(app);
 
-  try {
-    await initSocketIo(httpServer, {
-      jwtSecret: JWT_SECRET,
-      UserModel,
-      accessTokenCookieName: ACCESS_TOKEN_COOKIE_NAME,
-      corsOrigins: corsAllowedOriginsList || true,
-      isSocketSessionValid: (user, payload) => {
-        if ((user.role || 'student') !== 'student') return true;
-        const tokenSessionId = String(payload.sessionId || '');
-        const activeSessionId = String(user.activeSession?.sessionId || '');
-        return Boolean(tokenSessionId && activeSessionId && tokenSessionId === activeSessionId);
-      },
-      onStudentPresenceRegister: registerStudentPresence,
-      onStudentPresenceUnregister: unregisterStudentPresence,
-    });
-  } catch (error) {
-    console.error('[socket.io] Initialization failed (HTTP still runs):', error?.message || error);
-  }
-
+  // Listen first so Railway health checks can pass while Socket.IO/Redis warm up.
   const server = httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`[server] running on 0.0.0.0:${PORT}`);
     if (NODE_ENV) {
@@ -17032,6 +17013,23 @@ async function bootstrap() {
     if (typeof process.send === 'function') {
       process.send('ready');
     }
+  });
+
+  void initSocketIo(httpServer, {
+    jwtSecret: JWT_SECRET,
+    UserModel,
+    accessTokenCookieName: ACCESS_TOKEN_COOKIE_NAME,
+    corsOrigins: corsAllowedOriginsList || true,
+    isSocketSessionValid: (user, payload) => {
+      if ((user.role || 'student') !== 'student') return true;
+      const tokenSessionId = String(payload.sessionId || '');
+      const activeSessionId = String(user.activeSession?.sessionId || '');
+      return Boolean(tokenSessionId && activeSessionId && tokenSessionId === activeSessionId);
+    },
+    onStudentPresenceRegister: registerStudentPresence,
+    onStudentPresenceUnregister: unregisterStudentPresence,
+  }).catch((error) => {
+    console.error('[socket.io] Initialization failed (HTTP still runs):', error?.message || error);
   });
 
   let shuttingDown = false;

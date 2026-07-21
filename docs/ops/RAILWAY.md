@@ -1,39 +1,42 @@
 # Railway production deployment — NET360 API
 
+## Health-check root cause (fixed)
+
+Railway health checks were failing because:
+
+1. `healthcheckPath` was `/api/health/ready`, which returned **503** while MongoDB was still connecting after `connectMongo()` set `lastUri`.
+2. `/api/health` awaited Redis `getRedisMain()`, which could stall health probes on a bad Redis host.
+3. Default `npm start` previously launched the SPA helper (`server/web.js`), not the API.
+
+### Fixes
+
+- Railway healthcheck → `/api/health` (always 200 when the HTTP server is listening).
+- `/api/health` no longer connects to Redis; reports `isRedisReady()` only.
+- `/api/health/ready` treats Mongo `connecting` / reconnect as OK during startup.
+- `package.json` `"start": "node server/index.js"`.
+- `Procfile` + `nixpacks.toml` skip Vite build on Railway.
+
 ## Service settings
 
 | Setting | Value |
 |---------|--------|
-| Root directory | repository root |
 | Start command | `node server/index.js` |
-| Health check | `GET /api/health/ready` |
+| Health check | `GET /api/health` |
 | Custom domain | `api.net360preparation.com` |
-
-Do **not** use `npm start` (that runs the SPA helper). Use `start:server` / `node server/index.js` only.
+| Node | 20 (`.nvmrc`) |
 
 ## DNS cutover
 
-1. Deploy this service on Railway and confirm `https://<railway-host>/api/health/ready` returns 200.
-2. Add custom domain `api.net360preparation.com` in Railway.
-3. Lower TTL on the existing DNS record.
-4. Point `api.net360preparation.com` CNAME/ALIAS to the Railway domain.
-5. Keep EC2 running until smoke tests pass (24–48h).
-6. Decommission EC2 after soak.
+1. Deploy Railway; confirm `https://<railway>/api/health` → 200.
+2. Attach custom domain `api.net360preparation.com`.
+3. Lower DNS TTL; switch CNAME/ALIAS to Railway.
+4. Keep previous host warm until smoke tests pass.
+5. Decommission previous host after soak.
 
-## Firebase Admin (no credential file in the repo)
+## Firebase Admin
 
-Set **one** of:
-
-- `FIREBASE_SERVICE_ACCOUNT_JSON` — full service account JSON as a single-line string
-- `FIREBASE_SERVICE_ACCOUNT_BASE64` — base64 of that JSON
-- Or `FIREBASE_PROJECT_ID` + `FIREBASE_CLIENT_EMAIL` + `FIREBASE_PRIVATE_KEY` (use `\n` for newlines)
-
-Optional legacy (local/EC2 only): `GOOGLE_APPLICATION_CREDENTIALS` file path.
-
-## Required secrets (copy from EC2; do not commit)
-
-See `docs/ops/RAILWAY-ENV.md`.
+Set `FIREBASE_SERVICE_ACCOUNT_JSON` (or BASE64 / split fields). See `RAILWAY-ENV.md`.
 
 ## Rollback
 
-Repoint DNS for `api.net360preparation.com` back to EC2. Pause/stop the Railway service.
+Repoint DNS for `api.net360preparation.com` to the previous origin. Pause Railway.

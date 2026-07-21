@@ -34,11 +34,12 @@ Install on your machine:
 Use `.env.android.example` as reference and create your own `.env.android` (or CI env vars with Android mode):
 
 - `VITE_API_URL=https://api.net360preparation.com`
-- `VITE_S3_BASE_URL=https://net360-media.s3.ap-south-1.amazonaws.com`
+- `VITE_FIREBASE_API_KEY` / `VITE_FIREBASE_AUTH_DOMAIN` / `VITE_FIREBASE_PROJECT_ID` / `VITE_FIREBASE_APP_ID`
 - `VITE_ENABLE_PUSH_NOTIFICATIONS=false` (set `true` only after Firebase setup)
 
 Important:
 
+- Do **not** set `VITE_S3_BASE_URL` — static media is bundled into the APK (`public/`).
 - API URL must be HTTPS and reachable from real Android devices.
 - Use the same backend used by web so all admin updates and MCQ changes appear in mobile immediately.
 

@@ -1,19 +1,19 @@
-# Railway environment variables (from EC2 audit)
+# Railway environment variables
 
-Copy values from the live EC2 host. **Never commit secrets.**
+**Never commit secrets.** Set these in the Railway service Variables UI.
 
 ## Required
 
 | Variable | Notes |
 |----------|--------|
 | `NODE_ENV` | `production` |
-| `MONGODB_URI` | Same Atlas cluster as today |
-| `JWT_SECRET` | Rotate if ever exposed |
-| `JWT_REFRESH_SECRET` | Rotate if ever exposed |
+| `MONGODB_URI` | Same Atlas cluster as production |
+| `JWT_SECRET` | Strong secret |
+| `JWT_REFRESH_SECRET` | Strong secret |
 | `ADMIN_LOGIN_EMAIL` | |
 | `ADMIN_LOGIN_PASSWORD` | |
 | `CORS_ALLOWED_ORIGINS` | Vercel production origins (comma-separated) |
-| `ISSUE_AUTH_BODY_TOKENS` | `true` (Android) |
+| `ISSUE_AUTH_BODY_TOKENS` | `true` (required for Android) |
 
 ## Firebase Admin (pick one style)
 
@@ -35,7 +35,7 @@ Copy values from the live EC2 host. **Never commit secrets.**
 | `SMTP_*` | password recovery / delete link |
 | `PAYFAST_*` / `PAYFAST_CHECKOUT_DISABLED` | payments |
 | `SUBSCRIPTION_TRIAL_DAYS` / `PREMIUM_PLAN_DURATION_MONTHS` | |
-| `SUBSCRIPTION_PREMIUM_SURFACE_BYPASS` | match EC2 |
+| `SUBSCRIPTION_PREMIUM_SURFACE_BYPASS` | match prior production |
 | `MANUAL_SUBSCRIPTION_WHATSAPP` | |
 
 ## Optional
@@ -44,11 +44,12 @@ Copy values from the live EC2 host. **Never commit secrets.**
 |----------|--------|
 | `REDIS_URL` or `REDIS_HOST`+creds | Leave empty for Mongo-only |
 | `TWILIO_*` | if used |
+| `PUBLIC_*` media URL overrides | prefer empty (bundled assets) |
 | `GIT_COMMIT` / `DEPLOYED_AT` | build metadata |
 
-## Removed (do not set on Railway)
+## Do not set on Railway (removed / unused)
 
-`AWS_*`, `S3_*`, `AWS_PUBLIC_BASE_URL`, `S3_BACKUP_BUCKET`, `GOOGLE_APPLICATION_CREDENTIALS` (prefer JSON env), PM2/`NET360_LOG_DIR` EC2 paths.
+`AWS_*`, `S3_*`, `AWS_PUBLIC_BASE_URL`, `S3_BACKUP_BUCKET`, `S3_OBJECT_ACL`, `GOOGLE_APPLICATION_CREDENTIALS` (prefer JSON env), PM2/`NET360_LOG_DIR` paths, `VITE_*` (Vite vars belong on Vercel / Android CI, not the API service).
 
 ## Vercel (web)
 
@@ -56,7 +57,7 @@ Copy values from the live EC2 host. **Never commit secrets.**
 |----------|--------|
 | `VITE_API_URL` | `https://api.net360preparation.com` |
 | `VITE_FIREBASE_*` | client SDK |
-| `VITE_S3_BASE_URL` | **unset** after static assets are bundled |
+| `VITE_S3_BASE_URL` | **unset** |
 
 ## Android build
 
@@ -64,4 +65,4 @@ Copy values from the live EC2 host. **Never commit secrets.**
 |----------|--------|
 | `VITE_API_URL` | `https://api.net360preparation.com` |
 | `VITE_FIREBASE_*` | required |
-| `VITE_S3_BASE_URL` | **not required** after bundling |
+| `VITE_S3_BASE_URL` | **not required** |

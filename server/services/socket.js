@@ -1,6 +1,6 @@
 /**
  * Socket.IO for student/admin real-time sync (mirrors SSE payloads).
- * Works without Redis (single PM2 instance); with Redis pub/sub for horizontal scaling.
+ * Works without Redis (single instance); with Redis pub/sub for horizontal scaling.
  */
 import { Server } from 'socket.io';
 import { createAdapter } from '@socket.io/redis-adapter';

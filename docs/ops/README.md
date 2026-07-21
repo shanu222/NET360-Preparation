@@ -1,41 +1,20 @@
-# NET360 Production Operations
+# Ops docs index
 
-Operational runbooks for the NET360 API (EC2 + PM2 + MongoDB Atlas).
+## Current production (Railway)
 
-| Document | Purpose |
-|----------|---------|
-| [DEPLOYMENT-CHECKLIST.md](./DEPLOYMENT-CHECKLIST.md) | Pre/post deploy verification |
-| [INCIDENT-RECOVERY.md](./INCIDENT-RECOVERY.md) | Outage response and rollback |
-| [MONITORING-DASHBOARD.md](./MONITORING-DASHBOARD.md) | CloudWatch, PM2, health endpoints |
+| Doc | Purpose |
+|-----|---------|
+| [RAILWAY.md](./RAILWAY.md) | Deploy, health check, DNS cutover, rollback |
+| [RAILWAY-ENV.md](./RAILWAY-ENV.md) | Environment variables for Railway / Vercel / Android |
 
-## Quick reference
+Topology: **Vercel (web) → Railway (API) → MongoDB Atlas**. Auth: Firebase + JWT.
 
-```bash
-# One-time EC2 setup
-sudo bash scripts/setup-pm2-production.sh
+## Legacy (EC2 + PM2 — superseded)
 
-# Deploy API (main branch)
-bash scripts/deploy-api-production.sh main
+The following runbooks describe the previous EC2 host. Do not use them for new production deploys.
 
-# Verify routes
-bash scripts/verify-post-deploy-routes.sh https://api.net360preparation.com
-
-# Rollback
-bash scripts/rollback-api-production.sh .deploy-rollback-YYYYMMDD-HHMMSS
-
-# Health endpoints
-curl -sS https://api.net360preparation.com/api/health | jq .
-curl -sS https://api.net360preparation.com/api/health/ready | jq .
-curl -sS https://api.net360preparation.com/api/version | jq .
-```
-
-## Architecture
-
-| Component | Host | Process |
-|-----------|------|---------|
-| Frontend SPA | Vercel (`web-production`) | Static + `/api/*` rewrite |
-| API | EC2 `api.net360preparation.com` | PM2 `net360-api` → `server/index.js:5000` |
-| Reverse proxy | Nginx on EC2 | TLS + WebSocket to PM2 |
-| Database | MongoDB Atlas | `MONGODB_URI` |
-| Media | S3 `ap-south-1` | AWS SDK |
-| Logs | PM2 files + CloudWatch | `/net360/production/api` |
+| Doc | Purpose |
+|-----|---------|
+| [DEPLOYMENT-CHECKLIST.md](./DEPLOYMENT-CHECKLIST.md) | Historical EC2 deploy checklist |
+| [MONITORING-DASHBOARD.md](./MONITORING-DASHBOARD.md) | Historical PM2 / CloudWatch |
+| [INCIDENT-RECOVERY.md](./INCIDENT-RECOVERY.md) | Historical EC2 incident steps |
