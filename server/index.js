@@ -7620,6 +7620,7 @@ app.get('/api/health', async (_req, res) => {
   const mongo = getMongoHealth();
   const memory = process.memoryUsage();
   // Never block health on Redis connect — report in-process state only.
+  // Presence flags only — never log or return secret values.
   const payload = {
     status: 'ok',
     message: 'Backend is live',
@@ -7628,6 +7629,26 @@ app.get('/api/health', async (_req, res) => {
     mongo,
     firebaseAdminConfigured: Boolean(firebaseAdminAuth),
     firebaseAdminMissingEnv: getMissingFirebaseAdminEnvVars(),
+    envPresence: {
+      NODE_ENV: Boolean(String(process.env.NODE_ENV || '').trim()),
+      NODE_ENV_VALUE: String(process.env.NODE_ENV || '').trim() || '(unset → app defaults to development)',
+      MONGODB_URI: Boolean(String(process.env.MONGODB_URI || '').trim()),
+      DATABASE_URL: Boolean(String(process.env.DATABASE_URL || '').trim()),
+      MONGO_URI: Boolean(String(process.env.MONGO_URI || '').trim()),
+      JWT_SECRET: Boolean(String(process.env.JWT_SECRET || '').trim()),
+      JWT_REFRESH_SECRET: Boolean(String(process.env.JWT_REFRESH_SECRET || '').trim()),
+      FIREBASE_SERVICE_ACCOUNT_JSON: Boolean(String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_ADMIN_CREDENTIALS_JSON || '').trim()),
+      FIREBASE_SERVICE_ACCOUNT_BASE64: Boolean(String(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64 || '').trim()),
+      FIREBASE_PROJECT_ID: Boolean(String(process.env.FIREBASE_PROJECT_ID || process.env.FIREBASE_ADMIN_PROJECT_ID || '').trim()),
+      FIREBASE_CLIENT_EMAIL: Boolean(String(process.env.FIREBASE_CLIENT_EMAIL || process.env.FIREBASE_ADMIN_CLIENT_EMAIL || '').trim()),
+      FIREBASE_PRIVATE_KEY: Boolean(String(process.env.FIREBASE_PRIVATE_KEY || process.env.FIREBASE_ADMIN_PRIVATE_KEY || '').trim()),
+      ADMIN_LOGIN_EMAIL: Boolean(String(process.env.ADMIN_LOGIN_EMAIL || process.env.ADMIN_EMAIL || '').trim()),
+      ADMIN_LOGIN_PASSWORD: Boolean(String(process.env.ADMIN_LOGIN_PASSWORD || process.env.ADMIN_PASSWORD || '').trim()),
+      CORS_ALLOWED_ORIGINS: Boolean(String(process.env.CORS_ALLOWED_ORIGINS || process.env.NET360_CORS_ORIGINS || '').trim()),
+      ISSUE_AUTH_BODY_TOKENS: String(process.env.ISSUE_AUTH_BODY_TOKENS ?? '(unset → default true)'),
+      RAILWAY_ENVIRONMENT_NAME: String(process.env.RAILWAY_ENVIRONMENT_NAME || '').trim() || '(unset)',
+      RAILWAY_SERVICE_NAME: String(process.env.RAILWAY_SERVICE_NAME || '').trim() || '(unset)',
+    },
     redis: {
       configured: isRedisConfigured(),
       ready: isRedisReady(),
@@ -17006,6 +17027,21 @@ async function bootstrap() {
     if (NODE_ENV) {
       console.log(`[server] NODE_ENV=${NODE_ENV}`);
     }
+    // Safe presence diagnostics (no secret values).
+    console.log('[env-presence]', {
+      NODE_ENV: Boolean(String(process.env.NODE_ENV || '').trim()),
+      MONGODB_URI: Boolean(MONGODB_URI),
+      JWT_SECRET: Boolean(JWT_SECRET_RAW),
+      JWT_REFRESH_SECRET: Boolean(JWT_REFRESH_SECRET_RAW),
+      FIREBASE_JSON: Boolean(String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || '').trim()),
+      FIREBASE_PROJECT_ID: Boolean(String(process.env.FIREBASE_PROJECT_ID || '').trim()),
+      FIREBASE_CLIENT_EMAIL: Boolean(String(process.env.FIREBASE_CLIENT_EMAIL || '').trim()),
+      FIREBASE_PRIVATE_KEY: Boolean(String(process.env.FIREBASE_PRIVATE_KEY || '').trim()),
+      ADMIN_LOGIN: Boolean(ENV_ADMIN_LOGIN_EMAIL_RAW && ENV_ADMIN_LOGIN_PASSWORD),
+      CORS: Boolean(String(process.env.CORS_ALLOWED_ORIGINS || process.env.NET360_CORS_ORIGINS || '').trim()),
+      RAILWAY_SERVICE: String(process.env.RAILWAY_SERVICE_NAME || '').trim() || '(unset)',
+      RAILWAY_ENV: String(process.env.RAILWAY_ENVIRONMENT_NAME || '').trim() || '(unset)',
+    });
     const build = getBuildInfo();
     if (build.commit && build.commit !== 'unknown') {
       console.log(`[server] build commit=${build.commitShort} branch=${build.branch} deployedAt=${build.deployedAt || 'n/a'}`);
