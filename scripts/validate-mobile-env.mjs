@@ -36,14 +36,10 @@ if (/^http:\/\//i.test(apiBaseUrl)) {
 }
 
 const mediaBase = String(process.env.VITE_S3_BASE_URL || process.env.VITE_PUBLIC_MEDIA_BASE_URL || '').trim();
-if (!mediaBase) {
-  console.error(
-    '[mobile:build] Missing VITE_S3_BASE_URL (or VITE_PUBLIC_MEDIA_BASE_URL). ' +
-      'Android builds strip bundled media and require a CDN/S3 media base URL.',
-  );
-  process.exit(1);
+if (mediaBase) {
+  console.log('[mobile:build] Optional legacy media base URL present (bundled assets preferred):', mediaBase.replace(/\/+$/, ''));
 } else {
-  console.log('[mobile:build] Media base URL:', mediaBase.replace(/\/+$/, ''));
+  console.log('[mobile:build] Using bundled static media (schools/images/videos in dist).');
 }
 
 console.log('[mobile:build] Using backend URL:', apiBaseUrl);

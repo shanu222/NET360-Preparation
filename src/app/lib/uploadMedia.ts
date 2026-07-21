@@ -1,8 +1,8 @@
 import { apiRequest } from './api';
 
 /**
- * Upload a file to S3 via POST /api/upload (admin-only). Uses streaming multer-s3 on the server.
- * Returns the public URL and object key.
+ * Legacy admin upload endpoint (POST /api/upload).
+ * Hosted S3 uploads are retired — returns 410. Prefer MCQ data URLs in MongoDB.
  */
 export async function uploadMediaToS3(
   file: File,

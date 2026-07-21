@@ -21,20 +21,12 @@ function writeDistVersionJsonPlugin(): Plugin {
   }
 }
 
-function injectS3PreconnectPlugin(mode: string): Plugin {
-  const env = loadEnv(mode, process.cwd(), '')
-  const raw = String(env.VITE_S3_BASE_URL || env.VITE_PUBLIC_MEDIA_BASE_URL || '').trim().replace(/\/+$/, '')
+function injectS3PreconnectPlugin(_mode: string): Plugin {
   return {
     name: 'inject-s3-preconnect',
     transformIndexHtml(html) {
-      if (!raw || !/^https?:\/\//i.test(raw)) return html
-      try {
-        const origin = new URL(raw).origin
-        const extra = `  <link rel="dns-prefetch" href="${origin}" />\n  <link rel="preconnect" href="${origin}" crossorigin />\n`
-        return html.replace(/<\/head>/i, `${extra}</head>`)
-      } catch {
-        return html
-      }
+      // Static media is bundled same-origin; no CDN preconnect.
+      return html;
     },
   }
 }
