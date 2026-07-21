@@ -757,61 +757,62 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 </>
               )}
 
-              <div className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-1.5">
-                <div className="grid grid-cols-3 gap-1.5">
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className={`min-h-[2.75rem] h-auto rounded-lg px-2 py-2 text-center text-[12px] leading-tight whitespace-normal sm:text-sm ${
-                      authMode === 'login'
-                        ? 'bg-gradient-to-r from-indigo-700 to-violet-600 !text-white shadow-sm hover:from-indigo-800 hover:to-violet-700'
-                        : 'bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-700'
-                    }`}
-                    onClick={() => {
-                      setRegisterConflictBanner('');
-                      resetAuthActionState();
-                      setAuthMode('login');
-                    }}
-                  >
-                    Login
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className={`min-h-[2.75rem] h-auto rounded-lg px-2 py-2 text-center text-[12px] leading-tight whitespace-normal sm:text-sm ${
-                      authMode === 'register'
-                        ? 'bg-gradient-to-r from-indigo-700 to-violet-600 !text-white shadow-sm hover:from-indigo-800 hover:to-violet-700'
-                        : 'bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-700'
-                    }`}
-                    onClick={() => {
-                      setRegisterConflictBanner('');
-                      resetAuthActionState();
-                      setAuthMode('register');
-                    }}
-                  >
-                    Create Account
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className={`min-h-[2.75rem] h-auto rounded-lg px-2 py-2 text-center text-[12px] leading-tight whitespace-normal sm:text-sm ${
-                      authMode === 'recovery'
-                        ? 'bg-gradient-to-r from-indigo-700 to-violet-600 !text-white shadow-sm hover:from-indigo-800 hover:to-violet-700'
-                        : 'bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-700'
-                    }`}
-                    onClick={() => {
-                      setRegisterConflictBanner('');
-                      resetAuthActionState();
-                      setAuthMode('recovery');
-                    }}
-                  >
-                    Recover Password
-                  </Button>
-                </div>
-              </div>
+              <div className="space-y-3">
+                <button
+                  type="button"
+                  className={`flex w-full flex-col items-start rounded-xl border px-3.5 py-3 text-left transition active:scale-[0.99] ${
+                    authMode === 'login'
+                      ? 'border-indigo-500 bg-gradient-to-r from-indigo-700 to-violet-600 text-white shadow-sm'
+                      : 'border-indigo-100 bg-white text-slate-800 hover:border-indigo-200 hover:bg-indigo-50/60'
+                  }`}
+                  onClick={() => {
+                    setRegisterConflictBanner('');
+                    resetAuthActionState();
+                    setAuthMode('login');
+                  }}
+                >
+                  <span className={`text-[11px] font-semibold uppercase tracking-wide ${authMode === 'login' ? 'text-indigo-100' : 'text-indigo-600'}`}>Login</span>
+                  <span className={`mt-0.5 text-sm font-semibold ${authMode === 'login' ? 'text-white' : 'text-slate-900'}`}>Already have an account?</span>
+                  <span className={`mt-0.5 text-xs ${authMode === 'login' ? 'text-indigo-100' : 'text-slate-500'}`}>Sign in with email or Google</span>
+                </button>
 
-              <div className="text-xs text-slate-500 text-center">
-                Recover your password securely through email verification{forgotCooldownSeconds > 0 ? ` • cooldown ${forgotCooldownSeconds}s` : ''}
+                <button
+                  type="button"
+                  className={`flex w-full flex-col items-start rounded-xl border px-3.5 py-3 text-left transition active:scale-[0.99] ${
+                    authMode === 'register'
+                      ? 'border-indigo-500 bg-gradient-to-r from-indigo-700 to-violet-600 text-white shadow-sm'
+                      : 'border-indigo-100 bg-white text-slate-800 hover:border-indigo-200 hover:bg-indigo-50/60'
+                  }`}
+                  onClick={() => {
+                    setRegisterConflictBanner('');
+                    resetAuthActionState();
+                    setAuthMode('register');
+                  }}
+                >
+                  <span className={`text-[11px] font-semibold uppercase tracking-wide ${authMode === 'register' ? 'text-indigo-100' : 'text-indigo-600'}`}>Create Account</span>
+                  <span className={`mt-0.5 text-sm font-semibold ${authMode === 'register' ? 'text-white' : 'text-slate-900'}`}>New student?</span>
+                  <span className={`mt-0.5 text-xs ${authMode === 'register' ? 'text-indigo-100' : 'text-slate-500'}`}>Create your free account</span>
+                </button>
+
+                <button
+                  type="button"
+                  className={`flex w-full flex-col items-start rounded-xl border px-3.5 py-3 text-left transition active:scale-[0.99] ${
+                    authMode === 'recovery'
+                      ? 'border-indigo-500 bg-gradient-to-r from-indigo-700 to-violet-600 text-white shadow-sm'
+                      : 'border-indigo-100 bg-white text-slate-800 hover:border-indigo-200 hover:bg-indigo-50/60'
+                  }`}
+                  onClick={() => {
+                    setRegisterConflictBanner('');
+                    resetAuthActionState();
+                    setAuthMode('recovery');
+                  }}
+                >
+                  <span className={`text-[11px] font-semibold uppercase tracking-wide ${authMode === 'recovery' ? 'text-indigo-100' : 'text-indigo-600'}`}>Recover Password</span>
+                  <span className={`mt-0.5 text-sm font-semibold ${authMode === 'recovery' ? 'text-white' : 'text-slate-900'}`}>Forgot password?</span>
+                  <span className={`mt-0.5 text-xs ${authMode === 'recovery' ? 'text-indigo-100' : 'text-slate-500'}`}>
+                    Reset via email{forgotCooldownSeconds > 0 ? ` • cooldown ${forgotCooldownSeconds}s` : ''}
+                  </span>
+                </button>
               </div>
 
               {!isRecoveryMode ? (
@@ -824,17 +825,21 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                     <Button
                       type="button"
                       variant="outline"
-                      className="h-11 rounded-xl border-indigo-200 bg-white !text-slate-700 hover:bg-indigo-50 hover:!text-indigo-800"
+                      className="h-11 rounded-xl border-indigo-200 bg-white !text-slate-800 hover:bg-indigo-50 hover:!text-indigo-900 disabled:opacity-80"
                       disabled={isAuthBusy}
                       onClick={() => void handleSocialAuth()}
                     >
-                      <GoogleLogo className="mr-2 h-4 w-4" />
-                      Google
+                      {authActionState === 'loggingIn' ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <GoogleLogo className="mr-2 h-4 w-4" />
+                      )}
+                      {authActionState === 'loggingIn' ? 'Connecting Google…' : 'Continue with Google'}
                     </Button>
                     {isNativeRuntimePlatform() ? (
                       <p className="text-xs text-slate-500">
                         {Capacitor.getPlatform() === 'android'
-                          ? 'Uses the system Google account picker (not the in-app browser). You stay in NET360 when sign-in completes.'
+                          ? 'Uses the system Google account picker. You stay in NET360 when sign-in completes.'
                           : 'Finish signing in with Google, then you return here automatically.'}
                       </p>
                     ) : null}

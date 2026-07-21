@@ -15,13 +15,16 @@
 # Keep Capacitor/Cordova bridge classes required by plugins in release builds.
 -keep class com.getcapacitor.** { *; }
 -keep class org.apache.cordova.** { *; }
+-keep class ee.forgr.capacitor.social.login.** { *; }
 -dontwarn com.getcapacitor.**
 -dontwarn org.apache.cordova.**
+-dontwarn ee.forgr.capacitor.social.login.**
 
 # Keep Firebase + Google Sign-In auth classes used by WebView/native auth flows.
 -keep class com.google.firebase.** { *; }
 -keep class com.google.android.gms.auth.api.signin.** { *; }
 -keep class com.google.android.gms.common.api.** { *; }
+-keep class com.google.android.libraries.identity.googleid.** { *; }
 -dontwarn com.google.firebase.**
 -dontwarn com.google.android.gms.**
 

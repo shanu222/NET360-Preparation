@@ -667,7 +667,7 @@ export function Tests({ onNavigate }: TestsProps) {
                   </div>
 
                   <Button
-                    className="bg-gradient-to-r from-indigo-600 to-violet-500 text-white"
+                    className="h-auto w-full whitespace-normal bg-gradient-to-r from-indigo-600 to-violet-500 px-3 py-2.5 text-sm text-white sm:text-base"
                     onClick={() => {
                       const topSubject = recommendedSubjectBreakdown[0]?.subject || selectedSubject;
                       void beginTest(
@@ -679,8 +679,8 @@ export function Tests({ onNavigate }: TestsProps) {
                     }}
                     disabled={Boolean(launchingKind) || !authReady}
                   >
-                    {launchingKind === 'adaptive' ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />}
-                    Start Recommended Adaptive Test
+                    {launchingKind === 'adaptive' ? <Loader2 className="mr-1.5 h-4 w-4 shrink-0 animate-spin" /> : <Play className="mr-1.5 h-4 w-4 shrink-0" />}
+                    {launchingKind === 'adaptive' ? 'Launching Test…' : 'Start Adaptive Test'}
                   </Button>
                 </>
               ) : (
@@ -729,7 +729,7 @@ export function Tests({ onNavigate }: TestsProps) {
                       disabled={Boolean(launchingKind) || !authReady}
                     >
                       {isLaunchingThis ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Play className="mr-1.5 h-4 w-4" />}
-                      {isLaunchingThis ? 'Launching...' : 'Start Test'}
+                      {isLaunchingThis ? 'Launching Test…' : 'Start Test'}
                     </Button>
                   </CardContent>
                 </Card>

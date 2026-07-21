@@ -370,9 +370,10 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
         type="button"
         onClick={onOpenProfile}
         aria-label="Login or sign up"
-        className="touch-manipulation ml-1 inline-flex min-h-11 items-center gap-2 rounded-xl px-2 py-2 text-slate-700 transition hover:bg-indigo-50 sm:min-h-9 sm:py-1.5"
+        className="touch-manipulation inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-indigo-200 bg-indigo-50 text-indigo-700 transition hover:bg-indigo-100 active:scale-95 sm:ml-1 sm:h-auto sm:w-auto sm:gap-2 sm:rounded-xl sm:border-0 sm:bg-transparent sm:px-2 sm:py-1.5 sm:text-slate-700 sm:hover:bg-indigo-50"
       >
-        <div className="h-8 w-8 shrink-0 rounded-full bg-gradient-to-br from-amber-300 to-orange-500" />
+        <User className="h-4 w-4 sm:hidden" />
+        <div className="hidden h-8 w-8 shrink-0 rounded-full bg-gradient-to-br from-indigo-400 to-violet-500 sm:block" />
         <span className="hidden text-sm sm:inline">Login / Sign Up</span>
         <ChevronDown className="hidden w-4 h-4 sm:inline" />
       </button>
@@ -885,11 +886,11 @@ export default function App() {
         <div className="net360-shell mx-auto flex w-full min-w-0 max-w-[min(100%,1600px)] flex-col gap-2 rounded-[20px] border border-white/70 bg-white/65 p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl sm:gap-3 sm:rounded-[24px] sm:p-2 xl:rounded-[28px]">
           <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white/85 to-[#f2f4ff]/80 backdrop-blur sm:rounded-3xl">
             {/* Header */}
-            <header className="net360-header sticky top-0 z-40 flex min-h-14 flex-wrap items-center justify-between gap-2 rounded-t-2xl border-b border-indigo-100/70 bg-white/65 px-2 py-1.5 backdrop-blur-xl sm:min-h-16 sm:flex-nowrap sm:px-5 sm:py-0 sm:rounded-t-3xl">
-              <div className="flex min-w-0 items-center gap-2.5 sm:gap-3">
+            <header className="net360-header sticky top-0 z-40 flex min-h-14 items-center gap-1 overflow-hidden rounded-t-2xl border-b border-indigo-100/70 bg-white/65 px-2 py-1.5 backdrop-blur-xl sm:min-h-16 sm:gap-2 sm:px-5 sm:py-0 sm:rounded-t-3xl">
+              <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:gap-3">
                 <Sheet open={sidebarMenuOpen} onOpenChange={setSidebarMenuOpen}>
                   <SheetTrigger asChild>
-                    <Button variant="ghost" size="icon" className="touch-manipulation rounded-xl min-h-11 min-w-11" aria-label="Open navigation menu">
+                    <Button variant="ghost" size="icon" className="touch-manipulation shrink-0 rounded-xl min-h-10 min-w-10 sm:min-h-11 sm:min-w-11" aria-label="Open navigation menu">
                       <Menu className="w-5 h-5" />
                     </Button>
                   </SheetTrigger>
@@ -956,11 +957,11 @@ export default function App() {
                   </div>
                 </div>
               </div>
-              <div className="ml-auto flex items-center gap-1 sm:gap-2">
+              <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-2">
                 <Button
                   variant="ghost"
-                  size="sm"
-                  className="touch-manipulation min-h-11 rounded-xl px-2.5 text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 sm:min-h-9 sm:px-2"
+                  size="icon"
+                  className="touch-manipulation hidden min-h-10 min-w-10 rounded-xl text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 sm:inline-flex sm:min-h-9 sm:min-w-9 sm:w-auto sm:px-2.5"
                   onClick={() => setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'))}
                   aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
                   title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -971,7 +972,7 @@ export default function App() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="touch-manipulation min-h-11 min-w-11 rounded-xl text-slate-600 hover:bg-indigo-50"
+                  className="touch-manipulation min-h-10 min-w-10 rounded-xl text-slate-600 hover:bg-indigo-50 sm:min-h-9 sm:min-w-9"
                   onClick={() => showSuccessToast('We will show your updates here.')}
                   aria-label="Notifications"
                 >
@@ -983,7 +984,7 @@ export default function App() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="touch-manipulation min-h-11 min-w-11 rounded-xl text-slate-600 hover:bg-indigo-50"
+                  className="touch-manipulation min-h-10 min-w-10 rounded-xl text-slate-600 hover:bg-indigo-50 sm:min-h-9 sm:min-w-9"
                   onClick={() => {
                     window.dispatchEvent(new CustomEvent('net360:open-support-chat'));
                   }}

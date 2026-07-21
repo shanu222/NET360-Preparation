@@ -86,7 +86,7 @@ const googleServicesPath = path.join(workspaceRoot, 'android', 'app', 'google-se
 if (!fs.existsSync(googleServicesPath)) {
   console.error(
     `[mobile:build] Missing ${googleServicesPath}. ` +
-      'Add Firebase Android config for package com.net360.preparation before Android release builds.',
+      'Add Firebase Android config for package com.net360prep.app before Android release builds.',
   );
   process.exit(1);
 }
@@ -98,9 +98,9 @@ try {
       .map((c) => c?.client_info?.android_client_info?.package_name)
       .filter(Boolean),
   );
-  if (!packageNames.has('com.net360.preparation')) {
+  if (!packageNames.has('com.net360prep.app')) {
     console.error(
-      '[mobile:build] google-services.json does not include package com.net360.preparation. ' +
+      '[mobile:build] google-services.json does not include package com.net360prep.app. ' +
         `Found: ${Array.from(packageNames).join(', ') || '(none)'}`,
     );
     process.exit(1);
