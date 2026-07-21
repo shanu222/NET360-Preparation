@@ -98,12 +98,13 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
   const code = String(typed?.code || typed?.payload?.code || '').toUpperCase();
   const message = String(typed?.message || '').toLowerCase();
   const rawCode = String(typed?.code || '').trim();
+  const rawMessage = String(typed?.message || '').trim();
 
   if (rawCode === 'USER_CANCELLED') {
     return 'Sign-in was cancelled.';
   }
-  if (rawCode === 'GOOGLE_OAUTH_ANDROID_MISCONFIG') {
-    return 'Google sign-in is not available for this app build yet. Please use email and password.';
+  if (rawCode === 'GOOGLE_OAUTH_ANDROID_MISCONFIG' || rawCode === 'GOOGLE_SIGN_IN_FAILED') {
+    return 'Google sign-in failed. Please try again.';
   }
   if (code === 'ACTIVE_SESSION_ELSEWHERE' || code === 'SESSION_DISABLED_TEMP' || code === 'ACTIVE_SESSION_EXISTS') {
     return 'Your account is already signed in on another device.';
@@ -112,10 +113,14 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
     return 'Your account was signed in on another device. Please sign in again.';
   }
   if (message.includes('missing initial state') || message.includes('sessionstorage')) {
-    return 'Google sign-in could not finish on this device. Please try again or use email and password.';
+    return 'Google sign-in failed. Please try again.';
   }
   if (message.includes('google sign-in is not available in this android build')) {
     return 'Google sign-in is not available in this app version. Please use email and password.';
+  }
+  /* Debug builds may throw multi-line diagnostic messages — keep them visible. */
+  if (Boolean(import.meta.env.DEV) && rawMessage.includes('Google Sign-In failed (debug)')) {
+    return rawMessage;
   }
 
   return audienceFriendlyError(error, fallback);
@@ -383,7 +388,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       await loginWithGoogle();
       setAuthActionState('idle');
       if (!isNativeRuntimePlatform()) {
-        showSuccessToast('Signed in with Google.');
+        showSuccessToast('Login successful.');
       }
       /* Android: AuthContext shows success. iOS: getRedirectResult shows success after return. */
     } catch (error) {
@@ -398,7 +403,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         setOtherDeviceDialogOpen(true);
         return;
       }
-      showErrorToast(loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
+      showErrorToast(loginFriendlyAuthError(error, 'Google sign-in failed. Please try again.'));
     }
   };
 
@@ -724,7 +729,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               >
                 {isAuthBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 {authActionState === 'loggingIn'
-                  ? 'Logging in...'
+                  ? 'Signing in...'
                   : authActionState === 'creatingAccount'
                   ? 'Creating account...'
                   : isRegisterMode
@@ -748,8 +753,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                     <div className="mt-0.5 h-2.5 w-2.5 rounded-full bg-indigo-500 animate-pulse" />
                     <p className="text-sm leading-relaxed text-slate-700">
                       {authActionState === 'loggingIn'
-                        ? 'Logging in... please wait.'
-                        : 'Creating account... please wait.'}
+                        ? 'Signing in...'
+                        : 'Creating account...'}
                     </p>
                   </div>
                 </div>
@@ -834,7 +839,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                       ) : (
                         <GoogleLogo className="mr-2 h-4 w-4" />
                       )}
-                      {authActionState === 'loggingIn' ? 'Connecting Google…' : 'Continue with Google'}
+                      {authActionState === 'loggingIn' ? 'Signing in...' : 'Continue with Google'}
                     </Button>
                     {isNativeRuntimePlatform() ? (
                       <p className="text-xs text-slate-500">

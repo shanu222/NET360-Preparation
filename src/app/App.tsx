@@ -424,11 +424,24 @@ export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const [, startRouteTransition] = useTransition();
+  const { user, loading: authLoading } = useAuth();
   const activeTab = useMemo(() => resolveSectionFromLocation(location.pathname, location.hash), [location.hash, location.pathname]);
   const isConfirmAccountDeletionRoute = useMemo(() => {
     const normalized = location.pathname === '/' ? '/' : location.pathname.replace(/\/+$/, '');
     return normalized === '/confirm-account-deletion';
   }, [location.pathname]);
+
+  /** Native: unauthenticated users always land on Login (Profile), never Dashboard first. */
+  useEffect(() => {
+    if (authLoading || isConfirmAccountDeletionRoute) return;
+    const isNativeRuntime = Boolean(
+      (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.(),
+    );
+    if (!isNativeRuntime) return;
+    if (!user && activeTab === 'home') {
+      navigate(PATH_BY_SECTION.profile, { replace: true });
+    }
+  }, [authLoading, user, activeTab, navigate, isConfirmAccountDeletionRoute]);
 
   const navigateWithTransition = useCallback(
     (to: string) => {
