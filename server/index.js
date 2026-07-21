@@ -5771,11 +5771,25 @@ function serializeAttempt(attempt) {
 }
 
 function isMongoObjectIdLike(value) {
-  if (!value || typeof value !== 'object') return false;
-  if (typeof value.toHexString === 'function') return true;
-  if (typeof value.equals === 'function' && typeof value.getTimestamp === 'function') return true;
+  if (value == null) return false;
+  if (value instanceof mongoose.Types.ObjectId) return true;
+  if (typeof value !== 'object') {
+    return /^[a-f0-9]{24}$/i.test(String(value).trim());
+  }
+  try {
+    if (typeof value.toHexString === 'function') {
+      const hex = String(value.toHexString()).trim();
+      return /^[a-f0-9]{24}$/i.test(hex);
+    }
+  } catch {
+    return false;
+  }
   const ctor = String(value?.constructor?.name || '');
-  return ctor === 'ObjectId' || ctor === 'ObjectID';
+  if (ctor === 'ObjectId' || ctor === 'ObjectID') {
+    const asString = mongoIdToString(value);
+    return /^[a-f0-9]{24}$/i.test(asString);
+  }
+  return false;
 }
 
 /**
@@ -5829,7 +5843,9 @@ async function repairCorruptMcqDocumentIds() {
   try {
     for await (const doc of cursor) {
       scanned += 1;
-      if (isMongoObjectIdLike(doc?._id)) continue;
+      const idString = mongoIdToString(doc?._id);
+      // Any _id that does not serialize to a real ObjectId hex is corrupt for the MCQ player.
+      if (/^[a-f0-9]{24}$/i.test(idString)) continue;
       corruptIds.push(doc._id);
     }
   } finally {
