@@ -10,9 +10,8 @@ interface ImportMetaEnv {
   readonly VITE_FIREBASE_APP_ID?: string;
   readonly VITE_ENABLE_PUSH_NOTIFICATIONS?: string;
   readonly VITE_ADMIN_ONLY?: string;
-  /** @deprecated Unused — static media is bundled under public/. Do not set. */
-  readonly VITE_S3_BASE_URL?: string;
   readonly VITE_PUBLIC_MEDIA_BASE_URL?: string;
+  readonly VITE_MANUAL_SUBSCRIPTION_WHATSAPP?: string;
   /** If `"true"` in production, allow same-origin fallbacks for built-in media (keep dist copies; not typical). */
   readonly VITE_MEDIA_LOCAL_FALLBACK?: string;
   readonly VITE_BRAND_LOGO_URL?: string;

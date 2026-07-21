@@ -1,19 +1,16 @@
 #!/usr/bin/env node
 /**
- * Pre-commit verification for NET360 ops infrastructure.
+ * Pre-commit verification for NET360 ops (Railway + Vercel architecture).
  * Usage: node scripts/verify-ops-precommit.mjs
  */
-import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_DIR = path.resolve(__dirname, '..');
-const IS_WIN = process.platform === 'win32';
-const BASH = process.env.BASH_PATH
-  || (IS_WIN ? 'C:\\Program Files\\Git\\bin\\bash.exe' : '/bin/bash');
 
 const results = [];
 
@@ -25,22 +22,6 @@ function pass(id, detail) {
 function fail(id, detail) {
   results.push({ id, status: 'FAIL', detail });
   console.error(`FAIL  ${id} — ${detail}`);
-}
-
-function runBash(scriptRel, env = {}) {
-  const script = path.join(REPO_DIR, scriptRel).replace(/\\/g, '/');
-  const repo = REPO_DIR.replace(/\\/g, '/');
-  const result = spawnSync(BASH, [script], {
-    cwd: REPO_DIR,
-    env: { ...process.env, REPO_DIR: repo, ...env },
-    encoding: 'utf8',
-    timeout: 120_000,
-  });
-  return {
-    ok: result.status === 0,
-    status: result.status ?? 1,
-    stdout: `${result.stdout || ''}${result.stderr || ''}`,
-  };
 }
 
 function sleep(ms) {
@@ -68,7 +49,7 @@ function httpGetJson(url) {
       res.on('end', () => {
         try {
           resolve({ status: res.statusCode || 0, json: JSON.parse(data) });
-        } catch (error) {
+        } catch {
           reject(new Error(`Invalid JSON from ${url}: ${data.slice(0, 200)}`));
         }
       });
@@ -81,118 +62,46 @@ function httpGetJson(url) {
 }
 
 async function main() {
-  console.log('== NET360 ops pre-commit verification ==\n');
+  console.log('== NET360 ops pre-commit verification (Railway) ==\n');
 
-  // 1. Dry-run deployment scripts
-  const rollbackTag = '.deploy-rollback-verify-dryrun';
-  writeFileSync(
-    path.join(REPO_DIR, rollbackTag),
-    spawnSync('git', ['rev-parse', 'HEAD'], { cwd: REPO_DIR, encoding: 'utf8' }).stdout.trim(),
-  );
+  // 1. Railway config present
+  if (existsSync(path.join(REPO_DIR, 'railway.toml'))) {
+    const railway = readFileSync(path.join(REPO_DIR, 'railway.toml'), 'utf8');
+    if (railway.includes('build-for-host') && railway.includes('server/index.js')) {
+      pass('railway-toml', 'API-only build + node server/index.js start');
+    } else {
+      fail('railway-toml', 'missing expected build/start commands');
+    }
+  } else {
+    fail('railway-toml', 'railway.toml missing');
+  }
 
-  const dryScripts = [
-    ['scripts/deploy-api-production.sh', { DRY_RUN: '1', SKIP_GIT_PULL: '1' }],
-    ['scripts/setup-pm2-production.sh', { DRY_RUN: '1' }],
-    ['scripts/rollback-api-production.sh', { DRY_RUN: '1' }, [rollbackTag]],
-    ['deploy/cloudwatch/install-cloudwatch-agent.sh', { DRY_RUN: '1' }],
+  // 2. No direct AWS runtime deps in package.json
+  const pkg = JSON.parse(readFileSync(path.join(REPO_DIR, 'package.json'), 'utf8'));
+  const depNames = Object.keys({ ...pkg.dependencies, ...pkg.devDependencies });
+  const awsDeps = depNames.filter((n) => n.startsWith('@aws-sdk') || n === 'aws-sdk' || n === 'multer-s3');
+  if (awsDeps.length === 0) {
+    pass('no-aws-runtime-deps', 'package.json has no AWS SDK / multer-s3');
+  } else {
+    fail('no-aws-runtime-deps', `found: ${awsDeps.join(', ')}`);
+  }
+
+  // 3. EC2 deploy scripts removed
+  const banned = [
+    'scripts/deploy-api-production.sh',
+    'scripts/setup-pm2-production.sh',
+    'scripts/rollback-api-production.sh',
+    'scripts/pm2-health-monitor.sh',
+    'deploy/cloudwatch/install-cloudwatch-agent.sh',
   ];
-
-  let dryRunOk = true;
-  for (const entry of dryScripts) {
-    const [script, env, args = []] = entry;
-    const out = spawnSync(BASH, [path.join(REPO_DIR, script).replace(/\\/g, '/'), ...args], {
-      cwd: REPO_DIR,
-      env: { ...process.env, REPO_DIR: REPO_DIR.replace(/\\/g, '/'), ...env },
-      encoding: 'utf8',
-      timeout: 120_000,
-    });
-    const combined = `${out.stdout || ''}${out.stderr || ''}`;
-    if (out.status === 0) {
-      pass(`dry-run:${path.basename(script)}`, 'completed without error');
-    } else {
-      dryRunOk = false;
-      fail(`dry-run:${path.basename(script)}`, `exit ${out.status}\n${combined.slice(-400)}`);
-    }
-  }
-  rmSync(path.join(REPO_DIR, rollbackTag), { force: true });
-
-  // 2. Idempotent deploy dry-run (twice)
-  const idem1 = runBash('scripts/deploy-api-production.sh', { DRY_RUN: '1', SKIP_GIT_PULL: '1' });
-  const idem2 = runBash('scripts/deploy-api-production.sh', { DRY_RUN: '1', SKIP_GIT_PULL: '1' });
-  if (idem1.ok && idem2.ok) {
-    pass('deploy-idempotent', 'two consecutive DRY_RUN deploys succeeded');
+  const stillPresent = banned.filter((rel) => existsSync(path.join(REPO_DIR, rel)));
+  if (stillPresent.length === 0) {
+    pass('ec2-scripts-removed', 'legacy EC2/PM2/CloudWatch install scripts absent');
   } else {
-    fail('deploy-idempotent', 'consecutive dry-run deploys did not both succeed');
+    fail('ec2-scripts-removed', stillPresent.join(', '));
   }
 
-  // 3. Legacy workflow wrappers still valid
-  const legacy = runBash('scripts/net360-on-api-server.example.sh', { DRY_RUN: '1', SKIP_GIT_PULL: '1' });
-  if (legacy.ok && legacy.stdout.includes('[DRY_RUN]')) {
-    pass('legacy-deploy-wrapper', 'net360-on-api-server.example.sh delegates to deploy-api-production.sh');
-  } else {
-    fail('legacy-deploy-wrapper', legacy.stdout.slice(-300));
-  }
-
-  // 4. Amazon Linux 2023 compatibility (static)
-  const setupSrc = readFileSync(path.join(REPO_DIR, 'scripts/setup-pm2-production.sh'), 'utf8');
-  const cwSrc = readFileSync(path.join(REPO_DIR, 'deploy/cloudwatch/install-cloudwatch-agent.sh'), 'utf8');
-  if (setupSrc.includes('pm2 startup systemd') && cwSrc.includes('command -v dnf')) {
-    pass('amazon-linux-2023', 'uses pm2 startup systemd + dnf for CloudWatch Agent');
-  } else {
-    fail('amazon-linux-2023', 'missing systemd startup or dnf CloudWatch install path');
-  }
-
-  // 5. CloudWatch no manual code changes
-  try {
-    JSON.parse(readFileSync(path.join(REPO_DIR, 'deploy/cloudwatch/amazon-cloudwatch-agent.json'), 'utf8'));
-    if (cwSrc.includes('DRY_RUN') && cwSrc.includes('amazon-cloudwatch-agent-ctl')) {
-      pass('cloudwatch-config', 'valid JSON; install script is self-contained (IAM profile only prerequisite)');
-    } else {
-      fail('cloudwatch-config', 'install script incomplete');
-    }
-  } catch (error) {
-    fail('cloudwatch-config', error.message);
-  }
-
-  // 6. Backup fails safely without mongodump
-  const backupDir = path.join(REPO_DIR, '.verify-tmp-backup');
-  mkdirSync(backupDir, { recursive: true });
-  writeFileSync(path.join(REPO_DIR, '.verify-tmp.env'), 'MONGODB_URI=mongodb://127.0.0.1:27017/test\n');
-  const backupEnv = {
-    REPO_DIR: REPO_DIR.replace(/\\/g, '/'),
-    NET360_BACKUP_DIR: backupDir.replace(/\\/g, '/'),
-    PATH: process.env.PATH?.split(path.delimiter).filter((p) => !/mongo/i.test(p)).join(path.delimiter) || '',
-  };
-  // Point to temp env by copying logic - script sources .env not .verify-tmp.env
-  // Run with empty PATH for mongodump and no MONGODB_URI by using subshell
-  const backup = spawnSync(BASH, ['-c', `
-    export REPO_DIR='${REPO_DIR.replace(/'/g, "'\\''")}'
-    export NET360_BACKUP_DIR='${backupDir.replace(/'/g, "'\\''")}'
-    export PATH='/usr/bin:/bin'
-    export MONGODB_URI='mongodb://127.0.0.1:27017/test'
-    bash scripts/mongodb-backup-daily.sh
-  `], { cwd: REPO_DIR, encoding: 'utf8' });
-  const backupOut = `${backup.stdout || ''}${backup.stderr || ''}`;
-  if (backup.status !== 0 && backupOut.includes('mongodump not found')) {
-    pass('backup-fail-safe', 'exits non-zero with clear error when mongodump missing');
-  } else {
-    fail('backup-fail-safe', `expected mongodump error, got status ${backup.status}: ${backupOut.slice(-200)}`);
-  }
-  rmSync(backupDir, { recursive: true, force: true });
-  rmSync(path.join(REPO_DIR, '.verify-tmp.env'), { force: true });
-
-  // 7. Rollback dry-run with synthetic tag
-  const tag = '.deploy-rollback-verify-test';
-  writeFileSync(path.join(REPO_DIR, tag), spawnSync('git', ['rev-parse', 'HEAD'], { cwd: REPO_DIR, encoding: 'utf8' }).stdout.trim());
-  const rollback = runBash('scripts/rollback-api-production.sh', { DRY_RUN: '1' });
-  rmSync(path.join(REPO_DIR, tag), { force: true });
-  if (rollback.ok && rollback.stdout.includes('Rollback dry-run complete')) {
-    pass('rollback-dry-run', 'reads rollback tag and validates restore steps without mutating system');
-  } else {
-    fail('rollback-dry-run', rollback.stdout.slice(-300));
-  }
-
-  // 8. Health endpoints via local server
+  // 4. Health endpoints via local server
   const testPort = 51998;
   const testBase = `http://127.0.0.1:${testPort}`;
   writeFileSync(path.join(REPO_DIR, 'deploy/build-info.json'), JSON.stringify({
@@ -245,7 +154,7 @@ async function main() {
         && version.json.service === 'net360-api';
 
       if (healthOk && readyOk && versionOk) {
-        pass('health-endpoints', '/api/health 200, /api/health/ready 200 without Mongo configured, /api/version commit match');
+        pass('health-endpoints', '/api/health + /api/health/ready + /api/version OK');
       } else {
         fail('health-endpoints', JSON.stringify({ health: health.status, ready: ready.status, version: version.json }));
       }
@@ -258,7 +167,8 @@ async function main() {
     if (!serverProc.killed) serverProc.kill('SIGKILL');
   }
 
-  // 9. ecosystem + syntax
+  // 5. Server syntax
+  const { spawnSync } = await import('node:child_process');
   const syntax = spawnSync(process.execPath, ['--check', 'server/index.js'], { cwd: REPO_DIR });
   if (syntax.status === 0) {
     pass('server-syntax', 'node --check server/index.js');
@@ -266,16 +176,6 @@ async function main() {
     fail('server-syntax', syntax.stderr?.toString() || 'syntax check failed');
   }
 
-  try {
-    const { createRequire } = await import('node:module');
-    const require = createRequire(import.meta.url);
-    require(path.join(REPO_DIR, 'ecosystem.config.cjs'));
-    pass('ecosystem-config', 'ecosystem.config.cjs loads');
-  } catch (error) {
-    fail('ecosystem-config', error.message);
-  }
-
-  // Report
   console.log('\n== PASS/FAIL REPORT ==');
   const passed = results.filter((r) => r.status === 'PASS').length;
   const failed = results.filter((r) => r.status === 'FAIL').length;
