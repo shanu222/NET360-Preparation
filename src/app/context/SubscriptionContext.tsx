@@ -104,6 +104,14 @@ export interface SubscriptionMePayload {
   paidServices?: PaidServicesState;
   premiumSurface?: PremiumSurfaceState;
   subscriptionBadge?: SubscriptionBadge;
+  globalFreeAccess?: {
+    active: boolean;
+    startsAt: string | null;
+    expiresAt: string | null;
+    announcement: string;
+    reason?: string;
+  };
+  activationRequest?: unknown;
 }
 
 const emptySurface: PremiumSurfaceState = {

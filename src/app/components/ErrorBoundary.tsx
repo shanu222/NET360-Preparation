@@ -48,14 +48,18 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
         <div className="flex min-h-screen items-center justify-center bg-slate-100 px-4">
           <div className="w-full max-w-md rounded-2xl border border-rose-200 bg-white p-6 shadow-sm">
             <h1 className="mb-2 text-xl text-rose-700">
-              {isChunkError ? 'Updating NET360' : 'Something went wrong'}
+              {isChunkError ? 'Updating NET360' : 'We hit a temporary issue'}
             </h1>
             <p className="mb-4 text-sm text-slate-600">
               {isChunkError
                 ? 'We are loading a fresh copy of the app for you. If nothing changes in a few seconds, tap Reload.'
-                : 'The app hit an unexpected issue. Please retry. If this keeps happening, contact support.'}
+                : 'Please reload the app and try again. If this keeps happening, contact support.'}
             </p>
-            <p className="mb-5 rounded-lg bg-slate-50 p-3 text-xs text-slate-500">{message}</p>
+            {import.meta.env.DEV && message ? (
+              <p className="mb-5 rounded-lg bg-slate-50 p-3 text-xs text-slate-500">{message}</p>
+            ) : (
+              <div className="mb-5" />
+            )}
             <button
               type="button"
               onClick={this.handleReload}

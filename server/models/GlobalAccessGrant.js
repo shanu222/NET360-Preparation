@@ -8,6 +8,7 @@ const globalAccessGrantSchema = new mongoose.Schema(
     expiresAt: { type: Date, default: null },
     durationDays: { type: Number, default: 0 },
     notes: { type: String, default: '' },
+    announcement: { type: String, default: '' },
     grantedByUserId: { type: String, default: '' },
     grantedByEmail: { type: String, default: '' },
     lastActionByUserId: { type: String, default: '' },

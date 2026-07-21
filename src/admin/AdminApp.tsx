@@ -2508,6 +2508,12 @@ export default function AdminApp() {
   const [selectedAccessType, setSelectedAccessType] = useState<'mentor' | 'preparation'>('mentor');
   const [grantDurationDays, setGrantDurationDays] = useState('7');
   const [globalGrantDurationDays, setGlobalGrantDurationDays] = useState('7');
+  const [globalFreeAccessStartsAt, setGlobalFreeAccessStartsAt] = useState('');
+  const [globalFreeAccessEndsAt, setGlobalFreeAccessEndsAt] = useState('');
+  const [globalFreeAccessReason, setGlobalFreeAccessReason] = useState('Limited-time Premium for all students');
+  const [globalFreeAccessAnnouncement, setGlobalFreeAccessAnnouncement] = useState(
+    'NET360 Premium is FREE! Enjoy unlimited access to Premium MCQs, Practice, Mock Tests, Community, and Premium Resources.',
+  );
   const [isGrantingAccess, setIsGrantingAccess] = useState(false);
   const [isRevokingAccess, setIsRevokingAccess] = useState<Record<string, boolean>>({});
   const [isApplyingGlobalAccess, setIsApplyingGlobalAccess] = useState(false);
@@ -6775,6 +6781,69 @@ export default function AdminApp() {
     }
   };
 
+  const enableGlobalFreeAccess = async () => {
+    if (!authToken) return;
+    if (!globalFreeAccessEndsAt) {
+      showErrorToast('Choose an end date for Global Free Access.');
+      return;
+    }
+    const startsAtIso = globalFreeAccessStartsAt
+      ? new Date(globalFreeAccessStartsAt).toISOString()
+      : new Date().toISOString();
+    const endsAtIso = new Date(globalFreeAccessEndsAt).toISOString();
+    if (Number.isNaN(new Date(endsAtIso).getTime()) || new Date(endsAtIso).getTime() <= Date.now()) {
+      showErrorToast('End date must be a valid future date.');
+      return;
+    }
+    try {
+      setIsApplyingGlobalAccess(true);
+      await apiRequest(
+        '/api/admin/subscriptions/access/global/grant',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            applyToAllPremiumSurfaces: true,
+            startsAt: startsAtIso,
+            expiresAt: endsAtIso,
+            notes: globalFreeAccessReason.trim(),
+            announcement: globalFreeAccessAnnouncement.trim(),
+          }),
+        },
+        authToken,
+      );
+      showSuccessToast('Global Free Access is now enabled for every student.');
+      await loadAdminData(authToken);
+    } catch (error) {
+      handleApiError(error, 'Could not enable Global Free Access.');
+    } finally {
+      setIsApplyingGlobalAccess(false);
+    }
+  };
+
+  const disableGlobalFreeAccess = async () => {
+    if (!authToken) return;
+    try {
+      setIsApplyingGlobalAccess(true);
+      await apiRequest(
+        '/api/admin/subscriptions/access/global/revoke',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            revokeAll: true,
+            notes: globalFreeAccessReason.trim() || 'Global Free Access disabled by admin',
+          }),
+        },
+        authToken,
+      );
+      showSuccessToast('Global Free Access disabled. Individual subscriptions resume normally.');
+      await loadAdminData(authToken);
+    } catch (error) {
+      handleApiError(error, 'Could not disable Global Free Access.');
+    } finally {
+      setIsApplyingGlobalAccess(false);
+    }
+  };
+
   const revokeGlobalAccess = async (accessType: 'mentor' | 'preparation') => {
     if (!authToken) return;
     try {
@@ -10652,6 +10721,96 @@ export default function AdminApp() {
         </TabsContent>
 
         <TabsContent value="subscriptions" className="space-y-4">
+          <Card className="border-emerald-200 bg-gradient-to-br from-emerald-50/80 to-white">
+            <CardHeader>
+              <CardTitle>Global Free Access</CardTitle>
+              <CardDescription>
+                Enable Premium for every student (existing and new) without individual purchases. Stored in MongoDB and enforced by the backend.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {(() => {
+                const prepGlobal = subscriptionOverview?.preparationAccess?.global;
+                const mentorGlobal = subscriptionOverview?.mentorAccess?.global;
+                const active = Boolean(prepGlobal?.allowed || mentorGlobal?.allowed);
+                const endsAt = prepGlobal?.expiresAt || mentorGlobal?.expiresAt || null;
+                const startsAt = prepGlobal?.startsAt || mentorGlobal?.startsAt || null;
+                return (
+                  <div className="rounded-lg border bg-white/80 p-3 text-sm space-y-1">
+                    <p>
+                      Status:{' '}
+                      <span className={active ? 'font-semibold text-emerald-700' : 'font-semibold text-slate-600'}>
+                        {active ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </p>
+                    {startsAt ? <p className="text-muted-foreground">Starts: {new Date(startsAt).toLocaleString()}</p> : null}
+                    {endsAt ? <p className="text-muted-foreground">Ends: {new Date(endsAt).toLocaleString()}</p> : null}
+                  </div>
+                );
+              })()}
+
+              <div className="grid gap-3 md:grid-cols-2">
+                <div className="space-y-1.5">
+                  <Label htmlFor="global-free-start">Start Date</Label>
+                  <Input
+                    id="global-free-start"
+                    type="datetime-local"
+                    value={globalFreeAccessStartsAt}
+                    onChange={(e) => setGlobalFreeAccessStartsAt(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="global-free-end">End Date</Label>
+                  <Input
+                    id="global-free-end"
+                    type="datetime-local"
+                    value={globalFreeAccessEndsAt}
+                    onChange={(e) => setGlobalFreeAccessEndsAt(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="global-free-reason">Reason</Label>
+                <Input
+                  id="global-free-reason"
+                  value={globalFreeAccessReason}
+                  onChange={(e) => setGlobalFreeAccessReason(e.target.value)}
+                  placeholder="Launch promo / exam season / maintenance goodwill"
+                />
+              </div>
+
+              <div className="space-y-1.5">
+                <Label htmlFor="global-free-announcement">Announcement</Label>
+                <Textarea
+                  id="global-free-announcement"
+                  value={globalFreeAccessAnnouncement}
+                  onChange={(e) => setGlobalFreeAccessAnnouncement(e.target.value)}
+                  className="min-h-[90px]"
+                  placeholder="NET360 Premium is FREE! Enjoy unlimited MCQs, practice, mock tests, and community."
+                />
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  type="button"
+                  disabled={isApplyingGlobalAccess}
+                  onClick={() => void enableGlobalFreeAccess()}
+                >
+                  {isApplyingGlobalAccess ? 'Applying...' : 'Enable Global Free Access'}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isApplyingGlobalAccess}
+                  onClick={() => void disableGlobalFreeAccess()}
+                >
+                  Disable
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
             <CardHeader>
               <CardTitle>User Search & Management</CardTitle>
