@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 import jwt from 'jsonwebtoken';
 import { z } from 'zod';
 import bcrypt from 'bcryptjs';
-import { applicationDefault, getApps as getFirebaseAdminApps, initializeApp as initializeFirebaseAdminApp } from 'firebase-admin/app';
+import { applicationDefault, cert, getApps as getFirebaseAdminApps, initializeApp as initializeFirebaseAdminApp } from 'firebase-admin/app';
 import { getAuth as getFirebaseAdminAuth } from 'firebase-admin/auth';
 import OpenAI from 'openai';
 import nodemailer from 'nodemailer';
@@ -388,31 +388,68 @@ const twilioClient = TWILIO_ACCOUNT_SID && TWILIO_AUTH_TOKEN
   ? Twilio(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
   : null;
 
-function getMissingFirebaseAdminEnvVars() {
-  const missing = [];
+/**
+ * Railway-safe Firebase Admin credentials (prefer secrets; no repo JSON file).
+ * Order: FIREBASE_SERVICE_ACCOUNT_JSON → BASE64 → PROJECT_ID/CLIENT_EMAIL/PRIVATE_KEY → ADC file path.
+ */
+function resolveFirebaseAdminCredential() {
+  const jsonRaw = String(process.env.FIREBASE_SERVICE_ACCOUNT_JSON || process.env.FIREBASE_ADMIN_CREDENTIALS_JSON || '').trim();
+  if (jsonRaw) {
+    try {
+      return { credential: cert(JSON.parse(jsonRaw)), source: 'FIREBASE_SERVICE_ACCOUNT_JSON' };
+    } catch (error) {
+      console.error('[firebase-admin] Invalid FIREBASE_SERVICE_ACCOUNT_JSON:', error?.message || error);
+    }
+  }
+
+  const b64 = String(process.env.FIREBASE_SERVICE_ACCOUNT_BASE64 || '').trim();
+  if (b64) {
+    try {
+      const parsed = JSON.parse(Buffer.from(b64, 'base64').toString('utf8'));
+      return { credential: cert(parsed), source: 'FIREBASE_SERVICE_ACCOUNT_BASE64' };
+    } catch (error) {
+      console.error('[firebase-admin] Invalid FIREBASE_SERVICE_ACCOUNT_BASE64:', error?.message || error);
+    }
+  }
+
+  const projectId = String(process.env.FIREBASE_PROJECT_ID || process.env.FIREBASE_ADMIN_PROJECT_ID || '').trim();
+  const clientEmail = String(process.env.FIREBASE_CLIENT_EMAIL || process.env.FIREBASE_ADMIN_CLIENT_EMAIL || '').trim();
+  const privateKeyRaw = String(process.env.FIREBASE_PRIVATE_KEY || process.env.FIREBASE_ADMIN_PRIVATE_KEY || '').trim();
+  const privateKey = privateKeyRaw.replace(/\\n/g, '\n');
+  if (projectId && clientEmail && privateKey) {
+    return {
+      credential: cert({ projectId, clientEmail, privateKey }),
+      source: 'FIREBASE_PROJECT_ID+CLIENT_EMAIL+PRIVATE_KEY',
+    };
+  }
+
   const adcPath = String(process.env.GOOGLE_APPLICATION_CREDENTIALS || '').trim();
-  if (!adcPath) {
-    missing.push('GOOGLE_APPLICATION_CREDENTIALS');
-    return missing;
+  if (adcPath && existsSync(adcPath)) {
+    return { credential: applicationDefault(), source: 'GOOGLE_APPLICATION_CREDENTIALS' };
   }
-  if (!existsSync(adcPath)) {
-    missing.push('GOOGLE_APPLICATION_CREDENTIALS (file not found)');
-    return missing;
-  }
-  return missing;
+
+  return null;
+}
+
+function getMissingFirebaseAdminEnvVars() {
+  if (resolveFirebaseAdminCredential()) return [];
+  return [
+    'FIREBASE_SERVICE_ACCOUNT_JSON (or FIREBASE_SERVICE_ACCOUNT_BASE64 or FIREBASE_PROJECT_ID+FIREBASE_CLIENT_EMAIL+FIREBASE_PRIVATE_KEY)',
+  ];
 }
 
 const firebaseAdminAuth = (() => {
-  if (getMissingFirebaseAdminEnvVars().length) {
+  const resolved = resolveFirebaseAdminCredential();
+  if (!resolved) {
     return null;
   }
   try {
     if (!getFirebaseAdminApps().length) {
       initializeFirebaseAdminApp({
-        credential: applicationDefault(),
+        credential: resolved.credential,
       });
     }
-    console.log('[firebase-admin] initialized successfully');
+    console.log(`[firebase-admin] initialized successfully via ${resolved.source}`);
     return getFirebaseAdminAuth();
   } catch (err) {
     console.error('[firebase-admin] initialization failed', err?.message || err);
@@ -1035,15 +1072,16 @@ app.use((req, res, next) => {
 app.get('/', (req, res) => res.send('API is running'));
 
 app.get('/api/public/media-config', (_req, res) => {
-  const DEFAULT_S3_BASE = 'https://net360-media.s3.ap-south-1.amazonaws.com';
+  // Static assets are bundled in the web/Android frontend (same-origin).
+  // Absolute URL overrides remain optional via env for emergency CDN use.
   const mediaBaseUrl = String(
-    process.env.S3_BASE_URL || process.env.PUBLIC_MEDIA_BASE_URL || process.env.AWS_PUBLIC_BASE_URL || DEFAULT_S3_BASE,
+    process.env.PUBLIC_MEDIA_BASE_URL || process.env.S3_BASE_URL || process.env.AWS_PUBLIC_BASE_URL || '',
   )
     .trim()
     .replace(/\/+$/, '');
   const withBase = (suffix) => {
-    if (!mediaBaseUrl) return '';
     const s = suffix.startsWith('/') ? suffix : `/${suffix}`;
+    if (!mediaBaseUrl) return s;
     return `${mediaBaseUrl}${s}`;
   };
   const appPromoAssetVersion = String(process.env.PUBLIC_APP_PROMO_ASSET_VERSION || '20260510').trim();
@@ -1053,18 +1091,15 @@ app.get('/api/public/media-config', (_req, res) => {
     ? `${appPromoDefaultBase}${appPromoDefaultBase.includes('?') ? '&' : '?'}v=${encodeURIComponent(appPromoAssetVersion)}`
     : appPromoDefaultBase;
   res.json({
-    mediaBaseUrl,
-    s3BaseUrl: mediaBaseUrl,
-    /** Bumps cache on all HTTPS media URLs built client-side (optional). */
+    mediaBaseUrl: mediaBaseUrl || '',
+    s3BaseUrl: mediaBaseUrl || '',
     ...(mediaAssetVersion ? { mediaAssetVersion } : {}),
-    /** Same-origin app asset when unset; not served from S3. */
     brandLogoUrl: String(process.env.PUBLIC_BRAND_LOGO_URL || '').trim() || '/net360-logo.png',
-    userGuideVideoUrl: String(process.env.PUBLIC_USER_GUIDE_VIDEO_URL || '').trim() || withBase('videos/net360-guide.mp4'),
+    userGuideVideoUrl: String(process.env.PUBLIC_USER_GUIDE_VIDEO_URL || '').trim() || '/assets/videos/net360-guide.mp4',
     loginBannerUrl: String(process.env.PUBLIC_LOGIN_BANNER_URL || '').trim() || withBase('images/login-banner.png'),
     appPromoImageUrl: String(process.env.PUBLIC_APP_PROMO_IMAGE_URL || '').trim() || appPromoDefault,
-    /** Browser resolves against the web app origin; use PUBLIC_FAVICON_URL for absolute CDN favicon. */
     faviconUrl: String(process.env.PUBLIC_FAVICON_URL || '').trim() || '/favicon-32.png',
-    schoolsPathPrefix: withBase('schools'),
+    schoolsPathPrefix: String(process.env.PUBLIC_SCHOOLS_PATH_PREFIX || '').trim() || withBase('schools'),
   });
 });
 
@@ -4594,7 +4629,7 @@ function buildAdminInfraHealthSnapshot() {
   return {
     items: [
       { id: 'mongodb', label: 'MongoDB', status: mongoStatus, detail: mongoDetail, sourceLabel: mongoUriConfigured ? 'Environment' : 'None' },
-      { id: 'firebase-admin', label: 'Firebase Admin', status: firebaseStatus, detail: firebaseDetail, sourceLabel: firebaseAdminAuth ? 'GOOGLE_APPLICATION_CREDENTIALS' : 'None' },
+      { id: 'firebase-admin', label: 'Firebase Admin', status: firebaseStatus, detail: firebaseDetail, sourceLabel: firebaseAdminAuth ? 'FIREBASE_SERVICE_ACCOUNT_*' : 'None' },
       { id: 'jwt', label: 'JWT (access + refresh)', status: jwtStatus, detail: jwtDetail, sourceLabel: JWT_SECRET_RAW && JWT_REFRESH_SECRET_RAW ? 'Environment' : 'Partial / fallback' },
       { id: 'runtime-config', label: 'Secure config crypto', status: cryptoStatus, detail: cryptoDetail, sourceLabel: CONFIG_CRYPTO_KEY ? 'Environment' : 'None' },
     ],
@@ -16905,7 +16940,7 @@ function validateCriticalConfiguration() {
     warnings.push('JWT_REFRESH_SECRET is not set; refresh tokens cannot be verified.');
   }
   if (IS_PRODUCTION && !firebaseAdminAuth) {
-    warnings.push('Firebase Admin SDK is not initialized; set GOOGLE_APPLICATION_CREDENTIALS to your service account JSON path (or fix the file path).');
+    warnings.push('Firebase Admin SDK is not initialized; set FIREBASE_SERVICE_ACCOUNT_JSON (or BASE64 / PROJECT_ID+CLIENT_EMAIL+PRIVATE_KEY) in Railway secrets.');
   }
   if (IS_PRODUCTION && isEnvAdminLoginConfigured()) {
     warnings.push('ADMIN_LOGIN_EMAIL/ADMIN_LOGIN_PASSWORD are configured; env admin login is enabled.');
@@ -17004,16 +17039,27 @@ async function bootstrap() {
     if (shuttingDown) return;
     shuttingDown = true;
     console.warn(`[server] ${signal} received — closing HTTP server`);
-    server.close(() => {
-      console.log('[server] HTTP server closed');
-    });
+    const forceTimer = setTimeout(() => {
+      console.warn('[server] forced exit after shutdown timeout');
+      process.exit(1);
+    }, 10_000);
+    forceTimer.unref();
     try {
+      await new Promise((resolve) => {
+        server.close(() => {
+          console.log('[server] HTTP server closed');
+          resolve();
+        });
+      });
       await mongoose.connection.close(false);
       console.log('[mongo] connection closed');
+      clearTimeout(forceTimer);
+      process.exit(0);
     } catch (error) {
-      console.error('[mongo] close error:', error?.message || error);
+      console.error('[server] shutdown error:', error?.message || error);
+      clearTimeout(forceTimer);
+      process.exit(1);
     }
-    setTimeout(() => process.exit(0), 10_000).unref();
   };
   process.on('SIGTERM', () => { void gracefulShutdown('SIGTERM'); });
   process.on('SIGINT', () => { void gracefulShutdown('SIGINT'); });
