@@ -1,8 +1,11 @@
-# Railway production service for NET360 API
-# Custom domain: api.net360preparation.com (DNS CNAME → Railway)
+# Railway production service for NET360 API only
+# Frontend (Vite) is hosted on Vercel — do not run vite on Railway.
 
 [build]
 builder = "NIXPACKS"
+# Override Nixpacks/Railpack default `npm run build` (vite). Vite is a
+# devDependency and is not installed when NODE_ENV=production → "vite: not found".
+buildCommand = "node -e \"console.log('NET360 Railway API-only: skipping vite build (Vercel hosts the SPA)')\""
 
 [deploy]
 # Must be the Express API — not server/web.js (SPA helper).

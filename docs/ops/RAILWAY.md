@@ -21,9 +21,12 @@ Railway health checks were failing because:
 | Setting | Value |
 |---------|--------|
 | Start command | `node server/index.js` |
+| Build command | **Skip Vite** (`railway.toml` `buildCommand`) — frontend is on Vercel |
 | Health check | `GET /api/health` |
 | Custom domain | `api.net360preparation.com` |
-| Node | 20 (`.nvmrc`) |
+| Node | 20 (`.nvmrc`, `engines`) |
+
+If build fails with `vite: not found`, see [RAILWAY-BUILD-VITE-FIX.md](./RAILWAY-BUILD-VITE-FIX.md).
 
 **Main vs Admin:** See [RAILWAY-SERVICES.md](./RAILWAY-SERVICES.md). Production API is **Main only**. Keep `net360-admin` idle.
 

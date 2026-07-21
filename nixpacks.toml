@@ -1,7 +1,16 @@
-# API-only Railway image: skip Vite frontend build (Vercel hosts the SPA).
+# API-only Railway image (used when builder = NIXPACKS).
+# Frontend Vite build runs on Vercel — never on Railway.
+
+[variables]
+NIXPACKS_NODE_VERSION = "20"
+
+[phases.install]
+# Production deps only — vite lives in devDependencies and must not be required.
+cmds = ["npm ci --omit=dev || npm install --omit=dev"]
 
 [phases.build]
-cmds = ["echo 'Skipping vite build — Railway runs Express API only'"]
+# Replace default `npm run build` (vite) — Express needs no frontend compile.
+cmds = ["node -e \"console.log('NET360 Railway API-only: skipping vite build')\""]
 
 [start]
 cmd = "node server/index.js"
