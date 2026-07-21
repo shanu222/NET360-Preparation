@@ -1,7 +1,9 @@
 import {
   ADMIN_ACCESS_KEY,
   ADMIN_REFRESH_KEY,
+  clearAllAuthCredentialKeys,
   clearPersistedAdminTokens,
+  clearPersistedStudentTokens,
   COOKIE_SESSION_API_MARKER,
   hasStoredAdminCredentials,
   hasStoredAuthCredentials,
@@ -181,24 +183,15 @@ function redirectToLoginScreen() {
   window.location.assign(target);
 }
 
-function clearAllAuthStorage() {
+function clearAuthCredentialStorageOnly() {
   if (typeof window === 'undefined') return;
-  try {
-    localStorage.clear();
-  } catch {
-    // ignore
-  }
-  try {
-    sessionStorage.clear();
-  } catch {
-    // ignore
-  }
+  clearAllAuthCredentialKeys();
 }
 
 function handleSessionRevoked(payload: unknown) {
   void payload;
   showWarningToast('Your account has been signed in on another device.');
-  clearAllAuthStorage();
+  clearAuthCredentialStorageOnly();
   redirectToLoginScreen();
 }
 

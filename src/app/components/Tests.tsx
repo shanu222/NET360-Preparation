@@ -32,7 +32,7 @@ import {
 } from '../lib/authSession';
 import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTiming';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
-import { assignExamPopupLocation, openExamBlankPopup } from '../lib/examWindowLaunch';
+import { navigateToExamSameTab } from '../lib/examWindowLaunch';
 import { formatTestStartFailureToast } from '../lib/testStartToast';
 
 interface TestsProps {
@@ -250,12 +250,10 @@ export function Tests({ onNavigate }: TestsProps) {
     }
   }, [subjectOptions]);
 
-  const openExamWindow = (params: { sessionId: string; testType: TestKind; token: string; examWindow: Window | null }) => {
-    const { sessionId, testType, token: authToken, examWindow } = params;
-    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
+  const openExamWindow = (params: { sessionId: string; testType: TestKind; token: string }) => {
+    const { sessionId, testType, token: authToken } = params;
     const urlAuth = bearerForLaunchUrl(authToken);
 
-    // Fallback handoff in case query params are stripped or navigation races in popup.
     localStorage.setItem(
       'net360-exam-launch',
       JSON.stringify({
@@ -270,18 +268,7 @@ export function Tests({ onNavigate }: TestsProps) {
       ? `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=${encodeURIComponent(testType)}&authToken=${encodeURIComponent(urlAuth)}`
       : `/exam-interface?sessionId=${encodeURIComponent(sessionId)}&testType=${encodeURIComponent(testType)}`;
 
-    if (isNativeRuntime) {
-      // Android WebView commonly blocks popup windows, so navigate in the same view.
-      window.location.href = url;
-      return;
-    }
-
-    if (!examWindow) {
-      showErrorToast('Popup blocked. Please allow popups and try again.');
-      return;
-    }
-
-    assignExamPopupLocation(examWindow, url);
+    navigateToExamSameTab(url);
   };
 
   const beginTest = async (
@@ -340,14 +327,7 @@ export function Tests({ onNavigate }: TestsProps) {
       console.log('[Tests] Token before startTestSession:', formatStudentTokenDebugPreview());
     }
 
-    // Open a blank window first so /exam-interface never loads without sessionId (avoids missing-ID flash).
-    const examWindow = isNativeRuntime ? null : openExamBlankPopup();
-    if (!isNativeRuntime && !examWindow) {
-      showErrorToast('Popup blocked. Please allow popups and try again.');
-      launchingRef.current = false;
-      return;
-    }
-
+    // Same-tab navigation only — never open about:blank popups for tests.
     try {
       setLaunchingKind(kind);
       const mode = kind === 'full-mock' ? 'mock' : kind === 'adaptive' ? 'adaptive' : 'topic';
@@ -383,10 +363,9 @@ export function Tests({ onNavigate }: TestsProps) {
       });
 
       mobileTestStartRetryRef.current = 0;
-      openExamWindow({ sessionId: session.id, testType: kind, token: authToken, examWindow });
-      showSuccessToast(isNativeRuntime ? 'Test launched.' : 'Test launched in a new window.');
+      openExamWindow({ sessionId: session.id, testType: kind, token: authToken });
+      showSuccessToast('Test launched.');
     } catch (error) {
-      examWindow?.close();
       if (import.meta.env.DEV) {
         console.error('Test start error:', error);
       }

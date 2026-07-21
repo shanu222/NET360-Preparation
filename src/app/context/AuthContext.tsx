@@ -17,11 +17,14 @@ import { App as CapacitorApp } from '@capacitor/app';
 import {
   COOKIE_SESSION_API_MARKER,
   clearPersistedStudentTokens,
+  clearStudentUserSnapshot,
   hasStoredAuthCredentials,
   isCookieSessionApiMarker,
   persistCookieSessionMode,
   persistStudentTokens,
+  persistStudentUserSnapshot,
   readSessionIdFromAccessToken,
+  readStudentUserSnapshot,
   shouldPersistAuthTokens,
 } from '../lib/authSession';
 import { ensureFirebaseAuthReady, firebaseAuth, isFirebaseConfigured } from '../lib/firebase';
@@ -155,8 +158,34 @@ function isLikelyTransientAuthFailure(error: unknown): boolean {
     || message.includes('timed out')
     || message.includes('failed to fetch')
     || message.includes('request timeout')
+    || message.includes('unable to connect')
     || (Number.isFinite(status) && [408, 425, 429, 500, 502, 503, 504].includes(status))
   );
+}
+
+function isDefinitiveAuthFailure(error: unknown): boolean {
+  if (isLikelyTransientAuthFailure(error)) return false;
+  const err = error as Error & { code?: string; status?: number };
+  const code = String(err?.code || '').toUpperCase();
+  const status = Number(err?.status);
+  if (code === 'SESSION_REVOKED' || code === 'SESSION_NO_LONGER_ACTIVE') return true;
+  return status === 401 || status === 403;
+}
+
+function readJwtExpiryMs(token: string | null | undefined): number | null {
+  const raw = String(token || '').trim();
+  if (!raw || raw === COOKIE_SESSION_API_MARKER) return null;
+  try {
+    const part = raw.split('.')[1];
+    if (!part) return null;
+    const b64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4));
+    const parsed = JSON.parse(atob(b64 + pad)) as { exp?: number };
+    const exp = Number(parsed?.exp);
+    return Number.isFinite(exp) && exp > 0 ? exp * 1000 : null;
+  } catch {
+    return null;
+  }
 }
 
 function decodeJwtClaims(token: string): { aud?: string; iss?: string; sub?: string; auth_time?: number } {
@@ -351,6 +380,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const applyAuthPayload = useCallback((payload: { token?: string; refreshToken?: string; user: AuthUser }) => {
     setUser(payload.user);
+    persistStudentUserSnapshot(payload.user);
     if (payload.token && shouldPersistAuthTokens()) {
       setToken(payload.token);
       setRefreshToken(payload.refreshToken ?? null);
@@ -423,21 +453,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const storedRefresh = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
       const bearer = storedToken && !isCookieSessionApiMarker(storedToken) ? storedToken : undefined;
       const rt = storedRefresh;
+      const snapshotUser = readStudentUserSnapshot<AuthUser>();
+
+      const keepCredentialsAlive = (detail: string) => {
+        logNativeEvent('auth', 'restore-deferred-transient', { reason, detail }, 'warn');
+        updateAuthDebug({
+          refreshStatus: 'pending',
+          activeSessionStatus: 'active',
+        });
+        if (storedToken) setToken(storedToken);
+        if (storedRefresh) setRefreshToken(storedRefresh);
+        if (snapshotUser?.id && !cancelled) {
+          setUser(snapshotUser);
+        }
+      };
 
       try {
+        let meError: unknown = null;
         try {
           const me = await apiRequest<{ user: AuthUser }>(
             '/api/auth/me',
-            { retryCount: isNativeRuntime ? 2 : 1, retryDelayMs: 900, timeoutMs: 45_000 },
+            { retryCount: isNativeRuntime ? 2 : 2, retryDelayMs: 900, timeoutMs: 45_000 },
             bearer,
           );
           if (cancelled || loadId !== authSessionLoadGeneration) return;
-          logNativeEvent('auth', 'restore-from-me-success', { hasBearer: Boolean(bearer) });
+          logNativeEvent('auth', 'restore-from-me-success', { hasBearer: Boolean(bearer), reason });
           updateAuthDebug({
             activeSessionStatus: 'active',
             refreshStatus: 'ok',
           });
           setUser(me.user);
+          persistStudentUserSnapshot(me.user);
           if (!bearer) {
             setToken(COOKIE_SESSION_API_MARKER);
             persistCookieSessionMode();
@@ -445,12 +491,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             setToken(storedToken);
           }
           return;
-        } catch {
-          /* /me failed — try refresh only when a refresh token exists, else cookie-only refresh if marked */
+        } catch (error) {
+          meError = error;
         }
 
         if (cancelled || loadId !== authSessionLoadGeneration) return;
 
+        let refreshError: unknown = null;
         if (rt) {
           try {
             const refreshed = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
@@ -458,24 +505,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               { method: 'POST', body: JSON.stringify({ refreshToken: rt }), retryCount: 2, retryDelayMs: 900, timeoutMs: 50_000 },
             );
             if (cancelled || loadId !== authSessionLoadGeneration) return;
-            logNativeEvent('auth', 'restore-from-refresh-success');
+            logNativeEvent('auth', 'restore-from-refresh-success', { reason });
             updateAuthDebug({
               refreshStatus: 'ok',
               activeSessionStatus: 'active',
             });
-            setUser(refreshed.user);
-            if (refreshed.token && shouldPersistAuthTokens()) {
-              setToken(refreshed.token);
-              setRefreshToken(refreshed.refreshToken ?? null);
-              persistStudentTokens(refreshed.token, refreshed.refreshToken ?? null);
-            } else {
-              setToken(COOKIE_SESSION_API_MARKER);
-              setRefreshToken(null);
-              persistCookieSessionMode();
-            }
+            applyAuthPayload(refreshed);
             return;
-          } catch {
-            /* fall through */
+          } catch (error) {
+            refreshError = error;
           }
         }
 
@@ -486,38 +524,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
               { method: 'POST', body: JSON.stringify({}), retryCount: 2, retryDelayMs: 900, timeoutMs: 50_000 },
             );
             if (cancelled || loadId !== authSessionLoadGeneration) return;
-            logNativeEvent('auth', 'restore-from-cookie-refresh-success');
+            logNativeEvent('auth', 'restore-from-cookie-refresh-success', { reason });
             updateAuthDebug({
               refreshStatus: 'ok',
               activeSessionStatus: 'active',
             });
-            setUser(refreshed.user);
-            if (refreshed.token && shouldPersistAuthTokens()) {
-              setToken(refreshed.token);
-              setRefreshToken(refreshed.refreshToken ?? null);
-              persistStudentTokens(refreshed.token, refreshed.refreshToken ?? null);
-            } else {
-              setToken(COOKIE_SESSION_API_MARKER);
-              setRefreshToken(null);
-              persistCookieSessionMode();
-            }
+            applyAuthPayload(refreshed);
             return;
-          } catch {
-            /* logout below */
+          } catch (error) {
+            refreshError = refreshError || error;
           }
         }
 
         if (cancelled || loadId !== authSessionLoadGeneration) return;
+
+        const transient = isLikelyTransientAuthFailure(meError) || isLikelyTransientAuthFailure(refreshError);
+        const definitive = isDefinitiveAuthFailure(meError) || isDefinitiveAuthFailure(refreshError);
+
+        if (transient && !definitive) {
+          keepCredentialsAlive(String((refreshError as Error)?.message || (meError as Error)?.message || 'transient'));
+          return;
+        }
+
         setToken(null);
         setRefreshToken(null);
         setUser(null);
-        logNativeEvent('auth', 'restore-failed-cleared-session', { hadBearer: Boolean(bearer) }, 'warn');
+        logNativeEvent('auth', 'restore-failed-cleared-session', { hadBearer: Boolean(bearer), reason }, 'warn');
         updateAuthDebug({
           refreshStatus: 'failed',
           activeSessionStatus: 'ended',
         });
         clearPersistedStudentTokens();
-        if (bearer) {
+        clearStudentUserSnapshot();
+        if (bearer && definitive) {
           redirectToLoginScreen();
         }
       } finally {
@@ -528,7 +567,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     runSessionRestoreRef.current = async (reason = 'resume') => {
-      const attempts = isNativeRuntime ? 3 : 1;
+      const attempts = isNativeRuntime ? 3 : 3;
       for (let attempt = 0; attempt < attempts; attempt += 1) {
         try {
           await loadSession(reason);
@@ -586,9 +625,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const onVisibility = () => {
       if (!document.hidden) {
         syncFromStorage();
-        if (isNativeRuntime) {
-          void runSessionRestoreRef.current('visibility');
-        }
+        void runSessionRestoreRef.current('visibility');
       }
     };
 
@@ -600,9 +637,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const onFocus = () => {
       syncFromStorage();
-      if (isNativeRuntime) {
-        void runSessionRestoreRef.current('focus');
-      }
+      void runSessionRestoreRef.current('focus');
     };
 
     window.addEventListener('focus', onFocus);
@@ -612,17 +647,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .addListener('appStateChange', ({ isActive }) => {
         if (isActive) {
           syncFromStorage();
-          if (isNativeRuntime) {
-            void runSessionRestoreRef.current('app-resume');
-          }
+          void runSessionRestoreRef.current('app-resume');
         }
       })
       .catch(() => null);
     const onOnline = () => {
       syncFromStorage();
-      if (isNativeRuntime) {
-        void runSessionRestoreRef.current('online');
-      }
+      void runSessionRestoreRef.current('online');
     };
     window.addEventListener('online', onOnline);
     return () => {
@@ -633,6 +664,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       void appStateListenerPromise.then((listener) => listener?.remove());
     };
   }, [isNativeRuntime]);
+
+  // Silent access-token refresh before expiry so active users are never interrupted.
+  useEffect(() => {
+    if (typeof window === 'undefined' || !shouldPersistAuthTokens()) return;
+
+    let cancelled = false;
+    const tick = async () => {
+      if (cancelled || document.hidden) return;
+      const access = localStorage.getItem(TOKEN_STORAGE_KEY);
+      const refresh = localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY);
+      if (!access || !refresh || isCookieSessionApiMarker(access)) return;
+      const expMs = readJwtExpiryMs(access);
+      if (!expMs) return;
+      const msLeft = expMs - Date.now();
+      // Refresh when less than 3 minutes remain (or already expired but refresh still valid).
+      if (msLeft > 3 * 60_000) return;
+      try {
+        const refreshed = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+          '/api/auth/refresh',
+          {
+            method: 'POST',
+            body: JSON.stringify({ refreshToken: refresh }),
+            retryCount: 1,
+            retryDelayMs: 700,
+            timeoutMs: 40_000,
+          },
+        );
+        if (cancelled || !refreshed?.user) return;
+        applyAuthPayload(refreshed);
+        logNativeEvent('auth', 'silent-refresh-success', { msLeft });
+      } catch (error) {
+        if (isLikelyTransientAuthFailure(error)) {
+          logNativeEvent('auth', 'silent-refresh-transient', {}, 'warn');
+          return;
+        }
+        logNativeEvent('auth', 'silent-refresh-failed', {
+          message: String((error as Error)?.message || ''),
+        }, 'warn');
+      }
+    };
+
+    const intervalId = window.setInterval(() => {
+      void tick();
+    }, 60_000);
+    void tick();
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [applyAuthPayload, token, refreshToken]);
 
   const login = useCallback<AuthContextValue['login']>(async (email, password, opts) => {
     if (!isFirebaseConfigured()) {
@@ -1071,6 +1152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setRefreshToken(null);
     setUser(null);
     clearPersistedStudentTokens();
+    clearStudentUserSnapshot();
     clearSessionStorageSafe();
     clearLocalStorageAuthStateSafe();
   }, []);

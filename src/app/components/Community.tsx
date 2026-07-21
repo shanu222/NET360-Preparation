@@ -12,7 +12,7 @@ import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { apiRequest, buildSseStreamUrl, API_BASE } from '../lib/api';
-import { assignExamPopupLocation, openExamBlankPopup } from '../lib/examWindowLaunch';
+import { navigateToExamSameTab } from '../lib/examWindowLaunch';
 import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl, shouldPersistAuthTokens } from '../lib/authSession';
 import { io, type Socket } from 'socket.io-client';
@@ -1758,14 +1758,6 @@ function CommunityInner() {
       return;
     }
 
-    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
-    const examWindow = isNativeRuntime ? null : openExamBlankPopup();
-
-    if (!isNativeRuntime && !examWindow) {
-      showErrorToast('Popup blocked. Please allow popups and try again.');
-      return;
-    }
-
     const urlAuth = bearerForLaunchUrl(token);
     localStorage.setItem('net360-exam-launch', JSON.stringify({
       testType: 'challenge',
@@ -1777,14 +1769,7 @@ function CommunityInner() {
     const url = urlAuth
       ? `/exam-interface?testType=challenge&challengeId=${encodeURIComponent(challengeId)}&authToken=${encodeURIComponent(urlAuth)}`
       : `/exam-interface?testType=challenge&challengeId=${encodeURIComponent(challengeId)}`;
-    if (isNativeRuntime) {
-      window.location.href = url;
-      return;
-    }
-
-    if (examWindow) {
-      assignExamPopupLocation(examWindow, url);
-    }
+    navigateToExamSameTab(url);
   };
 
   const startChallengeAttempt = (challengeId: string) => {
