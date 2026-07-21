@@ -160,6 +160,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const [isPersonalInfoExpanded, setIsPersonalInfoExpanded] = useState(true);
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
   const [isSavingTargetProgram, setIsSavingTargetProgram] = useState(false);
+  const [isSavingPersonalInfo, setIsSavingPersonalInfo] = useState(false);
+  const [isSavingPreparationDetails, setIsSavingPreparationDetails] = useState(false);
 
   const targetProgramOptions = useMemo(() => NET_TARGET_PROGRAM_OPTIONS, []);
   const selectedTargetProgramLabel =
@@ -401,6 +403,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   };
 
   const savePersonalInfo = async () => {
+    if (isSavingPersonalInfo) return;
+    setIsSavingPersonalInfo(true);
     try {
       await saveProfile({
         firstName: localProfile.firstName,
@@ -412,10 +416,14 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       setIsPersonalInfoExpanded(false);
     } catch (error) {
       handleApiError(error, 'Could not save profile.');
+    } finally {
+      setIsSavingPersonalInfo(false);
     }
   };
 
   const savePreparationDetails = async () => {
+    if (isSavingPreparationDetails) return;
+    setIsSavingPreparationDetails(true);
     try {
       await saveProfile({
         targetProgram: localProfile.targetProgram,
@@ -428,6 +436,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       setIsPreparationExpanded(false);
     } catch (error) {
       handleApiError(error, 'Could not update details.');
+    } finally {
+      setIsSavingPreparationDetails(false);
     }
   };
 
@@ -1117,7 +1127,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
             </div>
 
             <div className="flex flex-wrap gap-2">
-              <Button onClick={savePersonalInfo}>Save Changes</Button>
+              <Button onClick={() => void savePersonalInfo()} disabled={isSavingPersonalInfo}>
+                {isSavingPersonalInfo ? 'Saving…' : 'Save Changes'}
+              </Button>
               <Button type="button" variant="outline" onClick={() => setIsPersonalInfoExpanded(false)}>
                 Cancel
               </Button>
@@ -1224,7 +1236,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
           </div>
 
           <div className="flex flex-wrap gap-2">
-            <Button onClick={savePreparationDetails}>Update Details</Button>
+            <Button onClick={() => void savePreparationDetails()} disabled={isSavingPreparationDetails}>
+              {isSavingPreparationDetails ? 'Updating…' : 'Update Details'}
+            </Button>
             <Button type="button" variant="outline" onClick={() => setIsPreparationExpanded(false)}>
               Cancel
             </Button>

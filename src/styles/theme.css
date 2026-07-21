@@ -1426,3 +1426,42 @@ html.native-android #root::-webkit-scrollbar {
     height: 0;
   }
 }
+
+/* Horizontal tab strips: edge fade affordance (Preparation / Community) */
+.net360-horizontal-scroll {
+  position: relative;
+  mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+  -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 12px, #000 calc(100% - 12px), transparent 100%);
+}
+
+@media (min-width: 768px) {
+  .net360-horizontal-scroll {
+    mask-image: none;
+    -webkit-mask-image: none;
+  }
+}
+
+/* Prefer calm motion for production polish + a11y */
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Large touch targets on coarse pointers */
+@media (hover: none) and (pointer: coarse) {
+  .net360-page button:not([data-slot='checkbox']):not([data-slot='switch']),
+  .net360-page [role='button'],
+  .net360-page a.inline-flex {
+    min-height: 44px;
+  }
+}
