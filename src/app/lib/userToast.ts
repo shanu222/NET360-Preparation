@@ -159,6 +159,19 @@ export function audienceFriendlyError(error: unknown, fallback = 'We could not c
   if (code === 'SESSION_REVOKED') {
     return 'Your account has been signed in on another device.';
   }
+  if (
+    code === 'GLOBAL_FREE_ACCESS_INVALID_WINDOW'
+    || code === 'GLOBAL_FREE_ACCESS_INVALID_TYPE'
+    || code === 'GLOBAL_FREE_ACCESS_USE_DEDICATED_ENDPOINT'
+  ) {
+    return 'Check the Global Free Access dates and try again.';
+  }
+  if (code === 'GLOBAL_FREE_ACCESS_ENABLE_FAILED' || code === 'GLOBAL_FREE_ACCESS_DISABLE_FAILED') {
+    return 'Could not update Global Free Access. Please try again.';
+  }
+  if (code === 'MANUAL_ACCESS_GRANT_INVALID' || code === 'MANUAL_ACCESS_REVOKE_INVALID') {
+    return 'Select a student, access type, and duration to continue.';
+  }
 
   const status = Number(err?.status);
   if (Number.isFinite(status) && status > 0) {
@@ -221,6 +234,12 @@ export function audienceFriendlyError(error: unknown, fallback = 'We could not c
   if (lower.includes('duplicate')) return 'This already exists. Try refreshing the page.';
   if (lower.includes('google login did not return')) return 'Google did not share an email. Use another account or email sign-in.';
 
+  if (lower.includes('userid, accesstype, and durationdays are required')) {
+    return 'Could not update Global Free Access. Please refresh the admin panel and try again.';
+  }
+  if (lower.includes('provide durationdays or a valid expiresat')) {
+    return 'Choose a valid end date for Global Free Access.';
+  }
   if (isLikelySafeServerMessage(message)) return message;
 
   if (Number.isFinite(status) && status > 0) {

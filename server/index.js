@@ -14061,6 +14061,202 @@ function parseAccessType(input) {
   return '';
 }
 
+async function upsertGlobalAccessGrants({
+  types,
+  startsAt,
+  expiresAt,
+  days,
+  adminUser,
+  notes,
+  announcement,
+}) {
+  const now = new Date();
+  const results = {};
+  for (const type of types) {
+    await GlobalAccessGrantModel.updateOne(
+      { accessType: type },
+      {
+        $set: {
+          accessType: type,
+          status: 'active',
+          startsAt,
+          expiresAt,
+          durationDays: days,
+          grantedByUserId: String(adminUser?._id || ''),
+          grantedByEmail: String(adminUser?.email || ''),
+          lastActionByUserId: String(adminUser?._id || ''),
+          lastActionByEmail: String(adminUser?.email || ''),
+          lastActionAt: now,
+          notes,
+          announcement,
+        },
+      },
+      { upsert: true, runValidators: true },
+    );
+    results[type] = accessStatusPayload({
+      allowed: true,
+      status: 'active',
+      source: 'global',
+      startsAt,
+      expiresAt,
+      durationDays: days,
+    });
+  }
+  await invalidateGlobalAccessGrantSnapshot();
+  return results;
+}
+
+async function revokeGlobalAccessGrants({ types, adminUser, notes }) {
+  const now = new Date();
+  for (const type of types) {
+    await GlobalAccessGrantModel.updateOne(
+      { accessType: type },
+      {
+        $set: {
+          accessType: type,
+          status: 'revoked',
+          lastActionByUserId: String(adminUser?._id || ''),
+          lastActionByEmail: String(adminUser?.email || ''),
+          lastActionAt: now,
+          notes: String(notes || '').slice(0, 300),
+          announcement: '',
+        },
+      },
+      { upsert: true, runValidators: true },
+    );
+  }
+  await invalidateGlobalAccessGrantSnapshot();
+}
+
+function buildGlobalFreeAccessResponse(globalGrants, serverNow = Date.now()) {
+  const prepActive = isGrantActive(globalGrants?.preparation, serverNow);
+  const mentorActive = isGrantActive(globalGrants?.mentor, serverNow);
+  const enabled = prepActive || mentorActive;
+  const primary = prepActive
+    ? globalGrants.preparation
+    : (mentorActive ? globalGrants.mentor : (globalGrants?.preparation || {}));
+  return {
+    enabled,
+    startsAt: enabled ? toIsoOrNull(primary?.startsAt) : null,
+    expiresAt: enabled ? toIsoOrNull(primary?.expiresAt) : null,
+    reason: enabled ? String(primary?.notes || '').trim() : '',
+    announcement: enabled ? String(primary?.announcement || '').trim() : '',
+    grants: {
+      preparation: accessStatusPayload({
+        ...globalGrants?.preparation,
+        allowed: prepActive,
+        source: prepActive ? 'global' : 'none',
+      }),
+      mentor: accessStatusPayload({
+        ...globalGrants?.mentor,
+        allowed: mentorActive,
+        source: mentorActive ? 'global' : 'none',
+      }),
+    },
+  };
+}
+
+async function resolveGlobalGrantWindow(req, { requireAccessType = false } = {}) {
+  const accessType = parseAccessType(req.body?.accessType);
+  const notes = String(req.body?.notes || req.body?.reason || '').trim().slice(0, 300);
+  const announcement = String(req.body?.announcement || '').trim().slice(0, 600);
+  const applyToAllPremiumSurfaces = Boolean(
+    req.body?.applyToAllPremiumSurfaces
+    || req.body?.enableForAllStudents
+    || (!accessType && !requireAccessType),
+  );
+  const now = new Date();
+
+  let startsAt = now;
+  let expiresAt = null;
+  let days = 0;
+
+  const startsAtRaw = String(req.body?.startsAt || req.body?.startDate || '').trim();
+  const expiresAtRaw = String(req.body?.expiresAt || req.body?.endDate || '').trim();
+  if (startsAtRaw) {
+    const parsedStart = new Date(startsAtRaw);
+    if (!Number.isNaN(parsedStart.getTime())) startsAt = parsedStart;
+  }
+  if (expiresAtRaw) {
+    const parsedEnd = new Date(expiresAtRaw);
+    if (!Number.isNaN(parsedEnd.getTime())) expiresAt = parsedEnd;
+  }
+
+  if (!expiresAt) {
+    const durationDays = Number(req.body?.durationDays || 0);
+    if (!Number.isFinite(durationDays) || durationDays <= 0) {
+      return {
+        error: {
+          status: 400,
+          body: {
+            error: 'Choose a valid end date or duration for Global Free Access.',
+            code: 'GLOBAL_FREE_ACCESS_INVALID_WINDOW',
+          },
+        },
+      };
+    }
+    days = Math.max(1, Math.min(3650, durationDays));
+    const existing = accessType ? await GlobalAccessGrantModel.findOne({ accessType }) : null;
+    const activeExisting = existing
+      && existing.status === 'active'
+      && existing.expiresAt
+      && new Date(existing.expiresAt).getTime() > now.getTime();
+    const startMs = activeExisting ? new Date(existing.expiresAt).getTime() : startsAt.getTime();
+    if (activeExisting && existing.startsAt) startsAt = existing.startsAt;
+    expiresAt = new Date(startMs + (days * 24 * 60 * 60 * 1000));
+  } else {
+    if (expiresAt.getTime() <= startsAt.getTime()) {
+      return {
+        error: {
+          status: 400,
+          body: {
+            error: 'End date must be after the start date.',
+            code: 'GLOBAL_FREE_ACCESS_INVALID_WINDOW',
+          },
+        },
+      };
+    }
+    if (expiresAt.getTime() <= now.getTime()) {
+      return {
+        error: {
+          status: 400,
+          body: {
+            error: 'End date must be in the future.',
+            code: 'GLOBAL_FREE_ACCESS_INVALID_WINDOW',
+          },
+        },
+      };
+    }
+    days = Math.max(1, Math.ceil((expiresAt.getTime() - startsAt.getTime()) / (24 * 60 * 60 * 1000)));
+  }
+
+  const typesToGrant = applyToAllPremiumSurfaces || !accessType
+    ? [ACCESS_TYPES.preparation, ACCESS_TYPES.mentor]
+    : [accessType];
+
+  if (!typesToGrant.length) {
+    return {
+      error: {
+        status: 400,
+        body: {
+          error: 'Could not determine which Premium surfaces to unlock.',
+          code: 'GLOBAL_FREE_ACCESS_INVALID_TYPE',
+        },
+      },
+    };
+  }
+
+  return {
+    accessType,
+    notes,
+    announcement,
+    startsAt,
+    expiresAt,
+    days,
+    typesToGrant,
+  };
+}
+
 function buildManualGrantPayload(existing, { durationDays, adminUser, source, notes }) {
   const now = new Date();
   const days = Math.max(1, Math.min(3650, Number(durationDays || 0)));
@@ -14535,13 +14731,169 @@ app.post('/api/admin/subscriptions/:userId/update', authMiddleware, requireAdmin
   res.json({ ok: true, userId, subscription: normalizeSubscription(user) });
 });
 
+app.get('/api/admin/global-free-access', authMiddleware, requireAdmin, async (_req, res) => {
+  try {
+    const globalGrants = await getGlobalAccessGrantSnapshot();
+    res.json({
+      ok: true,
+      ...buildGlobalFreeAccessResponse(globalGrants),
+    });
+  } catch (error) {
+    console.error('[global-free-access] status failed:', error);
+    res.status(500).json({
+      error: 'Could not load Global Free Access status. Please try again.',
+      code: 'GLOBAL_FREE_ACCESS_STATUS_FAILED',
+    });
+  }
+});
+
+app.post('/api/admin/global-free-access/enable', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveGlobalGrantWindow({
+      body: {
+        ...req.body,
+        applyToAllPremiumSurfaces: true,
+        notes: req.body?.reason ?? req.body?.notes,
+      },
+    });
+    if (resolved.error) {
+      res.status(resolved.error.status).json(resolved.error.body);
+      return;
+    }
+
+    const results = await upsertGlobalAccessGrants({
+      types: resolved.typesToGrant,
+      startsAt: resolved.startsAt,
+      expiresAt: resolved.expiresAt,
+      days: resolved.days,
+      adminUser: req.user,
+      notes: resolved.notes,
+      announcement: resolved.announcement,
+    });
+
+    const globalGrants = await getGlobalAccessGrantSnapshot();
+    res.json({
+      ok: true,
+      message: 'Global Free Access is enabled for every student.',
+      ...buildGlobalFreeAccessResponse(globalGrants),
+      grants: results,
+    });
+  } catch (error) {
+    console.error('[global-free-access] enable failed:', error);
+    res.status(500).json({
+      error: 'Could not enable Global Free Access. Please try again.',
+      code: 'GLOBAL_FREE_ACCESS_ENABLE_FAILED',
+    });
+  }
+});
+
+app.post('/api/admin/global-free-access/disable', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const notes = String(req.body?.notes || req.body?.reason || 'Global Free Access disabled by admin').trim().slice(0, 300);
+    await revokeGlobalAccessGrants({
+      types: [ACCESS_TYPES.preparation, ACCESS_TYPES.mentor],
+      adminUser: req.user,
+      notes,
+    });
+    const globalGrants = await getGlobalAccessGrantSnapshot();
+    res.json({
+      ok: true,
+      message: 'Global Free Access disabled. Individual subscriptions resume normally.',
+      ...buildGlobalFreeAccessResponse(globalGrants),
+    });
+  } catch (error) {
+    console.error('[global-free-access] disable failed:', error);
+    res.status(500).json({
+      error: 'Could not disable Global Free Access. Please try again.',
+      code: 'GLOBAL_FREE_ACCESS_DISABLE_FAILED',
+    });
+  }
+});
+
+// Legacy aliases — registered BEFORE :userId so "global" is never captured as a user id.
+app.post('/api/admin/subscriptions/access/global/grant', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const resolved = await resolveGlobalGrantWindow(req);
+    if (resolved.error) {
+      res.status(resolved.error.status).json(resolved.error.body);
+      return;
+    }
+    const results = await upsertGlobalAccessGrants({
+      types: resolved.typesToGrant,
+      startsAt: resolved.startsAt,
+      expiresAt: resolved.expiresAt,
+      days: resolved.days,
+      adminUser: req.user,
+      notes: resolved.notes,
+      announcement: resolved.announcement,
+    });
+    res.json({
+      ok: true,
+      globalAccess: results.preparation || results.mentor || null,
+      grants: results,
+      announcement: resolved.announcement,
+    });
+  } catch (error) {
+    console.error('[global-access] grant failed:', error);
+    res.status(500).json({
+      error: 'Could not enable Global Free Access. Please try again.',
+      code: 'GLOBAL_FREE_ACCESS_ENABLE_FAILED',
+    });
+  }
+});
+
+app.post('/api/admin/subscriptions/access/global/revoke', authMiddleware, requireAdmin, async (req, res) => {
+  try {
+    const accessType = parseAccessType(req.body?.accessType);
+    const notes = String(req.body?.notes || '').trim();
+    const revokeAll = Boolean(req.body?.revokeAll || req.body?.applyToAllPremiumSurfaces);
+    const typesToRevoke = revokeAll || !accessType
+      ? [ACCESS_TYPES.preparation, ACCESS_TYPES.mentor]
+      : [accessType];
+    if (!typesToRevoke.length) {
+      res.status(400).json({
+        error: 'Could not determine which Premium surfaces to revoke.',
+        code: 'GLOBAL_FREE_ACCESS_INVALID_TYPE',
+      });
+      return;
+    }
+    await revokeGlobalAccessGrants({
+      types: typesToRevoke,
+      adminUser: req.user,
+      notes,
+    });
+    res.json({
+      ok: true,
+      accessType: typesToRevoke[0],
+      revoked: typesToRevoke,
+      globalAccess: accessStatusPayload({ allowed: false, status: 'revoked', source: 'none' }),
+    });
+  } catch (error) {
+    console.error('[global-access] revoke failed:', error);
+    res.status(500).json({
+      error: 'Could not disable Global Free Access. Please try again.',
+      code: 'GLOBAL_FREE_ACCESS_DISABLE_FAILED',
+    });
+  }
+});
+
 app.post('/api/admin/subscriptions/access/:userId/grant', authMiddleware, requireAdmin, async (req, res) => {
   const userId = String(req.params.userId || '').trim();
+  if (userId === 'global') {
+    res.status(400).json({
+      error: 'Use the Global Free Access controls to unlock Premium for all students.',
+      code: 'GLOBAL_FREE_ACCESS_USE_DEDICATED_ENDPOINT',
+    });
+    return;
+  }
   const accessType = parseAccessType(req.body?.accessType);
   const durationDays = Number(req.body?.durationDays || 0);
   const notes = String(req.body?.notes || '').trim();
   if (!userId || !accessType || !Number.isFinite(durationDays) || durationDays <= 0) {
-    res.status(400).json({ error: 'userId, accessType, and durationDays are required.' });
+    res.status(400).json({
+      error: 'Select a student, access type, and duration in days to continue.',
+      code: 'MANUAL_ACCESS_GRANT_INVALID',
+    });
     return;
   }
 
@@ -14551,7 +14903,7 @@ app.post('/api/admin/subscriptions/access/:userId/grant', authMiddleware, requir
     return;
   }
 
-  const path = accessType === ACCESS_TYPES.mentor
+  const pathKey = accessType === ACCESS_TYPES.mentor
     ? 'accessControls.mentorManual'
     : 'accessControls.preparationManual';
   const existing = normalizeManualGrant(accessType === ACCESS_TYPES.mentor
@@ -14566,7 +14918,7 @@ app.post('/api/admin/subscriptions/access/:userId/grant', authMiddleware, requir
 
   await UserModel.updateOne(
     { _id: userId },
-    { $set: { [path]: nextGrant } },
+    { $set: { [pathKey]: nextGrant } },
     { runValidators: true },
   );
   await invalidateUserSubscriptionCache(userId);
@@ -14591,10 +14943,20 @@ app.post('/api/admin/subscriptions/access/:userId/grant', authMiddleware, requir
 
 app.post('/api/admin/subscriptions/access/:userId/revoke', authMiddleware, requireAdmin, async (req, res) => {
   const userId = String(req.params.userId || '').trim();
+  if (userId === 'global') {
+    res.status(400).json({
+      error: 'Use the Global Free Access controls to disable Premium for all students.',
+      code: 'GLOBAL_FREE_ACCESS_USE_DEDICATED_ENDPOINT',
+    });
+    return;
+  }
   const accessType = parseAccessType(req.body?.accessType);
   const notes = String(req.body?.notes || '').trim();
   if (!userId || !accessType) {
-    res.status(400).json({ error: 'userId and accessType are required.' });
+    res.status(400).json({
+      error: 'Select a student and access type to revoke.',
+      code: 'MANUAL_ACCESS_REVOKE_INVALID',
+    });
     return;
   }
   const user = await UserModel.findById(userId).select('accessControls role authProvider');
@@ -14602,141 +14964,17 @@ app.post('/api/admin/subscriptions/access/:userId/revoke', authMiddleware, requi
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
-  const path = accessType === ACCESS_TYPES.mentor
+  const pathKey = accessType === ACCESS_TYPES.mentor
     ? 'accessControls.mentorManual'
     : 'accessControls.preparationManual';
   const existing = normalizeManualGrant(accessType === ACCESS_TYPES.mentor
     ? user.accessControls?.mentorManual
     : user.accessControls?.preparationManual);
   const nextGrant = buildRevokedManualGrant(existing, req.user, notes);
-  await UserModel.updateOne({ _id: userId }, { $set: { [path]: nextGrant } }, { runValidators: true });
+  await UserModel.updateOne({ _id: userId }, { $set: { [pathKey]: nextGrant } }, { runValidators: true });
   await invalidateUserSubscriptionCache(userId);
   notifySubscriptionRefresh(String(userId), { reason: `admin_${accessType}_manual_revoke` });
   res.json({ ok: true, userId, accessType, access: accessStatusPayload(nextGrant) });
-});
-
-app.post('/api/admin/subscriptions/access/global/grant', authMiddleware, requireAdmin, async (req, res) => {
-  const accessType = parseAccessType(req.body?.accessType);
-  const notes = String(req.body?.notes || '').trim().slice(0, 300);
-  const announcement = String(req.body?.announcement || '').trim().slice(0, 600);
-  const applyToAllPremiumSurfaces = Boolean(req.body?.applyToAllPremiumSurfaces);
-  const now = new Date();
-
-  let startsAt = now;
-  let expiresAt = null;
-  let days = 0;
-
-  const startsAtRaw = String(req.body?.startsAt || '').trim();
-  const expiresAtRaw = String(req.body?.expiresAt || '').trim();
-  if (startsAtRaw) {
-    const parsedStart = new Date(startsAtRaw);
-    if (!Number.isNaN(parsedStart.getTime())) startsAt = parsedStart;
-  }
-  if (expiresAtRaw) {
-    const parsedEnd = new Date(expiresAtRaw);
-    if (!Number.isNaN(parsedEnd.getTime())) expiresAt = parsedEnd;
-  }
-
-  if (!expiresAt) {
-    const durationDays = Number(req.body?.durationDays || 0);
-    if (!Number.isFinite(durationDays) || durationDays <= 0) {
-      res.status(400).json({ error: 'Provide durationDays or a valid expiresAt date.' });
-      return;
-    }
-    days = Math.max(1, Math.min(3650, durationDays));
-    const existing = accessType ? await GlobalAccessGrantModel.findOne({ accessType }) : null;
-    const activeExisting = existing && existing.status === 'active' && existing.expiresAt && new Date(existing.expiresAt).getTime() > now.getTime();
-    const startMs = activeExisting ? new Date(existing.expiresAt).getTime() : startsAt.getTime();
-    if (activeExisting && existing.startsAt) startsAt = existing.startsAt;
-    expiresAt = new Date(startMs + (days * 24 * 60 * 60 * 1000));
-  } else {
-    if (expiresAt.getTime() <= startsAt.getTime()) {
-      res.status(400).json({ error: 'End date must be after the start date.' });
-      return;
-    }
-    days = Math.max(1, Math.ceil((expiresAt.getTime() - startsAt.getTime()) / (24 * 60 * 60 * 1000)));
-  }
-
-  const typesToGrant = applyToAllPremiumSurfaces || !accessType
-    ? [ACCESS_TYPES.preparation, ACCESS_TYPES.mentor]
-    : [accessType];
-
-  if (!typesToGrant.length) {
-    res.status(400).json({ error: 'accessType is required.' });
-    return;
-  }
-
-  const results = {};
-  for (const type of typesToGrant) {
-    await GlobalAccessGrantModel.updateOne(
-      { accessType: type },
-      {
-        $set: {
-          accessType: type,
-          status: 'active',
-          startsAt,
-          expiresAt,
-          durationDays: days,
-          grantedByUserId: String(req.user?._id || ''),
-          grantedByEmail: String(req.user?.email || ''),
-          lastActionByUserId: String(req.user?._id || ''),
-          lastActionByEmail: String(req.user?.email || ''),
-          lastActionAt: now,
-          notes,
-          announcement,
-        },
-      },
-      { upsert: true, runValidators: true },
-    );
-    results[type] = accessStatusPayload({
-      allowed: true,
-      status: 'active',
-      source: 'global',
-      startsAt,
-      expiresAt,
-      durationDays: days,
-    });
-  }
-  await invalidateGlobalAccessGrantSnapshot();
-  res.json({
-    ok: true,
-    globalAccess: results.preparation || results.mentor || null,
-    grants: results,
-    announcement,
-  });
-});
-
-app.post('/api/admin/subscriptions/access/global/revoke', authMiddleware, requireAdmin, async (req, res) => {
-  const accessType = parseAccessType(req.body?.accessType);
-  const notes = String(req.body?.notes || '').trim();
-  const revokeAll = Boolean(req.body?.revokeAll || req.body?.applyToAllPremiumSurfaces);
-  const typesToRevoke = revokeAll || !accessType
-    ? [ACCESS_TYPES.preparation, ACCESS_TYPES.mentor]
-    : [accessType];
-  if (!typesToRevoke.length) {
-    res.status(400).json({ error: 'accessType is required.' });
-    return;
-  }
-  const now = new Date();
-  for (const type of typesToRevoke) {
-    await GlobalAccessGrantModel.updateOne(
-      { accessType: type },
-      {
-        $set: {
-          accessType: type,
-          status: 'revoked',
-          lastActionByUserId: String(req.user?._id || ''),
-          lastActionByEmail: String(req.user?.email || ''),
-          lastActionAt: now,
-          notes: notes.slice(0, 300),
-          announcement: '',
-        },
-      },
-      { upsert: true, runValidators: true },
-    );
-  }
-  await invalidateGlobalAccessGrantSnapshot();
-  res.json({ ok: true, accessType: typesToRevoke[0], revoked: typesToRevoke, globalAccess: accessStatusPayload({ allowed: false, status: 'revoked', source: 'none' }) });
 });
 
 function normalizeSubscriptionSearch(input) {

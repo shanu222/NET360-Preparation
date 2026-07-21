@@ -54,6 +54,8 @@ export function isGrantActive(grantLike, serverNow = Date.now()) {
   const grant = normalizeManualGrant(grantLike);
   if (grant.status !== 'active') return false;
   if (!grant.expiresAt) return false;
+  const startsMs = grant.startsAt ? new Date(grant.startsAt).getTime() : NaN;
+  if (Number.isFinite(startsMs) && startsMs > serverNow) return false;
   return new Date(grant.expiresAt).getTime() > serverNow;
 }
 
@@ -93,17 +95,8 @@ function activeSourceDetail({ type, manual, globalGrant, legacyAllowed, sub, now
   const legacy = type === ACCESS_TYPES.mentor
     ? isPaidPlanActive(sub)
     : hasPremiumSurfaceAccess(sub);
-  if (isGrantActive(manual, now)) {
-    return {
-      allowed: true,
-      source: 'manual',
-      startsAt: manual.startsAt || null,
-      expiresAt: manual.expiresAt || null,
-      durationDays: Number(manual.durationDays || 0),
-      status: 'active',
-      legacyAllowed: legacy,
-    };
-  }
+  // Global Free Access wins first so every student (including those with individual grants)
+  // receives the active promo window and announcement surface.
   if (isGrantActive(globalGrant, now)) {
     return {
       allowed: true,
@@ -111,6 +104,17 @@ function activeSourceDetail({ type, manual, globalGrant, legacyAllowed, sub, now
       startsAt: globalGrant.startsAt || null,
       expiresAt: globalGrant.expiresAt || null,
       durationDays: Number(globalGrant.durationDays || 0),
+      status: 'active',
+      legacyAllowed: legacy,
+    };
+  }
+  if (isGrantActive(manual, now)) {
+    return {
+      allowed: true,
+      source: 'manual',
+      startsAt: manual.startsAt || null,
+      expiresAt: manual.expiresAt || null,
+      durationDays: Number(manual.durationDays || 0),
       status: 'active',
       legacyAllowed: legacy,
     };
@@ -251,7 +255,6 @@ export function resolvePaidServices(userLike, globalGrantMap, serverNow = Date.n
   const prepGlobal = globals.preparation;
 
   const applyGlobalPremium = (service) => {
-    if (service?.allowed) return service;
     if (!isGrantActive(prepGlobal, now)) return service;
     return {
       allowed: true,
