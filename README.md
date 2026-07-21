@@ -129,20 +129,22 @@ If admin/client requests fail with network errors in production:
 - Frontend includes retry/backoff for transient timeouts and `5xx` responses
 - If wake-up delays are frequent, consider an always-on plan for API service
 
-## Production operations (Railway)
+## Production operations (Railway + Vercel)
 
-Primary API host: **Railway** → custom domain `api.net360preparation.com`.  
-Frontend: **Vercel**. Database: **MongoDB Atlas**.
+Canonical architecture: [`docs/ops/FINAL-PRODUCTION-ARCHITECTURE.md`](docs/ops/FINAL-PRODUCTION-ARCHITECTURE.md)
 
-- [Railway deploy](docs/ops/RAILWAY.md)
-- [Railway environment variables](docs/ops/RAILWAY-ENV.md)
-- Legacy EC2/PM2 runbooks (historical): [`docs/ops/README.md`](docs/ops/README.md)
+- Frontend: **Vercel** (`www` / apex)
+- Backend: **Railway** service `net360-preparation` → `api.net360preparation.com`
+- Database: **MongoDB Atlas** · Auth: **Firebase** + JWT
+- Branch policy: [`docs/ops/BRANCH-CLEANUP-REPORT.md`](docs/ops/BRANCH-CLEANUP-REPORT.md)
 
 ```bash
-# After Railway deploy + DNS cutover
+curl -sS https://net360-preparation-production-3682.up.railway.app/api/health
+# After DNS cutover:
 curl -sS https://api.net360preparation.com/api/health
-curl -sS https://api.net360preparation.com/api/health/ready
 ```
+
+EC2/PM2/CloudWatch scripts are legacy and are no longer part of the production path.
 
 ## New Production Features Added
 
