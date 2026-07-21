@@ -3,7 +3,6 @@ import {
   ADMIN_REFRESH_KEY,
   clearAllAuthCredentialKeys,
   clearPersistedAdminTokens,
-  clearPersistedStudentTokens,
   COOKIE_SESSION_API_MARKER,
   hasStoredAdminCredentials,
   hasStoredAuthCredentials,
