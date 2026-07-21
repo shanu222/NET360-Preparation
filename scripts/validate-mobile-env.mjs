@@ -33,6 +33,22 @@ if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(apiBaseUrl)) {
   process.exit(1);
 }
 
+if (/amazonaws\.com|cloudfront\.net|s3[.-]|elasticbeanstalk\.com/i.test(apiBaseUrl)) {
+  console.error(
+    '[mobile:build] API base URL looks like AWS. NET360 production API is Railway only. Received:',
+    apiBaseUrl,
+  );
+  process.exit(1);
+}
+
+if (/api\.net360preparation\.com/i.test(apiBaseUrl)) {
+  console.error(
+    '[mobile:build] api.net360preparation.com DNS still points at retired EC2. ' +
+      'Set VITE_API_URL to https://net360-preparation-production-3682.up.railway.app for Android releases.',
+  );
+  process.exit(1);
+}
+
 if (/^http:\/\//i.test(apiBaseUrl)) {
   console.warn('[mobile:build] Warning: non-HTTPS API URL detected. Prefer HTTPS for Android production builds.');
 }
