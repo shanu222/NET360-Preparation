@@ -5823,39 +5823,62 @@ async function repairCorruptMcqDocumentIds() {
   const { ObjectId } = mongoose.Types;
   let scanned = 0;
   let repaired = 0;
-  const cursor = MCQModel.collection.find({}, { timeout: false });
+  // Only load _id first so large embedded images do not stall startup repair.
+  const cursor = MCQModel.collection.find({}, { projection: { _id: 1 }, timeout: false });
+  const corruptIds = [];
   try {
     for await (const doc of cursor) {
       scanned += 1;
-      const rawId = doc?._id;
-      if (isMongoObjectIdLike(rawId)) continue;
-      const asString = mongoIdToString(rawId);
-      if (/^[a-f0-9]{24}$/i.test(asString) && isMongoObjectIdLike(rawId)) continue;
-      // Non-ObjectId _id (plain object / unexpected BSON) — reinsert with a real ObjectId.
-      const { _id: _ignored, ...rest } = doc;
-      const nextId = new ObjectId();
-      try {
-        await MCQModel.collection.insertOne({ ...rest, _id: nextId });
-        await MCQModel.collection.deleteOne({ _id: rawId });
-        repaired += 1;
-        console.warn('[mcq-repair] reassigned corrupt _id', {
-          previousType: typeof rawId,
-          previousCtor: rawId?.constructor?.name || null,
-          previousString: asString || String(rawId),
-          nextId: String(nextId),
-          subject: String(rest.subject || ''),
-          chapter: String(rest.chapter || ''),
-        });
-      } catch (error) {
-        console.error('[mcq-repair] failed for document:', error?.message || error);
-      }
+      if (isMongoObjectIdLike(doc?._id)) continue;
+      corruptIds.push(doc._id);
     }
   } finally {
     if (typeof cursor.close === 'function') {
       await cursor.close().catch(() => undefined);
     }
   }
-  console.info('[mcq-repair] complete', { scanned, repaired, db: mongoose.connection?.name || null });
+
+  for (const rawId of corruptIds) {
+    const asString = mongoIdToString(rawId);
+    const nextId = new ObjectId();
+    let existing = null;
+    try {
+      existing = await MCQModel.collection.findOne({ _id: rawId });
+      if (!existing) continue;
+      const { _id: _ignored, ...rest } = existing;
+      // Delete first so sparse unique indexes (externalId) do not block the insert.
+      const deleted = await MCQModel.collection.findOneAndDelete({ _id: rawId });
+      if (!deleted) {
+        console.warn('[mcq-repair] skip: could not delete corrupt document', {
+          previousString: asString || String(rawId),
+        });
+        continue;
+      }
+      await MCQModel.collection.insertOne({ ...rest, _id: nextId });
+      repaired += 1;
+      console.warn('[mcq-repair] reassigned corrupt _id', {
+        previousType: typeof rawId,
+        previousCtor: rawId?.constructor?.name || null,
+        previousString: asString || String(rawId),
+        nextId: String(nextId),
+        subject: String(rest.subject || ''),
+        chapter: String(rest.chapter || ''),
+      });
+    } catch (error) {
+      console.error('[mcq-repair] failed for document:', error?.message || error);
+      try {
+        const stillThere = await MCQModel.collection.findOne({ _id: rawId }, { projection: { _id: 1 } });
+        if (!stillThere && existing) {
+          await MCQModel.collection.insertOne(existing);
+          console.warn('[mcq-repair] restored original document after failed reassignment');
+        }
+      } catch (restoreError) {
+        console.error('[mcq-repair] restore also failed:', restoreError?.message || restoreError);
+      }
+    }
+  }
+
+  console.info('[mcq-repair] complete', { scanned, corruptCandidates: corruptIds.length, repaired, db: mongoose.connection?.name || null });
   return { scanned, repaired };
 }
 
