@@ -5,6 +5,7 @@ import {
   mergedSubscription,
   premiumSurfaceBypassEnabled,
   surfaceAccessDetail,
+  trialIsActive,
 } from './subscriptionAccess.js';
 
 export const ACCESS_TYPES = {
@@ -17,6 +18,12 @@ export const PAID_SERVICE_TYPES = {
   preparation: 'preparation',
   community: 'community',
 };
+
+export const PAID_SERVICE_KEYS = [
+  PAID_SERVICE_TYPES.tests,
+  PAID_SERVICE_TYPES.preparation,
+  PAID_SERVICE_TYPES.community,
+];
 
 export function defaultManualGrant() {
   return {
@@ -186,40 +193,138 @@ export function resolveUserEntitlements(userLike, globalGrantMap, serverNow = Da
 }
 
 function buildLegacyPaidServiceState(serviceType, sub, now) {
+  // Historical shared subscription dates for display only — never unlock all modules.
   const legacyAllowed = hasPremiumSurfaceAccess(sub);
-  if (!legacyAllowed) {
-    return {
-      allowed: false,
-      source: 'none',
-      status: 'inactive',
-      startsAt: null,
-      expiresAt: null,
-      durationDays: 0,
-      durationValue: 0,
-      durationUnit: 'days',
-      legacyAllowed: false,
-      serviceType,
-    };
-  }
   const trialEndsAt = sub?.trialEndsAt ? new Date(sub.trialEndsAt).getTime() : 0;
   const paidEndsAt = sub?.expiresAt ? new Date(sub.expiresAt).getTime() : 0;
   const end = Math.max(trialEndsAt, paidEndsAt);
+  const startMs = sub?.trialStartedAt
+    ? new Date(sub.trialStartedAt).getTime()
+    : (sub?.startedAt ? new Date(sub.startedAt).getTime() : 0);
   return {
-    allowed: true,
-    source: 'legacy',
-    status: 'active',
-    startsAt: null,
+    allowed: false,
+    source: 'none',
+    status: 'inactive',
+    startsAt: Number.isFinite(startMs) && startMs > 0 ? new Date(startMs).toISOString() : null,
     expiresAt: end > 0 ? new Date(end).toISOString() : null,
     durationDays: 0,
     durationValue: 0,
     durationUnit: 'days',
-    legacyAllowed: true,
+    legacyAllowed: Boolean(legacyAllowed),
     serviceType,
   };
 }
 
+function isAdminManagedPaidServiceGrant(grantLike) {
+  const source = String(normalizeManualGrant(grantLike).source || '').toLowerCase();
+  return source.includes('admin') || source === 'admin_paid_services';
+}
+
+/**
+ * Build an independent per-module grant payload from the shared subscription record.
+ * Used for one-time migration and for packaging trial/payment into separate module fields.
+ */
+export function buildIndependentPaidServiceGrantFromSubscription(subLike, {
+  source = 'legacy_migrated',
+  now = new Date(),
+} = {}) {
+  const sub = mergedSubscription({ subscription: subLike });
+  const trialActive = trialIsActive(sub);
+  const paidActive = isPaidPlanActive(sub);
+  if (!trialActive && !paidActive) return null;
+
+  const startsAt = trialActive
+    ? (sub.trialStartedAt || now)
+    : (sub.startedAt || sub.lastActivatedAt || now);
+  const expiresAt = trialActive ? sub.trialEndsAt : sub.expiresAt;
+  if (!expiresAt) return null;
+  const startMs = new Date(startsAt).getTime();
+  const endMs = new Date(expiresAt).getTime();
+  if (!Number.isFinite(endMs) || endMs <= Date.now()) return null;
+  const durationDays = Number.isFinite(startMs)
+    ? Math.max(1, Math.ceil((endMs - startMs) / (24 * 60 * 60 * 1000)))
+    : 0;
+
+  return {
+    ...defaultManualGrant(),
+    status: 'active',
+    startsAt: startsAt ? new Date(startsAt) : now,
+    expiresAt: new Date(expiresAt),
+    durationDays,
+    durationValue: durationDays,
+    durationUnit: 'days',
+    source: String(source || 'legacy_migrated'),
+    grantedAt: now,
+    lastUpdatedAt: now,
+    notes: trialActive
+      ? 'Migrated from shared free-trial subscription'
+      : 'Migrated from shared paid subscription',
+  };
+}
+
+function shouldMigratePaidServiceSlot(existingGrant) {
+  const grant = normalizeManualGrant(existingGrant);
+  if (isAdminManagedPaidServiceGrant(grant)) return false;
+  if (grant.status === 'revoked') return false;
+  if (isGrantActive(grant)) return false;
+  // Only seed untouched slots. Never overwrite expired/inactive independent history.
+  if (grant.expiresAt || grant.startsAt || grant.grantedAt || String(grant.source || '').trim()) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Copy an active shared subscription into independent paidServices.* fields when those
+ * slots were never admin-managed. Preserves access for existing users without coupling
+ * future activate/deactivate actions across modules.
+ */
+export async function migrateSharedSubscriptionToIndependentPaidServices(UserModel, userId) {
+  const uid = String(userId || '').trim();
+  if (!uid || !UserModel) return { migrated: false, keys: [] };
+  const user = await UserModel.findById(uid).select('subscription paidServices').lean();
+  if (!user) return { migrated: false, keys: [] };
+
+  const sub = mergedSubscription(user);
+  if (!hasPremiumSurfaceAccess(sub)) return { migrated: false, keys: [] };
+
+  const paid = toPlain(user.paidServices || {});
+  const seed = buildIndependentPaidServiceGrantFromSubscription(sub, {
+    source: 'legacy_migrated',
+    now: new Date(),
+  });
+  if (!seed) return { migrated: false, keys: [] };
+
+  const updates = {};
+  const keys = [];
+  for (const key of PAID_SERVICE_KEYS) {
+    if (!shouldMigratePaidServiceSlot(paid[key])) continue;
+    updates[`paidServices.${key}`] = seed;
+    keys.push(key);
+  }
+  if (!keys.length) return { migrated: false, keys: [] };
+
+  await UserModel.updateOne({ _id: uid }, { $set: updates }, { runValidators: true });
+  return { migrated: true, keys };
+}
+
+/**
+ * Write the same grant window into selected paidServices keys (independent documents).
+ */
+export function buildPaidServicesUpdateMap(keys, grantPayload) {
+  const updates = {};
+  for (const key of keys) {
+    updates[`paidServices.${key}`] = {
+      ...defaultManualGrant(),
+      ...toPlain(grantPayload),
+      status: String(grantPayload?.status || 'active'),
+    };
+  }
+  return updates;
+}
+
 function resolveManualPaidService(serviceType, paidServices, sub, now) {
-  const legacy = buildLegacyPaidServiceState(serviceType, sub, now);
+  const legacyMeta = buildLegacyPaidServiceState(serviceType, sub, now);
   const manual = normalizeManualGrant(paidServices?.[serviceType]);
   if (isGrantActive(manual, now)) {
     return {
@@ -231,29 +336,51 @@ function resolveManualPaidService(serviceType, paidServices, sub, now) {
       durationDays: Number(manual.durationDays || 0),
       durationValue: Number(manual.durationValue || 0),
       durationUnit: String(manual.durationUnit || 'days'),
-      legacyAllowed: legacy.legacyAllowed,
+      legacyAllowed: legacyMeta.legacyAllowed,
       serviceType,
       notes: manual.notes || '',
     };
   }
-  if (legacy.allowed) return legacy;
+
+  const status = String(manual.status || '').toLowerCase();
+  if (status === 'expired' || status === 'revoked' || status === 'inactive') {
+    return {
+      allowed: false,
+      source: 'none',
+      status: status === 'inactive' && !manual.expiresAt ? 'inactive' : (status || 'inactive'),
+      startsAt: manual.startsAt ? new Date(manual.startsAt).toISOString() : null,
+      expiresAt: manual.expiresAt ? new Date(manual.expiresAt).toISOString() : null,
+      durationDays: Number(manual.durationDays || 0),
+      durationValue: Number(manual.durationValue || 0),
+      durationUnit: String(manual.durationUnit || 'days'),
+      legacyAllowed: legacyMeta.legacyAllowed,
+      serviceType,
+      notes: manual.notes || '',
+    };
+  }
+
   return {
-    ...legacy,
-    status: manual.status || legacy.status,
+    ...legacyMeta,
+    status: 'inactive',
   };
 }
 
 export function resolvePaidServices(userLike, globalGrantMap, serverNow = Date.now()) {
   const now = typeof serverNow === 'number' ? serverNow : new Date(serverNow).getTime();
+  // Back-compat: some callers historically passed a timestamp as the 2nd arg.
+  const globalsInput = (globalGrantMap && typeof globalGrantMap === 'object')
+    ? globalGrantMap
+    : {};
   const user = toPlain(userLike);
   const sub = mergedSubscription(user);
   const paidServices = toPlain(user.paidServices || {});
   const tests = resolveManualPaidService(PAID_SERVICE_TYPES.tests, paidServices, sub, now);
   const preparation = resolveManualPaidService(PAID_SERVICE_TYPES.preparation, paidServices, sub, now);
   const community = resolveManualPaidService(PAID_SERVICE_TYPES.community, paidServices, sub, now);
-  const globals = buildGlobalGrantMap([globalGrantMap?.mentor, globalGrantMap?.preparation]);
+  const globals = buildGlobalGrantMap([globalsInput?.mentor, globalsInput?.preparation]);
   const prepGlobal = globals.preparation;
 
+  // Global Free Access intentionally unlocks every premium student surface.
   const applyGlobalPremium = (service) => {
     if (!isGrantActive(prepGlobal, now)) return service;
     return {
@@ -357,7 +484,7 @@ export async function finalizeExpiredPaidServices(UserModel, userId) {
   const paid = toPlain(user.paidServices);
   const now = Date.now();
   const updates = {};
-  for (const key of [PAID_SERVICE_TYPES.tests, PAID_SERVICE_TYPES.preparation, PAID_SERVICE_TYPES.community]) {
+  for (const key of PAID_SERVICE_KEYS) {
     const grant = normalizeManualGrant(paid[key]);
     if (grant.status === 'active' && grant.expiresAt && new Date(grant.expiresAt).getTime() <= now) {
       updates[`paidServices.${key}.status`] = 'expired';

@@ -206,10 +206,40 @@ export async function grantTrialIfFirstTime(UserModel, userId, options = {}) {
         'subscription.trialStartedAt': now,
         'subscription.trialEndsAt': trialEndsAt,
         'subscription.status': 'trial',
+        'paidServices.tests': {
+          status: 'active',
+          startsAt: now,
+          expiresAt: trialEndsAt,
+          durationDays: Math.max(1, Math.ceil(TRIAL_MS / (24 * 60 * 60 * 1000))),
+          source: 'trial',
+          grantedAt: now,
+          lastUpdatedAt: now,
+          notes: 'Independent module grant from free trial',
+        },
+        'paidServices.preparation': {
+          status: 'active',
+          startsAt: now,
+          expiresAt: trialEndsAt,
+          durationDays: Math.max(1, Math.ceil(TRIAL_MS / (24 * 60 * 60 * 1000))),
+          source: 'trial',
+          grantedAt: now,
+          lastUpdatedAt: now,
+          notes: 'Independent module grant from free trial',
+        },
+        'paidServices.community': {
+          status: 'active',
+          startsAt: now,
+          expiresAt: trialEndsAt,
+          durationDays: Math.max(1, Math.ceil(TRIAL_MS / (24 * 60 * 60 * 1000))),
+          source: 'trial',
+          grantedAt: now,
+          lastUpdatedAt: now,
+          notes: 'Independent module grant from free trial',
+        },
       },
     },
     { new: true, runValidators: true },
-  ).select('subscription').lean();
+  ).select('subscription paidServices').lean();
 
   if (!updated) {
     return { ok: false, code: 'TRIAL_ALREADY_USED' };
@@ -276,7 +306,41 @@ export async function grantPaidPlanAfterPayment(UserModel, {
 
   await UserModel.findByIdAndUpdate(
     uid,
-    { $set: { subscription: nextSubscription } },
+    {
+      $set: {
+        subscription: nextSubscription,
+        'paidServices.tests': {
+          status: 'active',
+          startsAt: now,
+          expiresAt,
+          durationDays: Math.max(1, Math.ceil((expiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))),
+          source: 'payment',
+          grantedAt: now,
+          lastUpdatedAt: now,
+          notes: 'Independent module grant from paid checkout',
+        },
+        'paidServices.preparation': {
+          status: 'active',
+          startsAt: now,
+          expiresAt,
+          durationDays: Math.max(1, Math.ceil((expiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))),
+          source: 'payment',
+          grantedAt: now,
+          lastUpdatedAt: now,
+          notes: 'Independent module grant from paid checkout',
+        },
+        'paidServices.community': {
+          status: 'active',
+          startsAt: now,
+          expiresAt,
+          durationDays: Math.max(1, Math.ceil((expiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000))),
+          source: 'payment',
+          grantedAt: now,
+          lastUpdatedAt: now,
+          notes: 'Independent module grant from paid checkout',
+        },
+      },
+    },
     { runValidators: true },
   );
 

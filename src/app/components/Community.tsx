@@ -351,7 +351,7 @@ function canSendConnectionRequest(status?: string) {
 function CommunityInner() {
   const { token, user } = useAuth();
   const { surface, me, loading: subLoading } = useSubscription();
-  const communityAccessAllowed = me?.paidServices?.community?.allowed ?? surface.allowed;
+  const communityAccessAllowed = Boolean(me?.paidServices?.community?.allowed);
 
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');

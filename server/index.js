@@ -110,6 +110,7 @@ import {
   finalizeExpiredManualAccess,
   finalizeExpiredPaidServices,
   isGrantActive,
+  migrateSharedSubscriptionToIndependentPaidServices,
   normalizeManualGrant,
   PAID_SERVICE_TYPES,
   resolvePaidServices,
@@ -5218,14 +5219,21 @@ function buildTimelineStatus({
 async function resolveEntitlementsForUser(userLike) {
   const userId = String(userLike?._id || '').trim();
   if (userId) {
+    await migrateSharedSubscriptionToIndependentPaidServices(UserModel, userId);
     await finalizeExpiredManualAccess(UserModel, userId);
     await finalizeExpiredPaidServices(UserModel, userId);
   }
   const globalMap = await getGlobalAccessGrantSnapshot();
   const now = Date.now();
+  // Re-read paidServices after possible migration so entitlement snapshots stay accurate.
+  let userForResolve = userLike;
+  if (userId) {
+    const freshPaid = await UserModel.findById(userId).select('subscription accessControls paidServices role').lean();
+    if (freshPaid) userForResolve = freshPaid;
+  }
   return {
-    ...resolveUserEntitlements(userLike, globalMap, now),
-    paidServices: resolvePaidServices(userLike, globalMap, now),
+    ...resolveUserEntitlements(userForResolve, globalMap, now),
+    paidServices: resolvePaidServices(userForResolve, globalMap, now),
   };
 }
 
@@ -14553,9 +14561,10 @@ app.get('/api/admin/paid-services/users', authMiddleware, requireAdmin, async (r
     paidServices: 1,
   }).sort({ updatedAt: -1 }).limit(700).lean();
   const now = Date.now();
+  const globalGrants = await getGlobalAccessGrantSnapshot();
   const rows = users
     .map((item) => {
-      const paidServices = resolvePaidServices(item, now);
+      const paidServices = resolvePaidServices(item, globalGrants, now);
       const current = resolveRequestedServiceAccess(paidServices, serviceType);
       return {
         item,
@@ -14646,7 +14655,7 @@ app.post('/api/admin/paid-services/:userId/grant', authMiddleware, requireAdmin,
   await invalidateUserSubscriptionCache(userId);
   notifySubscriptionRefresh(String(userId), { reason: 'admin_paid_services_grant' });
   const fresh = await UserModel.findById(userId).select('email firstName lastName paidServices subscription').lean();
-  const paidServices = resolvePaidServices(fresh, Date.now());
+  const paidServices = resolvePaidServices(fresh, await getGlobalAccessGrantSnapshot(), Date.now());
   res.json({
     ok: true,
     user: {
@@ -14683,12 +14692,12 @@ app.post('/api/admin/paid-services/:userId/deactivate', authMiddleware, requireA
     const current = normalizeManualGrant(user.paidServices?.[key]);
     updates[`paidServices.${key}`] = {
       ...current,
-      status: 'inactive',
+      status: 'revoked',
       source: 'admin_paid_services',
       lastUpdatedAt: now,
       grantedByUserId: String(req.user?._id || ''),
       grantedByEmail: String(req.user?.email || ''),
-      notes: notes.slice(0, 300),
+      notes: notes.slice(0, 300) || 'Deactivated by admin',
     };
   }
   await UserModel.updateOne({ _id: userId }, { $set: updates }, { runValidators: true });
@@ -15217,7 +15226,7 @@ function buildManagedServiceDetail({
     source: String(access?.source || 'none'),
     freeTrialUsed: Boolean(sub?.hasUsedTrial),
     freeTrialActive,
-    paidPlanActive: active && !freeTrialActive,
+    paidPlanActive: active && String(access?.source || '') === 'manual',
     activatedBy: inferActivatedBy(access, manualGrant, sub, key),
     startedAt: toIsoOrNull(access?.startsAt || manualGrant?.startsAt),
     expiresAt: toIsoOrNull(access?.expiresAt || manualGrant?.expiresAt),
@@ -15416,7 +15425,7 @@ async function fetchAdminManagedUsers({
         const fullName = `${item.firstName || ''} ${item.lastName || ''}`.trim();
 
         const entitlements = resolveUserEntitlements(item, globalGrants, nowMs);
-        const paidServices = resolvePaidServices(item, nowMs);
+        const paidServices = resolvePaidServices(item, globalGrants, nowMs);
         const profile = profileByUserId.get(userId);
         const sub = mergedSubscription(item);
         const accountStatus = isSubscriptionActive(sub)
@@ -15579,13 +15588,16 @@ app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, req
   const globalGrants = await getGlobalAccessGrantSnapshot();
   const sub = mergedSubscription(user);
   const normalizedSub = normalizeSubscription(user);
-  const entitlements = resolveUserEntitlements(user, globalGrants, nowMs);
-  const paidServices = resolvePaidServices(user, nowMs);
+  await migrateSharedSubscriptionToIndependentPaidServices(UserModel, userId);
+  await finalizeExpiredPaidServices(UserModel, userId);
+  const freshUser = await UserModel.findById(userId).lean() || user;
+  const entitlements = resolveUserEntitlements(freshUser, globalGrants, nowMs);
+  const paidServices = resolvePaidServices(freshUser, globalGrants, nowMs);
   const mentorAccess = accessStatusPayload(entitlements?.mentor);
   const testsAccess = accessStatusPayload(paidServices?.tests);
   const prepAccess = accessStatusPayload(paidServices?.preparation);
   const communityAccess = accessStatusPayload(paidServices?.community);
-  const activeSession = user?.activeSession || null;
+  const activeSession = freshUser?.activeSession || null;
   const activeUserAgent = String(activeSession?.userAgent || '').toLowerCase();
 
   const services = {
@@ -15593,7 +15605,7 @@ app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, req
       key: PAID_SERVICE_TYPES.tests,
       label: 'Tests Access',
       access: testsAccess,
-      manualGrant: normalizeManualGrant(user?.paidServices?.tests),
+      manualGrant: normalizeManualGrant(freshUser?.paidServices?.tests),
       subscription: sub,
       nowMs,
     }),
@@ -15601,7 +15613,7 @@ app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, req
       key: PAID_SERVICE_TYPES.preparation,
       label: 'Preparation Materials Access',
       access: prepAccess,
-      manualGrant: normalizeManualGrant(user?.paidServices?.preparation),
+      manualGrant: normalizeManualGrant(freshUser?.paidServices?.preparation),
       subscription: sub,
       nowMs,
     }),
@@ -15609,7 +15621,7 @@ app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, req
       key: PAID_SERVICE_TYPES.community,
       label: 'Community Access',
       access: communityAccess,
-      manualGrant: normalizeManualGrant(user?.paidServices?.community),
+      manualGrant: normalizeManualGrant(freshUser?.paidServices?.community),
       subscription: sub,
       nowMs,
     }),
@@ -15618,7 +15630,7 @@ app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, req
         key: 'mentor',
         label: 'Smart Study Mentor',
         access: mentorAccess,
-        manualGrant: normalizeManualGrant(user?.accessControls?.mentorManual),
+        manualGrant: normalizeManualGrant(freshUser?.accessControls?.mentorManual),
         subscription: sub,
         nowMs,
       }),
@@ -15631,26 +15643,26 @@ app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, req
   const currentPlan = resolveSubscriptionPlan(normalizedSub.planId);
   res.json({
     user: {
-      id: String(user._id),
-      fullName: `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'No name',
-      firstName: String(user.firstName || ''),
-      lastName: String(user.lastName || ''),
-      email: String(user.email || ''),
-      firebaseUid: String(user.firebaseUid || ''),
-      joinedAt: toIsoOrNull(user.createdAt),
+      id: String(freshUser._id),
+      fullName: `${freshUser.firstName || ''} ${freshUser.lastName || ''}`.trim() || 'No name',
+      firstName: String(freshUser.firstName || ''),
+      lastName: String(freshUser.lastName || ''),
+      email: String(freshUser.email || ''),
+      firebaseUid: String(freshUser.firebaseUid || ''),
+      joinedAt: toIsoOrNull(freshUser.createdAt),
       profileImageUrl: profile?.shareProfilePicture ? String(profile?.profilePictureUrl || '') : '',
       syncStatus: {
-        firebaseLinked: Boolean(user.firebaseUid),
+        firebaseLinked: Boolean(freshUser.firebaseUid),
         android: activeUserAgent.includes('android') || activeUserAgent.includes(' wv') ? 'active' : 'not_detected',
         web: activeUserAgent.includes('mozilla') || activeUserAgent.includes('chrome') ? 'active' : 'not_detected',
-        lastLoginAt: toIsoOrNull(user.lastLoginAt),
-        provider: normalizeAuthProviderDetail(user.authProviderDetail),
+        lastLoginAt: toIsoOrNull(freshUser.lastLoginAt),
+        provider: normalizeAuthProviderDetail(freshUser.authProviderDetail),
         platformUsage: {
-          lastPlatform: String(user?.platformUsage?.lastPlatform || 'unknown'),
-          lastSeenAt: toIsoOrNull(user?.platformUsage?.lastSeenAt),
-          androidLogins: Number(user?.platformUsage?.androidLogins || 0),
-          webLogins: Number(user?.platformUsage?.webLogins || 0),
-          unknownLogins: Number(user?.platformUsage?.unknownLogins || 0),
+          lastPlatform: String(freshUser?.platformUsage?.lastPlatform || 'unknown'),
+          lastSeenAt: toIsoOrNull(freshUser?.platformUsage?.lastSeenAt),
+          androidLogins: Number(freshUser?.platformUsage?.androidLogins || 0),
+          webLogins: Number(freshUser?.platformUsage?.webLogins || 0),
+          unknownLogins: Number(freshUser?.platformUsage?.unknownLogins || 0),
         },
       },
       mentorPlan: {

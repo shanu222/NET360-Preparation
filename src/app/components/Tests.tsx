@@ -198,7 +198,7 @@ export function Tests({ onNavigate }: TestsProps) {
   const { attempts, startTestSession } = useAppData();
   const { token, user, loading: authLoading } = useAuth();
   const { surface, me, loading: subLoading } = useSubscription();
-  const testsAccessAllowed = me?.paidServices?.tests?.allowed ?? surface.allowed;
+  const testsAccessAllowed = Boolean(me?.paidServices?.tests?.allowed);
 
   const authLoadingRef = useRef(authLoading);
   authLoadingRef.current = authLoading;

@@ -570,7 +570,11 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
   const { attempts, startTestSession } = useAppData();
   const { token: authContextToken, user, loading: authLoading } = useAuth();
   const { surface, me, loading: subLoading } = useSubscription();
-  const preparationAccessAllowed = me?.paidServices?.preparation?.allowed ?? surface.allowed;
+  const preparationAccessAllowed = Boolean(
+    me?.paidServices?.preparation?.allowed
+    || (me?.preparationAccess?.allowed && me?.preparationAccess?.source !== 'legacy')
+    || (surface?.allowed && (surface?.source === 'global' || surface?.source === 'manual')),
+  );
   const authLoadingRef = useRef(authLoading);
   authLoadingRef.current = authLoading;
   const tokenRef = useRef(authContextToken);
