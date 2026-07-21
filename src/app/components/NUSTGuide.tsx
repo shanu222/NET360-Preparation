@@ -256,7 +256,7 @@ export function NUSTGuide() {
   return (
     <div className="space-y-5">
       <section className="relative overflow-hidden rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-[#edf2ff] via-[#e8e5ff] to-[#f8dff0] p-5 sm:p-6 dark:border-indigo-900/60 dark:bg-gradient-to-r dark:from-slate-900 dark:via-indigo-950/90 dark:to-slate-900">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_18%_24%,rgba(88,108,242,0.18),transparent_35%),radial-gradient(circle_at_84%_22%,rgba(247,180,214,0.28),transparent_32%)] dark:bg-[radial-gradient(circle_at_18%_24%,rgba(96,165,250,0.2),transparent_38%),radial-gradient(circle_at_84%_22%,rgba(129,140,248,0.16),transparent_34%)]" />
+        <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_24%,rgba(88,108,242,0.18),transparent_35%),radial-gradient(circle_at_84%_22%,rgba(247,180,214,0.28),transparent_32%)] dark:bg-[radial-gradient(circle_at_18%_24%,rgba(96,165,250,0.2),transparent_38%),radial-gradient(circle_at_84%_22%,rgba(129,140,248,0.16),transparent_34%)]" aria-hidden />
         <div className="relative space-y-4">
           <div>
             <h1 className="text-3xl text-indigo-950 dark:text-indigo-100">Complete NUST Admission Guide</h1>

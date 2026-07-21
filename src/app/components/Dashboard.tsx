@@ -261,7 +261,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       <section className="overflow-hidden rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-[#4a60ff] via-[#6a73ff] to-[#9f7cf8] text-white shadow-[0_18px_40px_rgba(84,104,246,0.35)]">
         <div className="grid gap-4 p-4 sm:p-5 lg:grid-cols-[1.5fr_1fr] lg:items-center">
           <div className="relative overflow-hidden rounded-2xl border border-white/25 bg-white/10 p-4 backdrop-blur-sm">
-            <div className="absolute -right-16 -top-24 h-40 w-40 rounded-full bg-cyan-200/30 blur-2xl" />
+            <div className="pointer-events-none absolute -right-16 -top-24 h-40 w-40 rounded-full bg-cyan-200/30 blur-2xl" aria-hidden />
             <div className="relative flex flex-col items-start gap-4 sm:flex-row sm:items-center">
               <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full border-4 border-white/80 bg-gradient-to-br from-white/20 to-white/5 text-center shadow-[inset_0_0_30px_rgba(255,255,255,0.2)] sm:h-24 sm:w-24">
                 <div>

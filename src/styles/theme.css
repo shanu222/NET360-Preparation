@@ -168,8 +168,8 @@
   #root {
     display: flex;
     flex-direction: column;
-    min-height: 100dvh;
     min-height: 100vh;
+    min-height: 100dvh;
     overflow-x: clip;
   }
 
@@ -315,7 +315,6 @@
   .net360-main {
     scrollbar-gutter: stable both-edges;
     padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
-    touch-action: pan-y;
     overflow-x: hidden;
   }
 
@@ -331,7 +330,6 @@
     padding-right: max(16px, env(safe-area-inset-right, 0px));
     /* Contain stray horizontal overflow; intentional row scroll lives in .net360-horizontal-scroll / .net360-swipe-row */
     overflow-x: clip;
-    touch-action: pan-y;
     font-size: clamp(14px, 0.82rem + 0.45vw, 17px);
   }
 
@@ -613,7 +611,6 @@
     -webkit-tap-highlight-color: rgba(89, 112, 255, 0.22);
     touch-action: manipulation;
     transition: transform 120ms ease, filter 140ms ease, box-shadow 160ms ease, background-color 160ms ease, border-color 160ms ease;
-    will-change: transform, filter;
   }
 
   .native-android .net360-page [data-slot='button']:active:not(:disabled),
@@ -1292,8 +1289,11 @@ html {
 html.native-android,
 html.native-android body,
 html.native-android #root {
-  overflow-y: auto;
-  overflow-x: hidden;
+  /* Single scroll owner on Android: .net360-main — dual scroll + pan-y caused center dead zones. */
+  height: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
   scrollbar-width: none;
   -ms-overflow-style: none;
 }
@@ -1306,24 +1306,82 @@ html.native-android #root::-webkit-scrollbar {
   height: 0;
 }
 
+html.native-android body {
+  /* StatusBar overlaysWebView=false already offsets the WebView; avoid double safe-area on body. */
+  padding-top: 0;
+  padding-bottom: 0;
+  padding-left: 0;
+  padding-right: 0;
+  background-attachment: scroll;
+}
+
 .native-android {
   --net360-header-height: 56px;
 }
 
 .native-android .net360-viewport {
-  padding-top: max(2px, env(safe-area-inset-top, 0px));
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  padding: 0 !important;
+}
+
+.native-android .net360-shell,
+.native-android .net360-shell > section,
+.native-android .net360-header {
+  /* backdrop-filter creates Android WebView compositor layers that steal center taps */
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  background-color: #f7f8ff;
+}
+
+.native-android .net360-shell {
+  height: 100%;
+  max-height: 100%;
+  min-height: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: #f7f8ff;
+}
+
+.native-android .net360-shell > section {
+  height: 100%;
+  min-height: 0;
+  border-radius: 0;
+  background: linear-gradient(180deg, #ffffff 0%, #f2f4ff 100%);
+}
+
+.dark.native-android .net360-shell,
+.dark .native-android .net360-shell,
+html.dark.native-android .net360-shell,
+html.dark.native-android .net360-shell > section,
+html.dark.native-android .net360-header {
+  background-color: #111831;
+  background: #111831;
 }
 
 .native-android .net360-header {
   top: 0;
   z-index: 60;
-  padding-top: max(2px, env(safe-area-inset-top, 0px));
+  padding-top: 0;
+  background: rgba(255, 255, 255, 0.98);
+}
+
+.native-android .net360-main {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  touch-action: manipulation;
 }
 
 .native-android .net360-page {
   padding-left: max(14px, env(safe-area-inset-left, 0px));
   padding-right: max(14px, env(safe-area-inset-right, 0px));
   overflow-x: clip;
+  touch-action: manipulation;
 }
 
 .native-android .net360-page [data-slot='dialog-content'],
@@ -1339,7 +1397,9 @@ html.native-android #root::-webkit-scrollbar {
 .native-android .net360-page [data-slot='tabs-trigger'],
 .native-android .net360-page [data-slot='button'],
 .native-android .net360-page button,
-.native-android .net360-page a[role='button'] {
+.native-android .net360-page a[role='button'],
+.native-android .net360-page a,
+.native-android .net360-page label {
   touch-action: manipulation;
 }
 

@@ -11,15 +11,16 @@
       "launchShowDuration": 900,
       "launchAutoHide": true,
       "showSpinner": false,
-      "backgroundColor": "#eef0ff"
+      "backgroundColor": "#0A1630"
     },
     "StatusBar": {
       "overlaysWebView": false,
-      "style": "DARK",
-      "backgroundColor": "#eef0ff"
+      "style": "LIGHT",
+      "backgroundColor": "#0A1630"
     },
     "PushNotifications": {
-      "presentationOptions": ["badge", "sound", "alert"]
+      "presentationOptions": ["badge", "sound", "alert"],
+      "iconColor": "#5B8CFF"
     }
   }
 }

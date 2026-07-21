@@ -58,8 +58,8 @@ export async function initializeNativeExperience() {
 async function configureStatusBar() {
   try {
     await StatusBar.setOverlaysWebView({ overlay: false });
-    await StatusBar.setStyle({ style: Style.Dark });
-    await StatusBar.setBackgroundColor({ color: '#EEF0FF' });
+    await StatusBar.setStyle({ style: Style.Light });
+    await StatusBar.setBackgroundColor({ color: '#0A1630' });
   } catch (error) {
     console.warn('StatusBar setup skipped:', error);
   }
