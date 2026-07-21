@@ -5832,8 +5832,43 @@ function mongoIdToString(value) {
   return '';
 }
 
+function needsMcqIdRepair(rawId) {
+  // Custom string/number _ids (e.g. qm_muscles_easy_002_…) are valid Mongo ids for this dataset.
+  if (rawId == null) return false;
+  if (typeof rawId === 'string' || typeof rawId === 'number' || typeof rawId === 'bigint') return false;
+  if (rawId instanceof mongoose.Types.ObjectId) return false;
+  try {
+    if (typeof rawId.toHexString === 'function') {
+      const hex = String(rawId.toHexString()).trim();
+      if (/^[a-f0-9]{24}$/i.test(hex)) return false;
+    }
+  } catch {
+    /* treat as corrupt */
+  }
+  // Plain objects / broken BSON that serialize to compound-* or empty must be reassigned.
+  const asString = mongoIdToString(rawId);
+  return !/^[a-f0-9]{24}$/i.test(asString);
+}
+
+let lastMcqIdRepair = {
+  ranAt: null,
+  scanned: 0,
+  corruptCandidates: 0,
+  repaired: 0,
+  error: null,
+};
+
 async function repairCorruptMcqDocumentIds() {
-  if (!MCQModel?.collection) return { scanned: 0, repaired: 0 };
+  if (!MCQModel?.collection) {
+    lastMcqIdRepair = {
+      ranAt: new Date().toISOString(),
+      scanned: 0,
+      corruptCandidates: 0,
+      repaired: 0,
+      error: 'MCQ collection unavailable',
+    };
+    return lastMcqIdRepair;
+  }
   const { ObjectId } = mongoose.Types;
   let scanned = 0;
   let repaired = 0;
@@ -5843,9 +5878,7 @@ async function repairCorruptMcqDocumentIds() {
   try {
     for await (const doc of cursor) {
       scanned += 1;
-      const idString = mongoIdToString(doc?._id);
-      // Any _id that does not serialize to a real ObjectId hex is corrupt for the MCQ player.
-      if (/^[a-f0-9]{24}$/i.test(idString)) continue;
+      if (!needsMcqIdRepair(doc?._id)) continue;
       corruptIds.push(doc._id);
     }
   } finally {
@@ -5853,6 +5886,8 @@ async function repairCorruptMcqDocumentIds() {
       await cursor.close().catch(() => undefined);
     }
   }
+
+  console.info('[mcq-repair] candidates', { scanned, corruptCandidates: corruptIds.length });
 
   for (const rawId of corruptIds) {
     const asString = mongoIdToString(rawId);
@@ -5894,8 +5929,15 @@ async function repairCorruptMcqDocumentIds() {
     }
   }
 
-  console.info('[mcq-repair] complete', { scanned, corruptCandidates: corruptIds.length, repaired, db: mongoose.connection?.name || null });
-  return { scanned, repaired };
+  lastMcqIdRepair = {
+    ranAt: new Date().toISOString(),
+    scanned,
+    corruptCandidates: corruptIds.length,
+    repaired,
+    error: null,
+  };
+  console.info('[mcq-repair] complete', { ...lastMcqIdRepair, db: mongoose.connection?.name || null });
+  return lastMcqIdRepair;
 }
 
 function serializeMcq(item) {
@@ -7814,6 +7856,7 @@ app.get('/api/health', async (_req, res) => {
     uptimeSec: Math.floor(process.uptime()),
     build,
     mongo,
+    mcqIdRepair: lastMcqIdRepair,
     firebaseAdminConfigured: Boolean(firebaseAdminAuth),
     firebaseAdminMissingEnv: getMissingFirebaseAdminEnvVars(),
     envPresence: {
@@ -17434,6 +17477,13 @@ async function bootstrap() {
         try {
           await repairCorruptMcqDocumentIds();
         } catch (error) {
+          lastMcqIdRepair = {
+            ranAt: new Date().toISOString(),
+            scanned: lastMcqIdRepair?.scanned || 0,
+            corruptCandidates: lastMcqIdRepair?.corruptCandidates || 0,
+            repaired: lastMcqIdRepair?.repaired || 0,
+            error: String(error?.message || error || 'unknown'),
+          };
           console.error('[startup] MCQ id repair failed (non-fatal):', error?.message || error);
         }
         try {
