@@ -17477,6 +17477,13 @@ async function bootstrap() {
         try {
           await repairCorruptMcqDocumentIds();
         } catch (error) {
+          lastMcqIdRepair = {
+            ranAt: new Date().toISOString(),
+            scanned: lastMcqIdRepair?.scanned || 0,
+            corruptCandidates: lastMcqIdRepair?.corruptCandidates || 0,
+            repaired: lastMcqIdRepair?.repaired || 0,
+            error: String(error?.message || error || 'unknown'),
+          };
           console.error('[startup] MCQ id repair failed (non-fatal):', error?.message || error);
         }
         try {
