@@ -906,8 +906,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             hasAccessToken: Boolean(accessToken),
           }));
         }
-        /* Firebase only needs the Google ID token; access token is optional. */
-        const credential = GoogleAuthProvider.credential(idToken, accessToken || undefined);
+        /* Firebase Auth only requires the Google ID token. */
+        const credential = GoogleAuthProvider.credential(idToken);
         let userCred;
         try {
           userCred = await signInWithCredential(activeAuth, credential);
