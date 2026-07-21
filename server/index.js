@@ -5770,6 +5770,95 @@ function serializeAttempt(attempt) {
   };
 }
 
+function isMongoObjectIdLike(value) {
+  if (!value || typeof value !== 'object') return false;
+  if (typeof value.toHexString === 'function') return true;
+  if (typeof value.equals === 'function' && typeof value.getTimestamp === 'function') return true;
+  const ctor = String(value?.constructor?.name || '');
+  return ctor === 'ObjectId' || ctor === 'ObjectID';
+}
+
+/**
+ * Stable string id for MCQ/session documents.
+ * Corrupt Atlas imports can store non-ObjectId `_id` values; `String(plainObject)` becomes "[object Object]"
+ * and collapses many questions onto one React/session key — blank/broken MCQ player.
+ */
+function mongoIdToString(value) {
+  if (value == null) return '';
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'bigint') {
+    const asString = String(value).trim();
+    return asString === '[object Object]' ? '' : asString;
+  }
+  if (typeof value === 'object') {
+    if (typeof value.toHexString === 'function') {
+      try {
+        return String(value.toHexString()).trim();
+      } catch {
+        /* fall through */
+      }
+    }
+    if (value.$oid) return String(value.$oid).trim();
+    if (typeof value.toString === 'function') {
+      try {
+        const asString = String(value.toString()).trim();
+        if (asString && asString !== '[object Object]') return asString;
+      } catch {
+        /* fall through */
+      }
+    }
+    try {
+      const stable = JSON.stringify(value);
+      if (stable && stable !== '{}' && stable !== 'null') {
+        return `compound-${crypto.createHash('sha1').update(stable).digest('hex').slice(0, 24)}`;
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  return '';
+}
+
+async function repairCorruptMcqDocumentIds() {
+  if (!MCQModel?.collection) return { scanned: 0, repaired: 0 };
+  const { ObjectId } = mongoose.Types;
+  let scanned = 0;
+  let repaired = 0;
+  const cursor = MCQModel.collection.find({}, { timeout: false });
+  try {
+    for await (const doc of cursor) {
+      scanned += 1;
+      const rawId = doc?._id;
+      if (isMongoObjectIdLike(rawId)) continue;
+      const asString = mongoIdToString(rawId);
+      if (/^[a-f0-9]{24}$/i.test(asString) && isMongoObjectIdLike(rawId)) continue;
+      // Non-ObjectId _id (plain object / unexpected BSON) — reinsert with a real ObjectId.
+      const { _id: _ignored, ...rest } = doc;
+      const nextId = new ObjectId();
+      try {
+        await MCQModel.collection.insertOne({ ...rest, _id: nextId });
+        await MCQModel.collection.deleteOne({ _id: rawId });
+        repaired += 1;
+        console.warn('[mcq-repair] reassigned corrupt _id', {
+          previousType: typeof rawId,
+          previousCtor: rawId?.constructor?.name || null,
+          previousString: asString || String(rawId),
+          nextId: String(nextId),
+          subject: String(rest.subject || ''),
+          chapter: String(rest.chapter || ''),
+        });
+      } catch (error) {
+        console.error('[mcq-repair] failed for document:', error?.message || error);
+      }
+    }
+  } finally {
+    if (typeof cursor.close === 'function') {
+      await cursor.close().catch(() => undefined);
+    }
+  }
+  console.info('[mcq-repair] complete', { scanned, repaired, db: mongoose.connection?.name || null });
+  return { scanned, repaired };
+}
+
 function serializeMcq(item) {
   const chapter = String(item.chapter || item.chapter_id || '').trim();
   const section = String(item.section || item.section_id || '').trim() || String(item.topic || item.topic_id || '').trim();
@@ -5788,9 +5877,13 @@ function serializeMcq(item) {
   const legacyOptions = [item.option_a, item.option_b, item.option_c, item.option_d]
     .map((option) => String(option || '').trim())
     .filter(Boolean);
-  const textOptions = Array.isArray(item.options)
-    ? item.options
-    : (legacyOptions.length ? legacyOptions : []);
+  const textOptionsRaw = Array.isArray(item.options) ? item.options : (legacyOptions.length ? legacyOptions : []);
+  const textOptions = textOptionsRaw.map((option) => {
+    if (option == null) return '';
+    if (typeof option === 'string' || typeof option === 'number') return String(option).trim();
+    if (typeof option === 'object') return String(option.text || option.label || option.value || '').trim();
+    return String(option || '').trim();
+  });
   const optionCount = Math.max(mediaOptions.length, textOptions.length);
   const normalizedOptionMedia = Array.from({ length: optionCount }, (_unused, index) => {
     const media = mediaOptions[index] && typeof mediaOptions[index] === 'object' ? mediaOptions[index] : {};
@@ -5819,7 +5912,7 @@ function serializeMcq(item) {
       image: null,
     }));
 
-  const resolvedOptions = resolvedOptionMedia.map((item) => item.text || `[${item.key}]`);
+  const resolvedOptions = resolvedOptionMedia.map((option) => option.text || `[${option.key}]`);
 
   const explanationText = String(item.explanationText || item.tip || item.explanation || '').trim();
   const explanationImage = item.explanationImage
@@ -5860,8 +5953,12 @@ function serializeMcq(item) {
     }
   }
 
+  const resolvedId = mongoIdToString(item._id)
+    || String(item.externalId || '').trim()
+    || `mcq-${crypto.createHash('sha1').update(String(item.question || '') + '|' + resolvedOptions.join('|')).digest('hex').slice(0, 24)}`;
+
   return {
-    id: String(item._id),
+    id: resolvedId,
     externalId: String(item.externalId || '').trim(),
     contentFingerprint: String(item.contentFingerprint || '').trim(),
     subject: canonicalizeSubject(item.subject || item.subject_id),
@@ -6159,15 +6256,18 @@ async function generateQuizChallengeQuestions({ mode, subject, topic, difficulty
     throw new Error('Could not generate challenge questions.');
   }
 
-  return selected.map((item) => ({
-    questionId: String(item._id),
-    subject: canonicalizeSubject(item.subject),
-    topic: String(item.topic || '').trim(),
-    question: String(item.question || '').trim(),
-    options: Array.isArray(item.options) ? item.options.map((option) => String(option || '').trim()) : [],
-    difficulty: String(item.difficulty || 'Medium'),
-    correctAnswer: String(item.answer || '').trim(),
-  }));
+  return selected.map((item) => {
+    const serialized = serializeMcq(item);
+    return {
+      questionId: serialized.id,
+      subject: canonicalizeSubject(item.subject),
+      topic: String(item.topic || '').trim(),
+      question: String(item.question || '').trim(),
+      options: Array.isArray(serialized.options) ? serialized.options : [],
+      difficulty: String(item.difficulty || 'Medium'),
+      correctAnswer: String(item.answer || '').trim(),
+    };
+  });
 }
 
 function serializeQuizChallenge(challenge, currentUserId) {
@@ -7442,14 +7542,15 @@ function pickFromPoolsByDistribution({ distribution, pool, totalQuestions, usedI
     const allowedCanonicalSubjects = Array.from(new Set((entry.sourceSubjects || []).map((subject) => canonicalizeSubject(subject))));
     const candidates = shuffle(
       pool.filter((item) => {
-        if (usedIds.has(String(item._id))) return false;
+        const id = mongoIdToString(item._id);
+        if (!id || usedIds.has(id)) return false;
         return allowedCanonicalSubjects.includes(canonicalizeSubject(item.subject));
       }),
     );
 
     for (const question of candidates) {
       selected.push(question);
-      usedIds.add(String(question._id));
+      usedIds.add(mongoIdToString(question._id));
       if (selected.filter((item) => allowedCanonicalSubjects.includes(canonicalizeSubject(item.subject))).length >= entry.count) {
         break;
       }
@@ -7460,10 +7561,13 @@ function pickFromPoolsByDistribution({ distribution, pool, totalQuestions, usedI
   });
 
   if (selected.length < totalQuestions) {
-    const fallback = shuffle(pool.filter((item) => !usedIds.has(String(item._id))));
+    const fallback = shuffle(pool.filter((item) => {
+      const id = mongoIdToString(item._id);
+      return id && !usedIds.has(id);
+    }));
     for (const question of fallback) {
       selected.push(question);
-      usedIds.add(String(question._id));
+      usedIds.add(mongoIdToString(question._id));
       if (selected.length >= totalQuestions) break;
     }
   }
@@ -7509,33 +7613,39 @@ function generateAdaptiveSet({ profile, allQuestions, weakTopics, questionCount,
 
   const fromWeak = shuffle(weakPool.length ? weakPool : easyPool);
   for (const question of fromWeak) {
-    if (usedIds.has(String(question._id))) continue;
+    const id = mongoIdToString(question._id);
+    if (!id || usedIds.has(id)) continue;
     selected.push(question);
-    usedIds.add(String(question._id));
+    usedIds.add(id);
     if (selected.length >= easyCount) break;
   }
 
   const fromMedium = shuffle(mediumPool);
   for (const question of fromMedium) {
-    if (usedIds.has(String(question._id))) continue;
+    const id = mongoIdToString(question._id);
+    if (!id || usedIds.has(id)) continue;
     selected.push(question);
-    usedIds.add(String(question._id));
+    usedIds.add(id);
     if (selected.length >= easyCount + mediumCount) break;
   }
 
   const fromHard = shuffle(hardPool);
   for (const question of fromHard) {
-    if (usedIds.has(String(question._id))) continue;
+    const id = mongoIdToString(question._id);
+    if (!id || usedIds.has(id)) continue;
     selected.push(question);
-    usedIds.add(String(question._id));
+    usedIds.add(id);
     if (selected.length >= easyCount + mediumCount + hardCount) break;
   }
 
   if (selected.length < questionCount) {
-    const fill = shuffle(inScope.filter((item) => !usedIds.has(String(item._id))));
+    const fill = shuffle(inScope.filter((item) => {
+      const id = mongoIdToString(item._id);
+      return id && !usedIds.has(id);
+    }));
     for (const question of fill) {
       selected.push(question);
-      usedIds.add(String(question._id));
+      usedIds.add(mongoIdToString(question._id));
       if (selected.length >= questionCount) break;
     }
   }
@@ -13109,19 +13219,34 @@ app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
   }
 
   let selected = [];
+  const needsFullProfilePool = normalizedTestType === 'full-mock'
+    || normalizedMode === 'mock'
+    || normalizedTestType === 'adaptive'
+    || normalizedMode === 'adaptive';
   const profileSubjectMatchers = buildSubjectInMatchers(Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects))));
-  const allInProfile = await MCQModel.find(
-    profileSubjectMatchers.length
-      ? { subject: { $in: profileSubjectMatchers } }
-      : {},
-  ).lean();
+  // Only load the wide subject pool for mock/adaptive. Topic/section tests use scoped filters below.
+  // Loading ~8k+ lean docs on every /api/tests/start previously timed out exam popups (blank page).
+  let allInProfile = [];
+  if (needsFullProfilePool) {
+    allInProfile = await MCQModel.find(
+      profileSubjectMatchers.length
+        ? { subject: { $in: profileSubjectMatchers } }
+        : {},
+    )
+      .select('_id subject part chapter section topic difficulty')
+      .lean();
+  }
 
   if (normalizedTestType === 'full-mock' || normalizedMode === 'mock') {
-    selected = pickFromPoolsByDistribution({
+    const pickedMeta = pickFromPoolsByDistribution({
       distribution: profile.distribution,
       pool: allInProfile,
       totalQuestions: profile.totalQuestions,
     });
+    const pickedIds = pickedMeta.map((item) => item._id).filter(Boolean);
+    selected = pickedIds.length
+      ? await MCQModel.find({ _id: { $in: pickedIds } }).lean()
+      : [];
   } else if (normalizedTestType === 'subject-wise') {
     const pickedSubject = canonicalizeSubject(selectedSubject || normalizedSubject || '');
     const subjectCount = profile.subjectWiseQuestions[pickedSubject] || desiredQuestions;
@@ -13130,13 +13255,17 @@ app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
     selected = shuffle(subjectPool).slice(0, Math.min(subjectCount, subjectPool.length));
   } else if (normalizedTestType === 'adaptive' || normalizedMode === 'adaptive') {
     const weakTopics = req.user.progress?.weakTopics || [];
-    selected = generateAdaptiveSet({
+    const pickedMeta = generateAdaptiveSet({
       profile,
       allQuestions: allInProfile,
       weakTopics,
       questionCount: desiredQuestions,
       userProgress: req.user.progress || defaultProgress(),
     });
+    const pickedIds = pickedMeta.map((item) => item._id).filter(Boolean);
+    selected = pickedIds.length
+      ? await MCQModel.find({ _id: { $in: pickedIds } }).lean()
+      : [];
   } else {
     const baseFilter = {};
     const andClauses = [];
@@ -13308,10 +13437,12 @@ app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
     return;
   }
 
-  const questions = selected.map((question) => {
+  const questions = [];
+  const answerKey = {};
+  selected.forEach((question) => {
     const serialized = serializeMcq(question);
-    return {
-      id: String(question._id),
+    const mapped = {
+      id: serialized.id,
       subject: canonicalizeSubject(question.subject) || normalizedSubject,
       part: String(question.part || '').trim(),
       chapter: String(question.chapter || '').trim(),
@@ -13330,36 +13461,30 @@ app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
       shortTrick: serialized.shortTrickText || '',
       shortTrickImage: serialized.shortTrickImage || null,
     };
-  });
+    questions.push(mapped);
 
-  const answerKey = {};
-  questions.forEach((question) => {
-    const answerRaw = String(selected.find((entry) => String(entry._id) === question.id)?.answer || '').trim();
+    const answerRaw = String(question.answer || '').trim();
     const loweredAnswer = answerRaw.toLowerCase();
-
     let answerKeyValue = '';
-    (Array.isArray(question.optionMedia) ? question.optionMedia : []).forEach((option) => {
+    (Array.isArray(mapped.optionMedia) ? mapped.optionMedia : []).forEach((option) => {
       if (!answerKeyValue && String(option?.text || '').trim().toLowerCase() === loweredAnswer) {
         answerKeyValue = String(option.key || '').trim().toUpperCase();
       }
     });
-
     if (!answerKeyValue) {
       const direct = answerRaw.match(/^(?:option\s*)?([A-Ha-h]|\d{1,2})(?:\b|\)|\.|:)?/i);
       if (direct) {
         const token = direct[1];
         const idx = /^\d+$/.test(token) ? Number(token) - 1 : token.toUpperCase().charCodeAt(0) - 65;
-        if (idx >= 0 && idx < question.optionMedia.length) {
-          answerKeyValue = String(question.optionMedia[idx].key || '').trim().toUpperCase();
+        if (idx >= 0 && idx < mapped.optionMedia.length) {
+          answerKeyValue = String(mapped.optionMedia[idx].key || '').trim().toUpperCase();
         }
       }
     }
-
     if (!answerKeyValue) {
-      answerKeyValue = 'A';
+      answerKeyValue = String(serialized.answerKey || 'A').trim().toUpperCase() || 'A';
     }
-
-    answerKey[String(question.id)] = answerKeyValue;
+    answerKey[String(mapped.id)] = answerKeyValue;
   });
 
   const session = await TestSessionModel.create({
@@ -17266,6 +17391,11 @@ async function bootstrap() {
           await ensureBootstrapAdminAccount();
         } catch (error) {
           console.error('[startup] Bootstrap admin setup failed (non-fatal):', error?.message || error);
+        }
+        try {
+          await repairCorruptMcqDocumentIds();
+        } catch (error) {
+          console.error('[startup] MCQ id repair failed (non-fatal):', error?.message || error);
         }
         try {
           const openAiProbe = await runOpenAiConnectionProbe('startup');
