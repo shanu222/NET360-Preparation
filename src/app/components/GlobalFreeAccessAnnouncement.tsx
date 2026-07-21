@@ -68,7 +68,7 @@ export function GlobalFreeAccessAnnouncement({
   };
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 bottom-3 z-[80] flex justify-center px-3 sm:bottom-5">
+    <div className="pointer-events-none fixed inset-x-0 bottom-[5.5rem] z-[75] flex justify-center px-3 sm:bottom-5 sm:z-[80]">
       <div
         className="pointer-events-auto relative w-full max-w-lg overflow-hidden rounded-2xl border border-emerald-200/80 bg-gradient-to-br from-emerald-50 via-white to-sky-50 p-4 shadow-[0_18px_40px_rgba(16,185,129,0.18)] animate-in fade-in-0 slide-in-from-bottom-4 duration-500"
         role="dialog"

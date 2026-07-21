@@ -1,8 +1,8 @@
-import { lazy, Suspense, useMemo } from 'react';
+import { lazy, Suspense, useMemo, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Progress } from './ui/progress';
 import { Badge } from './ui/badge';
-import { AlertTriangle, TrendingUp } from 'lucide-react';
+import { AlertTriangle, Loader2, TrendingUp } from 'lucide-react';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
@@ -18,7 +18,7 @@ const AnalyticsRadarChart = lazy(() =>
 );
 
 function AnalyticsChartFallback() {
-  return <div className="min-h-[248px] rounded-xl border border-indigo-100 bg-white/80" aria-busy="true" />;
+  return <div className="min-h-[248px] animate-pulse rounded-xl border border-border bg-muted/40" aria-busy="true" />;
 }
 
 const subjects: SubjectKey[] = ['mathematics', 'physics', 'english'];
@@ -27,11 +27,15 @@ export function Analytics() {
   const { attempts, mcqsBySubject } = useAppData();
   const { token, user } = useAuth();
 
+  const [exportingPdf, setExportingPdf] = useState(false);
+
   const exportReportPdf = async () => {
     if (!user) {
       showErrorToast('Please login to export reports.');
       return;
     }
+    if (exportingPdf) return;
+    setExportingPdf(true);
 
     try {
       const { blob, filename } = await downloadReport('/api/reports/export?format=pdf', token);
@@ -44,6 +48,8 @@ export function Analytics() {
       showSuccessToast(`PDF exported: ${filename}`);
     } catch (error) {
       handleApiError(error, 'Export failed.');
+    } finally {
+      setExportingPdf(false);
     }
   };
 
@@ -141,72 +147,80 @@ export function Analytics() {
 
       <h2 className="sr-only">Key performance indicators</h2>
 
-      <div className="rounded-xl border border-indigo-100 bg-white/75 p-2">
+      <div className="rounded-xl border border-border bg-card/90 p-2">
         <div className="flex gap-2">
           <Button
             variant="outline"
-            className="w-full border-indigo-200 bg-white text-indigo-700 sm:w-auto"
+            className="w-full border-indigo-200 bg-background text-indigo-700 sm:w-auto dark:border-indigo-400/30 dark:text-indigo-200"
+            disabled={exportingPdf}
             onClick={() => void exportReportPdf()}
           >
-            Export Professional PDF
+            {exportingPdf ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Exporting…
+              </>
+            ) : (
+              'Export Professional PDF'
+            )}
           </Button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card className="rounded-xl border-indigo-100 bg-white/92">
+        <Card className="rounded-xl border-border bg-card">
           <CardHeader className="pb-2">
-            <CardTitle as="h3" className="text-sm text-slate-700">
+            <CardTitle as="h3" className="text-sm text-muted-foreground">
               Tests Attempted
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl text-indigo-950 sm:text-4xl">{overallStats.testsAttempted}</div>
-            <p className="mt-1 text-xs text-slate-500">Total test records</p>
+            <div className="text-3xl text-foreground sm:text-4xl">{overallStats.testsAttempted}</div>
+            <p className="mt-1 text-xs text-muted-foreground">Total test records</p>
           </CardContent>
         </Card>
 
-        <Card className="rounded-xl border-indigo-100 bg-white/92">
+        <Card className="rounded-xl border-border bg-card">
           <CardHeader className="pb-2">
-            <CardTitle as="h3" className="text-sm text-slate-700">
+            <CardTitle as="h3" className="text-sm text-muted-foreground">
               Average Score
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl text-indigo-950 sm:text-4xl">{overallStats.averageScore}%</div>
-            <p className="mt-1 inline-flex items-center gap-1 text-xs text-slate-500">
+            <div className="text-3xl text-foreground sm:text-4xl">{overallStats.averageScore}%</div>
+            <p className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground">
               <TrendingUp className="h-3 w-3 text-indigo-500" />
               Average % of Correct Answers
             </p>
           </CardContent>
         </Card>
 
-        <Card className="rounded-xl border-indigo-100 bg-white/92">
+        <Card className="rounded-xl border-border bg-card">
           <CardHeader className="pb-2">
-            <CardTitle as="h3" className="text-sm text-slate-700">
+            <CardTitle as="h3" className="text-sm text-muted-foreground">
               Study Hours
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl text-indigo-950 sm:text-4xl">{overallStats.timeSpent}h</div>
-            <p className="mt-1 text-xs text-slate-500">Cumulative total from last 30 days</p>
+            <div className="text-3xl text-foreground sm:text-4xl">{overallStats.timeSpent}h</div>
+            <p className="mt-1 text-xs text-muted-foreground">Cumulative total from last 30 days</p>
           </CardContent>
         </Card>
 
-        <Card className="rounded-xl border-indigo-100 bg-white/92">
+        <Card className="rounded-xl border-border bg-card">
           <CardHeader className="pb-2">
-            <CardTitle as="h3" className="text-sm text-slate-700">
+            <CardTitle as="h3" className="text-sm text-muted-foreground">
               Questions Solved
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-3xl text-indigo-950 sm:text-4xl">{overallStats.questionsAttempted}</div>
-            <p className="mt-1 text-xs text-slate-500">Total MCQs attempted (bank: {questionBankSize})</p>
+            <div className="text-3xl text-foreground sm:text-4xl">{overallStats.questionsAttempted}</div>
+            <p className="mt-1 text-xs text-muted-foreground">Total MCQs attempted (bank: {questionBankSize})</p>
           </CardContent>
         </Card>
       </div>
 
-      <Card className="rounded-2xl border-indigo-100 bg-white/90">
+      <Card className="rounded-2xl border-border bg-card">
         <CardHeader>
           <CardTitle as="h2">Subject-Wise Performance</CardTitle>
           <CardDescription>Your measured accuracy in each subject</CardDescription>
@@ -214,13 +228,13 @@ export function Analytics() {
         <CardContent className="space-y-4">
           <div className="grid gap-4 xl:grid-cols-[1.15fr_1fr]">
             <div className="space-y-4">
-              <div className="rounded-xl border border-indigo-100 bg-white p-4">
+              <div className="rounded-xl border border-border bg-background/80 p-4">
                 <div className="space-y-4">
                   {subjectPerformance.map((subject, idx) => (
                     <div key={subject.key}>
-                      <div className="mb-1 flex items-center justify-between text-sm text-slate-600">
+                      <div className="mb-1 flex items-center justify-between text-sm text-muted-foreground">
                         <div className="inline-flex items-center gap-2">
-                          <span className="text-indigo-950">{subject.subject}</span>
+                          <span className="text-foreground">{subject.subject}</span>
                           <span>{subject.accuracy}%</span>
                         </div>
                         <span>{subject.correct}/{subject.attempted} correct</span>
@@ -228,7 +242,7 @@ export function Analytics() {
                       <Progress
                         value={subject.accuracy}
                         aria-label={`${subject.subject} accuracy, ${subject.accuracy} percent`}
-                        className={`h-2 bg-slate-200 ${
+                        className={`h-2 bg-muted ${
                           idx === 0
                             ? '[&>[data-slot=progress-indicator]]:bg-indigo-500'
                             : idx === 1

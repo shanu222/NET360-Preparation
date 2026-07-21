@@ -740,7 +740,7 @@ export function Tests({ onNavigate }: TestsProps) {
       ) : null}
 
       <Dialog open={subjectPickerOpen} onOpenChange={setSubjectPickerOpen}>
-        <DialogContent className="w-[95vw] max-w-md rounded-2xl border-indigo-100 bg-white/98 p-0 sm:max-w-lg">
+        <DialogContent className="w-[95vw] max-w-md rounded-2xl border-indigo-100 bg-card p-0 text-foreground sm:max-w-lg dark:border-indigo-400/20">
           <DialogHeader className="border-b border-indigo-100 px-5 py-4">
             <DialogTitle className="text-indigo-950">Choose Subject</DialogTitle>
             <DialogDescription>

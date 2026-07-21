@@ -6941,13 +6941,13 @@ export default function AdminApp() {
 
   const applyServiceAccessUpdate = async (
     userId: string,
-    mode: 'activate' | 'deactivate',
+    mode: 'activate' | 'extend' | 'deactivate',
     serviceKey: 'tests' | 'preparation' | 'community',
   ) => {
-    if (!authToken) return;
+    if (!authToken || isUpdatingSubscriptionManagement) return;
     try {
       setIsUpdatingSubscriptionManagement(true);
-      if (mode === 'activate') {
+      if (mode === 'activate' || mode === 'extend') {
         const durationValue = Number(serviceDurationValue || 0);
         if (!Number.isFinite(durationValue) || durationValue <= 0) {
           showErrorToast('Enter a valid duration value.');
@@ -6966,11 +6966,12 @@ export default function AdminApp() {
               durationValue,
               durationUnit: serviceDurationUnit,
               customExpiry: serviceCustomExpiry ? new Date(serviceCustomExpiry).toISOString() : '',
+              notes: mode === 'extend' ? `Extended ${serviceKey} access by admin` : `Activated ${serviceKey} access by admin`,
             }),
           },
           authToken,
         );
-        showSuccessToast(`${serviceKey} access updated.`);
+        showSuccessToast(mode === 'extend' ? `${serviceKey} access extended.` : `${serviceKey} access activated.`);
       } else {
         await apiRequest(
           `/api/admin/paid-services/${encodeURIComponent(userId)}/deactivate`,
@@ -6991,7 +6992,7 @@ export default function AdminApp() {
       await loadAdminData(authToken);
       await loadSubscriptionManagedUserDetail(userId, authToken);
     } catch (error) {
-      handleApiError(error, `Could not ${mode === 'activate' ? 'update' : 'deactivate'} ${serviceKey} access.`);
+      handleApiError(error, `Could not ${mode} ${serviceKey} access.`);
     } finally {
       setIsUpdatingSubscriptionManagement(false);
     }
@@ -11146,13 +11147,13 @@ export default function AdminApp() {
                             disabled={isUpdatingSubscriptionManagement}
                             onClick={() => void applyServiceAccessUpdate(selectedSubscriptionUserId, 'activate', serviceKey)}
                           >
-                            Activate Paid Access
+                            {isUpdatingSubscriptionManagement ? 'Working…' : 'Activate Paid Access'}
                           </Button>
                           <Button
                             size="sm"
                             variant="outline"
                             disabled={isUpdatingSubscriptionManagement}
-                            onClick={() => void applyServiceAccessUpdate(selectedSubscriptionUserId, 'activate', serviceKey)}
+                            onClick={() => void applyServiceAccessUpdate(selectedSubscriptionUserId, 'extend', serviceKey)}
                           >
                             Extend Access
                           </Button>

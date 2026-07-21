@@ -450,6 +450,10 @@ function CommunityInner() {
   const [isBlockingConnection, setIsBlockingConnection] = useState(false);
   const [isUnfriendingConnection, setIsUnfriendingConnection] = useState(false);
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [isSavingCommunityProfile, setIsSavingCommunityProfile] = useState(false);
+  const [isPostingRoom, setIsPostingRoom] = useState(false);
+  const [replyingPostId, setReplyingPostId] = useState<string | null>(null);
+  const [upvotingKey, setUpvotingKey] = useState<string | null>(null);
   const [reportReason, setReportReason] = useState('');
   const memoryCacheRef = useRef<Map<string, CommunityCacheEntry>>(new Map());
   const inFlightGetRef = useRef<Map<string, Promise<unknown>>>(new Map());
@@ -1286,7 +1290,8 @@ function CommunityInner() {
   };
 
   const saveCommunityProfile = async () => {
-    if (!token) return;
+    if (!token || isSavingCommunityProfile) return;
+    setIsSavingCommunityProfile(true);
     try {
       const subjectsNeedHelp = subjectsNeedHelpInput
         .split(',')
@@ -1328,6 +1333,8 @@ function CommunityInner() {
       await refreshCommunity(true);
     } catch (error) {
       handleApiError(error, 'Could not update profile.');
+    } finally {
+      setIsSavingCommunityProfile(false);
     }
   };
 
@@ -1411,11 +1418,12 @@ function CommunityInner() {
   };
 
   const createRoomPost = async () => {
-    if (!token || !activeRoomId) return;
+    if (!token || !activeRoomId || isPostingRoom) return;
     if (!newPostText.trim()) {
       showErrorToast('Write your discussion or doubt before posting.');
       return;
     }
+    setIsPostingRoom(true);
     try {
       await apiRequest(`/api/community/discussion-rooms/${activeRoomId}/posts`, {
         method: 'POST',
@@ -1430,13 +1438,16 @@ function CommunityInner() {
       setRooms(roomsPayload.rooms || []);
     } catch (error) {
       handleApiError(error, 'Could not post to room.');
+    } finally {
+      setIsPostingRoom(false);
     }
   };
 
   const addAnswer = async (postId: string) => {
-    if (!token) return;
+    if (!token || replyingPostId) return;
     const text = String(answerTextByPostId[postId] || '').trim();
     if (!text) return;
+    setReplyingPostId(postId);
     try {
       await apiRequest(`/api/community/discussion-posts/${postId}/answers`, {
         method: 'POST',
@@ -1447,11 +1458,16 @@ function CommunityInner() {
       await loadDiscussionRoomPosts(activeRoomId, true);
     } catch (error) {
       handleApiError(error, 'Could not post answer.');
+    } finally {
+      setReplyingPostId(null);
     }
   };
 
   const upvoteDiscussion = async (postId: string, answerId?: string) => {
     if (!token) return;
+    const key = answerId ? `${postId}:${answerId}` : postId;
+    if (upvotingKey) return;
+    setUpvotingKey(key);
     try {
       await apiRequest(`/api/community/discussion-posts/${postId}/upvote`, {
         method: 'POST',
@@ -1461,6 +1477,8 @@ function CommunityInner() {
       await loadDiscussionRoomPosts(activeRoomId, true);
     } catch (error) {
       handleApiError(error, 'Could not update vote.');
+    } finally {
+      setUpvotingKey(null);
     }
   };
 
@@ -2174,7 +2192,9 @@ function CommunityInner() {
               </div>
 
               <div className="flex flex-wrap gap-2">
-                <Button onClick={() => void saveCommunityProfile()}>Save Community Profile</Button>
+                <Button onClick={() => void saveCommunityProfile()} disabled={isSavingCommunityProfile}>
+                  {isSavingCommunityProfile ? 'Saving…' : 'Save Community Profile'}
+                </Button>
                 {hasCommunityProfileData ? (
                   <Button type="button" variant="outline" onClick={() => setIsCommunityProfileExpanded(false)}>
                     Cancel
@@ -2443,7 +2463,9 @@ function CommunityInner() {
                     <Input value={newPostTitle} onChange={(e) => setNewPostTitle(e.target.value)} placeholder="Title (optional)" className="md:col-span-2" />
                   </div>
                   <Textarea value={newPostText} onChange={(e) => setNewPostText(e.target.value)} className="min-h-[90px]" placeholder="Share concept, MCQ, or doubt..." />
-                  <Button onClick={() => void createRoomPost()} disabled={!activeRoomId}>Post in room</Button>
+                  <Button onClick={() => void createRoomPost()} disabled={!activeRoomId || isPostingRoom}>
+                    {isPostingRoom ? 'Posting…' : 'Post in room'}
+                  </Button>
                 </div>
 
                 <div className="space-y-3 max-h-[560px] overflow-auto">
@@ -2455,7 +2477,9 @@ function CommunityInner() {
                       </div>
                       <p className="text-sm whitespace-pre-wrap">{post.text}</p>
                       <p className="text-xs text-muted-foreground">By {post.author ? displayName(post.author) : 'Unknown'}  {post.createdAt ? new Date(post.createdAt).toLocaleString() : ''}</p>
-                      <Button size="sm" variant="outline" onClick={() => void upvoteDiscussion(post.id)}>Upvote ({post.upvotes})</Button>
+                      <Button size="sm" variant="outline" disabled={Boolean(upvotingKey)} onClick={() => void upvoteDiscussion(post.id)}>
+                        {upvotingKey === post.id ? 'Voting…' : `Upvote (${post.upvotes})`}
+                      </Button>
 
                       <div className="space-y-2 rounded-md bg-slate-50 p-2">
                         {post.answers.map((answer) => (
@@ -2463,8 +2487,8 @@ function CommunityInner() {
                             <p>{answer.text}</p>
                             <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
                               <span>{answer.author ? displayName(answer.author) : 'Unknown'}</span>
-                              <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => void upvoteDiscussion(post.id, answer.id)}>
-                                Upvote ({answer.upvotes})
+                              <Button size="sm" variant="ghost" className="h-6 px-2" disabled={Boolean(upvotingKey)} onClick={() => void upvoteDiscussion(post.id, answer.id)}>
+                                {upvotingKey === `${post.id}:${answer.id}` ? 'Voting…' : `Upvote (${answer.upvotes})`}
                               </Button>
                             </div>
                           </div>
@@ -2475,7 +2499,9 @@ function CommunityInner() {
                             onChange={(e) => setAnswerTextByPostId((prev) => ({ ...prev, [post.id]: e.target.value }))}
                             placeholder="Add answer"
                           />
-                          <Button size="sm" className="w-full sm:w-auto" onClick={() => void addAnswer(post.id)}>Reply</Button>
+                          <Button size="sm" className="w-full sm:w-auto" disabled={replyingPostId === post.id} onClick={() => void addAnswer(post.id)}>
+                            {replyingPostId === post.id ? 'Replying…' : 'Reply'}
+                          </Button>
                         </div>
                       </div>
                     </div>
