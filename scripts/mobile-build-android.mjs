@@ -1,22 +1,11 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
-import dotenv from 'dotenv';
+import { buildAndroidViteEnv } from './merge-android-vite-env.mjs';
 
 const workspaceRoot = process.cwd();
-const androidEnvPath = path.join(workspaceRoot, '.env.android');
-const androidLocalEnvPath = path.join(workspaceRoot, '.env.android.local');
 
-function readEnvFile(filePath) {
-  if (!fs.existsSync(filePath)) return {};
-  return dotenv.parse(fs.readFileSync(filePath, 'utf8'));
-}
-
-const androidEnv = {
-  ...readEnvFile(androidEnvPath),
-  ...readEnvFile(androidLocalEnvPath),
-};
+const androidEnv = buildAndroidViteEnv(workspaceRoot);
 
 const run = (command, args) => {
   const result = spawnSync(command, args, {
