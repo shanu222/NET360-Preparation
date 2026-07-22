@@ -8,9 +8,11 @@ import {
   useState,
   useTransition,
   memo,
+  useLayoutEffect,
   type ErrorInfo,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import { PageRouteFallback } from './components/PageRouteFallback';
 import { GlobalFreeAccessAnnouncement } from './components/GlobalFreeAccessAnnouncement';
 import { SubscriptionProvider } from './context/SubscriptionContext';
@@ -37,6 +39,7 @@ import {
   Moon,
   Sun,
   Crown,
+  LogOut,
 } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from './components/ui/sheet';
@@ -333,14 +336,31 @@ class SectionErrorBoundary extends Component<{ children: ReactNode; sectionName:
 function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
   const { user, logout } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; right: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const menuContentRef = useRef<HTMLDivElement | null>(null);
+
+  const recomputeMenuPosition = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setMenuPos({
+      top: rect.bottom + 8,
+      right: Math.max(8, window.innerWidth - rect.right),
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!menuOpen) return;
+    recomputeMenuPosition();
+  }, [menuOpen, recomputeMenuPosition]);
 
   useEffect(() => {
     if (!menuOpen) return;
 
     const handlePointerDown = (event: MouseEvent) => {
-      if (!menuRef.current) return;
-      if (menuRef.current.contains(event.target as Node)) return;
+      const target = event.target as Node;
+      if (buttonRef.current?.contains(target)) return;
+      if (menuContentRef.current?.contains(target)) return;
       setMenuOpen(false);
     };
 
@@ -348,11 +368,19 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
       if (event.key === 'Escape') setMenuOpen(false);
     };
 
+    const handleViewportChange = () => setMenuOpen(false);
+
     window.addEventListener('mousedown', handlePointerDown, { passive: true });
     window.addEventListener('keydown', handleEscape);
+    window.addEventListener('resize', handleViewportChange, { passive: true });
+    window.addEventListener('orientationchange', handleViewportChange, { passive: true });
+    window.addEventListener('scroll', handleViewportChange, { passive: true, capture: true });
     return () => {
       window.removeEventListener('mousedown', handlePointerDown);
       window.removeEventListener('keydown', handleEscape);
+      window.removeEventListener('resize', handleViewportChange);
+      window.removeEventListener('orientationchange', handleViewportChange);
+      window.removeEventListener('scroll', handleViewportChange, { capture: true });
     };
   }, [menuOpen]);
 
@@ -381,8 +409,9 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
   }
 
   return (
-    <div className="relative ml-1" ref={menuRef}>
+    <div className="relative ml-1">
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => setMenuOpen((current) => !current)}
         className="touch-manipulation inline-flex min-h-11 items-center gap-2 rounded-xl px-2 py-2 text-slate-700 transition hover:bg-indigo-50 dark:text-slate-100 dark:hover:bg-white/10 sm:min-h-9 sm:py-1.5"
@@ -395,22 +424,45 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
         <ChevronDown className={`hidden h-4 w-4 transition-transform sm:inline ${menuOpen ? 'rotate-180' : ''}`} />
       </button>
 
-      <div
-        className={`absolute right-0 top-[calc(100%+8px)] z-50 min-w-[180px] rounded-xl border border-indigo-100 bg-white/95 p-1.5 text-slate-800 shadow-[0_16px_30px_rgba(15,23,42,0.18)] backdrop-blur-md transition-all duration-150 dark:border-white/15 dark:bg-slate-900/95 dark:text-slate-100 ${menuOpen ? 'translate-y-0 opacity-100' : 'pointer-events-none -translate-y-1 opacity-0'}`}
-        role="menu"
-      >
-        <button
-          type="button"
-          className="min-h-11 w-full rounded-lg px-3 py-2.5 text-left text-sm font-medium text-rose-600 transition hover:bg-rose-50/90 dark:text-rose-300 dark:hover:bg-rose-500/15"
-          role="menuitem"
-          onClick={() => {
-            logout();
-            setMenuOpen(false);
-          }}
-        >
-          Logout
-        </button>
-      </div>
+      {menuOpen && menuPos
+        ? createPortal(
+            <div
+              ref={menuContentRef}
+              className="fixed z-[1000] min-w-[190px] max-w-[calc(100vw-16px)] rounded-xl border border-indigo-100 bg-white p-1.5 text-slate-800 shadow-[0_16px_30px_rgba(15,23,42,0.22)] dark:border-white/15 dark:bg-slate-900 dark:text-slate-100"
+              style={{ top: menuPos.top, right: menuPos.right }}
+              role="menu"
+            >
+              <div className="truncate px-3 py-2 text-xs font-medium text-slate-400 dark:text-slate-500 sm:hidden">
+                Signed in as {displayName}
+              </div>
+              <button
+                type="button"
+                className="flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:bg-indigo-50 dark:text-slate-100 dark:hover:bg-white/10"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onOpenProfile();
+                }}
+              >
+                <User className="h-4 w-4 shrink-0" />
+                Profile
+              </button>
+              <button
+                type="button"
+                className="flex min-h-11 w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-sm font-medium text-rose-600 transition hover:bg-rose-50/90 dark:text-rose-300 dark:hover:bg-rose-500/15"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  logout();
+                }}
+              >
+                <LogOut className="h-4 w-4 shrink-0" />
+                Logout
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }

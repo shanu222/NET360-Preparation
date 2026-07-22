@@ -21,6 +21,14 @@
     "PushNotifications": {
       "presentationOptions": ["badge", "sound", "alert"],
       "iconColor": "#5B8CFF"
+    },
+    "SocialLogin": {
+      "providers": {
+        "google": true,
+        "facebook": false,
+        "apple": true,
+        "twitter": true
+      }
     }
   }
 }
