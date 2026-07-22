@@ -1,16 +1,19 @@
 import { Capacitor } from '@capacitor/core';
+import { SocialLogin } from '@capgo/capacitor-social-login';
+import { shouldLogNativeDiagnostics } from './nativeDiagnostics';
 
 let socialLoginInit: Promise<void> | null = null;
 
+/** Internal telemetry only (gated by DEV / VITE_ANDROID_DEBUG_LOGS) — never shown to users. */
 function androidNativeLog(event: string, details: Record<string, unknown> = {}) {
-  if (Capacitor.getPlatform() !== 'android' || !Capacitor.isNativePlatform()) return;
+  if (!shouldLogNativeDiagnostics()) return;
   const payload = { ts: new Date().toISOString(), event, ...details };
   try {
     // eslint-disable-next-line no-console
-    console.error('[net360/google-native]', JSON.stringify(payload));
+    console.info('[net360/google-native]', JSON.stringify(payload));
   } catch {
     // eslint-disable-next-line no-console
-    console.error('[net360/google-native]', event, details);
+    console.info('[net360/google-native]', event, details);
   }
 }
 
@@ -42,14 +45,14 @@ function peekJwtPayload(token: string): { aud?: string; iss?: string; exp?: numb
 function serializeNativeError(e: unknown): Record<string, unknown> {
   if (e == null) return { kind: 'nullish' };
   if (typeof e === 'string') return { message: e };
-  const err = e as Error & { code?: string; data?: unknown };
-  const out: Record<string, unknown> = {
+  if (typeof e !== 'object') return { kind: typeof e, value: String(e) };
+  const err = e as Error & { code?: string; status?: number };
+  return {
     name: err.name,
     message: err.message,
     code: err.code,
+    status: err.status,
   };
-  if (typeof err.stack === 'string') out.stackHead = err.stack.slice(0, 500);
-  return out;
 }
 
 /**
@@ -84,28 +87,6 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
     webClientId: maskClientId(webClientId),
     packageHint: 'com.net360prep.app',
   });
-
-  let SocialLogin: {
-    initialize: (options: unknown) => Promise<void>;
-    login: (options: unknown) => Promise<{
-      provider: string;
-      result: {
-        responseType?: string;
-        idToken?: string;
-        accessToken?: { token?: string };
-        profile?: { email?: string };
-      };
-    }>;
-  };
-  try {
-    const importDynamic = new Function('specifier', 'return import(specifier)') as
-      (specifier: string) => Promise<Record<string, unknown>>;
-    const mod = await importDynamic('@capgo/capacitor-social-login');
-    SocialLogin = mod.SocialLogin as typeof SocialLogin;
-  } catch (e) {
-    androidNativeLog('plugin-import-failed', { error: serializeNativeError(e) });
-    throw e;
-  }
 
   if (!socialLoginInit) {
     socialLoginInit = (async () => {
