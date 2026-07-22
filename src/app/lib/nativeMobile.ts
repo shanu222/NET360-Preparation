@@ -147,14 +147,17 @@ export async function requestCameraAccessPermission(): Promise<PermissionResolut
   }
 
   try {
-    const result = await Camera.requestPermissions({ permissions: ['camera', 'photos'] });
-    const granted = result.camera === 'granted' || result.photos === 'granted';
+    /* Only the camera permission is requested here. Photo/gallery selection uses the
+     * system file picker (Android Photo Picker on API 33+), which needs no runtime
+     * media permission — see `Profile.tsx`'s `<input type="file">` avatar picker. */
+    const result = await Camera.requestPermissions({ permissions: ['camera'] });
+    const granted = result.camera === 'granted';
     return {
       granted,
       status: granted ? 'granted' : 'denied',
       message: granted
-        ? 'Camera/media permission granted. You can upload or capture question images.'
-        : 'Camera/media permission denied. You can still use text-based features.',
+        ? 'Camera permission granted. You can capture question images.'
+        : 'Camera permission denied. You can still use text-based features.',
     };
   } catch {
     return {
