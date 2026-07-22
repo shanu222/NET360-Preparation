@@ -881,12 +881,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!auth) {
       const bootstrapped = await ensureNativeAuthBootstrap('google-login');
       if (!bootstrapped) {
-        throw new Error('Google sign-in failed. Please try again.');
+        throw new Error('Google Sign-In could not be completed. Please try again.');
       }
     }
     const activeAuth = auth || firebaseAuth;
     if (!activeAuth) {
-      throw new Error('Google sign-in failed. Please try again.');
+      throw new Error('Google Sign-In could not be completed. Please try again.');
     }
     const provider = new GoogleAuthProvider();
     provider.addScope('profile');
@@ -894,18 +894,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     provider.setCustomParameters({ prompt: 'select_account' });
     if (isAndroidNative) {
       try {
-        showNeutralToast('Signing in...');
-        const { idToken, accessToken } = await signInWithGoogleAndroidNative();
-        const googleClaims = decodeJwtClaims(idToken);
-        if (typeof console !== 'undefined' && console.error) {
-          console.error('[net360/google-native]', JSON.stringify({
-            ts: new Date().toISOString(),
-            event: 'pre-firebase-credential',
-            googleIdAud: googleClaims.aud || undefined,
-            googleIdIss: googleClaims.iss || undefined,
-            hasAccessToken: Boolean(accessToken),
-          }));
-        }
+        showNeutralToast('Signing you in with Google…');
+        const { idToken } = await signInWithGoogleAndroidNative();
         /* Firebase Auth only requires the Google ID token. */
         const credential = GoogleAuthProvider.credential(idToken);
         let userCred;
@@ -914,25 +904,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } catch (fe) {
           const feCode = String((fe as { code?: string })?.code || '').trim();
           const feMsg = (fe as Error)?.message || String(fe);
-          if (typeof console !== 'undefined' && console.error) {
-            console.error('[net360/google-native]', JSON.stringify({
-              ts: new Date().toISOString(),
-              event: 'firebase-signInWithCredential-failed',
-              code: feCode || undefined,
-              message: feMsg,
-              googleIdAud: googleClaims.aud || undefined,
-            }));
-          }
           logNativeEvent('auth', 'firebase-signInWithCredential-failed', { code: feCode, message: feMsg }, 'error');
           throw fe;
-        }
-        if (typeof console !== 'undefined' && console.error) {
-          console.error('[net360/google-native]', JSON.stringify({
-            ts: new Date().toISOString(),
-            event: 'firebase-signInWithCredential-ok',
-            uidPrefix: userCred.user.uid ? `${userCred.user.uid.slice(0, 8)}…` : '',
-            hasEmail: Boolean(userCred.user.email),
-          }));
         }
         updateAuthDebug({ userAuthenticated: true });
         const firebaseIdToken = await userCred.user.getIdToken();
@@ -970,32 +943,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           throw error;
         }
         const message = (error as Error)?.message || String(error);
-        if (typeof console !== 'undefined' && console.error) {
-          console.error('[net360/google-native]', JSON.stringify({
-            ts: new Date().toISOString(),
-            event: 'google-native-outer-catch',
-            code: code || undefined,
-            message,
-          }));
-        }
         logNativeEvent('auth', 'google-native-failed', { code: code || undefined, message }, 'error');
 
-        /* Surface raw Capgo/Firebase details only in Vite DEV builds (not release APK). */
-        const exposeDebugDetail = Boolean(import.meta.env.DEV);
-        if (exposeDebugDetail) {
-          const debugError = new Error(
-            [
-              'Google Sign-In failed (debug)',
-              code ? `Code: ${code}` : null,
-              message ? `Detail: ${message}` : null,
-              `Package: com.net360prep.app`,
-            ].filter(Boolean).join('\n'),
-          );
-          (debugError as Error & { code?: string }).code = code || undefined;
-          throw debugError;
-        }
-
-        const productionError = new Error('Google sign-in failed. Please try again.');
+        const productionError = new Error('Google Sign-In could not be completed. Please try again.');
         (productionError as Error & { code?: string }).code = code || 'GOOGLE_SIGN_IN_FAILED';
         throw productionError;
       }
@@ -1009,11 +959,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         const message = (error as Error)?.message || String(error);
         logNativeEvent('auth', 'google-redirect-start-failed', { message }, 'error');
-        throw new Error(
-          message.includes('auth/') && Boolean(import.meta.env.DEV)
-            ? message
-            : 'Google sign-in failed. Please try again.',
-        );
+        throw new Error('Google Sign-In could not be completed. Please try again.');
       }
       return;
     }

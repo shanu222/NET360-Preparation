@@ -30,8 +30,8 @@ android {
         applicationId "com.net360prep.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 22
-        versionName "2.8.0"
+        versionCode 25
+        versionName "2.8.3"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         aaptOptions {

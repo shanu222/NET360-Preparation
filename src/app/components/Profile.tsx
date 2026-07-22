@@ -98,13 +98,12 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
   const code = String(typed?.code || typed?.payload?.code || '').toUpperCase();
   const message = String(typed?.message || '').toLowerCase();
   const rawCode = String(typed?.code || '').trim();
-  const rawMessage = String(typed?.message || '').trim();
 
   if (rawCode === 'USER_CANCELLED') {
     return 'Sign-in was cancelled.';
   }
   if (rawCode === 'GOOGLE_OAUTH_ANDROID_MISCONFIG' || rawCode === 'GOOGLE_SIGN_IN_FAILED') {
-    return 'Google sign-in failed. Please try again.';
+    return 'Google Sign-In could not be completed. Please try again.';
   }
   if (code === 'ACTIVE_SESSION_ELSEWHERE' || code === 'SESSION_DISABLED_TEMP' || code === 'ACTIVE_SESSION_EXISTS') {
     return 'Your account is already signed in on another device.';
@@ -113,14 +112,10 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
     return 'Your account was signed in on another device. Please sign in again.';
   }
   if (message.includes('missing initial state') || message.includes('sessionstorage')) {
-    return 'Google sign-in failed. Please try again.';
+    return 'Google Sign-In could not be completed. Please try again.';
   }
   if (message.includes('google sign-in is not available in this android build')) {
-    return 'Google sign-in is not available in this app version. Please use email and password.';
-  }
-  /* Debug builds may throw multi-line diagnostic messages — keep them visible. */
-  if (Boolean(import.meta.env.DEV) && rawMessage.includes('Google Sign-In failed (debug)')) {
-    return rawMessage;
+    return 'Google Sign-In is not available in this app version. Please use email and password.';
   }
 
   return audienceFriendlyError(error, fallback);
@@ -371,9 +366,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         }
       } catch (error) {
         if (String((error as { code?: string })?.code || '').trim() === 'USER_CANCELLED') {
-          showNeutralToast('Google sign-in was cancelled.');
+          showNeutralToast('Sign-in was cancelled.');
         } else {
-          showErrorToast(loginFriendlyAuthError(error, 'Google sign-in did not finish. Please try again.'));
+          showErrorToast(loginFriendlyAuthError(error, 'Google Sign-In could not be completed. Please try again.'));
         }
       } finally {
         setAuthActionState('idle');
@@ -394,7 +389,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     } catch (error) {
       setAuthActionState('idle');
       if (String((error as { code?: string })?.code || '').trim() === 'USER_CANCELLED') {
-        showNeutralToast('Google sign-in was cancelled.');
+        showNeutralToast('Sign-in was cancelled.');
         return;
       }
       if (isActiveSessionElsewhere(error)) {
@@ -403,7 +398,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         setOtherDeviceDialogOpen(true);
         return;
       }
-      showErrorToast(loginFriendlyAuthError(error, 'Google sign-in failed. Please try again.'));
+      showErrorToast(loginFriendlyAuthError(error, 'Google Sign-In could not be completed. Please try again.'));
     }
   };
 
@@ -827,20 +822,19 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                     <span className="relative bg-white px-3 text-slate-500">or continue with</span>
                   </div>
                   <div className="grid grid-cols-1 gap-2">
-                    <Button
+                    <button
                       type="button"
-                      variant="outline"
-                      className="h-11 rounded-xl border-indigo-200 bg-white !text-slate-800 hover:bg-indigo-50 hover:!text-indigo-900 disabled:opacity-80"
                       disabled={isAuthBusy}
                       onClick={() => void handleSocialAuth()}
+                      className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-[#dadce0] bg-white px-4 text-[15px] font-medium text-[#3c4043] shadow-sm transition-all duration-150 hover:bg-[#f8f9fa] hover:shadow-md active:scale-[0.98] active:bg-[#f1f3f4] disabled:cursor-not-allowed disabled:opacity-70 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4285F4] focus-visible:ring-offset-2 dark:border-[#dadce0] dark:bg-white dark:text-[#3c4043] dark:hover:bg-[#f8f9fa] dark:active:bg-[#f1f3f4]"
                     >
                       {authActionState === 'loggingIn' ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                        <Loader2 className="h-5 w-5 shrink-0 animate-spin text-[#4285F4]" />
                       ) : (
-                        <GoogleLogo className="mr-2 h-4 w-4" />
+                        <GoogleLogo className="h-5 w-5 shrink-0" />
                       )}
-                      {authActionState === 'loggingIn' ? 'Signing in...' : 'Continue with Google'}
-                    </Button>
+                      <span>{authActionState === 'loggingIn' ? 'Signing in…' : 'Continue with Google'}</span>
+                    </button>
                     {isNativeRuntimePlatform() ? (
                       <p className="text-xs text-slate-500">
                         {Capacitor.getPlatform() === 'android'
