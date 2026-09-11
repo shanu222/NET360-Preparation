@@ -532,11 +532,13 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const isDeleteConfirmationValid = deleteAccountConfirmationText.trim() === 'DELETE';
   const authProvider = String(user?.authProvider || '').toLowerCase();
   const authProviderDetail = String(user?.authProviderDetail || '').toLowerCase();
-  const isGoogleSsoAuth = authProvider === 'google' || authProviderDetail === 'google' || authProviderDetail === 'google.com';
-  const isPasswordAuth = authProvider === 'local' || authProvider === 'password' || authProviderDetail === 'password' || authProviderDetail === 'local';
-  const isAmbiguousFirebaseAuth = !isGoogleSsoAuth && !isPasswordAuth && (authProvider === 'firebase' || Boolean(user?.email));
-  const showDeletionEmailLink = isGoogleSsoAuth || isAmbiguousFirebaseAuth;
-  const showPasswordDelete = isPasswordAuth || isAmbiguousFirebaseAuth;
+  const isGoogleSsoAuth = authProvider === 'google'
+    || authProviderDetail === 'google'
+    || authProviderDetail === 'google.com';
+  const deletionChannel = String(user?.deletionChannel || '').toLowerCase();
+  const showDeletionEmailLink = deletionChannel === 'email-link'
+    || (!deletionChannel && isGoogleSsoAuth);
+  const showPasswordDelete = !showDeletionEmailLink;
   const isDeletePasswordProvided = deleteAccountPassword.trim().length > 0;
   const canSubmitPasswordDelete = isDeleteConfirmationValid && isDeletePasswordProvided && !isDeletingAccount;
   const canSendDeletionLink = isDeleteConfirmationValid && showDeletionEmailLink && !isRequestingDeletionLink;

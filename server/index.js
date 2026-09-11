@@ -36,6 +36,11 @@ import * as cheerio from 'cheerio';
 import mongoose from 'mongoose';
 import http from 'node:http';
 import { connectMongo, getMongoHealth } from './lib/mongo.js';
+import {
+  classifyStudentDeletionChannelSync,
+  normalizeAuthProviderDetail,
+  resolveStudentDeletionChannel,
+} from './lib/studentDeletionChannel.js';
 import { getBuildInfo } from './lib/buildInfo.js';
 import { logAuthDebug, normalizeAuthDebugRoute, shouldAuthDebugRoute } from './lib/authDebug.js';
 import { getRedisMain, isRedisConfigured, isRedisReady } from './services/redis.js';
@@ -3836,15 +3841,6 @@ function sanitizeHumanName(value, maxLen = 80) {
     .slice(0, maxLen);
 }
 
-function normalizeAuthProviderDetail(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'google.com' || normalized === 'google') return 'google';
-  if (normalized === 'password' || normalized === 'firebase' || normalized === 'local') {
-    return normalized === 'firebase' ? 'password' : normalized;
-  }
-  return normalized || 'unknown';
-}
-
 function splitDisplayNameParts(displayName) {
   const normalized = String(displayName || '').trim();
   if (!normalized) return { firstName: '', lastName: '' };
@@ -4174,44 +4170,6 @@ function buildAccountDeletionSessionFingerprint(req, user) {
   const ua = getUserAgent(req);
   const combined = `session:${sid}|device:${did}|ua:${ua}`;
   return crypto.createHash('sha256').update(combined, 'utf8').digest('hex').slice(0, 48);
-}
-
-function isGoogleManagedAuthProvider(authProvider, firebaseUid, authProviderDetail) {
-  const p = String(authProvider || 'local').trim().toLowerCase();
-  const d = normalizeAuthProviderDetail(authProviderDetail);
-  if (p === 'google' || d === 'google') return true;
-  return false;
-}
-
-function isPasswordManagedAuthProvider(authProvider, authProviderDetail) {
-  const p = String(authProvider || 'local').trim().toLowerCase();
-  const d = normalizeAuthProviderDetail(authProviderDetail);
-  return p === 'local' || p === 'password' || d === 'password' || d === 'local';
-}
-
-async function resolveStudentDeletionChannel(user) {
-  const provider = String(user?.authProvider || 'local').trim().toLowerCase();
-  const detail = normalizeAuthProviderDetail(user?.authProviderDetail);
-  if (isGoogleManagedAuthProvider(provider, user?.firebaseUid, detail)) {
-    return 'email-link';
-  }
-  if (isPasswordManagedAuthProvider(provider, detail)) {
-    return 'password';
-  }
-  const firebaseUid = String(user?.firebaseUid || '').trim();
-  if (firebaseAdminAuth && firebaseUid) {
-    try {
-      const fbUser = await firebaseAdminAuth.getUser(firebaseUid);
-      const ids = (fbUser.providerData || []).map((item) => String(item.providerId || '').toLowerCase());
-      if (ids.includes('google.com') && !ids.includes('password')) return 'email-link';
-      if (ids.includes('password')) return 'password';
-      if (ids.includes('google.com')) return 'email-link';
-    } catch (error) {
-      console.warn('[auth] deletion channel firebase lookup failed', error?.message || error);
-    }
-  }
-  if (provider === 'firebase' || firebaseUid) return 'email-link';
-  return 'password';
 }
 
 function resolveTrialIdentitySignals(req, user) {
@@ -5940,6 +5898,7 @@ function userPublic(user) {
     role: user.role || 'student',
     authProvider: String(user.authProvider || 'local'),
     authProviderDetail: normalizeAuthProviderDetail(user.authProviderDetail),
+    deletionChannel: classifyStudentDeletionChannelSync(user),
     preferences: { ...defaultPreferences(), ...(user.preferences || {}) },
     progress,
     subscription: {
@@ -7516,10 +7475,12 @@ async function issueAuthPayload(user, req) {
   user.refreshTokens = user.refreshTokens.slice(0, 5);
   await user.save();
 
+  const publicUser = userPublic(user);
+  publicUser.deletionChannel = await resolveStudentDeletionChannel(user, firebaseAdminAuth);
   return {
     token: accessToken,
     refreshToken,
-    user: userPublic(user),
+    user: publicUser,
   };
 }
 
@@ -8995,7 +8956,7 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const deletionChannel = await resolveStudentDeletionChannel(user);
+    const deletionChannel = await resolveStudentDeletionChannel(user, firebaseAdminAuth);
     if (deletionChannel === 'email-link') {
       res.status(400).json({
         error: 'Use email verification link for Google accounts.',
@@ -9062,7 +9023,7 @@ app.post('/api/auth/request-delete-link', authMiddleware, async (req, res) => {
     }
 
     const authProvider = String(user.authProvider || 'local').trim().toLowerCase();
-    const deletionChannel = await resolveStudentDeletionChannel(user);
+    const deletionChannel = await resolveStudentDeletionChannel(user, firebaseAdminAuth);
     if (deletionChannel !== 'email-link') {
       res.status(400).json({ error: 'Email deletion links are only for Google Sign-In accounts.' });
       return;
@@ -9162,7 +9123,7 @@ app.get('/api/auth/verify-delete-token', async (req, res) => {
       res.json({ valid: false, error: 'This deletion link is no longer valid.' });
       return;
     }
-    if ((await resolveStudentDeletionChannel(u)) !== 'email-link') {
+    if ((await resolveStudentDeletionChannel(u, firebaseAdminAuth)) !== 'email-link') {
       res.json({ valid: false, error: 'This deletion link is no longer valid.' });
       return;
     }
@@ -9219,7 +9180,7 @@ app.post('/api/auth/confirm-delete', async (req, res) => {
       return;
     }
     const ap = String(user.authProvider || 'local').toLowerCase();
-    if ((await resolveStudentDeletionChannel(user)) !== 'email-link') {
+    if ((await resolveStudentDeletionChannel(user, firebaseAdminAuth)) !== 'email-link') {
       res.status(400).json({ error: 'This deletion link is no longer valid for this account.' });
       return;
     }
@@ -9434,6 +9395,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   const u = userPublic(req.user);
+  u.deletionChannel = await resolveStudentDeletionChannel(req.user, firebaseAdminAuth);
   if ((req.user.role || 'student') === 'student' && req.user.activeSession?.sessionId) {
     u.activeSessionId = String(req.user.activeSession.sessionId);
   }

@@ -41,6 +41,7 @@ interface AuthUser {
   role?: 'student' | 'admin';
   authProvider?: string;
   authProviderDetail?: string;
+  deletionChannel?: 'password' | 'email-link';
   /** Present on `/api/auth/me` for students; used for session diagnostics only. */
   activeSessionId?: string;
 }
