@@ -514,11 +514,15 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
 
   const isDeleteConfirmationValid = deleteAccountConfirmationText.trim() === 'DELETE';
   const authProvider = String(user?.authProvider || '').toLowerCase();
-  const isGoogleSsoAuth = authProvider === 'firebase' || authProvider === 'google';
-  const isPasswordAuth = authProvider === 'local' || authProvider === 'password';
+  const authProviderDetail = String(user?.authProviderDetail || '').toLowerCase();
+  const isGoogleSsoAuth = authProvider === 'google' || authProviderDetail === 'google' || authProviderDetail === 'google.com';
+  const isPasswordAuth = authProvider === 'local' || authProvider === 'password' || authProviderDetail === 'password' || authProviderDetail === 'local';
+  const isAmbiguousFirebaseAuth = !isGoogleSsoAuth && !isPasswordAuth && (authProvider === 'firebase' || Boolean(user?.email));
+  const showDeletionEmailLink = isGoogleSsoAuth || isAmbiguousFirebaseAuth;
+  const showPasswordDelete = isPasswordAuth || isAmbiguousFirebaseAuth;
   const isDeletePasswordProvided = deleteAccountPassword.trim().length > 0;
   const canSubmitPasswordDelete = isDeleteConfirmationValid && isDeletePasswordProvided && !isDeletingAccount;
-  const canSendDeletionLink = isDeleteConfirmationValid && isGoogleSsoAuth && !isRequestingDeletionLink;
+  const canSendDeletionLink = isDeleteConfirmationValid && showDeletionEmailLink && !isRequestingDeletionLink;
 
   const handleRequestDeletionLink = async () => {
     setDeleteAccountAttempted(true);
@@ -554,7 +558,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
 
   const handleDeleteAccount = async () => {
     setDeleteAccountAttempted(true);
-    if (!isPasswordAuth) {
+    if (!showPasswordDelete) {
       showErrorToast('Use the secure email link to delete a Google Sign-In account.');
       return;
     }
@@ -1362,7 +1366,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               ) : null}
             </div>
 
-            {isGoogleSsoAuth ? (
+            {showDeletionEmailLink ? (
               <div className="space-y-2">
                 <Label>Google Sign-In account</Label>
                 <p className="text-xs text-red-700/90">
@@ -1385,7 +1389,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                   <p className="text-xs font-medium text-red-700">Type DELETE above before sending the link.</p>
                 ) : null}
               </div>
-            ) : (
+            ) : null}
+            {showPasswordDelete ? (
               <div className="space-y-2">
                 <Label htmlFor="delete-account-password">Confirm with your registration password</Label>
                 <PasswordInput
@@ -1401,8 +1406,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                   <p className="text-xs font-medium text-red-700">Password is required for secure account deletion.</p>
                 ) : null}
               </div>
-            )}
-            {isPasswordAuth ? (
+            ) : null}
+            {showPasswordDelete ? (
             <Button
               variant="destructive"
               onClick={() => void handleDeleteAccount()}

@@ -142,7 +142,19 @@ function readCookie(req, key) {
   return String(cookies?.[key] || '').trim();
 }
 
-function buildAuthCookieOptions(maxAgeMs) {
+function resolveAuthCookieDomainForHost(req) {
+  const configured = String(AUTH_COOKIE_DOMAIN || '').trim();
+  if (!configured) return '';
+  const host = String(req?.headers?.host || '').split(':')[0].trim().toLowerCase();
+  if (!host) return '';
+  const normalized = configured.replace(/^\./, '').toLowerCase();
+  if (host === normalized || host.endsWith(`.${normalized}`)) {
+    return configured;
+  }
+  return '';
+}
+
+function buildAuthCookieOptions(maxAgeMs, req) {
   const options = {
     httpOnly: true,
     secure: AUTH_COOKIE_SECURE,
@@ -150,18 +162,19 @@ function buildAuthCookieOptions(maxAgeMs) {
     path: '/',
     maxAge: Math.max(1000, Math.floor(Number(maxAgeMs || 0))),
   };
-  if (AUTH_COOKIE_DOMAIN) {
-    options.domain = AUTH_COOKIE_DOMAIN;
+  const cookieDomain = resolveAuthCookieDomainForHost(req);
+  if (cookieDomain) {
+    options.domain = cookieDomain;
   }
   return options;
 }
 
-function setAuthCookies(res, accessToken, refreshToken) {
+function setAuthCookies(res, accessToken, refreshToken, req) {
   if (accessToken) {
-    res.cookie(ACCESS_TOKEN_COOKIE_NAME, String(accessToken), buildAuthCookieOptions(ACCESS_TOKEN_COOKIE_MAX_AGE_MS));
+    res.cookie(ACCESS_TOKEN_COOKIE_NAME, String(accessToken), buildAuthCookieOptions(ACCESS_TOKEN_COOKIE_MAX_AGE_MS, req));
   }
   if (refreshToken) {
-    res.cookie(REFRESH_TOKEN_COOKIE_NAME, String(refreshToken), buildAuthCookieOptions(REFRESH_TOKEN_TTL_MS));
+    res.cookie(REFRESH_TOKEN_COOKIE_NAME, String(refreshToken), buildAuthCookieOptions(REFRESH_TOKEN_TTL_MS, req));
   }
 }
 
@@ -173,9 +186,9 @@ function setAuthTransportDiagnosticsHeaders(req, res, payload) {
   res.setHeader('X-Net360-Auth-Cookies-Set', `access=${hasAccessCookie ? '1' : '0'};refresh=${hasRefreshCookie ? '1' : '0'}`);
 }
 
-function clearAuthCookies(res) {
+function clearAuthCookies(res, req) {
   const expiredOptions = {
-    ...buildAuthCookieOptions(1),
+    ...buildAuthCookieOptions(1, req),
     maxAge: 0,
   };
   res.clearCookie(ACCESS_TOKEN_COOKIE_NAME, expiredOptions);
@@ -214,10 +227,30 @@ function isNativeAppRequest(req) {
   }
 }
 
+function isCrossSiteBrowserRequest(req) {
+  try {
+    const origin = String(req?.headers?.origin || '').trim();
+    if (!origin) return false;
+    const originHost = new URL(origin).hostname.toLowerCase();
+    const apiHost = String(req?.headers?.host || '').split(':')[0].trim().toLowerCase();
+    if (!originHost || !apiHost) return false;
+    return originHost !== apiHost;
+  } catch {
+    return false;
+  }
+}
+
 function buildAuthJsonBody(req, payload) {
   if (!payload || typeof payload !== 'object') return payload;
-  // Native WebViews and admin panel can intermittently drop cross-origin cookies. Always include body tokens.
-  if (ISSUE_AUTH_BODY_TOKENS || isNativeAppRequest(req) || isAdminPanelRequest(req)) return payload;
+  // Cross-site browsers (www → Railway), native WebViews, and admin can drop cookies. Always include body tokens.
+  if (
+    ISSUE_AUTH_BODY_TOKENS
+    || isNativeAppRequest(req)
+    || isAdminPanelRequest(req)
+    || isCrossSiteBrowserRequest(req)
+  ) {
+    return payload;
+  }
   return { user: payload.user };
 }
 
@@ -310,13 +343,30 @@ const ALLOW_QUERY_TOKEN_AUTH =
     : !IS_PRODUCTION;
 
 const MODEL_PROVIDER_KEY = process.env.MODEL_PROVIDER_API_KEY || process.env.OPENAI_API_KEY || '';
-const SMTP_HOST = String(process.env.SMTP_HOST || '').trim();
-const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
-const SMTP_SECURE = String(process.env.SMTP_SECURE || 'false').toLowerCase() === 'true';
-const SMTP_USER = String(process.env.SMTP_USER || '').trim();
-const SMTP_PASS = String(process.env.SMTP_PASS || '').trim();
-const SMTP_FROM_EMAIL = String(process.env.SMTP_FROM_EMAIL || SMTP_USER).trim();
-const NET360_PUBLIC_APP_URL = String(process.env.NET360_PUBLIC_APP_URL || process.env.PUBLIC_APP_URL || '').trim();
+const SMTP_HOST = String(process.env.SMTP_HOST || process.env.MAIL_HOST || process.env.EMAIL_HOST || '').trim();
+const SMTP_PORT = Number(process.env.SMTP_PORT || process.env.MAIL_PORT || 587);
+const SMTP_SECURE = String(process.env.SMTP_SECURE || '').toLowerCase() === 'true'
+  || Number(SMTP_PORT) === 465;
+const SMTP_USER = String(process.env.SMTP_USER || process.env.EMAIL_USER || process.env.MAIL_USER || '').trim();
+const SMTP_PASS = String(
+  process.env.SMTP_PASS
+  || process.env.SMTP_PASSWORD
+  || process.env.EMAIL_PASS
+  || process.env.MAIL_PASS
+  || '',
+).trim();
+const SMTP_FROM_EMAIL = String(
+  process.env.SMTP_FROM_EMAIL
+  || process.env.MAIL_FROM
+  || process.env.EMAIL_FROM
+  || SMTP_USER,
+).trim();
+const NET360_PUBLIC_APP_URL = String(
+  process.env.NET360_PUBLIC_APP_URL
+  || process.env.PUBLIC_APP_URL
+  || process.env.APP_PUBLIC_URL
+  || '',
+).trim();
 const TWILIO_ACCOUNT_SID = String(process.env.TWILIO_ACCOUNT_SID || '').trim();
 const TWILIO_AUTH_TOKEN = String(process.env.TWILIO_AUTH_TOKEN || '').trim();
 const TWILIO_PHONE_NUMBER = String(process.env.TWILIO_PHONE_NUMBER || '').trim();
@@ -339,7 +389,6 @@ if (!Number.isFinite(SMTP_PORT) || SMTP_PORT <= 0) smtpMissingEnv.push('SMTP_POR
 if (!SMTP_USER) smtpMissingEnv.push('SMTP_USER');
 if (!SMTP_PASS) smtpMissingEnv.push('SMTP_PASS');
 if (!SMTP_FROM_EMAIL) smtpMissingEnv.push('SMTP_FROM_EMAIL');
-if (!NET360_PUBLIC_APP_URL) smtpMissingEnv.push('NET360_PUBLIC_APP_URL');
 
 const smtpRuntime = {
   enabled: smtpMissingEnv.length === 0,
@@ -357,6 +406,9 @@ const smtpTransporter = smtpRuntime.enabled
       user: SMTP_USER,
       pass: SMTP_PASS,
     },
+    connectionTimeout: 12_000,
+    greetingTimeout: 12_000,
+    socketTimeout: 20_000,
   })
   : null;
 
@@ -524,86 +576,9 @@ const PAYFAST_WALLET_ACCOUNT_TYPE_ID = String(process.env.PAYFAST_WALLET_ACCOUNT
 
 const app = express();
 
+// CORS is configured once below (corsMiddleware). Multiple CORS layers were removed
+// to avoid duplicate Access-Control-* headers that break some browser/HTTP2 responses.
 
-
-app.use(cors({
-  origin: function(origin, callback) {
-
-    if (!origin) {
-      return callback(null, true);
-    }
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    console.log("Blocked by CORS:", origin);
-
-    return callback(null, true);
-  },
-
-  credentials: true,
-
-  methods: [
-    "GET",
-    "POST",
-    "PUT",
-    "PATCH",
-    "DELETE",
-    "OPTIONS"
-  ],
-
-  allowedHeaders: [
-    "Origin",
-    "X-Requested-With",
-    "Content-Type",
-    "Accept",
-    "Authorization",
-    "x-net360-client-platform",
-    "x-net360-client-version",
-    "X-Net360-Auth-Transport-Preference",
-    "x-net360-auth-transport-preference",
-  ]
-}));
-
-app.options("*", cors());
-
-
-app.use((req, res, next) => {
-  
-
-  const origin = req.headers.origin;
-
-  if (origin && allowedOrigins.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
-  }
-
-  res.header(
-    'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-net360-client-platform, x-net360-client-version, X-Net360-Auth-Transport-Preference, x-net360-auth-transport-preference',
-  );
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Credentials', 'true');
-
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
-
-  next();
-});
-
-
-
-
-
-
-
-
-
-
-
-
-app.options('*', cors());
 
 const aiParseUpload = multer({
   storage: multer.memoryStorage(),
@@ -852,8 +827,11 @@ const expressCorsDisabled = String(process.env.DISABLE_EXPRESS_CORS || '').toLow
  */
 function parseCorsAllowedOriginsList() {
   const raw = String(process.env.CORS_ALLOWED_ORIGINS || process.env.NET360_CORS_ORIGINS || '').trim();
-  if (!raw) return null;
-  const list = raw.split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean);
+  const fromEnv = raw
+    ? raw.split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean)
+    : [];
+  const hardcoded = allowedOrigins.map((s) => String(s || '').trim().replace(/\/+$/, '')).filter(Boolean);
+  const list = [...new Set([...fromEnv, ...hardcoded])];
   return list.length ? list : null;
 }
 
@@ -981,6 +959,8 @@ const corsMiddleware = cors({
       'x-requested-with',
       'X-Net360-Auth-Transport-Preference',
       'x-net360-auth-transport-preference',
+      'x-net360-device-id',
+      'X-Net360-Device-Id',
     ],
   exposedHeaders: ['Content-Length', 'Content-Type', 'X-Net360-Auth-Transport', 'X-Net360-Auth-Cookies-Set'],
   maxAge: 86_400,
@@ -3588,6 +3568,7 @@ async function verifyFirebaseUserToken(idToken) {
     uid: String(decoded.uid),
     email,
     authTimeMs,
+    signInProvider: String(decoded.firebase?.sign_in_provider || decoded.sign_in_provider || '').trim(),
   };
 }
 
@@ -3715,7 +3696,8 @@ function sanitizeHumanName(value, maxLen = 80) {
 
 function normalizeAuthProviderDetail(value) {
   const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'google' || normalized === 'password' || normalized === 'firebase' || normalized === 'local') {
+  if (normalized === 'google.com' || normalized === 'google') return 'google';
+  if (normalized === 'password' || normalized === 'firebase' || normalized === 'local') {
     return normalized === 'firebase' ? 'password' : normalized;
   }
   return normalized || 'unknown';
@@ -3967,7 +3949,7 @@ function resolveNet360PublicWebBaseUrl() {
     }
   }
   if (IS_PRODUCTION) {
-    return 'https://net360preparation.com';
+    return 'https://www.net360preparation.com';
   }
   return 'http://localhost:5173';
 }
@@ -4000,14 +3982,42 @@ function buildAccountDeletionSessionFingerprint(req, user) {
   return crypto.createHash('sha256').update(combined, 'utf8').digest('hex').slice(0, 48);
 }
 
-function isGoogleManagedAuthProvider(authProvider, firebaseUid) {
+function isGoogleManagedAuthProvider(authProvider, firebaseUid, authProviderDetail) {
   const p = String(authProvider || 'local').trim().toLowerCase();
-  return p === 'firebase' || p === 'google' || Boolean(String(firebaseUid || '').trim());
+  const d = normalizeAuthProviderDetail(authProviderDetail);
+  if (p === 'google' || d === 'google') return true;
+  return false;
 }
 
-function isPasswordManagedAuthProvider(authProvider) {
+function isPasswordManagedAuthProvider(authProvider, authProviderDetail) {
   const p = String(authProvider || 'local').trim().toLowerCase();
-  return p === 'local' || p === 'password';
+  const d = normalizeAuthProviderDetail(authProviderDetail);
+  return p === 'local' || p === 'password' || d === 'password' || d === 'local';
+}
+
+async function resolveStudentDeletionChannel(user) {
+  const provider = String(user?.authProvider || 'local').trim().toLowerCase();
+  const detail = normalizeAuthProviderDetail(user?.authProviderDetail);
+  if (isGoogleManagedAuthProvider(provider, user?.firebaseUid, detail)) {
+    return 'email-link';
+  }
+  if (isPasswordManagedAuthProvider(provider, detail)) {
+    return 'password';
+  }
+  const firebaseUid = String(user?.firebaseUid || '').trim();
+  if (firebaseAdminAuth && firebaseUid) {
+    try {
+      const fbUser = await firebaseAdminAuth.getUser(firebaseUid);
+      const ids = (fbUser.providerData || []).map((item) => String(item.providerId || '').toLowerCase());
+      if (ids.includes('google.com') && !ids.includes('password')) return 'email-link';
+      if (ids.includes('password')) return 'password';
+      if (ids.includes('google.com')) return 'email-link';
+    } catch (error) {
+      console.warn('[auth] deletion channel firebase lookup failed', error?.message || error);
+    }
+  }
+  if (provider === 'firebase' || firebaseUid) return 'email-link';
+  return 'password';
 }
 
 function resolveTrialIdentitySignals(req, user) {
@@ -4092,9 +4102,29 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
       text,
       html,
     });
+    smtpRuntime.verified = true;
+    smtpRuntime.verifyError = '';
     return { status: 'sent', detail: 'Deletion email sent.' };
-  } catch (error) {
-    return { status: 'failed', detail: error instanceof Error ? error.message : 'Email provider error.' };
+  } catch (firstError) {
+    smtpRuntime.verified = false;
+    const retried = await verifySmtpTransport('delete-link-retry');
+    if (retried) {
+      try {
+        await smtpTransporter.sendMail({
+          from: SMTP_FROM_EMAIL,
+          to: toEmail,
+          subject,
+          text,
+          html,
+        });
+        smtpRuntime.verified = true;
+        smtpRuntime.verifyError = '';
+        return { status: 'sent', detail: 'Deletion email sent.' };
+      } catch (retryError) {
+        return { status: 'failed', detail: retryError instanceof Error ? retryError.message : 'Email provider error.' };
+      }
+    }
+    return { status: 'failed', detail: firstError instanceof Error ? firstError.message : 'Email provider error.' };
   }
 }
 
@@ -4242,7 +4272,7 @@ async function executePermanentStudentAccountDeletion(req, res, user) {
     }
   }
 
-  clearAuthCookies(res);
+  clearAuthCookies(res, req);
 
   await logSecurityEvent(req, {
     eventType: 'auth.delete_account_success',
@@ -5723,6 +5753,7 @@ function userPublic(user) {
     testDate: user.testDate || '',
     role: user.role || 'student',
     authProvider: String(user.authProvider || 'local'),
+    authProviderDetail: normalizeAuthProviderDetail(user.authProviderDetail),
     preferences: { ...defaultPreferences(), ...(user.preferences || {}) },
     progress,
     subscription: {
@@ -5757,11 +5788,17 @@ function serializeSession(session) {
   };
 }
 
+function serializeIsoDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
 function serializeAttempt(attempt) {
   return {
     id: String(attempt._id),
-    sessionId: String(attempt.sessionId),
-    userId: String(attempt.userId),
+    sessionId: String(attempt.sessionId || ''),
+    userId: String(attempt.userId || ''),
     subject: attempt.subject,
     topic: attempt.topic,
     difficulty: attempt.difficulty,
@@ -5773,8 +5810,8 @@ function serializeAttempt(attempt) {
     unanswered: attempt.unanswered,
     submittedAnswers: attempt.submittedAnswers,
     durationMinutes: attempt.durationMinutes,
-    attemptedAt: new Date(attempt.attemptedAt).toISOString(),
-    submittedAt: new Date(attempt.submittedAt).toISOString(),
+    attemptedAt: serializeIsoDate(attempt.attemptedAt),
+    submittedAt: serializeIsoDate(attempt.submittedAt),
     metadata: attempt.metadata || {},
   };
 }
@@ -7886,8 +7923,20 @@ app.get('/api/health', async (_req, res) => {
       ADMIN_LOGIN_PASSWORD: Boolean(String(process.env.ADMIN_LOGIN_PASSWORD || process.env.ADMIN_PASSWORD || '').trim()),
       CORS_ALLOWED_ORIGINS: Boolean(String(process.env.CORS_ALLOWED_ORIGINS || process.env.NET360_CORS_ORIGINS || '').trim()),
       ISSUE_AUTH_BODY_TOKENS: String(process.env.ISSUE_AUTH_BODY_TOKENS ?? '(unset → default true)'),
+      AUTH_COOKIE_DOMAIN: Boolean(String(process.env.AUTH_COOKIE_DOMAIN || '').trim()),
+      SMTP_HOST: Boolean(SMTP_HOST),
+      SMTP_USER: Boolean(SMTP_USER),
+      SMTP_PASS: Boolean(SMTP_PASS),
+      SMTP_FROM_EMAIL: Boolean(SMTP_FROM_EMAIL),
+      NET360_PUBLIC_APP_URL: Boolean(NET360_PUBLIC_APP_URL),
       RAILWAY_ENVIRONMENT_NAME: String(process.env.RAILWAY_ENVIRONMENT_NAME || '').trim() || '(unset)',
       RAILWAY_SERVICE_NAME: String(process.env.RAILWAY_SERVICE_NAME || '').trim() || '(unset)',
+    },
+    smtp: {
+      configured: smtpRuntime.enabled,
+      verified: smtpRuntime.verified,
+      missingEnv: smtpMissingEnv,
+      publicAppUrlConfigured: Boolean(NET360_PUBLIC_APP_URL),
     },
     redis: {
       configured: isRedisConfigured(),
@@ -8189,7 +8238,7 @@ async function createDirectStudentAccount(req, res) {
     }
 
     const payload = await issueAuthPayload(user, req);
-    setAuthCookies(res, payload.token, payload.refreshToken);
+    setAuthCookies(res, payload.token, payload.refreshToken, req);
     setAuthTransportDiagnosticsHeaders(req, res, payload);
     mirrorStudentSessionRedis(user._id, user.activeSession.sessionId, deviceId);
     res.status(201).json(buildAuthJsonBody(req, payload));
@@ -8231,7 +8280,7 @@ async function createDirectStudentAccount(req, res) {
   }
 
   const payload = await issueAuthPayload(user, req);
-  setAuthCookies(res, payload.token, payload.refreshToken);
+  setAuthCookies(res, payload.token, payload.refreshToken, req);
   setAuthTransportDiagnosticsHeaders(req, res, payload);
   mirrorStudentSessionRedis(user._id, user.activeSession.sessionId, deviceId);
   res.status(201).json(buildAuthJsonBody(req, payload));
@@ -8402,6 +8451,9 @@ app.post('/api/auth/login', async (req, res) => {
       if (String(user.firebaseUid || '') !== String(verifiedFirebase.uid)) {
         user.firebaseUid = String(verifiedFirebase.uid);
       }
+      if (verifiedFirebase.signInProvider) {
+        user.authProviderDetail = normalizeAuthProviderDetail(verifiedFirebase.signInProvider);
+      }
 
       const storedHash = String(user.passwordHash || user.password || '').trim();
       if (!storedHash) {
@@ -8518,7 +8570,7 @@ app.post('/api/auth/login', async (req, res) => {
       }
 
       const payload = await issueAuthPayload(user, req);
-      setAuthCookies(res, payload.token, payload.refreshToken);
+      setAuthCookies(res, payload.token, payload.refreshToken, req);
       setAuthTransportDiagnosticsHeaders(req, res, payload);
       await logSecurityEvent(req, {
         eventType: 'auth.login_success',
@@ -8550,7 +8602,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const payload = await issueAuthPayload(user, req);
-    setAuthCookies(res, payload.token, payload.refreshToken);
+    setAuthCookies(res, payload.token, payload.refreshToken, req);
     setAuthTransportDiagnosticsHeaders(req, res, payload);
     await logSecurityEvent(req, {
       eventType: 'auth.login_success',
@@ -8591,7 +8643,7 @@ app.post('/api/auth/refresh', async (req, res) => {
         eventType: 'auth.refresh_invalid_type',
         severity: 'warning',
       });
-      clearAuthCookies(res);
+      clearAuthCookies(res, req);
       res.status(401).json({ error: 'Invalid refresh token.' });
       return;
     }
@@ -8602,7 +8654,7 @@ app.post('/api/auth/refresh', async (req, res) => {
         eventType: 'auth.refresh_user_not_found',
         severity: 'warning',
       });
-      clearAuthCookies(res);
+      clearAuthCookies(res, req);
       res.status(401).json({ error: 'User not found.' });
       return;
     }
@@ -8617,7 +8669,7 @@ app.post('/api/auth/refresh', async (req, res) => {
         actorUserId: user._id,
         actorEmail: user.email,
       });
-      clearAuthCookies(res);
+      clearAuthCookies(res, req);
       res.status(401).json({ error: 'Refresh token revoked or expired.' });
       return;
     }
@@ -8634,7 +8686,7 @@ app.post('/api/auth/refresh', async (req, res) => {
           actorUserId: user._id,
           actorEmail: user.email,
         });
-        clearAuthCookies(res);
+        clearAuthCookies(res, req);
         res.status(401).json({ error: 'Session ended. Please log in again.', code: 'SESSION_NO_LONGER_ACTIVE' });
         return;
       }
@@ -8644,7 +8696,7 @@ app.post('/api/auth/refresh', async (req, res) => {
     await user.save();
 
     const newPayload = await issueAuthPayload(user, req);
-    setAuthCookies(res, newPayload.token, newPayload.refreshToken);
+    setAuthCookies(res, newPayload.token, newPayload.refreshToken, req);
     setAuthTransportDiagnosticsHeaders(req, res, newPayload);
     if ((user.role || 'student') === 'student' && user.activeSession?.sessionId) {
       mirrorStudentSessionRedis(user._id, user.activeSession.sessionId, user.activeSession.deviceId || '');
@@ -8661,14 +8713,14 @@ app.post('/api/auth/refresh', async (req, res) => {
       eventType: 'auth.refresh_invalid_token',
       severity: 'warning',
     });
-    clearAuthCookies(res);
+    clearAuthCookies(res, req);
     res.status(401).json({ error: 'Invalid or expired refresh token.' });
   }
 });
 
 app.post('/api/auth/logout', async (req, res) => {
   const refreshToken = String(req.body?.refreshToken || readCookie(req, REFRESH_TOKEN_COOKIE_NAME) || '').trim();
-  clearAuthCookies(res);
+  clearAuthCookies(res, req);
 
   if (!refreshToken) {
     res.json({ message: 'Logged out.' });
@@ -8734,7 +8786,7 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const user = await UserModel.findById(req.user._id).select('_id passwordHash role email phone firebaseUid authProvider activeSession firstName');
+    const user = await UserModel.findById(req.user._id).select('_id passwordHash role email phone firebaseUid authProvider authProviderDetail activeSession firstName');
     if (!user) {
       res.status(404).json({ error: 'Account not found.' });
       return;
@@ -8745,17 +8797,11 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const authProvider = String(user.authProvider || 'local').trim().toLowerCase();
-    const firebaseUid = String(user.firebaseUid || '').trim();
-    if (isGoogleManagedAuthProvider(authProvider, firebaseUid)) {
+    const deletionChannel = await resolveStudentDeletionChannel(user);
+    if (deletionChannel === 'email-link') {
       res.status(400).json({
         error: 'Use email verification link for Google accounts.',
       });
-      return;
-    }
-
-    if (!isPasswordManagedAuthProvider(authProvider)) {
-      res.status(400).json({ error: 'This account cannot be deleted with a password on this endpoint.' });
       return;
     }
 
@@ -8764,7 +8810,22 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const passwordMatches = await bcrypt.compare(password, String(user.passwordHash || ''));
+    const firebaseIdToken = String(req.body?.firebaseIdToken || '').trim();
+    let passwordMatches = false;
+    if (firebaseIdToken) {
+      try {
+        const verified = await verifyFirebaseUserToken(firebaseIdToken);
+        const sameUid = Boolean(user.firebaseUid) && verified.uid === String(user.firebaseUid);
+        const sameEmail = verified.email && verified.email === normalizeEmail(user.email || '');
+        const recentAuth = verified.authTimeMs > 0 && (Date.now() - verified.authTimeMs) <= ACCOUNT_DELETION_LINK_TTL_MS;
+        passwordMatches = (sameUid || sameEmail) && recentAuth;
+      } catch {
+        passwordMatches = false;
+      }
+    }
+    if (!passwordMatches) {
+      passwordMatches = await bcrypt.compare(password, String(user.passwordHash || ''));
+    }
     if (!passwordMatches) {
       await logSecurityEvent(req, {
         eventType: 'auth.delete_account_wrong_password',
@@ -8792,7 +8853,7 @@ app.post('/api/auth/request-delete-link', authMiddleware, async (req, res) => {
       return;
     }
 
-    const user = await UserModel.findById(req.user._id).select('_id role email firebaseUid authProvider activeSession firstName');
+    const user = await UserModel.findById(req.user._id).select('_id role email firebaseUid authProvider authProviderDetail activeSession firstName');
     if (!user) {
       res.status(404).json({ error: 'Account not found.' });
       return;
@@ -8803,8 +8864,8 @@ app.post('/api/auth/request-delete-link', authMiddleware, async (req, res) => {
     }
 
     const authProvider = String(user.authProvider || 'local').trim().toLowerCase();
-    const firebaseUid = String(user.firebaseUid || '').trim();
-    if (!isGoogleManagedAuthProvider(authProvider, firebaseUid)) {
+    const deletionChannel = await resolveStudentDeletionChannel(user);
+    if (deletionChannel !== 'email-link') {
       res.status(400).json({ error: 'Email deletion links are only for Google Sign-In accounts.' });
       return;
     }
@@ -8893,7 +8954,7 @@ app.get('/api/auth/verify-delete-token', async (req, res) => {
       return;
     }
 
-    const u = await UserModel.findById(doc.userId).select('email firstName authProvider firebaseUid role').lean();
+    const u = await UserModel.findById(doc.userId).select('email firstName authProvider authProviderDetail firebaseUid role').lean();
     if (!u || (u.role || 'student') !== 'student') {
       res.json({ valid: false, error: 'This deletion link is no longer valid.' });
       return;
@@ -8902,9 +8963,7 @@ app.get('/api/auth/verify-delete-token', async (req, res) => {
       res.json({ valid: false, error: 'This deletion link is no longer valid.' });
       return;
     }
-    const ap = String(u.authProvider || 'local').toLowerCase();
-    const uid = String(u.firebaseUid || '').trim();
-    if (!isGoogleManagedAuthProvider(ap, uid)) {
+    if ((await resolveStudentDeletionChannel(u)) !== 'email-link') {
       res.json({ valid: false, error: 'This deletion link is no longer valid.' });
       return;
     }
@@ -8946,7 +9005,7 @@ app.post('/api/auth/confirm-delete', async (req, res) => {
       return;
     }
 
-    const user = await UserModel.findById(claimed.userId).select('_id passwordHash role email phone firebaseUid authProvider activeSession firstName');
+    const user = await UserModel.findById(claimed.userId).select('_id passwordHash role email phone firebaseUid authProvider authProviderDetail activeSession firstName');
     if (!user) {
       res.status(400).json({ error: 'This account no longer exists.' });
       return;
@@ -8961,8 +9020,7 @@ app.post('/api/auth/confirm-delete', async (req, res) => {
       return;
     }
     const ap = String(user.authProvider || 'local').toLowerCase();
-    const uid = String(user.firebaseUid || '').trim();
-    if (!isGoogleManagedAuthProvider(ap, uid)) {
+    if ((await resolveStudentDeletionChannel(user)) !== 'email-link') {
       res.status(400).json({ error: 'This deletion link is no longer valid for this account.' });
       return;
     }
@@ -13626,8 +13684,13 @@ app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
 });
 
 app.get('/api/tests/attempts', ...studentPremiumSurface, async (req, res) => {
-  const attempts = await AttemptModel.find({ userId: req.user._id }).sort({ attemptedAt: -1 }).lean();
-  res.json({ attempts: attempts.map((item) => serializeAttempt(item)) });
+  try {
+    const attempts = await AttemptModel.find({ userId: req.user._id }).sort({ attemptedAt: -1 }).lean();
+    res.json({ attempts: attempts.map((item) => serializeAttempt(item)) });
+  } catch (error) {
+    console.error('[tests/attempts] failed', error?.message || error);
+    res.status(500).json({ error: 'Could not load test attempts.' });
+  }
 });
 
 app.get('/api/tests/:sessionId', ...studentPremiumSurface, async (req, res) => {
@@ -17623,6 +17686,12 @@ function validateCriticalConfiguration() {
   }
   if (IS_PRODUCTION && isEnvAdminLoginConfigured()) {
     warnings.push('ADMIN_LOGIN_EMAIL/ADMIN_LOGIN_PASSWORD are configured; env admin login is enabled.');
+  }
+  if (IS_PRODUCTION && !smtpRuntime.enabled) {
+    warnings.push(`SMTP is not configured (${smtpMissingEnv.join(', ') || 'unknown'}); Google account deletion emails will return 503.`);
+  }
+  if (AUTH_COOKIE_DOMAIN && /railway/i.test(String(process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || ''))) {
+    warnings.push('AUTH_COOKIE_DOMAIN does not match the Railway API host; cookies will be set host-only. Body JWTs remain the auth transport.');
   }
 
   if (IS_PRODUCTION && JWT_SECRET && (JWT_SECRET === 'dev-secret-change-me' || JWT_SECRET.length < 32)) {

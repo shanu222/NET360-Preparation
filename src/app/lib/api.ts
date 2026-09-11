@@ -122,13 +122,19 @@ function resolveApiBase() {
     throw new Error('Missing VITE_API_URL or VITE_API_BASE_URL in production');
   }
 
-  // Explicit api.* backend: always use it (Socket.IO + POST must hit Node, not static rewrites).
-  if (hostnameStartsWithApiSubdomain(configured)) {
+  // Explicit backend hosts: never rewrite to the Vercel static origin.
+  // www.net360preparation.com must keep calling Railway / api.* or auth cookies/CORS break.
+  const configuredHost = hostnameOf(configured);
+  if (
+    hostnameStartsWithApiSubdomain(configured)
+    || configuredHost.endsWith('.up.railway.app')
+    || configuredHost.endsWith('.railway.app')
+  ) {
     return configured;
   }
 
   // If the configured host differs from current web origin, prefer same-origin
-  // to avoid cross-origin failures on custom domains.
+  // only for accidental frontend URLs (e.g. a Vercel app URL pasted into VITE_API_URL).
   if (browserOrigin) {
     try {
       const configuredOrigin = new URL(configured).origin.replace(/\/$/, '');
@@ -147,6 +153,19 @@ function resolveApiBase() {
 }
 
 export const API_BASE = resolveApiBase();
+
+/** True when the SPA origin is a different site than the API (e.g. www → Railway). */
+export function isCrossSiteApiBase(): boolean {
+  if (typeof window === 'undefined') return false;
+  try {
+    const apiHost = new URL(API_BASE).hostname.toLowerCase();
+    const pageHost = String(window.location.hostname || '').toLowerCase();
+    if (!apiHost || !pageHost) return true;
+    return apiHost !== pageHost;
+  } catch {
+    return true;
+  }
+}
 
 if (import.meta.env.DEV) {
   console.log('[net360] API BASE:', API_BASE);

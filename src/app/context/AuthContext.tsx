@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { apiRequest } from '../lib/api';
+import { apiRequest, isCrossSiteApiBase } from '../lib/api';
 import {
   createUserWithEmailAndPassword,
   getRedirectResult,
@@ -40,6 +40,7 @@ interface AuthUser {
   lastName: string;
   role?: 'student' | 'admin';
   authProvider?: string;
+  authProviderDetail?: string;
   /** Present on `/api/auth/me` for students; used for session diagnostics only. */
   activeSessionId?: string;
 }
@@ -385,11 +386,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setToken(payload.token);
       setRefreshToken(payload.refreshToken ?? null);
       persistStudentTokens(payload.token, payload.refreshToken ?? null);
-    } else {
-      setToken(COOKIE_SESSION_API_MARKER);
-      setRefreshToken(null);
-      persistCookieSessionMode();
+      return;
     }
+    const existingAccess = shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+    const existingRefresh = shouldPersistAuthTokens() ? localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY) : null;
+    if (existingAccess && !isCookieSessionApiMarker(existingAccess)) {
+      setToken(existingAccess);
+      setRefreshToken(existingRefresh);
+      return;
+    }
+    if (isCrossSiteApiBase()) {
+      setToken(existingAccess);
+      setRefreshToken(existingRefresh);
+      return;
+    }
+    setToken(COOKIE_SESSION_API_MARKER);
+    persistCookieSessionMode();
   }, []);
 
   const finalizeNativeAuthTransport = useCallback(async (
@@ -1139,17 +1151,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return payload;
     };
 
+    let firebaseIdToken = '';
+    const email = String(user?.email || '').trim();
+    if (email && password) {
+      try {
+        if (isNativeRuntime) {
+          const rest = await signInWithEmailPasswordRest(email, password);
+          firebaseIdToken = rest.idToken;
+        } else if (firebaseAuth) {
+          const credential = await signInWithEmailAndPassword(firebaseAuth, email, password);
+          firebaseIdToken = await credential.user.getIdToken(true);
+        }
+      } catch {
+        firebaseIdToken = '';
+      }
+    }
+
     const payload = await apiRequest<{ message: string }>('/api/auth/delete-account', {
       method: 'POST',
       body: JSON.stringify({
         password,
         confirmationText,
+        firebaseIdToken,
       }),
       timeoutMs: 60_000,
       retryCount: 0,
     });
     return finalizeSuccess(payload);
-  }, [clearClientAuthState]);
+  }, [clearClientAuthState, isNativeRuntime, user?.email]);
 
   useEffect(() => {
     const onRevoked = (ev: Event) => {

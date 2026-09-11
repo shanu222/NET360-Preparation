@@ -105,7 +105,7 @@ export function requireTrialOrPremiumContent(UserModel, resolveEntitlements) {
           serviceType,
           subscriptionStatus: String(sub?.status || 'inactive'),
           trialActive: trialIsActive(sub),
-          legacyAllowed,
+          legacyAllowed: false,
           serviceAccessAllowed: Boolean(serviceAccess?.allowed),
         });
       }

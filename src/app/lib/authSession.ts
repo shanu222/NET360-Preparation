@@ -46,7 +46,8 @@ function lsRemove(key: string) {
 export function persistCookieSessionMode() {
   if (!shouldPersistAuthTokens()) return;
   lsSet(STUDENT_ACCESS_KEY, COOKIE_SESSION_API_MARKER);
-  lsRemove(STUDENT_REFRESH_KEY);
+  // Keep any existing refresh JWT. Wiping it forces POST /api/auth/refresh with an empty
+  // body; when third-party cookies are blocked (www → Railway) that returns 400.
 }
 
 /** Read stored student access JWT or cookie-session marker (same key as AuthContext). */
