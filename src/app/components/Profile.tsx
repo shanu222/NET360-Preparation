@@ -137,7 +137,7 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
 }
 
 export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
-  const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, deleteAccount, logout } = useAuth();
+  const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, deleteAccount, requestAccountDeletionLink, logout } = useAuth();
   const { surface } = useSubscription();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
   const [localProfile, setLocalProfile] = useState(profile);
@@ -169,6 +169,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const [deleteAccountPassword, setDeleteAccountPassword] = useState('');
   const [deleteAccountConfirmationText, setDeleteAccountConfirmationText] = useState('');
   const [deleteAccountAttempted, setDeleteAccountAttempted] = useState(false);
+  const [isRequestingDeletionLink, setIsRequestingDeletionLink] = useState(false);
+  const [deletionLinkFeedback, setDeletionLinkFeedback] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isPersonalInfoExpanded, setIsPersonalInfoExpanded] = useState(true);
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
@@ -208,6 +210,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     setShowDeleteAccountPanel(false);
     setDeleteAccountConfirmationText('');
     setDeleteAccountPassword('');
+    setDeletionLinkFeedback('');
     setDeleteAccountAttempted(false);
   }, [user?.id]);
 
@@ -536,23 +539,54 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const showPasswordDelete = isPasswordAuth || isAmbiguousFirebaseAuth;
   const isDeletePasswordProvided = deleteAccountPassword.trim().length > 0;
   const canSubmitPasswordDelete = isDeleteConfirmationValid && isDeletePasswordProvided && !isDeletingAccount;
-  const canConfirmGoogleDelete = isDeleteConfirmationValid && showDeletionEmailLink && !isDeletingAccount;
+  const canSendDeletionLink = isDeleteConfirmationValid && showDeletionEmailLink && !isRequestingDeletionLink;
 
-  const handleDeleteAccount = async (mode: 'password' | 'google' = 'password') => {
+  const handleRequestDeletionLink = async () => {
     setDeleteAccountAttempted(true);
+    if (!isDeleteConfirmationValid) {
+      showErrorToast('Type DELETE exactly to confirm you want to start account deletion.');
+      return;
+    }
+    try {
+      setIsRequestingDeletionLink(true);
+      setDeletionLinkFeedback('');
+      const result = await requestAccountDeletionLink({
+        confirmationText: deleteAccountConfirmationText.trim(),
+      });
+      const msg = String(result?.message || '').trim()
+        || 'Deletion confirmation link sent to your Google email.';
+      setDeletionLinkFeedback(msg);
+      showSuccessToast(msg);
+    } catch (error) {
+      const message = String((error as Error)?.message || '').toLowerCase();
+      if (message.includes('temporarily unavailable') || message.includes('smtp')) {
+        showErrorToast('Email delivery is temporarily unavailable. Please try again shortly.');
+      } else if (message.includes('google sign-in accounts')) {
+        showErrorToast('This option is only available for Google Sign-In accounts.');
+      } else if (message.includes('type delete')) {
+        showErrorToast('Type DELETE exactly before sending the verification link.');
+      } else {
+        handleApiError(error, 'Could not send deletion link.');
+      }
+    } finally {
+      setIsRequestingDeletionLink(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    setDeleteAccountAttempted(true);
+    if (!showPasswordDelete) {
+      showErrorToast('Use the secure email link to delete a Google Sign-In account.');
+      return;
+    }
+    if (!isDeletePasswordProvided) {
+      showErrorToast('Enter your registration password to confirm account deletion.');
+      return;
+    }
+
     if (!isDeleteConfirmationValid) {
       showErrorToast('Type DELETE exactly to confirm permanent account deletion.');
       return;
-    }
-    if (mode === 'password') {
-      if (!showPasswordDelete) {
-        showErrorToast('Confirm with Google to delete this account.');
-        return;
-      }
-      if (!isDeletePasswordProvided) {
-        showErrorToast('Enter your registration password to confirm account deletion.');
-        return;
-      }
     }
 
     const approved = window.confirm(
@@ -562,11 +596,10 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
 
     try {
       setIsDeletingAccount(true);
-      const result = await deleteAccount(
-        mode === 'google'
-          ? { confirmationText: deleteAccountConfirmationText.trim(), googleConfirm: true }
-          : { password: deleteAccountPassword, confirmationText: deleteAccountConfirmationText.trim() },
-      );
+      const result = await deleteAccount({
+        password: deleteAccountPassword,
+        confirmationText: deleteAccountConfirmationText.trim(),
+      });
       showSuccessToast(
         result?.message
         || 'Your NET360 account has been permanently deleted. Any active subscription access has been revoked. You must create a new account to use NET360 again.',
@@ -577,6 +610,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       );
       setDeleteAccountPassword('');
       setDeleteAccountConfirmationText('');
+      setDeletionLinkFeedback('');
       setDeleteAccountAttempted(false);
       window.location.assign('/?tab=profile');
     } catch (error) {
@@ -593,6 +627,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       if (next) {
         setDeleteAccountConfirmationText('');
         setDeleteAccountPassword('');
+        setDeletionLinkFeedback('');
         setDeleteAccountAttempted(false);
       }
       return next;
@@ -1352,20 +1387,23 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               <div className="space-y-2">
                 <Label>Google Sign-In account</Label>
                 <p className="text-xs text-red-700/90">
-                  This account uses Google Sign-In. Type DELETE, then confirm with the same Google account
-                  ({user?.email || 'your Google email'}). A Google popup will ask you to sign in again before deletion.
+                  This account uses Google Sign-In. For your security we do not delete Google accounts from this screen.
+                  We will email a single-use HTTPS link to <span className="font-medium">{user?.email || 'your Google email'}</span>.
                 </p>
                 <Button
                   type="button"
-                  variant="destructive"
-                  className="w-fit"
-                  disabled={!canConfirmGoogleDelete}
-                  onClick={() => void handleDeleteAccount('google')}
+                  variant="outline"
+                  className="w-fit border-red-300 bg-white text-red-700 hover:bg-red-50"
+                  disabled={!canSendDeletionLink || isDeletingAccount}
+                  onClick={() => void handleRequestDeletionLink()}
                 >
-                  {isDeletingAccount ? 'Deleting Account Permanently...' : 'Confirm Google and Delete Account'}
+                  {isRequestingDeletionLink ? 'Sending link…' : 'Send Verification Link'}
                 </Button>
+                {deletionLinkFeedback ? (
+                  <p className="text-xs font-medium text-emerald-700">{deletionLinkFeedback}</p>
+                ) : null}
                 {deleteAccountAttempted && !isDeleteConfirmationValid ? (
-                  <p className="text-xs font-medium text-red-700">Type DELETE above before confirming with Google.</p>
+                  <p className="text-xs font-medium text-red-700">Type DELETE above before sending the link.</p>
                 ) : null}
               </div>
             ) : null}
@@ -1389,7 +1427,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
             {showPasswordDelete ? (
             <Button
               variant="destructive"
-              onClick={() => void handleDeleteAccount('password')}
+              onClick={() => void handleDeleteAccount()}
               disabled={!canSubmitPasswordDelete}
             >
               {isDeletingAccount ? 'Deleting Account Permanently...' : 'Delete Account Permanently'}
