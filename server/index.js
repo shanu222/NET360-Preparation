@@ -398,14 +398,22 @@ const smtpRuntime = {
   verifyAttempted: false,
   verified: false,
   verifyError: '',
+  activePort: 0,
 };
 
-const smtpTransporter = smtpRuntime.enabled
-  ? nodemailer.createTransport({
+function sanitizeSmtpError(error) {
+  let message = error instanceof Error ? error.message : String(error || 'SMTP error');
+  if (SMTP_USER) message = message.split(SMTP_USER).join('[smtp-user]');
+  if (SMTP_PASS) message = message.split(SMTP_PASS).join('[smtp-pass]');
+  return message.replace(/pass(word)?=[^,\s]+/gi, 'pass=[redacted]').slice(0, 220);
+}
+
+function createSmtpTransport(port, secure) {
+  return nodemailer.createTransport({
     host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_SECURE,
-    requireTLS: !SMTP_SECURE && SMTP_PORT === 587,
+    port,
+    secure,
+    requireTLS: !secure && Number(port) === 587,
     auth: {
       user: SMTP_USER,
       pass: SMTP_PASS,
@@ -413,11 +421,51 @@ const smtpTransporter = smtpRuntime.enabled
     tls: {
       minVersion: 'TLSv1.2',
     },
+    family: 4,
     connectionTimeout: 12_000,
     greetingTimeout: 12_000,
     socketTimeout: 20_000,
-  })
-  : null;
+  });
+}
+
+const smtpTransports = smtpRuntime.enabled
+  ? {
+    primary: createSmtpTransport(SMTP_PORT, SMTP_SECURE),
+    fallback465: SMTP_PORT === 465
+      ? null
+      : createSmtpTransport(465, true),
+  }
+  : { primary: null, fallback465: null };
+
+const smtpTransporter = smtpTransports.primary;
+
+async function sendSmtpMail(mail) {
+  if (!smtpTransports.primary) {
+    throw new Error('SMTP transporter is not configured.');
+  }
+  const attempts = [
+    { port: SMTP_PORT, transporter: smtpTransports.primary },
+    smtpTransports.fallback465
+      ? { port: 465, transporter: smtpTransports.fallback465 }
+      : null,
+  ].filter(Boolean);
+  let lastError = null;
+  for (const attempt of attempts) {
+    try {
+      await attempt.transporter.sendMail(mail);
+      smtpRuntime.verified = true;
+      smtpRuntime.verifyError = '';
+      smtpRuntime.activePort = attempt.port;
+      return;
+    } catch (error) {
+      lastError = error;
+      smtpRuntime.verified = false;
+      smtpRuntime.verifyError = sanitizeSmtpError(error);
+      console.warn(`[smtp] sendMail failed port=${attempt.port}: ${smtpRuntime.verifyError}`);
+    }
+  }
+  throw lastError || new Error('SMTP send failed.');
+}
 
 async function verifySmtpTransport(reason = 'startup') {
   if (!smtpTransporter) return false;
@@ -427,11 +475,12 @@ async function verifySmtpTransport(reason = 'startup') {
     await smtpTransporter.verify();
     smtpRuntime.verified = true;
     smtpRuntime.verifyError = '';
+    smtpRuntime.activePort = SMTP_PORT;
     console.log(`[smtp] transporter verified (${reason})`);
     return true;
   } catch (error) {
     smtpRuntime.verified = false;
-    smtpRuntime.verifyError = (error instanceof Error ? error.message : String(error)).slice(0, 220);
+    smtpRuntime.verifyError = sanitizeSmtpError(error);
     console.warn(`[smtp] transporter verify failed (${reason}): ${smtpRuntime.verifyError}`);
     return false;
   }
@@ -4043,7 +4092,10 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
     return { status: 'failed', detail: readiness.detail || 'Email delivery is temporarily unavailable.' };
   }
   const greetingName = String(firstName || '').trim() || 'NET360 student';
-  const expiryLabel = expiresAt.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  const expiryDate = expiresAt instanceof Date ? expiresAt : new Date(expiresAt);
+  const expiryLabel = Number.isFinite(expiryDate.getTime())
+    ? expiryDate.toISOString().replace('T', ' ').slice(0, 16) + ' UTC'
+    : '15 minutes from send';
   const subject = 'Confirm NET360 account deletion';
   const text = [
     `Hi ${greetingName},`,
@@ -4097,36 +4149,16 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
 </body></html>`;
 
   try {
-    await smtpTransporter.sendMail({
+    await sendSmtpMail({
       from: SMTP_FROM_EMAIL,
       to: toEmail,
       subject,
       text,
       html,
     });
-    smtpRuntime.verified = true;
-    smtpRuntime.verifyError = '';
     return { status: 'sent', detail: 'Deletion email sent.' };
-  } catch (firstError) {
-    smtpRuntime.verified = false;
-    const retried = await verifySmtpTransport('delete-link-retry');
-    if (retried) {
-      try {
-        await smtpTransporter.sendMail({
-          from: SMTP_FROM_EMAIL,
-          to: toEmail,
-          subject,
-          text,
-          html,
-        });
-        smtpRuntime.verified = true;
-        smtpRuntime.verifyError = '';
-        return { status: 'sent', detail: 'Deletion email sent.' };
-      } catch (retryError) {
-        return { status: 'failed', detail: retryError instanceof Error ? retryError.message : 'Email provider error.' };
-      }
-    }
-    return { status: 'failed', detail: firstError instanceof Error ? firstError.message : 'Email provider error.' };
+  } catch (error) {
+    return { status: 'failed', detail: sanitizeSmtpError(error) };
   }
 }
 
@@ -7939,6 +7971,8 @@ app.get('/api/health', async (_req, res) => {
       verified: smtpRuntime.verified,
       missingEnv: smtpMissingEnv,
       publicAppUrlConfigured: Boolean(NET360_PUBLIC_APP_URL),
+      lastError: smtpRuntime.verifyError || '',
+      activePort: smtpRuntime.activePort || 0,
     },
     redis: {
       configured: isRedisConfigured(),
