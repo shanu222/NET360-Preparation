@@ -364,6 +364,12 @@ const SMTP_FROM_EMAIL = unquoteEnv(
   || process.env.EMAIL_FROM
   || SMTP_USER,
 );
+const RESEND_API_KEY = unquoteEnv(process.env.RESEND_API_KEY || '');
+const RESEND_FROM_EMAIL = unquoteEnv(
+  process.env.RESEND_FROM_EMAIL
+  || SMTP_FROM_EMAIL
+  || 'NET360 Preparation <beth.t@example.com>',
+);
 const NET360_PUBLIC_APP_URL = String(
   process.env.NET360_PUBLIC_APP_URL
   || process.env.PUBLIC_APP_URL
@@ -4027,18 +4033,40 @@ function resolveNet360PublicWebBaseUrl() {
 }
 
 async function ensureDeletionEmailDeliveryReady() {
+  if (RESEND_API_KEY && RESEND_FROM_EMAIL) {
+    return { ok: true, detail: '' };
+  }
   if (!smtpRuntime.enabled || !smtpTransporter || !SMTP_FROM_EMAIL) {
     return {
       ok: false,
       detail: 'Email delivery is temporarily unavailable.',
     };
   }
-  // PrivateEmail / some SMTP hosts fail SMTP verify() but still accept sendMail.
-  // Do not block the Google deletion link on verify(); sendMail is the real check.
   if (!smtpRuntime.verified) {
     void verifySmtpTransport('delete-link');
   }
   return { ok: true, detail: '' };
+}
+
+async function sendDeletionEmailViaResend({ from, to, subject, text, html }) {
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      from,
+      to: [to],
+      subject,
+      text,
+      html,
+    }),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(`Resend ${response.status}: ${String(body || '').slice(0, 180)}`);
+  }
 }
 
 function buildAccountDeletionSessionFingerprint(req, user) {
@@ -4104,7 +4132,7 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
     return { status: 'failed', detail: 'Invalid destination email.' };
   }
   const readiness = await ensureDeletionEmailDeliveryReady();
-  if (!readiness.ok || !smtpTransporter || !SMTP_FROM_EMAIL) {
+  if (!readiness.ok) {
     return { status: 'failed', detail: readiness.detail || 'Email delivery is temporarily unavailable.' };
   }
   const greetingName = String(firstName || '').trim() || 'NET360 student';
@@ -4165,6 +4193,16 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
 </body></html>`;
 
   try {
+    if (RESEND_API_KEY) {
+      await sendDeletionEmailViaResend({
+        from: RESEND_FROM_EMAIL,
+        to: toEmail,
+        subject,
+        text,
+        html,
+      });
+      return { status: 'sent', detail: 'Deletion email sent.' };
+    }
     await sendSmtpMail({
       from: SMTP_FROM_EMAIL,
       to: toEmail,
@@ -7978,6 +8016,8 @@ app.get('/api/health', async (_req, res) => {
       SMTP_USER: Boolean(SMTP_USER),
       SMTP_PASS: Boolean(SMTP_PASS),
       SMTP_FROM_EMAIL: Boolean(SMTP_FROM_EMAIL),
+      RESEND_API_KEY: Boolean(RESEND_API_KEY),
+      RESEND_FROM_EMAIL: Boolean(RESEND_FROM_EMAIL),
       NET360_PUBLIC_APP_URL: Boolean(NET360_PUBLIC_APP_URL),
       RAILWAY_ENVIRONMENT_NAME: String(process.env.RAILWAY_ENVIRONMENT_NAME || '').trim() || '(unset)',
       RAILWAY_SERVICE_NAME: String(process.env.RAILWAY_SERVICE_NAME || '').trim() || '(unset)',
@@ -7989,6 +8029,7 @@ app.get('/api/health', async (_req, res) => {
       publicAppUrlConfigured: Boolean(NET360_PUBLIC_APP_URL),
       lastError: smtpRuntime.verifyError || '',
       activePort: smtpRuntime.activePort || 0,
+      resendConfigured: Boolean(RESEND_API_KEY),
     },
     redis: {
       configured: isRedisConfigured(),
