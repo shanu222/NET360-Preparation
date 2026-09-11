@@ -343,24 +343,27 @@ const ALLOW_QUERY_TOKEN_AUTH =
     : !IS_PRODUCTION;
 
 const MODEL_PROVIDER_KEY = process.env.MODEL_PROVIDER_API_KEY || process.env.OPENAI_API_KEY || '';
-const SMTP_HOST = String(process.env.SMTP_HOST || process.env.MAIL_HOST || process.env.EMAIL_HOST || '').trim();
-const SMTP_PORT = Number(process.env.SMTP_PORT || process.env.MAIL_PORT || 587);
-const SMTP_SECURE = String(process.env.SMTP_SECURE || '').toLowerCase() === 'true'
+function unquoteEnv(value) {
+  return String(value || '').trim().replace(/^['"]+|['"]+$/g, '').trim();
+}
+const SMTP_HOST = unquoteEnv(process.env.SMTP_HOST || process.env.MAIL_HOST || process.env.EMAIL_HOST || '');
+const SMTP_PORT = Number(unquoteEnv(process.env.SMTP_PORT || process.env.MAIL_PORT || '587'));
+const SMTP_SECURE = unquoteEnv(process.env.SMTP_SECURE || '').toLowerCase() === 'true'
   || Number(SMTP_PORT) === 465;
-const SMTP_USER = String(process.env.SMTP_USER || process.env.EMAIL_USER || process.env.MAIL_USER || '').trim();
-const SMTP_PASS = String(
+const SMTP_USER = unquoteEnv(process.env.SMTP_USER || process.env.EMAIL_USER || process.env.MAIL_USER || '');
+const SMTP_PASS = unquoteEnv(
   process.env.SMTP_PASS
   || process.env.SMTP_PASSWORD
   || process.env.EMAIL_PASS
   || process.env.MAIL_PASS
   || '',
-).trim();
-const SMTP_FROM_EMAIL = String(
+);
+const SMTP_FROM_EMAIL = unquoteEnv(
   process.env.SMTP_FROM_EMAIL
   || process.env.MAIL_FROM
   || process.env.EMAIL_FROM
   || SMTP_USER,
-).trim();
+);
 const NET360_PUBLIC_APP_URL = String(
   process.env.NET360_PUBLIC_APP_URL
   || process.env.PUBLIC_APP_URL
@@ -402,9 +405,13 @@ const smtpTransporter = smtpRuntime.enabled
     host: SMTP_HOST,
     port: SMTP_PORT,
     secure: SMTP_SECURE,
+    requireTLS: !SMTP_SECURE && SMTP_PORT === 587,
     auth: {
       user: SMTP_USER,
       pass: SMTP_PASS,
+    },
+    tls: {
+      minVersion: 'TLSv1.2',
     },
     connectionTimeout: 12_000,
     greetingTimeout: 12_000,
@@ -3955,21 +3962,16 @@ function resolveNet360PublicWebBaseUrl() {
 }
 
 async function ensureDeletionEmailDeliveryReady() {
-  if (!smtpRuntime.enabled || !smtpTransporter) {
+  if (!smtpRuntime.enabled || !smtpTransporter || !SMTP_FROM_EMAIL) {
     return {
       ok: false,
       detail: 'Email delivery is temporarily unavailable.',
     };
   }
-  if (smtpRuntime.verified) {
-    return { ok: true, detail: '' };
-  }
-  const verified = await verifySmtpTransport('delete-link');
-  if (!verified) {
-    return {
-      ok: false,
-      detail: 'Email delivery is temporarily unavailable.',
-    };
+  // PrivateEmail / some SMTP hosts fail SMTP verify() but still accept sendMail.
+  // Do not block the Google deletion link on verify(); sendMail is the real check.
+  if (!smtpRuntime.verified) {
+    void verifySmtpTransport('delete-link');
   }
   return { ok: true, detail: '' };
 }
