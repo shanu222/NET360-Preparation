@@ -8961,10 +8961,36 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
     }
 
     const deletionChannel = await resolveStudentDeletionChannel(user);
+    const firebaseIdToken = String(req.body?.firebaseIdToken || '').trim();
+
+    const verifyFreshFirebaseIdentity = async () => {
+      if (!firebaseIdToken) return false;
+      const verified = await verifyFirebaseUserToken(firebaseIdToken);
+      const sameUid = Boolean(user.firebaseUid) && verified.uid === String(user.firebaseUid);
+      const sameEmail = verified.email && verified.email === normalizeEmail(user.email || '');
+      const recentAuth = verified.authTimeMs > 0 && (Date.now() - verified.authTimeMs) <= ACCOUNT_DELETION_LINK_TTL_MS;
+      return (sameUid || sameEmail) && recentAuth;
+    };
+
     if (deletionChannel === 'email-link') {
-      res.status(400).json({
-        error: 'Use email verification link for Google accounts.',
-      });
+      let googleMatches = false;
+      try {
+        googleMatches = await verifyFreshFirebaseIdentity();
+      } catch {
+        googleMatches = false;
+      }
+      if (!googleMatches) {
+        await logSecurityEvent(req, {
+          eventType: 'auth.delete_account_google_reauth_failed',
+          severity: 'warning',
+          actorUserId: user._id,
+          actorEmail: user.email,
+        });
+        res.status(401).json({ error: 'Confirm with Google again to delete this account.' });
+        return;
+      }
+      const payload = await executePermanentStudentAccountDeletion(req, res, user);
+      res.json(payload);
       return;
     }
 
@@ -8973,15 +8999,10 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const firebaseIdToken = String(req.body?.firebaseIdToken || '').trim();
     let passwordMatches = false;
     if (firebaseIdToken) {
       try {
-        const verified = await verifyFirebaseUserToken(firebaseIdToken);
-        const sameUid = Boolean(user.firebaseUid) && verified.uid === String(user.firebaseUid);
-        const sameEmail = verified.email && verified.email === normalizeEmail(user.email || '');
-        const recentAuth = verified.authTimeMs > 0 && (Date.now() - verified.authTimeMs) <= ACCOUNT_DELETION_LINK_TTL_MS;
-        passwordMatches = (sameUid || sameEmail) && recentAuth;
+        passwordMatches = await verifyFreshFirebaseIdentity();
       } catch {
         passwordMatches = false;
       }

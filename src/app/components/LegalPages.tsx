@@ -178,8 +178,8 @@ export function DeleteAccountHelpPage() {
           <li>Open Profile / Settings.</li>
           <li>Open Danger Zone: Delete Account.</li>
           <li>Type DELETE in uppercase.</li>
-          <li>Enter your registration password.</li>
-          <li>Click &quot;Delete Account Permanently&quot;.</li>
+          <li>Email/password accounts: enter your registration password, then click &quot;Delete Account Permanently&quot;.</li>
+          <li>Google Sign-In accounts: click &quot;Confirm Google and Delete Account&quot; and sign in with the same Google account.</li>
         </ul>
       </section>
 

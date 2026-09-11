@@ -5,6 +5,8 @@ import {
   getRedirectResult,
   deleteUser,
   GoogleAuthProvider,
+  reauthenticateWithCredential,
+  reauthenticateWithPopup,
   sendPasswordResetEmail,
   signInWithCredential,
   signInWithEmailAndPassword,
@@ -58,7 +60,7 @@ interface AuthContextValue {
     lastName?: string;
   }) => Promise<void>;
   sendRecoveryEmail: (email: string) => Promise<void>;
-  deleteAccount: (params: { password: string; confirmationText: string }) => Promise<{ message: string }>;
+  deleteAccount: (params: { password?: string; confirmationText: string; googleConfirm?: boolean }) => Promise<{ message: string }>;
   requestAccountDeletionLink: (params: { confirmationText: string }) => Promise<{ message: string; expiresAt?: string }>;
   logout: () => void;
 }
@@ -1142,7 +1144,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [clearClientAuthState, refreshToken]);
 
-  const deleteAccount = useCallback<AuthContextValue['deleteAccount']>(async ({ password, confirmationText }) => {
+  const deleteAccount = useCallback<AuthContextValue['deleteAccount']>(async ({ password, confirmationText, googleConfirm }) => {
     const finalizeSuccess = async (payload: { message: string }) => {
       clearClientAuthState();
       if (firebaseAuth) {
@@ -1153,7 +1155,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     let firebaseIdToken = '';
     const email = String(user?.email || '').trim();
-    if (email && password) {
+
+    if (googleConfirm) {
+      if (!isFirebaseConfigured()) {
+        throw new Error('Google confirmation is not available right now. Please try again.');
+      }
+      const auth = await ensureFirebaseAuthReady();
+      const activeAuth = auth || firebaseAuth;
+      if (!activeAuth) {
+        throw new Error('Google confirmation is not available right now. Please try again.');
+      }
+      const provider = new GoogleAuthProvider();
+      provider.addScope('profile');
+      provider.addScope('email');
+      provider.setCustomParameters({ prompt: 'login', login_hint: email });
+      try {
+        if (isAndroidNative) {
+          const { idToken } = await signInWithGoogleAndroidNative();
+          const googleCredential = GoogleAuthProvider.credential(idToken);
+          const userCred = activeAuth.currentUser
+            ? await reauthenticateWithCredential(activeAuth.currentUser, googleCredential)
+            : await signInWithCredential(activeAuth, googleCredential);
+          firebaseIdToken = await userCred.user.getIdToken(true);
+        } else if (activeAuth.currentUser) {
+          const cred = await reauthenticateWithPopup(activeAuth.currentUser, provider);
+          firebaseIdToken = await cred.user.getIdToken(true);
+        } else {
+          const cred = await signInWithPopup(activeAuth, provider);
+          firebaseIdToken = await cred.user.getIdToken(true);
+        }
+      } catch (error) {
+        const code = String((error as { code?: string })?.code || '').trim();
+        if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request' || code === 'USER_CANCELLED') {
+          throw new Error('Google confirmation was cancelled. Account was not deleted.');
+        }
+        throw new Error('Google confirmation failed. Please try again.');
+      }
+    } else if (email && password) {
       try {
         if (isNativeRuntime) {
           const rest = await signInWithEmailPasswordRest(email, password);
@@ -1170,7 +1208,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const payload = await apiRequest<{ message: string }>('/api/auth/delete-account', {
       method: 'POST',
       body: JSON.stringify({
-        password,
+        password: password || '',
         confirmationText,
         firebaseIdToken,
       }),
@@ -1178,7 +1216,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       retryCount: 0,
     });
     return finalizeSuccess(payload);
-  }, [clearClientAuthState, isNativeRuntime, user?.email]);
+  }, [clearClientAuthState, isAndroidNative, isNativeRuntime, user?.email]);
 
   useEffect(() => {
     const onRevoked = (ev: Event) => {
