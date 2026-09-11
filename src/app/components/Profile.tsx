@@ -93,6 +93,21 @@ function isActiveSessionElsewhere(error: unknown): boolean {
     || message.includes('active on another device');
 }
 
+function cleanProfileNamePart(value: string | undefined) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed || trimmed === '-' || trimmed === '—') return '';
+  return trimmed;
+}
+
+function profileAvatarInitials(firstName: string, lastName: string) {
+  const firstLetters = cleanProfileNamePart(firstName).replace(/[^a-zA-Z]/g, '');
+  const lastLetters = cleanProfileNamePart(lastName).replace(/[^a-zA-Z]/g, '');
+  if (firstLetters && lastLetters) return `${firstLetters[0]}${lastLetters[0]}`.toUpperCase();
+  if (firstLetters.length >= 2) return firstLetters.slice(0, 2).toUpperCase();
+  if (firstLetters) return firstLetters[0].toUpperCase();
+  return 'ST';
+}
+
 function loginFriendlyAuthError(error: unknown, fallback: string): string {
   const typed = error as AuthErrorLike;
   const code = String(typed?.code || typed?.payload?.code || '').toUpperCase();
@@ -229,11 +244,13 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   }, [forgotCooldownSeconds]);
 
 
-  const avatarText = useMemo(() => {
-    const first = localProfile.firstName?.trim()[0] ?? 'S';
-    const last = localProfile.lastName?.trim()[0] ?? 'T';
-    return `${first}${last}`.toUpperCase();
-  }, [localProfile.firstName, localProfile.lastName]);
+  const displayFirstName = cleanProfileNamePart(localProfile.firstName);
+  const displayLastName = cleanProfileNamePart(localProfile.lastName);
+  const displayEmail = String(localProfile.email || user?.email || '').trim();
+  const avatarText = useMemo(
+    () => profileAvatarInitials(displayFirstName, displayLastName),
+    [displayFirstName, displayLastName],
+  );
 
   const updateField = (key: keyof typeof localProfile, value: string) => {
     setLocalProfile((previous) => ({ ...previous, [key]: value }));
@@ -1008,8 +1025,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 <AvatarImage src={getMediaUrl(avatarPreview)} width={96} height={96} />
                 <AvatarFallback className="text-2xl">{avatarText}</AvatarFallback>
               </Avatar>
-              <h3>{`${localProfile.firstName || 'Student'} ${localProfile.lastName || ''}`.trim()}</h3>
-              <p className="text-sm text-muted-foreground">{localProfile.email || user.email}</p>
+              <h3>{`${displayFirstName || 'Student'} ${displayLastName}`.trim()}</h3>
+              <p className="text-sm text-muted-foreground break-all">{displayEmail}</p>
               <Button variant="outline" className="mt-4" onClick={triggerPhotoPicker}>Change Photo</Button>
               <input
                 ref={photoInputRef}
@@ -1092,9 +1109,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
           <CardContent className="space-y-4">
             {!isPersonalInfoExpanded ? (
               <div className="grid gap-2 rounded-lg border bg-slate-50/70 p-3 text-sm md:grid-cols-2">
-                <p><span className="text-muted-foreground">First Name:</span> {localProfile.firstName || 'Not set'}</p>
-                <p><span className="text-muted-foreground">Last Name:</span> {localProfile.lastName || 'Not set'}</p>
-                <p><span className="text-muted-foreground">Email:</span> {localProfile.email || user.email || 'Not set'}</p>
+                <p><span className="text-muted-foreground">First Name:</span> {displayFirstName || 'Not set'}</p>
+                <p><span className="text-muted-foreground">Last Name:</span> {displayLastName || 'Not set'}</p>
+                <p className="break-all"><span className="text-muted-foreground">Email:</span> {displayEmail || 'Not set'}</p>
                 <p><span className="text-muted-foreground">Phone:</span> {localProfile.phone || 'Not set'}</p>
                 <p className="md:col-span-2"><span className="text-muted-foreground">City:</span> {localProfile.city || 'Not set'}</p>
               </div>
@@ -1105,22 +1122,22 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
             <div className="grid md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="first-name">First Name</Label>
-                <Input id="first-name" value={localProfile.firstName} disabled placeholder="John" />
+                <Input id="first-name" value={displayFirstName} disabled placeholder="Not set" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="last-name">Last Name</Label>
-                <Input id="last-name" value={localProfile.lastName} disabled placeholder="Doe" />
+                <Input id="last-name" value={displayLastName} disabled placeholder="Not set" />
               </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="email">Email Address</Label>
-              <Input id="email" type="email" value={localProfile.email || user.email} disabled />
+              <Input id="email" type="text" value={displayEmail} disabled className="break-all" />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="phone">Phone Number</Label>
-              <Input id="phone" type="tel" value={localProfile.phone} disabled placeholder="+92 300 1234567" />
+              <Input id="phone" type="tel" value={localProfile.phone} disabled placeholder="Not set" />
             </div>
 
             <div className="space-y-2">
