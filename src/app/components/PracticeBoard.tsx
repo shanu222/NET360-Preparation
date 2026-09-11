@@ -1,8 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Eraser, PenLine, RefreshCcw } from 'lucide-react';
+import { Eraser, Maximize2, PenLine, RefreshCcw } from 'lucide-react';
 import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { Button } from './ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from './ui/dialog';
 import { Input } from './ui/input';
 import { apiRequest } from '../lib/api';
 import { logNativeEvent } from '../lib/nativeDiagnostics';
@@ -106,6 +112,40 @@ function downloadDataUrlFile(file?: { dataUrl?: string | null; name?: string | n
   }
 }
 
+function PracticeBoardImage({
+  src,
+  alt,
+  onOpenFullSize,
+  frameClassName,
+}: {
+  src: string;
+  alt: string;
+  onOpenFullSize: () => void;
+  frameClassName: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onOpenFullSize}
+      className={`group relative mt-3 block max-w-full overflow-hidden rounded-xl border bg-white text-left shadow-sm transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${frameClassName}`}
+      aria-label={`View ${alt} full size`}
+    >
+      <img
+        src={src}
+        alt={alt}
+        className="max-h-56 w-auto max-w-full object-contain sm:max-h-72"
+        loading="lazy"
+        decoding="async"
+      />
+      <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950/45 via-transparent to-transparent opacity-80 transition group-hover:opacity-100" />
+      <span className="absolute bottom-2 right-2 inline-flex items-center gap-1.5 rounded-full bg-white/95 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-slate-800 shadow-md ring-1 ring-black/5">
+        <Maximize2 className="h-3.5 w-3.5 text-indigo-600" />
+        Full size
+      </span>
+    </button>
+  );
+}
+
 const LIGHT_PEN_PRIMARY = { name: 'Black', value: '#111827' };
 const DARK_PEN_PRIMARY = { name: 'White', value: '#f8fafc' };
 
@@ -127,6 +167,7 @@ export function PracticeBoard() {
   const [questionBankQuestions, setQuestionBankQuestions] = useState<BoardQuestion[]>([]);
   const [tool, setTool] = useState<Tool>('pen');
   const [isDarkMode, setIsDarkMode] = useState(() => document.documentElement.classList.contains('dark'));
+  const [fullSizeImage, setFullSizeImage] = useState<{ src: string; title: string; alt: string } | null>(null);
 
   const penColors = useMemo(
     () => [isDarkMode ? DARK_PEN_PRIMARY : LIGHT_PEN_PRIMARY, ...SHARED_PEN_COLORS],
@@ -392,6 +433,14 @@ export function PracticeBoard() {
 
   const questionFile = useMemo(() => activeQuestion?.questionFile || null, [activeQuestion]);
   const solutionFile = useMemo(() => activeQuestion?.solutionFile || null, [activeQuestion]);
+  const questionText = String(activeQuestion?.questionText || '').trim();
+  const solutionText = String(activeQuestion?.solutionText || '').trim();
+  const questionImage = questionFile && isImageMimeType(questionFile.mimeType) ? questionFile : null;
+  const solutionImage = solutionFile && isImageMimeType(solutionFile.mimeType) ? solutionFile : null;
+
+  useEffect(() => {
+    setFullSizeImage(null);
+  }, [activeQuestion?.id]);
 
   if (isQuestionBankView) {
     return (
@@ -536,19 +585,25 @@ export function PracticeBoard() {
         </CardHeader>
         <CardContent>
           <div className="rounded-xl border border-indigo-100 bg-slate-50/60 p-4">
-            <p className="text-base text-slate-800 sm:text-lg">
-              {activeQuestion?.questionText || 'Question bank is empty right now.'}
-            </p>
-            {questionFile ? (
-              isImageMimeType(questionFile.mimeType) ? (
-                <img
-                  src={questionFile.dataUrl}
-                  alt="Question diagram"
-                  className="mt-3 max-h-48 w-auto rounded-lg border border-indigo-100 bg-white object-contain sm:max-h-56"
-                  loading="lazy"
-                  decoding="async"
-                />
-              ) : (
+            {questionText ? (
+              <p className="text-base text-slate-800 sm:text-lg">{questionText}</p>
+            ) : !activeQuestion ? (
+              <p className="text-base text-slate-800 sm:text-lg">Question bank is empty right now.</p>
+            ) : null}
+            {questionImage ? (
+              <PracticeBoardImage
+                src={questionImage.dataUrl}
+                alt="Question"
+                frameClassName="border-indigo-100"
+                onOpenFullSize={() =>
+                  setFullSizeImage({
+                    src: questionImage.dataUrl,
+                    title: 'Question',
+                    alt: 'Question',
+                  })
+                }
+              />
+            ) : questionFile ? (
                 <div className="mt-3 rounded-md border border-indigo-100 bg-white p-2 text-xs text-slate-600">
                   <p>Question file: {questionFile.name}</p>
                   <div className="mt-1 flex flex-wrap gap-2">
@@ -556,24 +611,33 @@ export function PracticeBoard() {
                     <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => downloadDataUrlFile(questionFile)}>Download</Button>
                   </div>
                 </div>
-              )
             ) : null}
           </div>
 
           {showAnswer && activeQuestion ? (
             <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4">
               <p className="text-xs uppercase tracking-wide text-emerald-700">Answer</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">
-                {activeQuestion.solutionText || 'No text answer provided for this question.'}
-              </p>
-              {solutionFile ? (
-                isImageMimeType(solutionFile.mimeType) ? (
-                  <img
-                    src={solutionFile.dataUrl}
-                    alt="Solution diagram"
-                    className="mt-3 max-h-48 w-auto rounded-lg border border-emerald-200 bg-white object-contain sm:max-h-56"
-                  />
-                ) : (
+              {solutionText ? (
+                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">{solutionText}</p>
+              ) : !solutionImage ? (
+                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">
+                  No text answer provided for this question.
+                </p>
+              ) : null}
+              {solutionImage ? (
+                <PracticeBoardImage
+                  src={solutionImage.dataUrl}
+                  alt="Answer"
+                  frameClassName="border-emerald-200"
+                  onOpenFullSize={() =>
+                    setFullSizeImage({
+                      src: solutionImage.dataUrl,
+                      title: 'Answer',
+                      alt: 'Answer',
+                    })
+                  }
+                />
+              ) : solutionFile ? (
                   <div className="mt-3 rounded-md border border-emerald-200 bg-white p-2 text-xs text-slate-600">
                     <p>Solution file: {solutionFile.name}</p>
                     <div className="mt-1 flex flex-wrap gap-2">
@@ -581,12 +645,33 @@ export function PracticeBoard() {
                       <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={() => downloadDataUrlFile(solutionFile)}>Download</Button>
                     </div>
                   </div>
-                )
               ) : null}
             </div>
           ) : null}
         </CardContent>
       </Card>
+
+      <Dialog open={Boolean(fullSizeImage)} onOpenChange={(open) => { if (!open) setFullSizeImage(null); }}>
+        <DialogContent className="max-h-[min(96dvh,calc(100dvh-1rem))] w-[min(96vw,1120px)] max-w-[min(96vw,1120px)] overflow-hidden border-slate-800 bg-slate-950 p-0 text-white shadow-2xl sm:max-w-[min(96vw,1120px)] md:max-w-[min(96vw,1120px)] [&>button]:text-white [&>button]:hover:bg-white/10 [&>button]:hover:text-white">
+          <div className="border-b border-white/10 px-4 py-3 pr-12">
+            <DialogTitle className="text-sm font-semibold tracking-wide text-white">
+              {fullSizeImage?.title || 'Preview'}
+            </DialogTitle>
+            <DialogDescription className="text-xs text-slate-300">
+              Click outside or press Esc to close
+            </DialogDescription>
+          </div>
+          <div className="flex max-h-[min(82dvh,860px)] items-center justify-center bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.18),transparent_58%),#020617] p-3 sm:p-5">
+            {fullSizeImage ? (
+              <img
+                src={fullSizeImage.src}
+                alt={fullSizeImage.alt}
+                className="max-h-[min(78dvh,820px)] w-auto max-w-full rounded-lg object-contain shadow-[0_24px_60px_rgba(0,0,0,0.45)]"
+              />
+            ) : null}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Card className="rounded-2xl border-indigo-100 bg-white/96 shadow-[0_12px_24px_rgba(98,113,202,0.10)]">
         <CardHeader className="pb-2">
