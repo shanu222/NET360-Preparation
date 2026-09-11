@@ -335,7 +335,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const authToken = resolveClientAuthToken();
     if (!authToken) return;
     void loadUserData(authToken).catch(() => undefined);
-  }, [token, user, loadUserData, resolveClientAuthToken]);
+  }, [token, user?.id, loadUserData, resolveClientAuthToken]);
 
   useEffect(() => {
     const authToken = resolveClientAuthToken();

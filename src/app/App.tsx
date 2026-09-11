@@ -85,7 +85,13 @@ const SupportChatWidgetLazy = lazyWithRetry(() =>
 
 function SessionReady({ children }: { children: ReactNode }) {
   const { loading } = useAuth();
-  if (loading) {
+  const hasBeenReadyRef = useRef(false);
+  if (!loading) {
+    hasBeenReadyRef.current = true;
+  }
+  // After the first successful session, never replace the student tree with a
+  // skeleton. Resume/focus restores must stay silent so Profile is not remounted.
+  if (loading && !hasBeenReadyRef.current) {
     return <PageRouteFallback />;
   }
   return <>{children}</>;
@@ -478,6 +484,12 @@ export default function App() {
   const [, startRouteTransition] = useTransition();
   const { user, loading: authLoading } = useAuth();
   const activeTab = useMemo(() => resolveSectionFromLocation(location.pathname, location.hash), [location.hash, location.pathname]);
+  const [profileVisited, setProfileVisited] = useState(
+    () => resolveSectionFromLocation(
+      typeof window !== 'undefined' ? window.location.pathname : '/',
+      typeof window !== 'undefined' ? window.location.hash : '',
+    ) === 'profile',
+  );
   const isConfirmAccountDeletionRoute = useMemo(() => {
     const normalized = location.pathname === '/' ? '/' : location.pathname.replace(/\/+$/, '');
     return normalized === '/confirm-account-deletion';
@@ -494,6 +506,12 @@ export default function App() {
       navigate(PATH_BY_SECTION.profile, { replace: true });
     }
   }, [authLoading, user, activeTab, navigate, isConfirmAccountDeletionRoute]);
+
+  useEffect(() => {
+    if (activeTab === 'profile') {
+      setProfileVisited(true);
+    }
+  }, [activeTab]);
 
   const navigateWithTransition = useCallback(
     (to: string) => {
@@ -853,11 +871,7 @@ export default function App() {
           </div>
         );
       case 'profile':
-        return (
-          <div className="mt-0 net360-page net360-page-enter">
-            <Profile onNavigate={onNavigateSection} />
-          </div>
-        );
+        return null;
       case 'subscription':
         return (
           <div className="mt-0 net360-page net360-page-enter">
@@ -1061,9 +1075,23 @@ export default function App() {
               </div>
             </header>
 
-            {/* Main Content — lazy routes + Suspense avoid blank flash while chunks load */}
+            {/* Main Content — lazy routes + Suspense avoid blank flash while chunks load.
+                Profile stays mounted after first visit so returning to it is not a remount. */}
             <main id="main-content" className="net360-main min-h-0 min-w-0 flex-1 overflow-y-auto px-0 py-2.5 sm:py-5">
-              <Suspense fallback={<PageRouteFallback />}>{mainSection}</Suspense>
+              {profileVisited ? (
+                <div
+                  hidden={activeTab !== 'profile'}
+                  className={activeTab === 'profile' ? 'mt-0 net360-page' : 'hidden'}
+                  aria-hidden={activeTab !== 'profile'}
+                >
+                  <Suspense fallback={activeTab === 'profile' ? <PageRouteFallback /> : null}>
+                    <Profile onNavigate={onNavigateSection} />
+                  </Suspense>
+                </div>
+              ) : null}
+              {activeTab !== 'profile' ? (
+                <Suspense fallback={<PageRouteFallback />}>{mainSection}</Suspense>
+              ) : null}
             </main>
           </section>
         </div>

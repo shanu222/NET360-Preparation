@@ -141,11 +141,28 @@ function clearLocalStorageAuthStateSafe() {
 }
 
 let authSessionLoadGeneration = 0;
+const FOREGROUND_SESSION_RESTORE_DEBOUNCE_MS = 320;
 
 function delay(ms: number) {
   return new Promise<void>((resolve) => {
     window.setTimeout(resolve, Math.max(0, Math.floor(ms)));
   });
+}
+
+function isSameAuthUser(a: AuthUser | null | undefined, b: AuthUser | null | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.id === b.id
+    && a.email === b.email
+    && a.firstName === b.firstName
+    && a.lastName === b.lastName
+    && a.role === b.role
+    && a.authProvider === b.authProvider
+    && a.authProviderDetail === b.authProviderDetail
+    && a.deletionChannel === b.deletionChannel
+    && a.activeSessionId === b.activeSessionId
+  );
 }
 
 function isLikelyTransientAuthFailure(error: unknown): boolean {
@@ -255,6 +272,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAndroidNative = isNativeRuntime && Capacitor.getPlatform() === 'android';
   const runSessionRestoreRef = useRef<(reason?: string) => Promise<void>>(async () => undefined);
   const authBootstrapInFlightRef = useRef<Promise<boolean> | null>(null);
+  const userRef = useRef(user);
+  const tokenRef = useRef(token);
+  userRef.current = user;
+  tokenRef.current = token;
 
   useEffect(() => {
     if (!isNativeRuntime) return;
@@ -381,8 +402,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [detectNativeWebViewCapabilities, isNativeRuntime, waitForCapacitorReady, waitForNetworkReady, waitForStorageReady]);
 
   const applyAuthPayload = useCallback((payload: { token?: string; refreshToken?: string; user: AuthUser }) => {
-    setUser(payload.user);
     persistStudentUserSnapshot(payload.user);
+    setUser((current) => (isSameAuthUser(current, payload.user) ? current : payload.user));
     if (payload.token && shouldPersistAuthTokens()) {
       setToken(payload.token);
       setRefreshToken(payload.refreshToken ?? null);
@@ -449,7 +470,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (typeof window === 'undefined') return;
 
       const loadId = ++authSessionLoadGeneration;
-      setLoading(true);
+      // Cold start only. Focus / visibility / app-resume must not flip `loading`
+      // or SessionReady will unmount the student UI (Profile looks like a reload).
+      const isColdStart = reason === 'mount';
+      if (isColdStart) {
+        setLoading(true);
+      }
 
       if (!shouldPersistAuthTokens()) {
         if (!cancelled && loadId === authSessionLoadGeneration) setLoading(false);
@@ -476,8 +502,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         if (storedToken) setToken(storedToken);
         if (storedRefresh) setRefreshToken(storedRefresh);
-        if (snapshotUser?.id && !cancelled) {
+        if (snapshotUser?.id && !cancelled && !isSameAuthUser(userRef.current, snapshotUser)) {
           setUser(snapshotUser);
+        }
+      };
+
+      const commitRestoredUser = (nextUser: AuthUser) => {
+        persistStudentUserSnapshot(nextUser);
+        if (!isSameAuthUser(userRef.current, nextUser)) {
+          setUser(nextUser);
+        }
+      };
+
+      const commitRestoredAccessToken = (nextToken: string | null) => {
+        if (tokenRef.current !== nextToken) {
+          setToken(nextToken);
         }
       };
 
@@ -495,13 +534,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             activeSessionStatus: 'active',
             refreshStatus: 'ok',
           });
-          setUser(me.user);
-          persistStudentUserSnapshot(me.user);
+          commitRestoredUser(me.user);
           if (!bearer) {
-            setToken(COOKIE_SESSION_API_MARKER);
+            commitRestoredAccessToken(COOKIE_SESSION_API_MARKER);
             persistCookieSessionMode();
           } else {
-            setToken(storedToken);
+            commitRestoredAccessToken(storedToken);
           }
           return;
         } catch (error) {
@@ -635,10 +673,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    let restoreDebounceTimer: number | null = null;
+    const scheduleForegroundRestore = (reason: string) => {
+      if (restoreDebounceTimer) {
+        window.clearTimeout(restoreDebounceTimer);
+      }
+      restoreDebounceTimer = window.setTimeout(() => {
+        restoreDebounceTimer = null;
+        void runSessionRestoreRef.current(reason);
+      }, FOREGROUND_SESSION_RESTORE_DEBOUNCE_MS);
+    };
+
     const onVisibility = () => {
       if (!document.hidden) {
         syncFromStorage();
-        void runSessionRestoreRef.current('visibility');
+        scheduleForegroundRestore('visibility');
       }
     };
 
@@ -649,8 +698,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const onFocus = () => {
+      if (document.hidden) return;
       syncFromStorage();
-      void runSessionRestoreRef.current('focus');
+      scheduleForegroundRestore('focus');
     };
 
     window.addEventListener('focus', onFocus);
@@ -660,16 +710,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .addListener('appStateChange', ({ isActive }) => {
         if (isActive) {
           syncFromStorage();
-          void runSessionRestoreRef.current('app-resume');
+          scheduleForegroundRestore('app-resume');
         }
       })
       .catch(() => null);
     const onOnline = () => {
       syncFromStorage();
-      void runSessionRestoreRef.current('online');
+      scheduleForegroundRestore('online');
     };
     window.addEventListener('online', onOnline);
     return () => {
+      if (restoreDebounceTimer) {
+        window.clearTimeout(restoreDebounceTimer);
+      }
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('storage', onStorage);

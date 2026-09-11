@@ -147,6 +147,8 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
   const trialAutoSyncUserIdRef = useRef<string | null>(null);
 
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
+  const meRef = useRef(me);
+  meRef.current = me;
 
   const refresh = useCallback(async () => {
     if (!user) {
@@ -158,7 +160,10 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
     if (!p) {
       const bearer = resolveBearer(authToken);
       p = (async () => {
-        setLoading(true);
+        const showLoading = !meRef.current;
+        if (showLoading) {
+          setLoading(true);
+        }
         try {
           const stored = shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
           const t = bearer ?? (stored && !isCookieSessionApiMarker(stored) ? stored : undefined);
@@ -170,7 +175,9 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
         } catch {
           setMe(null);
         } finally {
-          setLoading(false);
+          if (showLoading) {
+            setLoading(false);
+          }
         }
       })();
       refreshInFlightRef.current = p;
