@@ -443,14 +443,18 @@ async function sendSmtpMail(mail) {
   if (!smtpTransports.primary) {
     throw new Error('SMTP transporter is not configured.');
   }
-  const attempts = [
-    { port: SMTP_PORT, transporter: smtpTransports.primary },
-    smtpTransports.fallback465
-      ? { port: 465, transporter: smtpTransports.fallback465 }
-      : null,
-  ].filter(Boolean);
+  const preferSsl = String(SMTP_HOST || '').toLowerCase().includes('privateemail.com') && SMTP_PORT !== 465;
+  const attempts = preferSsl
+    ? [
+      smtpTransports.fallback465 ? { port: 465, transporter: smtpTransports.fallback465 } : null,
+      { port: SMTP_PORT, transporter: smtpTransports.primary },
+    ]
+    : [
+      { port: SMTP_PORT, transporter: smtpTransports.primary },
+      smtpTransports.fallback465 ? { port: 465, transporter: smtpTransports.fallback465 } : null,
+    ];
   let lastError = null;
-  for (const attempt of attempts) {
+  for (const attempt of attempts.filter(Boolean)) {
     try {
       await attempt.transporter.sendMail(mail);
       smtpRuntime.verified = true;
@@ -468,22 +472,34 @@ async function sendSmtpMail(mail) {
 }
 
 async function verifySmtpTransport(reason = 'startup') {
-  if (!smtpTransporter) return false;
+  if (!smtpTransports.primary) return false;
   if (smtpRuntime.verified) return true;
   smtpRuntime.verifyAttempted = true;
-  try {
-    await smtpTransporter.verify();
-    smtpRuntime.verified = true;
-    smtpRuntime.verifyError = '';
-    smtpRuntime.activePort = SMTP_PORT;
-    console.log(`[smtp] transporter verified (${reason})`);
-    return true;
-  } catch (error) {
-    smtpRuntime.verified = false;
-    smtpRuntime.verifyError = sanitizeSmtpError(error);
-    console.warn(`[smtp] transporter verify failed (${reason}): ${smtpRuntime.verifyError}`);
-    return false;
+  const preferSsl = String(SMTP_HOST || '').toLowerCase().includes('privateemail.com') && SMTP_PORT !== 465;
+  const attempts = preferSsl
+    ? [
+      smtpTransports.fallback465 ? { port: 465, transporter: smtpTransports.fallback465 } : null,
+      { port: SMTP_PORT, transporter: smtpTransports.primary },
+    ]
+    : [
+      { port: SMTP_PORT, transporter: smtpTransports.primary },
+      smtpTransports.fallback465 ? { port: 465, transporter: smtpTransports.fallback465 } : null,
+    ];
+  for (const attempt of attempts.filter(Boolean)) {
+    try {
+      await attempt.transporter.verify();
+      smtpRuntime.verified = true;
+      smtpRuntime.verifyError = '';
+      smtpRuntime.activePort = attempt.port;
+      console.log(`[smtp] transporter verified (${reason}) port=${attempt.port}`);
+      return true;
+    } catch (error) {
+      smtpRuntime.verified = false;
+      smtpRuntime.verifyError = sanitizeSmtpError(error);
+      console.warn(`[smtp] transporter verify failed (${reason}) port=${attempt.port}: ${smtpRuntime.verifyError}`);
+    }
   }
+  return false;
 }
 
 if (!smtpRuntime.enabled) {
