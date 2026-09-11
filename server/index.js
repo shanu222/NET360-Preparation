@@ -413,6 +413,7 @@ const resendRuntime = {
   lastError: '',
   lastFrom: '',
   lastAt: '',
+  domains: [],
 };
 
 function sanitizeResendError(error) {
@@ -421,21 +422,52 @@ function sanitizeResendError(error) {
   return message.replace(/re_[A-Za-z0-9_]+/g, '[resend-key]').slice(0, 220);
 }
 
-function isResendFromRejected(message) {
-  return /not verified|testing emails|invalid `from`|invalid from|domain/i.test(String(message || ''));
+function addResendFromCandidate(list, seen, from) {
+  const value = String(from || '').trim();
+  if (!value) return;
+  const key = value.toLowerCase();
+  if (seen.has(key)) return;
+  seen.add(key);
+  list.push(value);
 }
 
-function listResendFromCandidates() {
+async function fetchResendDomains() {
+  if (!RESEND_API_KEY) return [];
+  const response = await fetch('https://api.resend.com/domains', {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${RESEND_API_KEY}` },
+  });
+  const body = await response.text().catch(() => '');
+  if (!response.ok) {
+    resendRuntime.lastStatus = response.status;
+    resendRuntime.lastError = sanitizeResendError(new Error(`Resend domains ${response.status}: ${String(body || '').slice(0, 160)}`));
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(body);
+    const rows = Array.isArray(parsed?.data) ? parsed.data : Array.isArray(parsed) ? parsed : [];
+    resendRuntime.domains = rows.map((row) => ({
+      name: String(row?.name || ''),
+      status: String(row?.status || ''),
+    })).filter((row) => row.name);
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+async function listResendFromCandidates() {
   const seen = new Set();
   const list = [];
-  for (const value of [RESEND_FROM_EMAIL, RESEND_TEST_FROM_EMAIL]) {
-    const from = String(value || '').trim();
-    if (!from) continue;
-    const key = from.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    list.push(from);
+  const domains = await fetchResendDomains();
+  for (const row of domains) {
+    const name = String(row?.name || '').trim().toLowerCase();
+    const status = String(row?.status || '').trim().toLowerCase();
+    if (!name || !/verified/.test(status)) continue;
+    addResendFromCandidate(list, seen, `NET360 Preparation <noreply@${name}>`);
   }
+  addResendFromCandidate(list, seen, RESEND_FROM_EMAIL);
+  addResendFromCandidate(list, seen, RESEND_TEST_FROM_EMAIL);
   return list;
 }
 
@@ -4115,7 +4147,7 @@ async function postResendEmail({ from, to, subject, text, html }) {
 }
 
 async function sendDeletionEmailViaResend({ to, subject, text, html }) {
-  const froms = listResendFromCandidates();
+  const froms = await listResendFromCandidates();
   let lastError = new Error('Resend from-address is not configured.');
   for (let i = 0; i < froms.length; i += 1) {
     try {
@@ -4130,8 +4162,7 @@ async function sendDeletionEmailViaResend({ to, subject, text, html }) {
     } catch (error) {
       lastError = error;
       console.warn(`[resend] send failed from=${resendRuntime.lastFrom}: ${sanitizeResendError(error)}`);
-      const canRetry = i < froms.length - 1 && isResendFromRejected(error?.message);
-      if (!canRetry) throw error;
+      if (i >= froms.length - 1) throw error;
     }
   }
   throw lastError;
@@ -8047,6 +8078,9 @@ async function refreshUserProgress(userId) {
 }
 
 app.get('/api/health', async (_req, res) => {
+  if (RESEND_API_KEY) {
+    await fetchResendDomains().catch(() => []);
+  }
   const build = getBuildInfo();
   const mongo = getMongoHealth();
   const memory = process.memoryUsage();
@@ -8100,6 +8134,7 @@ app.get('/api/health', async (_req, res) => {
       resendLastStatus: resendRuntime.lastStatus || 0,
       resendLastError: resendRuntime.lastError || '',
       resendLastFrom: resendRuntime.lastFrom || '',
+      resendDomains: Array.isArray(resendRuntime.domains) ? resendRuntime.domains : [],
     },
     redis: {
       configured: isRedisConfigured(),
