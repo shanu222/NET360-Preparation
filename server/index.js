@@ -407,6 +407,38 @@ const smtpRuntime = {
   activePort: 0,
 };
 
+const RESEND_TEST_FROM_EMAIL = 'NET360 Preparation <beth.t@example.com>';
+const resendRuntime = {
+  lastStatus: 0,
+  lastError: '',
+  lastFrom: '',
+  lastAt: '',
+};
+
+function sanitizeResendError(error) {
+  let message = error instanceof Error ? error.message : String(error || 'Resend error');
+  if (RESEND_API_KEY) message = message.split(RESEND_API_KEY).join('[resend-key]');
+  return message.replace(/re_[A-Za-z0-9_]+/g, '[resend-key]').slice(0, 220);
+}
+
+function isResendFromRejected(message) {
+  return /not verified|testing emails|invalid `from`|invalid from|domain/i.test(String(message || ''));
+}
+
+function listResendFromCandidates() {
+  const seen = new Set();
+  const list = [];
+  for (const value of [RESEND_FROM_EMAIL, RESEND_TEST_FROM_EMAIL]) {
+    const from = String(value || '').trim();
+    if (!from) continue;
+    const key = from.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    list.push(from);
+  }
+  return list;
+}
+
 function sanitizeSmtpError(error) {
   let message = error instanceof Error ? error.message : String(error || 'SMTP error');
   if (SMTP_USER) message = message.split(SMTP_USER).join('[smtp-user]');
@@ -4048,7 +4080,7 @@ async function ensureDeletionEmailDeliveryReady() {
   return { ok: true, detail: '' };
 }
 
-async function sendDeletionEmailViaResend({ from, to, subject, text, html }) {
+async function postResendEmail({ from, to, subject, text, html }) {
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -4063,10 +4095,46 @@ async function sendDeletionEmailViaResend({ from, to, subject, text, html }) {
       html,
     }),
   });
+  const body = await response.text().catch(() => '');
+  resendRuntime.lastStatus = response.status;
+  resendRuntime.lastFrom = /resend\.dev/i.test(from) ? 'resend.dev' : 'custom';
+  resendRuntime.lastAt = new Date().toISOString();
   if (!response.ok) {
-    const body = await response.text().catch(() => '');
-    throw new Error(`Resend ${response.status}: ${String(body || '').slice(0, 180)}`);
+    let detail = String(body || '').slice(0, 180);
+    try {
+      const parsed = JSON.parse(body);
+      detail = String(parsed?.message || parsed?.name || detail);
+    } catch {
+      /* keep raw snippet */
+    }
+    const error = new Error(sanitizeResendError(new Error(`Resend ${response.status}: ${detail}`)));
+    resendRuntime.lastError = error.message;
+    throw error;
   }
+  resendRuntime.lastError = '';
+}
+
+async function sendDeletionEmailViaResend({ to, subject, text, html }) {
+  const froms = listResendFromCandidates();
+  let lastError = new Error('Resend from-address is not configured.');
+  for (let i = 0; i < froms.length; i += 1) {
+    try {
+      await postResendEmail({
+        from: froms[i],
+        to,
+        subject,
+        text,
+        html,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[resend] send failed from=${resendRuntime.lastFrom}: ${sanitizeResendError(error)}`);
+      const canRetry = i < froms.length - 1 && isResendFromRejected(error?.message);
+      if (!canRetry) throw error;
+    }
+  }
+  throw lastError;
 }
 
 function buildAccountDeletionSessionFingerprint(req, user) {
@@ -4195,7 +4263,6 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
   try {
     if (RESEND_API_KEY) {
       await sendDeletionEmailViaResend({
-        from: RESEND_FROM_EMAIL,
         to: toEmail,
         subject,
         text,
@@ -8030,6 +8097,9 @@ app.get('/api/health', async (_req, res) => {
       lastError: smtpRuntime.verifyError || '',
       activePort: smtpRuntime.activePort || 0,
       resendConfigured: Boolean(RESEND_API_KEY),
+      resendLastStatus: resendRuntime.lastStatus || 0,
+      resendLastError: resendRuntime.lastError || '',
+      resendLastFrom: resendRuntime.lastFrom || '',
     },
     redis: {
       configured: isRedisConfigured(),
@@ -9014,6 +9084,7 @@ app.post('/api/auth/request-delete-link', authMiddleware, async (req, res) => {
 
     if (sendResult.status !== 'sent') {
       await AccountDeletionTokenModel.deleteOne({ tokenHash });
+      console.error('[auth/request-delete-link] email dispatch failed', sendResult.detail);
       res.status(503).json({ error: 'Email delivery is temporarily unavailable.' });
       return;
     }
@@ -17780,7 +17851,7 @@ function validateCriticalConfiguration() {
   if (IS_PRODUCTION && isEnvAdminLoginConfigured()) {
     warnings.push('ADMIN_LOGIN_EMAIL/ADMIN_LOGIN_PASSWORD are configured; env admin login is enabled.');
   }
-  if (IS_PRODUCTION && !smtpRuntime.enabled) {
+  if (IS_PRODUCTION && !RESEND_API_KEY && !smtpRuntime.enabled) {
     warnings.push(`SMTP is not configured (${smtpMissingEnv.join(', ') || 'unknown'}); Google account deletion emails will return 503.`);
   }
   if (AUTH_COOKIE_DOMAIN && /railway/i.test(String(process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || ''))) {
