@@ -1,4 +1,4 @@
-﻿const allowedOrigins = [
+const allowedOrigins = [
   "https://net360preparation.com",
   "https://www.net360preparation.com",
   "capacitor://localhost",
@@ -12233,7 +12233,7 @@ app.get('/api/practice-board/questions/random', async (req, res) => {
     if (subject) filter.subject = subject;
     if (difficulty) filter.difficulty = difficulty;
     if (excludeId && isValidObjectId(excludeId)) {
-      filter._id = { $ne: excludeId };
+      filter._id = { $ne: new mongoose.Types.ObjectId(excludeId) };
     }
 
     const sampled = await PracticeBoardQuestionModel.aggregate([
