@@ -849,14 +849,17 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                       type="button"
                       disabled={isAuthBusy}
                       onClick={() => void handleSocialAuth()}
-                      className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-[#dadce0] bg-white px-4 text-[15px] font-medium text-[#3c4043] shadow-sm transition-all duration-150 hover:bg-[#f8f9fa] hover:shadow-md active:scale-[0.98] active:bg-[#f1f3f4] disabled:cursor-not-allowed disabled:opacity-70 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4285F4] focus-visible:ring-offset-2 dark:border-[#dadce0] dark:bg-white dark:text-[#3c4043] dark:hover:bg-[#f8f9fa] dark:active:bg-[#f1f3f4]"
+                      className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-[#dadce0] bg-white px-4 text-[15px] font-medium text-[#202124] shadow-sm transition-all duration-150 hover:bg-[#f8f9fa] hover:shadow-md active:scale-[0.98] active:bg-[#f1f3f4] disabled:cursor-not-allowed disabled:opacity-70 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4285F4] focus-visible:ring-offset-2 dark:!border-[#dadce0] dark:!bg-white dark:!text-[#202124] dark:hover:!bg-[#f8f9fa] dark:active:!bg-[#f1f3f4]"
+                      style={{ color: '#202124', backgroundColor: '#ffffff' }}
                     >
                       {authActionState === 'loggingIn' ? (
                         <Loader2 className="h-5 w-5 shrink-0 animate-spin text-[#4285F4]" />
                       ) : (
                         <GoogleLogo className="h-5 w-5 shrink-0" />
                       )}
-                      <span>{authActionState === 'loggingIn' ? 'Signing in…' : 'Continue with Google'}</span>
+                      <span className="font-medium !text-[#202124]" style={{ color: '#202124' }}>
+                        {authActionState === 'loggingIn' ? 'Signing in…' : 'Continue with Google'}
+                      </span>
                     </button>
                     {isNativeRuntimePlatform() ? (
                       <p className="text-xs text-slate-500">

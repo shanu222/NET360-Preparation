@@ -158,9 +158,9 @@ const SHARED_PEN_COLORS = [
 
 export function PracticeBoard() {
   const isQuestionBankView = new URLSearchParams(window.location.search).get('view') === 'question-bank';
-  const [activeQuestion, setActiveQuestion] = useState<BoardQuestion | null>(null);
+  const [activeQuestion, setActiveQuestion] = useState<BoardQuestion | null>(() => readCachedQuestion());
   const [showAnswer, setShowAnswer] = useState(false);
-  const [loadingQuestion, setLoadingQuestion] = useState(false);
+  const [loadingQuestion, setLoadingQuestion] = useState(true);
   const [questionBankLoading, setQuestionBankLoading] = useState(false);
   const [questionBankQuery, setQuestionBankQuery] = useState('');
   const [questionBankSubject, setQuestionBankSubject] = useState('');
@@ -353,11 +353,15 @@ export function PracticeBoard() {
 
   const fetchRandomQuestion = useCallback(async (excludeId?: string) => {
     setLoadingQuestion(true);
+    const cachedWhileLoading = readCachedQuestion();
+    if (cachedWhileLoading && (!excludeId || cachedWhileLoading.id !== excludeId)) {
+      setActiveQuestion(cachedWhileLoading);
+    }
     try {
       const query = excludeId ? `?excludeId=${encodeURIComponent(excludeId)}` : '';
       const payload = await apiRequest<{ question: BoardQuestion }>(
         `/api/practice-board/questions/random${query}`,
-        { retryCount: 3, retryDelayMs: 900, timeoutMs: 50_000 },
+        { retryCount: 1, retryDelayMs: 600, timeoutMs: 12_000 },
       );
       setActiveQuestion(payload?.question || null);
       writeCachedQuestion(payload?.question || null);
@@ -367,19 +371,36 @@ export function PracticeBoard() {
       });
       setShowAnswer(false);
     } catch (error) {
+      const status = Number((error as { status?: number })?.status || 0);
+      const message = String((error as Error)?.message || '').toLowerCase();
+      const isEmptyBank = status === 404 || message.includes('no practice board question');
+      const isSlowNetwork = !isEmptyBank && (
+        message.includes('timeout')
+        || message.includes('took too long')
+        || message.includes('network error')
+        || message.includes('failed to fetch')
+        || (error as { code?: string })?.code === 'REQUEST_TIMEOUT'
+      );
       const cached = readCachedQuestion();
       logNativeEvent('practice-board', 'random-question-failed', {
         message: (error as Error)?.message || String(error),
         fallbackToCache: Boolean(cached),
       }, 'error');
+      if (isEmptyBank) {
+        setActiveQuestion(null);
+        return;
+      }
       if (cached) {
         setActiveQuestion(cached);
         setShowAnswer(false);
-        showWarningToast('Network is slow. Showing your last available practice board question.');
+        showWarningToast('Could not load due to slow internet. Showing your last available question.');
         return;
       }
-      setActiveQuestion(null);
-      showErrorToast('Could not load a practice board question from the database.');
+      if (isSlowNetwork) {
+        showErrorToast('Could not load due to slow internet. Please try again.');
+        return;
+      }
+      showErrorToast('Could not load a practice board question. Please try again.');
     } finally {
       setLoadingQuestion(false);
     }
@@ -390,7 +411,7 @@ export function PracticeBoard() {
     try {
       const payload = await apiRequest<{ questions: BoardQuestion[] }>(
         '/api/practice-board/questions?limit=500',
-        { retryCount: 3, retryDelayMs: 900, timeoutMs: 50_000 },
+        { retryCount: 1, retryDelayMs: 600, timeoutMs: 12_000 },
       );
       const questions = payload?.questions || [];
       setQuestionBankQuestions(questions);
@@ -406,11 +427,22 @@ export function PracticeBoard() {
       }, 'error');
       if (cached.length) {
         setQuestionBankQuestions(cached);
-        showWarningToast('Network is slow. Showing cached practice board questions.');
+        showWarningToast('Could not load due to slow internet. Showing cached questions.');
         return;
       }
+      const status = Number((error as { status?: number })?.status || 0);
+      const message = String((error as Error)?.message || '').toLowerCase();
+      const isSlowNetwork = status !== 404 && (
+        message.includes('timeout')
+        || message.includes('took too long')
+        || message.includes('network error')
+        || message.includes('failed to fetch')
+        || (error as { code?: string })?.code === 'REQUEST_TIMEOUT'
+      );
       setQuestionBankQuestions([]);
-      showErrorToast('Could not load practice board question bank.');
+      showErrorToast(isSlowNetwork
+        ? 'Could not load due to slow internet. Please try again.'
+        : 'Could not load practice board questions. Please try again.');
     } finally {
       setQuestionBankLoading(false);
     }
@@ -561,7 +593,9 @@ export function PracticeBoard() {
               <CardDescription>
                 {activeQuestion
                   ? `${formatSubjectLabel(activeQuestion.subject)} • ${activeQuestion.difficulty}`
-                  : 'No question available. Import a new dataset to begin practice.'}
+                  : loadingQuestion
+                    ? 'Loading question…'
+                    : 'No question available.'}
               </CardDescription>
             </div>
             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
@@ -587,6 +621,8 @@ export function PracticeBoard() {
           <div className="rounded-xl border border-indigo-100 bg-slate-50/60 p-4">
             {questionText ? (
               <p className="text-base text-slate-800 sm:text-lg">{questionText}</p>
+            ) : loadingQuestion ? (
+              <p className="text-base text-slate-800 sm:text-lg">Loading question…</p>
             ) : !activeQuestion ? (
               <p className="text-base text-slate-800 sm:text-lg">Question bank is empty right now.</p>
             ) : null}

@@ -12236,16 +12236,27 @@ app.get('/api/practice-board/questions/random', async (req, res) => {
       filter._id = { $ne: excludeId };
     }
 
-    const count = await PracticeBoardQuestionModel.countDocuments(filter);
-    if (!count) {
-      res.status(404).json({ error: 'No practice board questions found for this selection.' });
-      return;
-    }
-
-    const randomIndex = Math.floor(Math.random() * count);
-    const item = await PracticeBoardQuestionModel.findOne(filter).skip(randomIndex).lean();
+    const sampled = await PracticeBoardQuestionModel.aggregate([
+      { $match: filter },
+      { $sample: { size: 1 } },
+      {
+        $project: {
+          subject: 1,
+          difficulty: 1,
+          questionText: 1,
+          questionFile: 1,
+          questionImageUrl: 1,
+          solutionText: 1,
+          solutionFile: 1,
+          solutionImageUrl: 1,
+          source: 1,
+          createdAt: 1,
+        },
+      },
+    ]);
+    const item = sampled[0];
     if (!item) {
-      res.status(404).json({ error: 'No practice board question available.' });
+      res.status(404).json({ error: 'No practice board questions found for this selection.' });
       return;
     }
 
