@@ -472,6 +472,8 @@ async function listResendFromCandidates() {
     addResendFromCandidate(list, seen, `NET360 Preparation <noreply@${name}>`);
   }
   addResendFromCandidate(list, seen, RESEND_FROM_EMAIL);
+  addResendFromCandidate(list, seen, SMTP_FROM_EMAIL);
+  addResendFromCandidate(list, seen, 'NET360 Preparation <noreply@net360preparation.com>');
   addResendFromCandidate(list, seen, RESEND_TEST_FROM_EMAIL);
   return list;
 }
@@ -4093,7 +4095,7 @@ function resolveNet360PublicWebBaseUrl() {
 }
 
 async function ensureDeletionEmailDeliveryReady() {
-  if (RESEND_API_KEY && RESEND_FROM_EMAIL) {
+  if (RESEND_API_KEY) {
     return { ok: true, detail: '' };
   }
   if (!smtpRuntime.enabled || !smtpTransporter || !SMTP_FROM_EMAIL) {
@@ -4257,8 +4259,14 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
         text,
         html,
       });
+      console.log('[email] deletion link sent via Resend');
       return { status: 'sent', detail: 'Deletion email sent.' };
     }
+  } catch (resendError) {
+    console.warn('[email] Resend deletion send failed:', sanitizeResendError(resendError));
+  }
+
+  try {
     await sendSmtpMail({
       from: SMTP_FROM_EMAIL,
       to: toEmail,
@@ -4266,9 +4274,10 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
       text,
       html,
     });
+    console.log('[email] deletion link sent via SMTP');
     return { status: 'sent', detail: 'Deletion email sent.' };
   } catch (error) {
-    return { status: 'failed', detail: sanitizeSmtpError(error) };
+    return { status: 'failed', detail: sanitizeResendError(error) || sanitizeSmtpError(error) };
   }
 }
 
