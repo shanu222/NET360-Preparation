@@ -77,10 +77,10 @@ export function GlobalFreeAccessAnnouncement({
         <button
           type="button"
           onClick={dismiss}
-          className="absolute right-2 top-2 rounded-full p-1.5 text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+          className="absolute right-2 top-2 z-10 flex h-9 w-9 items-center justify-center rounded-full border border-slate-300 bg-white text-slate-900 shadow-sm hover:bg-slate-100"
           aria-label="Dismiss announcement"
         >
-          <X className="h-4 w-4" />
+          <X className="h-5 w-5 stroke-[2.5]" />
         </button>
         <div className="flex items-start gap-3 pr-6">
           <div className="mt-0.5 rounded-xl bg-emerald-500/15 p-2 text-emerald-700">
@@ -114,7 +114,12 @@ export function GlobalFreeAccessAnnouncement({
               >
                 Start Learning
               </Button>
-              <Button size="sm" variant="outline" onClick={dismiss}>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-slate-400 bg-white text-slate-900 hover:bg-slate-100"
+                onClick={dismiss}
+              >
                 Dismiss
               </Button>
             </div>
