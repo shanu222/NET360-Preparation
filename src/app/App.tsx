@@ -933,7 +933,7 @@ export default function App() {
             <title>Confirm account deletion | NET360 Preparation</title>
             <meta name="robots" content="noindex, nofollow" />
           </Helmet>
-          <div className="net360-viewport flex min-h-dvh min-h-screen flex-col bg-gradient-to-b from-slate-50 to-indigo-50/30 p-3 dark:from-slate-950 dark:to-slate-900">
+          <div className="net360-viewport flex min-h-dvh min-h-screen flex-col bg-[#f1f5f9] p-3 text-[#0f172a]" style={{ colorScheme: 'light' }}>
             <Suspense fallback={<PageRouteFallback />}>
               <ConfirmAccountDeletionPageLazy />
             </Suspense>
