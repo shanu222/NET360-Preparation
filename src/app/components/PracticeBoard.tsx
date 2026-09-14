@@ -10,7 +10,7 @@ import {
   DialogTitle,
 } from './ui/dialog';
 import { Input } from './ui/input';
-import { apiRequest } from '../lib/api';
+import { apiRequest, API_BASE } from '../lib/api';
 import { logNativeEvent } from '../lib/nativeDiagnostics';
 import {
   downloadDataUrlFile as downloadDataUrlFileSafe,
@@ -92,24 +92,40 @@ function writeCachedQuestionBank(questions: BoardQuestion[]) {
 }
 
 function isImageMimeType(mimeType?: string | null) {
-  return /^image\/(png|jpeg)$/i.test(String(mimeType || ''));
+  return /^image\/(png|jpe?g)$/i.test(String(mimeType || ''));
+}
+
+function resolvePracticeBoardMediaSrc(dataUrl?: string | null) {
+  const raw = String(dataUrl || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('data:') || /^https?:\/\//i.test(raw)) return raw;
+  const path = raw.startsWith('/') ? raw : `/${raw}`;
+  return `${String(API_BASE || '').replace(/\/$/, '')}${path}`;
 }
 
 function openDataUrlFile(file?: { dataUrl?: string | null } | null) {
-  const dataUrl = String(file?.dataUrl || '').trim();
-  if (!dataUrl) return;
-  if (!openDataUrlPreview(dataUrl)) {
-    showErrorToast('Could not open file preview.');
+  const src = resolvePracticeBoardMediaSrc(file?.dataUrl);
+  if (!src) return;
+  if (src.startsWith('data:')) {
+    if (!openDataUrlPreview(src)) {
+      showErrorToast('Could not open file preview.');
+    }
+    return;
   }
+  window.open(src, '_blank', 'noopener,noreferrer');
 }
 
 function downloadDataUrlFile(file?: { dataUrl?: string | null; name?: string | null } | null) {
-  const dataUrl = String(file?.dataUrl || '').trim();
-  if (!dataUrl) return;
-  const downloaded = downloadDataUrlFileSafe(dataUrl, String(file?.name || 'practice-file'));
-  if (!downloaded) {
-    showErrorToast('Could not download this file.');
+  const src = resolvePracticeBoardMediaSrc(file?.dataUrl);
+  if (!src) return;
+  if (src.startsWith('data:')) {
+    const downloaded = downloadDataUrlFileSafe(src, String(file?.name || 'practice-file'));
+    if (!downloaded) {
+      showErrorToast('Could not download this file.');
+    }
+    return;
   }
+  window.open(src, '_blank', 'noopener,noreferrer');
 }
 
 function PracticeBoardImage({
@@ -131,7 +147,7 @@ function PracticeBoardImage({
       aria-label={`View ${alt} full size`}
     >
       <img
-        src={src}
+        src={resolvePracticeBoardMediaSrc(src)}
         alt={alt}
         className="max-h-56 w-auto max-w-full object-contain sm:max-h-72"
         loading="lazy"
@@ -361,7 +377,7 @@ export function PracticeBoard() {
       const query = excludeId ? `?excludeId=${encodeURIComponent(excludeId)}` : '';
       const payload = await apiRequest<{ question: BoardQuestion }>(
         `/api/practice-board/questions/random${query}`,
-        { retryCount: 1, retryDelayMs: 600, timeoutMs: 12_000 },
+        { retryCount: 1, retryDelayMs: 600, timeoutMs: 20_000 },
       );
       setActiveQuestion(payload?.question || null);
       writeCachedQuestion(payload?.question || null);
@@ -411,7 +427,7 @@ export function PracticeBoard() {
     try {
       const payload = await apiRequest<{ questions: BoardQuestion[] }>(
         '/api/practice-board/questions?limit=500',
-        { retryCount: 1, retryDelayMs: 600, timeoutMs: 12_000 },
+        { retryCount: 1, retryDelayMs: 600, timeoutMs: 20_000 },
       );
       const questions = payload?.questions || [];
       setQuestionBankQuestions(questions);
@@ -633,7 +649,7 @@ export function PracticeBoard() {
                 frameClassName="border-indigo-100"
                 onOpenFullSize={() =>
                   setFullSizeImage({
-                    src: questionImage.dataUrl,
+                    src: resolvePracticeBoardMediaSrc(questionImage.dataUrl),
                     title: 'Question',
                     alt: 'Question',
                   })
@@ -667,7 +683,7 @@ export function PracticeBoard() {
                   frameClassName="border-emerald-200"
                   onOpenFullSize={() =>
                     setFullSizeImage({
-                      src: solutionImage.dataUrl,
+                      src: resolvePracticeBoardMediaSrc(solutionImage.dataUrl),
                       title: 'Answer',
                       alt: 'Answer',
                     })

@@ -1,4 +1,4 @@
-const allowedOrigins = [
+﻿const allowedOrigins = [
   "https://net360preparation.com",
   "https://www.net360preparation.com",
   "capacitor://localhost",
@@ -1503,6 +1503,7 @@ const COMMUNITY_MESSAGE_SELECT = 'connectionId senderUserId messageType text att
 const COMMUNITY_ROOM_POST_SELECT = 'roomId authorUserId type title text subject upvotes answers flagged createdAt';
 const MCQ_SELECT = 'externalId contentFingerprint subject part chapter section topic question questionImageUrl questionImage options optionMedia answer tip explanationText explanationImage shortTrickText shortTrickImage difficulty source createdAt subject_id part_id chapter_id section_id topic_id question_text question_image_url option_a option_b option_c option_d correct_answer explanation level';
 const PRACTICE_BOARD_SELECT = 'subject difficulty questionText questionFile questionImageUrl solutionText solutionFile solutionImageUrl source createdAt';
+const PRACTICE_BOARD_CLIENT_SELECT = 'subject difficulty questionText solutionText questionImageUrl solutionImageUrl source createdAt questionFile.name questionFile.mimeType questionFile.size solutionFile.name solutionFile.mimeType solutionFile.size';
 
 const CHAT_ATTACHMENT_MAX_FILE_BYTES = 8 * 1024 * 1024;
 const CHAT_ATTACHMENT_ALLOWED_MIME_TYPES = new Set([
@@ -6266,50 +6267,94 @@ function serializeMcq(item) {
   };
 }
 
-function serializePracticeBoardQuestion(item) {
-  const legacyQuestionUrl = String(item.questionImageUrl || '').trim();
-  const legacySolutionUrl = String(item.solutionImageUrl || '').trim();
-  const normalizedQuestionFile = item.questionFile
-    ? {
-      name: String(item.questionFile.name || '').trim(),
-      mimeType: String(item.questionFile.mimeType || '').trim().toLowerCase(),
-      size: Number(item.questionFile.size || 0),
-      dataUrl: String(item.questionFile.dataUrl || '').trim(),
-    }
-    : (legacyQuestionUrl
-      ? {
-        name: 'question-image',
-        mimeType: 'image/*',
-        size: 0,
-        dataUrl: legacyQuestionUrl,
-      }
-      : null);
+function practiceBoardFilePayload(questionId, kind, file, legacyUrl, embedFiles) {
+  const nested = file && typeof file === 'object' ? file : null;
+  const nestedDataUrl = String(nested?.dataUrl || '').trim();
+  const fallbackUrl = String(legacyUrl || '').trim();
+  const hasStoredFile = Boolean(nested && (nested.name || nestedDataUrl || nested.mimeType));
+  if (!hasStoredFile && !fallbackUrl) return null;
 
-  const normalizedSolutionFile = item.solutionFile
-    ? {
-      name: String(item.solutionFile.name || '').trim(),
-      mimeType: String(item.solutionFile.mimeType || '').trim().toLowerCase(),
-      size: Number(item.solutionFile.size || 0),
-      dataUrl: String(item.solutionFile.dataUrl || '').trim(),
-    }
-    : (legacySolutionUrl
-      ? {
-        name: 'solution-image',
-        mimeType: 'image/*',
-        size: 0,
-        dataUrl: legacySolutionUrl,
-      }
-      : null);
+  const name = String(nested?.name || `${kind}-image`).trim() || `${kind}-image`;
+  let mimeType = String(nested?.mimeType || '').trim().toLowerCase();
+  if (!mimeType || mimeType === 'image/*') {
+    mimeType = fallbackUrl.startsWith('data:') ? 'application/octet-stream' : 'image/jpeg';
+  }
+  const size = Number(nested?.size || 0);
+  if (embedFiles) {
+    return {
+      name,
+      mimeType,
+      size,
+      dataUrl: nestedDataUrl || fallbackUrl,
+    };
+  }
+
+  if (fallbackUrl && !nestedDataUrl && (/^https?:\/\//i.test(fallbackUrl) || fallbackUrl.startsWith('data:'))) {
+    return {
+      name,
+      mimeType: mimeType === 'application/octet-stream' ? 'image/jpeg' : mimeType,
+      size,
+      dataUrl: fallbackUrl,
+    };
+  }
 
   return {
-    id: String(item._id),
+    name,
+    mimeType,
+    size,
+    dataUrl: `/api/practice-board/questions/${questionId}/files/${kind}`,
+  };
+}
+
+function serializePracticeBoardQuestion(item, options = {}) {
+  const embedFiles = options.embedFiles === true;
+  const questionId = String(item?._id || item?.id || '').trim();
+  return {
+    id: questionId,
     subject: String(item.subject || '').toLowerCase(),
     difficulty: String(item.difficulty || 'Medium'),
     questionText: String(item.questionText || '').trim(),
-    questionFile: normalizedQuestionFile,
+    questionFile: practiceBoardFilePayload(
+      questionId,
+      'question',
+      item.questionFile,
+      item.questionImageUrl,
+      embedFiles,
+    ),
     solutionText: String(item.solutionText || '').trim(),
-    solutionFile: normalizedSolutionFile,
+    solutionFile: practiceBoardFilePayload(
+      questionId,
+      'solution',
+      item.solutionFile,
+      item.solutionImageUrl,
+      embedFiles,
+    ),
   };
+}
+
+function sendPracticeBoardStoredFile(res, file, legacyUrl, downloadName) {
+  const nestedDataUrl = String(file?.dataUrl || '').trim();
+  const fallbackUrl = String(legacyUrl || '').trim();
+  const raw = nestedDataUrl || fallbackUrl;
+  if (!raw) {
+    res.status(404).json({ error: 'Practice board file not found.' });
+    return;
+  }
+  if (/^https?:\/\//i.test(raw)) {
+    res.redirect(302, raw);
+    return;
+  }
+  const parsed = parseDataUrl(raw);
+  if (!parsed?.buffer) {
+    res.status(404).json({ error: 'Practice board file not found.' });
+    return;
+  }
+  const mimeType = String(file?.mimeType || parsed.mimeType || 'application/octet-stream').trim() || 'application/octet-stream';
+  const safeName = String(file?.name || downloadName || 'practice-file').replace(/[\r\n"]/g, '');
+  res.setHeader('Content-Type', mimeType);
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+  res.send(parsed.buffer);
 }
 
 function makeCommunityUsername(user) {
@@ -12212,7 +12257,7 @@ app.get('/api/practice-board/questions', async (req, res) => {
     }
 
     const questions = await PracticeBoardQuestionModel.find(filter)
-      .select(PRACTICE_BOARD_SELECT)
+      .select(PRACTICE_BOARD_CLIENT_SELECT)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -12236,25 +12281,14 @@ app.get('/api/practice-board/questions/random', async (req, res) => {
       filter._id = { $ne: new mongoose.Types.ObjectId(excludeId) };
     }
 
-    const sampled = await PracticeBoardQuestionModel.aggregate([
-      { $match: filter },
-      { $sample: { size: 1 } },
-      {
-        $project: {
-          subject: 1,
-          difficulty: 1,
-          questionText: 1,
-          questionFile: 1,
-          questionImageUrl: 1,
-          solutionText: 1,
-          solutionFile: 1,
-          solutionImageUrl: 1,
-          source: 1,
-          createdAt: 1,
-        },
-      },
-    ]);
-    const item = sampled[0];
+    const idDocs = await PracticeBoardQuestionModel.find(filter).select('_id').lean();
+    if (!idDocs.length) {
+      res.status(404).json({ error: 'No practice board questions found for this selection.' });
+      return;
+    }
+
+    const picked = idDocs[Math.floor(Math.random() * idDocs.length)];
+    const item = await PracticeBoardQuestionModel.findById(picked._id).select(PRACTICE_BOARD_CLIENT_SELECT).lean();
     if (!item) {
       res.status(404).json({ error: 'No practice board questions found for this selection.' });
       return;
@@ -12263,6 +12297,34 @@ app.get('/api/practice-board/questions/random', async (req, res) => {
     res.json({ question: serializePracticeBoardQuestion(item) });
   } catch {
     res.status(500).json({ error: 'Failed to load random practice board question.' });
+  }
+});
+
+app.get('/api/practice-board/questions/:questionId/files/:kind', async (req, res) => {
+  try {
+    const questionId = String(req.params.questionId || '').trim();
+    const kind = String(req.params.kind || '').trim().toLowerCase() === 'solution' ? 'solution' : 'question';
+    if (!questionId || !isValidObjectId(questionId)) {
+      res.status(400).json({ error: 'Invalid practice board question id.' });
+      return;
+    }
+
+    const select = kind === 'solution'
+      ? 'solutionFile solutionImageUrl'
+      : 'questionFile questionImageUrl';
+    const item = await PracticeBoardQuestionModel.findById(questionId).select(select).lean();
+    if (!item) {
+      res.status(404).json({ error: 'Practice board question not found.' });
+      return;
+    }
+
+    if (kind === 'solution') {
+      sendPracticeBoardStoredFile(res, item.solutionFile, item.solutionImageUrl, 'solution');
+      return;
+    }
+    sendPracticeBoardStoredFile(res, item.questionFile, item.questionImageUrl, 'question');
+  } catch {
+    res.status(500).json({ error: 'Failed to load practice board file.' });
   }
 });
 
@@ -17686,7 +17748,7 @@ app.get('/api/admin/practice-board/questions', authMiddleware, requireAdmin, asy
     .skip(skip)
     .limit(limit)
     .lean();
-  res.json({ page, limit, questions: questions.map((item) => serializePracticeBoardQuestion(item)) });
+  res.json({ page, limit, questions: questions.map((item) => serializePracticeBoardQuestion(item, { embedFiles: true })) });
 });
 
 app.post('/api/admin/practice-board/questions', authMiddleware, requireAdmin, async (req, res) => {
@@ -17735,7 +17797,7 @@ app.post('/api/admin/practice-board/questions', authMiddleware, requireAdmin, as
     source: 'Admin',
   });
 
-  res.status(201).json({ question: serializePracticeBoardQuestion(created) });
+  res.status(201).json({ question: serializePracticeBoardQuestion(created, { embedFiles: true }) });
 });
 
 app.put('/api/admin/practice-board/questions/:questionId', authMiddleware, requireAdmin, async (req, res) => {
@@ -17795,7 +17857,7 @@ app.put('/api/admin/practice-board/questions/:questionId', authMiddleware, requi
   Object.assign(existing, next);
   const updated = await existing.save();
 
-  res.json({ question: serializePracticeBoardQuestion(updated) });
+  res.json({ question: serializePracticeBoardQuestion(updated, { embedFiles: true }) });
 });
 
 app.delete('/api/admin/practice-board/questions/:questionId', authMiddleware, requireAdmin, async (req, res) => {
