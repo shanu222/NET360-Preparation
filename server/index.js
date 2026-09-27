@@ -62,6 +62,18 @@ import {
   listPresence,
   sweepExpiredPresence,
 } from './services/communityPresence.js';
+import {
+  buildSupportReplyToken,
+  collectInboundEmailId,
+  collectInboundFrom,
+  collectInboundTargets,
+  collectInboundText,
+  emailDomainFromFromHeader,
+  extractInboundReplyText,
+  notificationShell,
+  parseSupportReplyToken,
+  verifyResendWebhookSignature,
+} from './services/notificationEmail.js';
 import { subscriptionExpiryRefresh, requireTrialOrPremiumContent } from './middleware/subscriptionGate.js';
 import {
   mergedSubscription,
@@ -384,6 +396,8 @@ const RESEND_FROM_EMAIL = unquoteEnv(
   || SMTP_FROM_EMAIL
   || 'NET360 Preparation <beth.t@example.com>',
 );
+const RESEND_WEBHOOK_SECRET = unquoteEnv(process.env.RESEND_WEBHOOK_SECRET || '');
+const RESEND_INBOUND_DOMAIN = unquoteEnv(process.env.RESEND_INBOUND_DOMAIN || '');
 const NET360_PUBLIC_APP_URL = String(
   process.env.NET360_PUBLIC_APP_URL
   || process.env.PUBLIC_APP_URL
@@ -1287,7 +1301,15 @@ if (!IS_PRODUCTION || String(process.env.NET360_LOG_REQUESTS || '').trim() === '
     next();
   });
 }
-app.use(express.json({ limit: `${MAX_JSON_BODY_MB}mb` }));
+app.use(express.json({
+  limit: `${MAX_JSON_BODY_MB}mb`,
+  verify: (req, _res, buf) => {
+    const pathName = String(req.originalUrl || req.url || '').split('?')[0];
+    if (pathName === '/api/webhooks/resend') {
+      req.rawBody = Buffer.isBuffer(buf) ? buf.toString('utf8') : String(buf || '');
+    }
+  },
+}));
 app.use(express.urlencoded({ extended: false, limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use((req, res, next) => {
   req.body = sanitizePayload(req.body);
@@ -4279,20 +4301,22 @@ async function ensureDeletionEmailDeliveryReady() {
   return { ok: true, detail: '' };
 }
 
-async function postResendEmail({ from, to, subject, text, html }) {
+async function postResendEmail({ from, to, subject, text, html, replyTo }) {
+  const payload = {
+    from,
+    to: [to],
+    subject,
+    text,
+    html,
+  };
+  if (replyTo) payload.reply_to = replyTo;
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${RESEND_API_KEY}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      from,
-      to: [to],
-      subject,
-      text,
-      html,
-    }),
+    body: JSON.stringify(payload),
   });
   const body = await response.text().catch(() => '');
   resendRuntime.lastStatus = response.status;
@@ -4333,6 +4357,257 @@ async function sendDeletionEmailViaResend({ to, subject, text, html }) {
     }
   }
   throw lastError;
+}
+
+async function sendNotificationEmailViaResend({ to, subject, text, html, replyTo }) {
+  const froms = await listResendFromCandidates();
+  let lastError = new Error('Resend from-address is not configured.');
+  for (let i = 0; i < froms.length; i += 1) {
+    try {
+      await postResendEmail({
+        from: froms[i],
+        to,
+        subject,
+        text,
+        html,
+        replyTo,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[resend] notify failed from=${resendRuntime.lastFrom}: ${sanitizeResendError(error)}`);
+      if (i >= froms.length - 1) throw error;
+    }
+  }
+  throw lastError;
+}
+
+function studentNotifyName(user) {
+  return [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || 'a NET360 student';
+}
+
+function communityAppUrl() {
+  return `${resolveNet360PublicWebBaseUrl()}/community`;
+}
+
+function supportAdminAppUrl() {
+  return `${resolveNet360PublicWebBaseUrl()}/admin/support-chat`;
+}
+
+function escapeNotifyHtml(value) {
+  return escapeHtml(value);
+}
+
+function supportReplyToAddress(userId) {
+  const token = buildSupportReplyToken(userId, JWT_SECRET);
+  const domain = String(RESEND_INBOUND_DOMAIN || emailDomainFromFromHeader(RESEND_FROM_EMAIL) || 'net360preparation.com').replace(/^@/, '');
+  if (!token || !domain) return '';
+  return `NET360 Support <support+${token}@${domain}>`;
+}
+
+async function dispatchNotificationEmail({ to, subject, text, html, replyTo }) {
+  const dest = normalizeEmail(to);
+  if (!isValidEmail(dest) || !RESEND_API_KEY) return;
+  try {
+    await sendNotificationEmailViaResend({ to: dest, subject, text, html, replyTo });
+  } catch (error) {
+    console.warn('[email] notification send failed:', sanitizeResendError(error));
+  }
+}
+
+async function loadUserForNotify(userId) {
+  if (!isValidObjectId(String(userId || ''))) return null;
+  return UserModel.findById(userId).select('firstName lastName email role').lean();
+}
+
+function queueCommunityNotice({ toUser, subject, title, paragraphs }) {
+  const dest = normalizeEmail(toUser?.email);
+  if (!dest || (toUser?.role || 'student') === 'admin') return;
+  const greeting = String(toUser.firstName || '').trim() || 'there';
+  const openUrl = communityAppUrl();
+  const footer = 'This is a notification only. You cannot accept, reject, or reply from email. Open NET360 to respond.';
+  const text = [
+    `Hi ${greeting},`,
+    '',
+    ...paragraphs,
+    '',
+    `Open NET360 to respond: ${openUrl}`,
+    '',
+    footer,
+    '',
+    '— NET360 Preparation',
+  ].join('\n');
+  const html = notificationShell({
+    title,
+    greeting: escapeNotifyHtml(greeting),
+    paragraphs: paragraphs.map((p) => escapeNotifyHtml(p)),
+    ctaLabel: 'Open NET360',
+    ctaUrl: escapeNotifyHtml(openUrl),
+    footer,
+  });
+  void dispatchNotificationEmail({ to: dest, subject, text, html });
+}
+
+async function notifyCommunityConnectionRequested(fromUserId, toUserId) {
+  const [fromUser, toUser] = await Promise.all([loadUserForNotify(fromUserId), loadUserForNotify(toUserId)]);
+  if (!toUser) return;
+  const who = studentNotifyName(fromUser);
+  queueCommunityNotice({
+    toUser,
+    subject: 'NET360: new Community connection request',
+    title: 'Community connection request',
+    paragraphs: [
+      `${who} sent you a connection request on NET360 Community.`,
+      'Open NET360 → Community to accept or reject this request. Email replies are ignored.',
+    ],
+  });
+}
+
+async function notifyCommunityConnectionResponded(fromUserId, toUserId, status) {
+  const [fromUser, toUser] = await Promise.all([loadUserForNotify(fromUserId), loadUserForNotify(toUserId)]);
+  if (!fromUser) return;
+  const who = studentNotifyName(toUser);
+  const accepted = String(status) === 'accepted';
+  queueCommunityNotice({
+    toUser: fromUser,
+    subject: accepted ? 'NET360: your Community request was accepted' : 'NET360: your Community request was declined',
+    title: accepted ? 'Connection request accepted' : 'Connection request declined',
+    paragraphs: [
+      accepted
+        ? `${who} accepted your Community connection request.`
+        : `${who} declined your Community connection request.`,
+      'Open NET360 → Community to continue. Email replies are ignored.',
+    ],
+  });
+}
+
+async function notifyQuizChallengeCreated(challengerUserId, opponentUserId) {
+  const [challenger, opponent] = await Promise.all([loadUserForNotify(challengerUserId), loadUserForNotify(opponentUserId)]);
+  if (!opponent) return;
+  const who = studentNotifyName(challenger);
+  queueCommunityNotice({
+    toUser: opponent,
+    subject: 'NET360: new Quiz Battle request',
+    title: 'Quiz Battle request',
+    paragraphs: [
+      `${who} challenged you to a Quiz Battle.`,
+      'Open NET360 → Community → Quiz Battles to accept or decline. Email replies are ignored.',
+    ],
+  });
+}
+
+async function notifyQuizChallengeResponded(challengerUserId, opponentUserId, action) {
+  const [challenger, opponent] = await Promise.all([loadUserForNotify(challengerUserId), loadUserForNotify(opponentUserId)]);
+  if (!challenger) return;
+  const who = studentNotifyName(opponent);
+  const accepted = String(action) === 'accept';
+  queueCommunityNotice({
+    toUser: challenger,
+    subject: accepted ? 'NET360: your Quiz Battle was accepted' : 'NET360: your Quiz Battle was declined',
+    title: accepted ? 'Quiz Battle accepted' : 'Quiz Battle declined',
+    paragraphs: [
+      accepted
+        ? `${who} accepted your Quiz Battle.`
+        : `${who} declined your Quiz Battle.`,
+      'Open NET360 → Community → Quiz Battles to continue. Email replies are ignored.',
+    ],
+  });
+}
+
+async function listAdminNotificationEmails() {
+  const emails = new Set();
+  const add = (value) => {
+    const email = normalizeEmail(value);
+    if (email && isValidEmail(email)) emails.add(email);
+  };
+  add(ENV_ADMIN_LOGIN_EMAIL_RAW);
+  add(BOOTSTRAP_ADMIN_EMAIL_RAW);
+  add(NET360_SUPPORT_EMAIL);
+  try {
+    const admins = await UserModel.find({ role: 'admin' }).select('email').lean();
+    for (const admin of admins) add(admin.email);
+  } catch {
+    // still notify env-configured addresses
+  }
+  return Array.from(emails);
+}
+
+async function notifyAdminsOfSupportMessage(user, message) {
+  const preview = String(message?.text || (message?.messageType === 'file' ? message?.attachment?.name || 'Shared a file' : '')).trim().slice(0, 240);
+  const who = studentNotifyName(user);
+  const userId = String(user?._id || message?.userId || '');
+  const replyTo = supportReplyToAddress(userId);
+  const token = buildSupportReplyToken(userId, JWT_SECRET);
+  const openUrl = supportAdminAppUrl();
+  const emails = await listAdminNotificationEmails();
+  if (!emails.length) return;
+  const subject = `[NET360 Support] ${who}: ${preview || 'New message'}`;
+  const text = [
+    `${who} sent a Support Chat message.`,
+    '',
+    preview || '(file attachment)',
+    '',
+    `Reply to this email to send your answer into the same NET360 Support Chat, or open the admin panel: ${openUrl}`,
+    token ? `Conversation-Ref: ${token}` : '',
+    '',
+    '— NET360 Preparation',
+  ].filter(Boolean).join('\n');
+  const html = notificationShell({
+    title: 'New Support Chat message',
+    greeting: 'Admin',
+    paragraphs: [
+      escapeNotifyHtml(`${who} sent a Support Chat message.`),
+      escapeNotifyHtml(preview || '(file attachment)'),
+      token ? escapeNotifyHtml(`Conversation-Ref: ${token}`) : 'Reply in Gmail to post into this student\'s NET360 Support Chat.',
+    ].filter(Boolean),
+    ctaLabel: 'Open Admin Support Chat',
+    ctaUrl: escapeNotifyHtml(openUrl),
+    footer: 'You can reply from Gmail or from the existing Admin Support Chat panel. Both use the same conversation.',
+  });
+  for (const to of emails) {
+    void dispatchNotificationEmail({ to, subject, text, html, replyTo: replyTo || undefined });
+  }
+}
+
+const inboundEmailSeen = new Map();
+
+async function claimInboundEmailId(emailId) {
+  const id = String(emailId || '').trim();
+  if (!id) return false;
+  const redisKey = `support:inbound-email:${id}`;
+  try {
+    const redis = await getRedisMain();
+    if (redis?.isReady) {
+      const stored = await redis.set(redisKey, '1', { NX: true, EX: 30 * 24 * 60 * 60 });
+      return stored === 'OK' || stored === true;
+    }
+  } catch {
+    // fall through to process memory
+  }
+  const now = Date.now();
+  for (const [key, at] of inboundEmailSeen) {
+    if (now - at > 24 * 60 * 60 * 1000) inboundEmailSeen.delete(key);
+  }
+  if (inboundEmailSeen.has(id)) return false;
+  inboundEmailSeen.set(id, now);
+  return true;
+}
+
+async function isAuthorizedAdminInboundEmail(email) {
+  const dest = normalizeEmail(email);
+  if (!dest) return false;
+  if (dest === normalizeEmail(ENV_ADMIN_LOGIN_EMAIL_RAW) || dest === normalizeEmail(BOOTSTRAP_ADMIN_EMAIL_RAW)) {
+    return true;
+  }
+  const admin = await UserModel.findOne({ email: dest, role: 'admin' }).select('_id email role').lean();
+  return Boolean(admin);
+}
+
+async function resolveAdminSenderUserId(email) {
+  const dest = normalizeEmail(email);
+  if (!dest) return null;
+  const admin = await UserModel.findOne({ email: dest, role: 'admin' }).select('_id').lean();
+  return admin?._id || null;
 }
 
 function buildAccountDeletionSessionFingerprint(req, user) {
@@ -8302,6 +8577,7 @@ app.get('/api/health', async (_req, res) => {
       SMTP_FROM_EMAIL: Boolean(SMTP_FROM_EMAIL),
       RESEND_API_KEY: Boolean(RESEND_API_KEY),
       RESEND_FROM_EMAIL: Boolean(RESEND_FROM_EMAIL),
+      RESEND_WEBHOOK_SECRET: Boolean(RESEND_WEBHOOK_SECRET),
       NET360_PUBLIC_APP_URL: Boolean(NET360_PUBLIC_APP_URL),
       REDIS_URL: Boolean(String(process.env.REDIS_URL || '').trim()),
       REDIS_HOST: Boolean(String(process.env.REDIS_HOST || '').trim()),
@@ -10087,6 +10363,7 @@ app.post('/api/community/connections/request', ...studentPremiumSurface, async (
     toUserId,
     requestId: String(created._id),
   });
+  void notifyCommunityConnectionRequested(req.user._id, toUserId);
 
   res.status(201).json({ requestId: String(created._id) });
 });
@@ -10194,6 +10471,7 @@ app.post('/api/community/connections/requests/:requestId/respond', ...studentPre
     fromUserId: String(request.fromUserId),
     toUserId: String(request.toUserId),
   });
+  void notifyCommunityConnectionResponded(request.fromUserId, request.toUserId, request.status);
   res.json({ ok: true, status: request.status });
 });
 
@@ -10885,6 +11163,7 @@ app.post('/api/community/quiz-challenges', ...studentPremiumSurface, async (req,
         challengeType: normalizedChallengeType,
       },
     });
+    void notifyQuizChallengeCreated(currentUser._id, opponentUser._id);
 
     const loaded = await CommunityQuizChallengeModel.findById(challenge._id).lean();
     res.status(201).json({ challenge: serializeQuizChallenge(loaded, req.user._id) });
@@ -10940,6 +11219,7 @@ app.post('/api/community/quiz-challenges/:id/respond', ...studentPremiumSurface,
           status: String(challenge.status || ''),
         },
       });
+      void notifyQuizChallengeResponded(challenge.challengerUserId, challenge.opponentUserId, action);
       res.json({ challenge: serializeQuizChallenge(challenge.toObject(), req.user._id) });
       return;
     }
@@ -10970,6 +11250,7 @@ app.post('/api/community/quiz-challenges/:id/respond', ...studentPremiumSurface,
         status: String(challenge.status || ''),
       },
     });
+    void notifyQuizChallengeResponded(challenge.challengerUserId, challenge.opponentUserId, action);
 
     res.json({ challenge: serializeQuizChallenge(challenge.toObject(), req.user._id) });
   } catch (error) {
@@ -11929,6 +12210,7 @@ app.post('/api/support-chat/messages', authMiddleware, async (req, res) => {
 
   const serialized = serializeSupportMessage(created);
   emitSupportChatEvent('support.message', serializeSupportMessageForEvent(created), { clientMessageId });
+  void notifyAdminsOfSupportMessage(req.user, serialized);
 
   res.status(201).json({
     message: serialized,
@@ -12228,6 +12510,80 @@ app.post('/api/admin/support-chat/messages/:userId/:messageId/reactions', authMi
   emitSupportChatEvent('support.message.updated', serializeSupportMessageForEvent(message));
 
   res.json({ message: serializeSupportMessage(message) });
+});
+
+app.post('/api/webhooks/resend', async (req, res) => {
+  if (!RESEND_WEBHOOK_SECRET) {
+    res.status(503).json({ error: 'Inbound email is not configured.' });
+    return;
+  }
+  const rawBody = String(req.rawBody || '');
+  if (!verifyResendWebhookSignature(rawBody, req.headers, RESEND_WEBHOOK_SECRET)) {
+    res.status(401).json({ error: 'Invalid webhook signature.' });
+    return;
+  }
+
+  let payload = null;
+  try {
+    payload = rawBody ? JSON.parse(rawBody) : req.body;
+  } catch {
+    res.status(400).json({ error: 'Invalid webhook payload.' });
+    return;
+  }
+
+  const eventType = String(payload?.type || '').toLowerCase();
+  const isReceived = !eventType || eventType === 'email.received' || eventType.includes('received');
+  if (!isReceived) {
+    res.json({ ok: true, ignored: true });
+    return;
+  }
+
+  const emailId = collectInboundEmailId(payload);
+  if (emailId && !(await claimInboundEmailId(emailId))) {
+    res.json({ ok: true, duplicate: true });
+    return;
+  }
+
+  const fromEmail = collectInboundFrom(payload);
+  if (!(await isAuthorizedAdminInboundEmail(fromEmail))) {
+    console.warn('[email] inbound support reply rejected: unauthorized from address');
+    res.status(403).json({ error: 'Unauthorized sender.' });
+    return;
+  }
+
+  const haystack = `${collectInboundTargets(payload).join(' ')}\n${collectInboundText(payload)}`;
+  const userId = parseSupportReplyToken(haystack, JWT_SECRET);
+  if (!userId || !isValidObjectId(userId)) {
+    res.status(422).json({ error: 'Conversation reference missing.' });
+    return;
+  }
+
+  const text = extractInboundReplyText(collectInboundText(payload));
+  if (!text) {
+    res.status(422).json({ error: 'Reply text is empty.' });
+    return;
+  }
+
+  const targetUser = await UserModel.findById(userId).select('_id').lean();
+  if (!targetUser) {
+    res.status(410).json({ error: 'Support thread is read-only.' });
+    return;
+  }
+
+  const senderUserId = await resolveAdminSenderUserId(fromEmail);
+  const created = await SupportChatMessageModel.create({
+    userId,
+    senderRole: 'admin',
+    senderUserId: senderUserId || undefined,
+    messageType: 'text',
+    text,
+    attachment: null,
+    readByUser: false,
+    readByAdmin: true,
+  });
+  emitSupportChatEvent('support.message', serializeSupportMessageForEvent(created));
+  console.log(`[email] inbound admin reply stored userId=${userId} messageId=${String(created._id)}`);
+  res.json({ ok: true, messageId: String(created._id) });
 });
 
 app.post('/api/admin/community/reports/:reportId/review', authMiddleware, requireAdmin, async (req, res) => {
