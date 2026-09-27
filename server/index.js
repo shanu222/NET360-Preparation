@@ -8135,6 +8135,8 @@ app.get('/api/health', async (_req, res) => {
       RESEND_API_KEY: Boolean(RESEND_API_KEY),
       RESEND_FROM_EMAIL: Boolean(RESEND_FROM_EMAIL),
       NET360_PUBLIC_APP_URL: Boolean(NET360_PUBLIC_APP_URL),
+      REDIS_URL: Boolean(String(process.env.REDIS_URL || '').trim()),
+      REDIS_HOST: Boolean(String(process.env.REDIS_HOST || '').trim()),
       RAILWAY_ENVIRONMENT_NAME: String(process.env.RAILWAY_ENVIRONMENT_NAME || '').trim() || '(unset)',
       RAILWAY_SERVICE_NAME: String(process.env.RAILWAY_SERVICE_NAME || '').trim() || '(unset)',
     },
