@@ -1,4 +1,8 @@
 import { CommunityNotificationDeliveryModel } from '../models/CommunityNotificationDelivery.js';
+import { getRedisMain } from '../services/redis.js';
+
+const localClaimedDeliveryIds = new Set();
+const NOTIFY_DEDUP_TTL_SEC = 90 * 24 * 60 * 60;
 
 export const COMMUNITY_FILE_MAX_BYTES = 10 * 1024 * 1024;
 export const COMMUNITY_NOTIFY_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
@@ -82,19 +86,80 @@ export function safeCommunityAttachmentContentType(mimeType, kind) {
   return 'application/octet-stream';
 }
 
-export async function claimCommunityNotificationDelivery(eventKey, userId) {
+export function notificationRecipientKey(userId, email) {
+  const dest = String(email || '').trim().toLowerCase();
+  if (dest) return dest;
+  return String(userId || '').trim().toLowerCase();
+}
+
+export function buildNotificationDeliveryId(eventKey, userId, email) {
+  const key = String(eventKey || '').trim();
+  const recipient = notificationRecipientKey(userId, email);
+  if (!key || !recipient) return '';
+  return `${key}::${recipient}`;
+}
+
+export function tryReserveLocalDeliveryId(deliveryId) {
+  const id = String(deliveryId || '').trim();
+  if (!id) return false;
+  if (localClaimedDeliveryIds.has(id)) return false;
+  localClaimedDeliveryIds.add(id);
+  return true;
+}
+
+async function reserveRedisDeliveryId(deliveryId) {
+  try {
+    const redis = await getRedisMain();
+    if (!redis?.isReady) return 'skipped';
+    const reserved = await redis.set(`notify:once:${deliveryId}`, '1', { NX: true, EX: NOTIFY_DEDUP_TTL_SEC });
+    return reserved === 'OK' ? 'claimed' : 'exists';
+  } catch {
+    return 'skipped';
+  }
+}
+
+export async function claimCommunityNotificationDelivery(eventKey, userId, email = '') {
   const key = String(eventKey || '').trim();
   const uid = String(userId || '').trim();
-  if (!key || !uid) return false;
+  const dest = String(email || '').trim().toLowerCase();
+  const deliveryId = buildNotificationDeliveryId(key, uid, dest);
+  if (!deliveryId) return false;
+  if (!tryReserveLocalDeliveryId(deliveryId)) return false;
+
+  const redisState = await reserveRedisDeliveryId(deliveryId);
+  if (redisState === 'exists') return false;
+
   try {
-    await CommunityNotificationDeliveryModel.create({
-      eventKey: key,
-      userId: uid,
-      sentAt: new Date(),
-    });
+    const existingQuery = {
+      $or: [
+        { deliveryId },
+        { eventKey: key, userId: uid },
+      ],
+    };
+    if (dest) {
+      existingQuery.$or.push({ eventKey: key, recipientEmail: dest });
+    }
+    const existing = await CommunityNotificationDeliveryModel.findOne(existingQuery).select('_id').lean();
+    if (existing) return false;
+
+    const result = await CommunityNotificationDeliveryModel.findOneAndUpdate(
+      { deliveryId },
+      {
+        $setOnInsert: {
+          deliveryId,
+          eventKey: key,
+          userId: uid || dest,
+          recipientEmail: dest,
+          sentAt: new Date(),
+        },
+      },
+      { upsert: true, new: true, includeResultMetadata: true },
+    );
+    if (result?.lastErrorObject?.updatedExisting) return false;
     return true;
   } catch (error) {
     if (error && error.code === 11000) return false;
-    throw error;
+    console.warn('[notify] delivery claim failed:', error?.message || error);
+    return false;
   }
 }

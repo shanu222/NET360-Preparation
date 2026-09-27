@@ -4511,7 +4511,7 @@ async function queueCommunityNotice({ eventKey, toUser, subject, title, paragrap
   const dest = normalizeEmail(toUser?.email);
   if (!dest || (toUser?.role || 'student') === 'admin') return;
   if (accountNeedsEmailVerification(toUser)) return;
-  const claimed = await claimCommunityNotificationDelivery(eventKey, toUser._id);
+  const claimed = await claimCommunityNotificationDelivery(eventKey, toUser._id, dest);
   if (!claimed) return;
   const greeting = String(toUser.firstName || '').trim() || 'there';
   const destUrl = openUrl || communityAppUrl();
@@ -4931,7 +4931,7 @@ async function notifyAdminsOfSupportMessage(user, message) {
     footer,
   });
   for (const to of emails) {
-    const claimed = await claimCommunityNotificationDelivery(eventKey, `admin:${to}`);
+    const claimed = await claimCommunityNotificationDelivery(eventKey, `admin:${to}`, to);
     if (!claimed) continue;
     void dispatchNotificationEmail({ to, subject, text, html });
   }

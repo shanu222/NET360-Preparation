@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   COMMUNITY_FILE_MAX_BYTES,
+  buildNotificationDeliveryId,
   communityFileMimeMatchesKind,
   communityNotifyEvent,
   isRecentCommunityEvent,
+  notificationRecipientKey,
   sniffCommunityFileKind,
+  tryReserveLocalDeliveryId,
 } from './communityNotifications.js';
 
 test('community file limit is 10MB', () => {
@@ -42,3 +45,23 @@ test('sniffs PDF, images, and rejects HTML/SVG payloads', () => {
   assert.equal(communityFileMimeMatchesKind('image/jpeg', 'jpeg'), true);
   assert.equal(communityFileMimeMatchesKind('application/pdf', 'jpeg'), false);
 });
+
+test('delivery ids are stable per event and recipient inbox', () => {
+  assert.equal(notificationRecipientKey('user-1', 'A@Net360Preparation.com'), 'a@net360preparation.com');
+  assert.equal(
+    buildNotificationDeliveryId('community.message:msg-1', 'user-1', 'A@Net360Preparation.com'),
+    buildNotificationDeliveryId('community.message:msg-1', 'user-9', 'a@net360preparation.com'),
+  );
+  assert.notEqual(
+    buildNotificationDeliveryId('community.message:msg-1', 'user-1', 'a@example.com'),
+    buildNotificationDeliveryId('community.message:msg-2', 'user-1', 'a@example.com'),
+  );
+});
+
+test('local reserve allows only one send for the same delivery id', () => {
+  const deliveryId = buildNotificationDeliveryId('community.message:once-test', 'user-1', 'once@example.com');
+  assert.equal(tryReserveLocalDeliveryId(deliveryId), true);
+  assert.equal(tryReserveLocalDeliveryId(deliveryId), false);
+  assert.equal(tryReserveLocalDeliveryId(deliveryId), false);
+});
+
