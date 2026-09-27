@@ -48,6 +48,34 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     webView.setHorizontalScrollBarEnabled(false);
     webView.setScrollbarFadingEnabled(true);
     webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+    webView.setSaveEnabled(true);
+  }
+
+  @Override
+  public void onPause() {
+    WebView webView = this.bridge != null ? this.bridge.getWebView() : null;
+    if (webView != null) {
+      webView.onPause();
+    }
+    super.onPause();
+  }
+
+  @Override
+  public void onResume() {
+    super.onResume();
+    WebView webView = this.bridge != null ? this.bridge.getWebView() : null;
+    if (webView != null) {
+      webView.onResume();
+    }
+  }
+
+  @Override
+  public void onSaveInstanceState(Bundle outState) {
+    super.onSaveInstanceState(outState);
+    WebView webView = this.bridge != null ? this.bridge.getWebView() : null;
+    if (webView != null) {
+      webView.saveState(outState);
+    }
   }
 
   @Override

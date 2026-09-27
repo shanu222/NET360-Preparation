@@ -79,13 +79,13 @@ export function ProgramExplorer() {
       <section className="relative overflow-hidden rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-[#eef2ff] via-[#ebe8ff] to-[#e6ebff] p-5 sm:p-6">
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_82%_20%,rgba(168,151,255,0.25),transparent_35%),radial-gradient(circle_at_12%_88%,rgba(140,186,255,0.2),transparent_30%)]" aria-hidden />
         <div className="relative">
-          <h1 className="text-3xl text-indigo-950">Explore NUST Programs</h1>
-          <p className="text-base text-slate-600">Updated view of NUST Schools, Colleges and Campuses with undergraduate programs</p>
+          <h1 className="text-3xl text-indigo-950 dark:text-slate-100">Explore NUST Programs</h1>
+          <p className="text-base text-slate-600 dark:text-slate-300">Updated view of NUST Schools, Colleges and Campuses with undergraduate programs</p>
         </div>
       </section>
 
       <Tabs defaultValue="engineering" className="space-y-4">
-        <div className="net360-swipe-row pb-1">
+        <div className="net360-horizontal-scroll net360-swipe-row pb-1">
           <TabsList className="inline-flex h-auto min-w-max gap-1.5 rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-[#eef2ff] via-[#f1ecff] to-[#f5f8ff] p-1.5 shadow-[0_8px_18px_rgba(79,70,229,0.14)]">
             {(['engineering', 'computing', 'business', 'architecture', 'sciences', 'applied'] as CategoryKey[]).map((key) => (
               <TabsTrigger

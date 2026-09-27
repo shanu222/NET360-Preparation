@@ -10,7 +10,8 @@ import {
   DialogTitle,
 } from './ui/dialog';
 import { Input } from './ui/input';
-import { apiRequest, API_BASE } from '../lib/api';
+import { apiRequest, downloadBinary, API_BASE } from '../lib/api';
+import { Capacitor } from '@capacitor/core';
 import { logNativeEvent } from '../lib/nativeDiagnostics';
 import {
   downloadDataUrlFile as downloadDataUrlFileSafe,
@@ -227,19 +228,57 @@ function PracticeBoardImage({
   onOpenFullSize: () => void;
   frameClassName: string;
 }) {
+  const [displaySrc, setDisplaySrc] = useState(() => resolvePracticeBoardMediaSrc(src));
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    const resolved = resolvePracticeBoardMediaSrc(src);
+    setFailed(false);
+    setDisplaySrc(resolved);
+    if (!resolved || resolved.startsWith('data:') || resolved.startsWith('blob:')) return undefined;
+    if (!Capacitor.isNativePlatform()) return undefined;
+
+    let objectUrl = '';
+    let cancelled = false;
+    const apiPath = String(src || '').startsWith('/') ? src : '';
+    void downloadBinary(apiPath || resolved)
+      .then(({ blob }) => {
+        if (cancelled || !blob || blob.size < 8) return;
+        objectUrl = URL.createObjectURL(blob);
+        setDisplaySrc(objectUrl);
+      })
+      .catch(() => {
+        if (!cancelled) setDisplaySrc(resolved);
+      });
+
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [src]);
+
+  if (failed || !displaySrc) {
+    return (
+      <p className="mt-3 text-sm text-slate-700 dark:text-slate-200">
+        Question image could not be displayed. Tap Next Question to load another.
+      </p>
+    );
+  }
+
   return (
     <button
       type="button"
       onClick={onOpenFullSize}
-      className={`group relative mt-3 block max-w-full overflow-hidden rounded-xl border bg-white text-left shadow-sm transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${frameClassName}`}
+      className={`group relative mt-3 block max-w-full overflow-hidden rounded-xl border bg-white text-left shadow-sm transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 dark:border-slate-600 dark:bg-slate-900 ${frameClassName}`}
       aria-label={`View ${alt} full size`}
     >
       <img
-        src={resolvePracticeBoardMediaSrc(src)}
+        src={displaySrc}
         alt={alt}
         className="max-h-56 w-auto max-w-full object-contain sm:max-h-72"
         loading="eager"
         decoding="async"
+        onError={() => setFailed(true)}
       />
       <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950/45 via-transparent to-transparent opacity-80 transition group-hover:opacity-100" />
       <span className="absolute bottom-2 right-2 inline-flex items-center gap-1.5 rounded-full bg-white/95 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-slate-800 shadow-md ring-1 ring-black/5">
@@ -815,11 +854,11 @@ export function PracticeBoard() {
         <p className="text-muted-foreground">Solve one random question at a time on a full digital whiteboard.</p>
       </div>
 
-      <Card className="rounded-2xl border-indigo-100 bg-white/95 shadow-[0_10px_22px_rgba(98,113,202,0.10)]">
+      <Card className="rounded-2xl border-indigo-100 bg-white/95 shadow-[0_10px_22px_rgba(98,113,202,0.10)] dark:border-slate-700 dark:bg-slate-900/90">
         <CardHeader className="pb-3">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <CardTitle className="text-indigo-950">Question</CardTitle>
+              <CardTitle className="text-indigo-950 dark:text-slate-100">Question</CardTitle>
               <CardDescription>
                 {activeQuestion
                   ? `${formatSubjectLabel(activeQuestion.subject)} • ${activeQuestion.difficulty}`
@@ -848,13 +887,15 @@ export function PracticeBoard() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="rounded-xl border border-indigo-100 bg-slate-50/60 p-4">
+          <div className="rounded-xl border border-indigo-100 bg-slate-50/60 p-4 dark:border-slate-600 dark:bg-slate-800/80">
             {questionText ? (
-              <p className="text-base text-slate-800 sm:text-lg">{questionText}</p>
+              <p className="whitespace-pre-wrap text-base text-slate-800 dark:text-slate-100 sm:text-lg">{questionText}</p>
             ) : loadingQuestion ? (
-              <p className="text-base text-slate-800 sm:text-lg">Loading question…</p>
+              <p className="text-base text-slate-800 dark:text-slate-100 sm:text-lg">Loading question…</p>
             ) : !activeQuestion ? (
-              <p className="text-base text-slate-800 sm:text-lg">Question bank is empty right now.</p>
+              <p className="text-base text-slate-800 dark:text-slate-100 sm:text-lg">Question bank is empty right now.</p>
+            ) : !questionImage && !questionFile ? (
+              <p className="text-base text-slate-800 dark:text-slate-100 sm:text-lg">This question has no visible text. Tap Next Question.</p>
             ) : null}
             {questionImage ? (
               <PracticeBoardImage
@@ -881,12 +922,12 @@ export function PracticeBoard() {
           </div>
 
           {showAnswer && activeQuestion ? (
-            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4">
-              <p className="text-xs uppercase tracking-wide text-emerald-700">Answer</p>
+            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 dark:border-emerald-700/50 dark:bg-emerald-950/40">
+              <p className="text-xs uppercase tracking-wide text-emerald-700 dark:text-emerald-300">Answer</p>
               {solutionText ? (
-                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">{solutionText}</p>
+                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800 dark:text-slate-100">{solutionText}</p>
               ) : !solutionImage ? (
-                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800">
+                <p className="mt-1 whitespace-pre-wrap text-sm text-slate-800 dark:text-slate-100">
                   No text answer provided for this question.
                 </p>
               ) : null}

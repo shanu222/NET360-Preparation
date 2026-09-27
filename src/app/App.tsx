@@ -56,6 +56,7 @@ import { brandLogoUrl } from './lib/publicMedia';
 import { fetchAndApplyPublicMediaConfig } from './lib/publicMediaRuntime';
 import { PremiumCountdownBadge } from './components/subscription/PremiumCountdownBadge';
 import { logNativeEvent } from './lib/nativeDiagnostics';
+import { isNativeAndroidRuntime } from './lib/nativeForeground';
 
 const SubscriptionPageLazy = lazyWithRetry(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
 const Dashboard = lazyWithRetry(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
@@ -193,6 +194,24 @@ const PATH_BY_SECTION: Record<SectionId, string> = {
   'net-preparation-pakistan': '/net-preparation-pakistan',
   'nust-entry-test-preparation': '/nust-entry-test-preparation',
 };
+
+const ANDROID_LAST_ROUTE_KEY = 'net360-android-last-route';
+
+function isStandaloneAuthPath(pathname: string) {
+  const normalized = pathname === '/' ? '/' : pathname.replace(/\/+$/, '');
+  return normalized === '/confirm-account-deletion' || normalized === '/verify-email';
+}
+
+function isRestorableAndroidRoute(route: string) {
+  try {
+    const parsed = new URL(route, 'https://net360preparation.com');
+    if (isStandaloneAuthPath(parsed.pathname)) return false;
+    if (resolveSectionFromPath(parsed.pathname)) return true;
+    return /^\/(test|exam|community|guide|analytics|practice-board)/.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
 
 const STUDENT_NAVIGATION_ITEMS: Array<{ id: SectionId; label: string; icon: typeof Home }> = [
   { id: 'home', label: 'Dashboard', icon: Home },
@@ -503,6 +522,7 @@ export default function App() {
     return normalized === '/verify-email';
   }, [location.pathname]);
   const isStandaloneAuthRoute = isConfirmAccountDeletionRoute || isVerifyEmailRoute;
+  const androidRouteRestoredRef = useRef(false);
 
   /** Native: unauthenticated users always land on Login (Profile), never Dashboard first. */
   useEffect(() => {
@@ -515,6 +535,32 @@ export default function App() {
       navigate(PATH_BY_SECTION.profile, { replace: true });
     }
   }, [authLoading, user, activeTab, navigate, isStandaloneAuthRoute]);
+
+  useEffect(() => {
+    if (!isNativeAndroidRuntime() || isStandaloneAuthRoute || !user) return;
+    const route = `${location.pathname}${location.search || ''}${location.hash || ''}`;
+    if (!isRestorableAndroidRoute(route)) return;
+    try {
+      window.localStorage.setItem(ANDROID_LAST_ROUTE_KEY, route);
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }, [isStandaloneAuthRoute, location.hash, location.pathname, location.search, user]);
+
+  useEffect(() => {
+    if (authLoading || isStandaloneAuthRoute || !user) return;
+    if (!isNativeAndroidRuntime() || androidRouteRestoredRef.current) return;
+    androidRouteRestoredRef.current = true;
+    if (location.pathname !== '/' && location.pathname !== '') return;
+    let last = '';
+    try {
+      last = String(window.localStorage.getItem(ANDROID_LAST_ROUTE_KEY) || '').trim();
+    } catch {
+      return;
+    }
+    if (!last || last === '/' || !isRestorableAndroidRoute(last)) return;
+    navigate(last, { replace: true });
+  }, [authLoading, isStandaloneAuthRoute, location.pathname, navigate, user]);
 
   useEffect(() => {
     if (activeTab === 'profile') {
@@ -1053,7 +1099,7 @@ export default function App() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="touch-manipulation hidden min-h-10 min-w-10 rounded-xl text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 sm:inline-flex sm:min-h-9 sm:min-w-9 sm:w-auto sm:px-2.5"
+                  className="inline-flex min-h-10 min-w-10 touch-manipulation items-center justify-center rounded-xl text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white sm:min-h-9 sm:min-w-9 sm:w-auto sm:px-2.5"
                   onClick={() => setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'))}
                   aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
                   title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}

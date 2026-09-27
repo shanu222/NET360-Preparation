@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { Button } from './ui/button';
 import { downloadReport } from '../lib/api';
+import { openOrSaveBlobOnDevice } from '../lib/nativeFileAccess';
 import { showSuccessToast, showErrorToast, handleApiError } from '../lib/userToast';
 
 const AnalyticsLineChart = lazy(() =>
@@ -39,12 +40,7 @@ export function Analytics() {
 
     try {
       const { blob, filename } = await downloadReport('/api/reports/export?format=pdf', token);
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement('a');
-      anchor.href = url;
-      anchor.download = filename;
-      anchor.click();
-      URL.revokeObjectURL(url);
+      await openOrSaveBlobOnDevice(blob, filename, 'download');
       showSuccessToast(`PDF exported: ${filename}`);
     } catch (error) {
       handleApiError(error, 'Export failed.');

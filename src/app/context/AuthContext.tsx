@@ -31,6 +31,7 @@ import { ensureFirebaseAuthReady, firebaseAuth, isFirebaseConfigured } from '../
 import { showNeutralToast, showSuccessToast, showWarningToast } from '../lib/userToast';
 import { updateAuthDebug } from '../lib/authDebugState';
 import { isNativeRuntime as isNativeRuntimePlatform, logNativeEvent } from '../lib/nativeDiagnostics';
+import { consumeBriefNativeHide, markNativeDocumentHidden } from '../lib/nativeForeground';
 import { signInWithGoogleAndroidNative } from '../lib/nativeGoogleAuth';
 import { closeRealtimeScope } from '../lib/realtimeSocket';
 
@@ -647,7 +648,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void ensureNativeAuthBootstrap('mount');
     const listenerPromise = CapacitorApp
       .addListener('appStateChange', ({ isActive }) => {
-        if (isActive) void ensureNativeAuthBootstrap('app-resume');
+        if (!isActive) {
+          markNativeDocumentHidden();
+          return;
+        }
+        if (consumeBriefNativeHide()) return;
+        if (isAndroidNative && userRef.current) return;
+        void ensureNativeAuthBootstrap('app-resume');
       })
       .catch(() => null);
     const onOnline = () => {
@@ -686,10 +693,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const onVisibility = () => {
-      if (!document.hidden) {
-        syncFromStorage();
-        scheduleForegroundRestore('visibility');
+      if (document.hidden) {
+        markNativeDocumentHidden();
+        return;
       }
+      syncFromStorage();
+      if (consumeBriefNativeHide()) return;
+      if (isAndroidNative && userRef.current) return;
+      scheduleForegroundRestore('visibility');
     };
 
     const onStorage = (event: StorageEvent) => {
@@ -701,6 +712,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const onFocus = () => {
       if (document.hidden) return;
       syncFromStorage();
+      if (consumeBriefNativeHide()) return;
+      if (isAndroidNative && userRef.current) return;
       scheduleForegroundRestore('focus');
     };
 
@@ -711,7 +724,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .addListener('appStateChange', ({ isActive }) => {
         if (isActive) {
           syncFromStorage();
+          if (consumeBriefNativeHide()) return;
+          if (isAndroidNative && userRef.current) return;
           scheduleForegroundRestore('app-resume');
+        } else {
+          markNativeDocumentHidden();
         }
       })
       .catch(() => null);

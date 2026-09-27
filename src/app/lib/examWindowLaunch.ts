@@ -24,6 +24,35 @@ export function appNavigate(to: To, options?: NavigateOptions) {
  * Production policy: never open about:blank popups / new windows for tests.
  * Uses client-side routing when the student shell is mounted (keeps auth warm).
  */
+const LAUNCHED_SESSION_CACHE_KEY = 'net360-exam-session-cache';
+
+export function cacheLaunchedExamSession(session: { id?: string } | null | undefined) {
+  if (typeof window === 'undefined' || !session?.id) return;
+  try {
+    window.sessionStorage.setItem(LAUNCHED_SESSION_CACHE_KEY, JSON.stringify({
+      id: String(session.id),
+      session,
+      cachedAt: Date.now(),
+    }));
+  } catch {
+    /* quota / private mode */
+  }
+}
+
+export function readCachedLaunchedExamSession<T>(sessionId: string | null | undefined): T | null {
+  if (typeof window === 'undefined' || !sessionId) return null;
+  try {
+    const raw = window.sessionStorage.getItem(LAUNCHED_SESSION_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { id?: string; session?: T; cachedAt?: number };
+    if (String(parsed?.id || '') !== String(sessionId)) return null;
+    if (parsed.cachedAt && Date.now() - Number(parsed.cachedAt) > 5 * 60_000) return null;
+    return parsed.session || null;
+  } catch {
+    return null;
+  }
+}
+
 export function navigateToExamSameTab(pathWithSearch: string): void {
   const target = new URL(pathWithSearch, window.location.origin);
   const next = `${target.pathname}${target.search}${target.hash}`;

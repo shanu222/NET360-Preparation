@@ -8,7 +8,9 @@ import {
   resolveSnapshotStudentAuthToken,
 } from '../lib/authSession';
 import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTiming';
+import { cacheLaunchedExamSession } from '../lib/examWindowLaunch';
 import { logNativeEvent } from '../lib/nativeDiagnostics';
+import { consumeBriefNativeHide, markNativeDocumentHidden } from '../lib/nativeForeground';
 import { useAuth } from './AuthContext';
 
 interface TestAttempt {
@@ -453,7 +455,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (!authToken) return;
 
     const onVisibility = () => {
-      if (document.hidden) return;
+      if (document.hidden) {
+        markNativeDocumentHidden();
+        return;
+      }
+      if (consumeBriefNativeHide()) return;
       scheduleDebouncedForegroundSync(authToken);
     };
 
@@ -464,6 +470,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
     const onFocus = () => {
       if (document.hidden) return;
+      if (consumeBriefNativeHide()) return;
       scheduleDebouncedForegroundSync(authToken);
     };
 
@@ -533,40 +540,34 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     selectedSubject,
     authTokenHint,
   }) => {
-    await waitUntilAuthHydrated(() => authLoadingRef.current);
-    if (!readPersistedStudentAccessToken() && !token && !user) {
-      throw new Error('Please login first to start a server-backed test session.');
-    }
-    await waitUntilClientAuthToken(resolveClientAuthToken);
-
     const trimmedHint =
       typeof authTokenHint === 'string' && authTokenHint.trim() ? authTokenHint.trim() : null;
-    let authToken: string | null =
-      trimmedHint && !isCookieSessionApiMarker(trimmedHint) ? trimmedHint : null;
-
     const storedAccess = readPersistedStudentAccessToken();
-    if (!authToken && storedAccess && !isCookieSessionApiMarker(storedAccess)) {
-      authToken = storedAccess;
-    }
-    if (!authToken) {
-      authToken = resolveClientAuthToken();
-    }
+    let authToken: string | null =
+      trimmedHint && !isCookieSessionApiMarker(trimmedHint)
+        ? trimmedHint
+        : storedAccess && !isCookieSessionApiMarker(storedAccess)
+          ? storedAccess
+          : resolveClientAuthToken();
+
     if (!authToken || isCookieSessionApiMarker(authToken)) {
-      authToken = await resolveLaunchAuthToken(token);
-    }
-    if (!authToken) {
-      throw new Error('Please login first to start a server-backed test session.');
-    }
-
-    const persistedJwt = readPersistedStudentAccessToken();
-    if (persistedJwt && !isCookieSessionApiMarker(persistedJwt)) {
-      authToken = persistedJwt;
-    }
-
-    await ensureStudentBearerTokenFromRefresh(token);
-    const bearerAfterPrime = readPersistedStudentAccessToken();
-    if (bearerAfterPrime && !isCookieSessionApiMarker(bearerAfterPrime)) {
-      authToken = bearerAfterPrime;
+      await waitUntilAuthHydrated(() => authLoadingRef.current);
+      if (!readPersistedStudentAccessToken() && !token && !user) {
+        throw new Error('Please login first to start a server-backed test session.');
+      }
+      await waitUntilClientAuthToken(resolveClientAuthToken);
+      authToken = resolveClientAuthToken();
+      if (!authToken || isCookieSessionApiMarker(authToken)) {
+        authToken = await resolveLaunchAuthToken(token);
+      }
+      if (!authToken) {
+        throw new Error('Please login first to start a server-backed test session.');
+      }
+      await ensureStudentBearerTokenFromRefresh(token);
+      const bearerAfterPrime = readPersistedStudentAccessToken();
+      if (bearerAfterPrime && !isCookieSessionApiMarker(bearerAfterPrime)) {
+        authToken = bearerAfterPrime;
+      }
     }
 
     if (import.meta.env.DEV) {
@@ -600,7 +601,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           {
             method: 'POST',
             retryCount: 1,
-            timeoutMs: 50_000,
+            timeoutMs: 18_000,
             body: JSON.stringify(normalizedPayload),
           },
           authToken,
@@ -623,6 +624,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           questionCount: normalizedPayload.questionCount,
           returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
         });
+        cacheLaunchedExamSession(startPayload.session);
         return startPayload.session;
       } catch (error) {
         logNativeEvent('practice-board', 'test-session-start-failed', {

@@ -19,6 +19,7 @@ import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl } from '../lib/authSession';
 import { App as CapacitorApp } from '@capacitor/app';
 import { logNativeEvent } from '../lib/nativeDiagnostics';
+import { consumeBriefNativeHide, markNativeDocumentHidden } from '../lib/nativeForeground';
 import {
   acquireRealtimeSocket,
   isRealtimeConnected,
@@ -1216,11 +1217,15 @@ function CommunityInner() {
   useEffect(() => {
     if (!token || activeTab !== 'messages' || !activeConnectionId) return;
     const onVis = () => {
-      if (document.visibilityState === 'visible') {
-        void refreshActiveMessages();
+      if (document.hidden) {
+        markNativeDocumentHidden();
+        return;
       }
+      if (consumeBriefNativeHide()) return;
+      void refreshActiveMessages();
     };
     const onFocus = () => {
+      if (consumeBriefNativeHide()) return;
       void refreshActiveMessages();
     };
     document.addEventListener('visibilitychange', onVis);
@@ -1526,17 +1531,23 @@ function CommunityInner() {
       handleConnectivityResume();
     };
     const onVisibilityChange = () => {
-      if (!document.hidden) {
-        handleConnectivityResume();
+      if (document.hidden) {
+        markNativeDocumentHidden();
+        return;
       }
+      if (consumeBriefNativeHide()) return;
+      handleConnectivityResume();
     };
     window.addEventListener('online', onOnline);
     document.addEventListener('visibilitychange', onVisibilityChange);
     const appStateListenerPromise = CapacitorApp
       .addListener('appStateChange', ({ isActive }) => {
-        if (isActive) {
-          handleConnectivityResume();
+        if (!isActive) {
+          markNativeDocumentHidden();
+          return;
         }
+        if (consumeBriefNativeHide()) return;
+        handleConnectivityResume();
       })
       .catch(() => null);
 
