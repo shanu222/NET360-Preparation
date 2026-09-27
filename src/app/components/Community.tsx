@@ -721,13 +721,15 @@ function CommunityInner() {
       const payload = await apiRequest<{ online: OnlineStudentRow[] }>('/api/community/presence', {}, token);
       // A newer request already started; let it win to avoid applying a stale snapshot.
       if (seq !== presenceRequestSeqRef.current) return;
-      setOnlineStudents((prev) => mergePresenceRoster(prev, payload.online || []));
+      const selfId = String(user?.id || '');
+      const others = (payload.online || []).filter((row) => String(row.id) !== selfId);
+      setOnlineStudents((prev) => mergePresenceRoster(prev, others));
     } catch {
       // Keep the last known roster; a transient failure must not blank the list.
     } finally {
       if (!silent && seq === presenceRequestSeqRef.current) setPresenceLoading(false);
     }
-  }, [token]);
+  }, [token, user?.id]);
 
   useEffect(() => {
     loadPresenceRef.current = loadPresence;
@@ -1208,6 +1210,8 @@ function CommunityInner() {
       }
       if (t === 'community.presence') {
         const uid = String(parsed.userId || '').trim();
+        // Our own presence changes are not part of our roster.
+        if (uid && uid === authUserId) return;
         if (parsed.action === 'offline' && uid) {
           // Server only emits offline once the user's last connection is gone: drop the tile now.
           setOnlineStudents((prev) => (
@@ -2099,8 +2103,8 @@ function CommunityInner() {
 
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {onlineStudents.map((s) => {
+                  if (String(s.id) === String(user.id)) return null;
                   const netStatus = [...allCommunityUsers, ...searchResults].find((x) => x.id === s.id)?.connectionStatus;
-                  const isSelf = String(s.id) === String(user.id);
                   const pendingKind = pendingRosterAction?.userId === s.id ? pendingRosterAction.kind : null;
                   const isConnecting = connectingUserIds.has(s.id);
                   const tileName = displayName(s);
@@ -2122,9 +2126,6 @@ function CommunityInner() {
                         <div className="min-w-0">
                           <p className="flex min-w-0 items-center gap-1.5 font-semibold">
                             <span className="truncate">{tileName}</span>
-                            {isSelf ? (
-                              <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide">You</Badge>
-                            ) : null}
                           </p>
                           <p className="truncate text-xs text-muted-foreground">{s.username ? `@${s.username}` : 'Student'}</p>
                           <p className="truncate text-xs font-medium text-indigo-700 dark:text-indigo-300">
@@ -2142,44 +2143,40 @@ function CommunityInner() {
                         <p className="mt-1 text-[10px] text-muted-foreground">Last seen {new Date(s.lastSeenAt).toLocaleString()}</p>
                       ) : null}
                       <div className="mt-4 flex flex-wrap gap-2">
-                        {!isSelf ? (
-                          <>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              className="shadow-sm"
-                              onClick={() => openChatWithUser(s.id)}
-                              disabled={Boolean(pendingRosterAction)}
-                              aria-busy={pendingKind === 'chat'}
-                              aria-label={pendingKind === 'chat' ? `Opening chat with ${tileName}` : `Chat with ${tileName}`}
-                            >
-                              {pendingKind === 'chat' ? 'Opening…' : 'Chat'}
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => void sendConnectionRequest(s.id)}
-                              disabled={isConnecting || !canSendConnectionRequest(netStatus)}
-                              aria-busy={isConnecting}
-                              aria-label={`${connectButtonLabel(netStatus, s.id)} — ${tileName}`}
-                            >
-                              {connectButtonLabel(netStatus, s.id)}
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => inviteToQuizBattleFromPresence(s.id)}
-                              disabled={Boolean(pendingRosterAction)}
-                              aria-busy={pendingKind === 'quiz'}
-                              aria-label={pendingKind === 'quiz' ? `Starting quiz battle with ${tileName}` : `Quiz battle with ${tileName}`}
-                            >
-                              {pendingKind === 'quiz' ? 'Starting…' : 'Quiz battle'}
-                            </Button>
-                          </>
-                        ) : null}
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          className="shadow-sm"
+                          onClick={() => openChatWithUser(s.id)}
+                          disabled={Boolean(pendingRosterAction)}
+                          aria-busy={pendingKind === 'chat'}
+                          aria-label={pendingKind === 'chat' ? `Opening chat with ${tileName}` : `Chat with ${tileName}`}
+                        >
+                          {pendingKind === 'chat' ? 'Opening…' : 'Chat'}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => void sendConnectionRequest(s.id)}
+                          disabled={isConnecting || !canSendConnectionRequest(netStatus)}
+                          aria-busy={isConnecting}
+                          aria-label={`${connectButtonLabel(netStatus, s.id)} — ${tileName}`}
+                        >
+                          {connectButtonLabel(netStatus, s.id)}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => inviteToQuizBattleFromPresence(s.id)}
+                          disabled={Boolean(pendingRosterAction)}
+                          aria-busy={pendingKind === 'quiz'}
+                          aria-label={pendingKind === 'quiz' ? `Starting quiz battle with ${tileName}` : `Quiz battle with ${tileName}`}
+                        >
+                          {pendingKind === 'quiz' ? 'Starting…' : 'Quiz battle'}
+                        </Button>
                         <Button
                           type="button"
                           size="sm"
@@ -2197,9 +2194,9 @@ function CommunityInner() {
                   );
                 })}
               </div>
-              {!onlineStudents.length && !presenceLoading ? (
+              {!onlineStudents.some((s) => String(s.id) !== String(user.id)) && !presenceLoading ? (
                 <div className="rounded-xl border border-dashed p-8 text-center">
-                  <p className="text-sm font-medium text-slate-800 dark:text-slate-100">No visible classmates online</p>
+                  <p className="text-sm font-medium text-slate-800 dark:text-slate-100">No other students are currently online.</p>
                   <p className="mt-1 text-xs text-muted-foreground">Study sessions spike after school hours — invite friends or jump into Discussion Rooms meanwhile.</p>
                 </div>
               ) : null}

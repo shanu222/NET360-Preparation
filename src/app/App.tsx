@@ -15,6 +15,7 @@ import {
 import { createPortal } from 'react-dom';
 import { PageRouteFallback } from './components/PageRouteFallback';
 import { GlobalFreeAccessAnnouncement } from './components/GlobalFreeAccessAnnouncement';
+import { StudentPresenceHeartbeat } from './components/StudentPresenceHeartbeat';
 import { SubscriptionProvider } from './context/SubscriptionContext';
 import { isChunkLoadFailure, lazyWithRetry, scheduleStaleChunkReload } from './lib/chunkLoadRecovery';
 
@@ -1099,6 +1100,7 @@ export default function App() {
 
       <GlobalFreeAccessAnnouncement onStartLearning={() => navigate(PATH_BY_SECTION.tests)} />
       <DeferredSupportChat />
+      <StudentPresenceHeartbeat />
     </AppDataProvider>
       </SubscriptionProvider>
       )}

@@ -59,6 +59,7 @@ function adminRoom(userId) {
  * @param {boolean | string[]} [opts.corsOrigins] Same as Express CORS: true = any, or allowlist of origins
  * @param {(userId: string, clientId: string) => void} [opts.onStudentPresenceRegister]
  * @param {(userId: string, clientId: string) => void} [opts.onStudentPresenceUnregister]
+ * @param {(userId: string, meta: { away: boolean }) => void} [opts.onStudentPresenceHeartbeat]
  */
 export async function initSocketIo(httpServer, opts) {
   const {
@@ -69,6 +70,7 @@ export async function initSocketIo(httpServer, opts) {
     corsOrigins = true,
     onStudentPresenceRegister,
     onStudentPresenceUnregister,
+    onStudentPresenceHeartbeat,
   } = opts;
 
   // Resolve the adapter BEFORE attaching Socket.IO to the HTTP server. `new Server(httpServer)`
@@ -163,6 +165,24 @@ export async function initSocketIo(httpServer, opts) {
         io.to(studentRoom(target)).emit('sync', { type: 'support.typing', userId: target, from: 'admin', typing, ts: now });
       } else {
         io.to('community-admins').emit('sync', { type: 'support.typing', userId, from: 'user', typing, ts: now });
+      }
+    });
+
+    // App-wide presence heartbeat from the web client (any page, not just Community).
+    // Offline is still driven by socket disconnect / Socket.IO ping timeout.
+    let lastHeartbeatAt = 0;
+    let lastHeartbeatAway = null;
+    socket.on('presence:heartbeat', (payload) => {
+      if (role === 'admin') return;
+      const now = Date.now();
+      const away = Boolean(payload && typeof payload === 'object' && payload.away);
+      if (away === lastHeartbeatAway && now - lastHeartbeatAt < 5_000) return;
+      lastHeartbeatAt = now;
+      lastHeartbeatAway = away;
+      try {
+        onStudentPresenceHeartbeat?.(userId, { away });
+      } catch {
+        // non-fatal
       }
     });
 

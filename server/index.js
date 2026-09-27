@@ -830,6 +830,43 @@ function unregisterStudentPresence(userId, clientId) {
   }
 }
 
+/** No heartbeat for this long -> roster shows the user as "away" until the socket drops. */
+const STUDENT_PRESENCE_STALE_PING_MS = 120_000;
+const STUDENT_PRESENCE_LAST_SEEN_PERSIST_MS = 5 * 60_000;
+
+function isStudentPresencePingStale(meta, now = Date.now()) {
+  return now - Number(meta?.lastPing || 0) > STUDENT_PRESENCE_STALE_PING_MS;
+}
+
+function broadcastStudentPresenceUpdate(uid) {
+  broadcastSyncEvent({
+    role: 'student',
+    event: 'sync',
+    data: { type: 'community.presence', action: 'update', userId: uid },
+  });
+}
+
+/**
+ * Socket heartbeat from the web app (sent from every page while signed in). Keeps the user
+ * "online" (not stale/away), throttles lastSeenAt writes, and only broadcasts when the
+ * visible state actually changes so peers are not flooded with roster reloads.
+ */
+function heartbeatStudentPresence(userId, { away = false } = {}) {
+  const uid = String(userId || '').trim();
+  if (!uid || !studentPresenceClientIdsByUser.has(uid)) return;
+  const now = Date.now();
+  const meta = studentPresenceMetaByUser.get(uid) || { studyingSubject: '', away: false, lastPing: 0 };
+  const changed = Boolean(meta.away) !== Boolean(away) || isStudentPresencePingStale(meta, now);
+  meta.away = Boolean(away);
+  meta.lastPing = now;
+  if (now - Number(meta.lastSeenPersistedAt || 0) > STUDENT_PRESENCE_LAST_SEEN_PERSIST_MS) {
+    meta.lastSeenPersistedAt = now;
+    CommunityProfileModel.updateOne({ userId: uid }, { $set: { lastSeenAt: new Date(now) } }).catch(() => {});
+  }
+  studentPresenceMetaByUser.set(uid, meta);
+  if (changed) broadcastStudentPresenceUpdate(uid);
+}
+
 function touchStudentPresenceMeta(userId, patch) {
   const uid = String(userId || '').trim();
   if (!uid) return;
@@ -9704,9 +9741,9 @@ app.get('/api/community/presence', ...studentPremiumSurface, async (req, res) =>
   if (await communityGuard(req, res)) return;
   const viewerId = String(req.user._id);
   const now = Date.now();
-  const STALE_PING_MS = 120_000;
 
-  const onlineUserIds = Array.from(studentPresenceClientIdsByUser.keys());
+  // "Online students" lists OTHER students only; the viewer is never part of their own roster.
+  const onlineUserIds = Array.from(studentPresenceClientIdsByUser.keys()).filter((id) => id !== viewerId);
   if (!onlineUserIds.length) {
     res.json({ online: [], serverTime: new Date().toISOString() });
     return;
@@ -9718,7 +9755,6 @@ app.get('/api/community/presence', ...studentPremiumSurface, async (req, res) =>
   const privacyById = new Map(privacyRows.map((row) => [String(row.userId), row]));
 
   const visibleIds = onlineUserIds.filter((id) => {
-    if (id === viewerId) return true;
     const row = privacyById.get(id);
     return !row?.hideOnlineStatus;
   });
@@ -9737,7 +9773,7 @@ app.get('/api/community/presence', ...studentPremiumSurface, async (req, res) =>
       const u = userById.get(id);
       const p = profileByUser.get(id) || {};
       const meta = studentPresenceMetaByUser.get(id) || { studyingSubject: '', away: false, lastPing: now };
-      const pingStale = now - Number(meta.lastPing || 0) > STALE_PING_MS;
+      const pingStale = isStudentPresencePingStale(meta, now);
       const presenceStatus = meta.away || pingStale ? 'away' : 'online';
       const base = serializeCommunityUser({ user: u, profile: p });
       return {
@@ -9756,16 +9792,20 @@ app.get('/api/community/presence', ...studentPremiumSurface, async (req, res) =>
 app.post('/api/community/presence/ping', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const uid = String(req.user._id);
+  const before = studentPresenceMetaByUser.get(uid);
+  const beforeAway = Boolean(before?.away);
+  const beforeSubject = String(before?.studyingSubject || '');
+  const beforeStale = !before || isStudentPresencePingStale(before);
   touchStudentPresenceMeta(uid, {
     studyingSubject: req.body?.studyingSubject,
     away: req.body?.away,
   });
-  if (studentPresenceClientIdsByUser.has(uid)) {
-    broadcastSyncEvent({
-      role: 'student',
-      event: 'sync',
-      data: { type: 'community.presence', action: 'update', userId: uid },
-    });
+  const after = studentPresenceMetaByUser.get(uid);
+  const changed = beforeStale
+    || beforeAway !== Boolean(after?.away)
+    || beforeSubject !== String(after?.studyingSubject || '');
+  if (changed && studentPresenceClientIdsByUser.has(uid)) {
+    broadcastStudentPresenceUpdate(uid);
   }
   res.json({ ok: true });
 });
@@ -18132,6 +18172,7 @@ async function bootstrap() {
     },
     onStudentPresenceRegister: registerStudentPresence,
     onStudentPresenceUnregister: unregisterStudentPresence,
+    onStudentPresenceHeartbeat: heartbeatStudentPresence,
   }).catch((error) => {
     console.error('[socket.io] Initialization failed (HTTP still runs):', error?.message || error);
   });
