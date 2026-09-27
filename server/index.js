@@ -57,6 +57,7 @@ import { cacheGetJson, cacheSetJson, cacheKey, cacheDel, invalidateCommunityLead
 import {
   initSocketIo,
   emitSocketSyncToStudentUser,
+  emitSocketSyncToStudents,
   emitSocketSyncToAdmins,
   mirrorBroadcastSyncEvent,
   getIo,
@@ -112,6 +113,13 @@ import { TestSessionModel } from './models/TestSession.js';
 import { AttemptModel } from './models/Attempt.js';
 import { AIUsageModel } from './models/AIUsage.js';
 import { PracticeBoardQuestionModel } from './models/PracticeBoardQuestion.js';
+import { NustAdmissionSnapshotModel } from './models/NustAdmissionSnapshot.js';
+import {
+  NUST_UG_PORTAL_URL,
+  buildNustContentHash,
+  extractNustAdmissionsFromHtml,
+  isSelectionListNotice,
+} from './lib/nustAdmissionsExtract.js';
 import { QuestionSubmissionModel } from './models/QuestionSubmission.js';
 import { ContributionPolicyModel } from './models/ContributionPolicy.js';
 import { SubmissionRestrictionModel } from './models/SubmissionRestriction.js';
@@ -369,7 +377,7 @@ const SIGNUP_TOKEN_TTL_MINUTES = Number(
 );
 const PREMIUM_TOKEN_TTL_HOURS = Number(process.env.PREMIUM_TOKEN_TTL_HOURS || 24);
 const NUST_UPDATES_CACHE_MS = Number(process.env.NUST_UPDATES_CACHE_MS || 60 * 1000);
-const NUST_ADMISSIONS_REFRESH_MS = clamp(Number(process.env.NUST_ADMISSIONS_REFRESH_MS || 3 * 60 * 60 * 1000), 15 * 60 * 1000, 24 * 60 * 60 * 1000);
+const NUST_ADMISSIONS_REFRESH_MS = clamp(Number(process.env.NUST_ADMISSIONS_REFRESH_MS || 45 * 60 * 1000), 30 * 60 * 1000, 60 * 60 * 1000);
 /** Community leaderboard Redis cache TTL (seconds). */
 const COMMUNITY_LEADERBOARD_CACHE_TTL_SEC = clamp(Number(process.env.COMMUNITY_LEADERBOARD_CACHE_TTL_SEC || 45), 15, 180);
 const QUIZ_LEADERBOARD_CACHE_TTL_SEC = clamp(Number(process.env.QUIZ_LEADERBOARD_CACHE_TTL_SEC || 50), 20, 180);
@@ -1581,8 +1589,11 @@ const DEFAULT_NUST_IMPORTANT_NOTICES = [
 const nustUpdatesCache = {
   fetchedAt: 0,
   lastAttemptAt: 0,
+  lastSuccessAt: 0,
   refreshInFlight: false,
   lastError: '',
+  contentHash: '',
+  sessionLabel: '',
   dates: DEFAULT_NUST_IMPORTANT_DATES,
   notices: DEFAULT_NUST_IMPORTANT_NOTICES,
   updates: [],
@@ -8108,19 +8119,138 @@ function parseNustNotices(html) {
 }
 
 function parseNustAdmissionsFeed(html) {
-  const dates = parseNustImportantDates(html);
-  const notices = filterNustNotices(parseNustNotices(html));
-
+  const extracted = extractNustAdmissionsFromHtml(html);
   return {
-    dates: dates.length ? dates : DEFAULT_NUST_IMPORTANT_DATES,
-    notices: notices.length ? notices : DEFAULT_NUST_IMPORTANT_NOTICES,
+    dates: extracted.dates,
+    notices: filterNustNotices(extracted.notices),
+    extras: extracted.extras || {},
   };
+}
+
+function applyNustSnapshotToCache(snapshot) {
+  if (!snapshot) return;
+  const dates = Array.isArray(snapshot.dates) ? snapshot.dates : [];
+  const notices = filterNustNotices(snapshot.notices);
+  if (dates.length) nustUpdatesCache.dates = dates;
+  if (notices.length) {
+    nustUpdatesCache.notices = notices;
+    nustUpdatesCache.updates = notices.map((item) => ({ title: item.title, subtitle: item.subtitle }));
+  }
+  nustUpdatesCache.contentHash = String(snapshot.contentHash || '');
+  nustUpdatesCache.sessionLabel = String(snapshot.sessionLabel || '');
+  nustUpdatesCache.lastError = String(snapshot.lastError || '');
+  if (snapshot.lastSuccessAt) {
+    const successAt = new Date(snapshot.lastSuccessAt).getTime();
+    if (Number.isFinite(successAt)) {
+      nustUpdatesCache.lastSuccessAt = successAt;
+      nustUpdatesCache.fetchedAt = successAt;
+    }
+  }
+}
+
+async function hydrateNustAdmissionsCacheFromMongo() {
+  try {
+    const snapshot = await NustAdmissionSnapshotModel.findOne({ key: 'latest' }).lean();
+    if (snapshot?.contentHash && Array.isArray(snapshot.dates) && snapshot.dates.length) {
+      applyNustSnapshotToCache(snapshot);
+    }
+  } catch (error) {
+    console.warn('[nust-cache] hydrate failed:', error?.message || error);
+  }
+}
+
+async function persistNustAdmissionSnapshot(fields) {
+  return NustAdmissionSnapshotModel.findOneAndUpdate(
+    { key: 'latest' },
+    { $set: { key: 'latest', ...fields } },
+    { upsert: true, new: true },
+  );
+}
+
+async function fetchOfficialNustPortalHtml() {
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const response = await fetch(NUST_UG_PORTAL_URL, {
+        signal: controller.signal,
+        redirect: 'follow',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; NET360-AdmissionsMonitor/1.0; +https://net360preparation.com)',
+          Accept: 'text/html,application/xhtml+xml',
+        },
+      });
+      clearTimeout(timeout);
+      if (!response.ok) {
+        throw new Error(`NUST source returned status ${response.status}.`);
+      }
+      const html = await response.text();
+      if (!html || html.length < 400 || /just a moment|enable javascript and cookies/i.test(html)) {
+        throw new Error('NUST source returned an incomplete public page.');
+      }
+      return html;
+    } catch (error) {
+      lastError = error;
+      clearTimeout(timeout);
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
+  }
+  throw lastError || new Error('NUST source fetch failed.');
+}
+
+async function notifyVerifiedStudentsOfNustAdmission({ contentHash, notices }) {
+  const eventKey = communityNotifyEvent.nustAdmission(contentHash);
+  const selection = (notices || []).some((item) => isSelectionListNotice(item));
+  const title = selection ? 'New NUST Selection List Available' : 'NUST admission update';
+  const subject = selection ? 'NET360: New NUST Selection List Available' : 'NET360: NUST admission information updated';
+  const paragraphs = selection
+    ? [
+      'A new public NUST selection/merit-list announcement is available.',
+      'Open NET360 or the official NUST Undergraduate Admission Portal to view the details.',
+      'NET360 cannot determine any individual selection status.',
+    ]
+    : [
+      'Official NUST undergraduate admission information has changed.',
+      'Open NET360 to review the latest dates and notices from the NUST portal.',
+    ];
+  const openUrl = `${resolveNet360PublicWebBaseUrl().replace(/\/$/, '')}/guide`;
+
+  const users = UserModel.find({
+    role: { $ne: 'admin' },
+    email: { $exists: true, $nin: [null, ''] },
+  }).select('firstName lastName email role requiresEmailVerification emailVerifiedAt authProvider').lean().cursor();
+
+  for await (const user of users) {
+    await queueCommunityNotice({
+      eventKey,
+      toUser: user,
+      subject,
+      title,
+      paragraphs,
+      openUrl,
+    });
+  }
+}
+
+function broadcastNustAdmissionsUpdate() {
+  const payload = {
+    type: 'nust.admissions.updated',
+    dates: nustUpdatesCache.dates,
+    notices: filterNustNotices(nustUpdatesCache.notices),
+    fetchedAt: nustUpdatesCache.lastSuccessAt
+      ? new Date(nustUpdatesCache.lastSuccessAt).toISOString()
+      : null,
+    sessionLabel: nustUpdatesCache.sessionLabel,
+    contentHash: nustUpdatesCache.contentHash,
+  };
+  emitSocketSyncToStudents(payload);
 }
 
 async function refreshNustAdmissionsCache({ force = false } = {}) {
   const now = Date.now();
-  const cacheAge = now - Number(nustUpdatesCache.fetchedAt || 0);
-  if (!force && nustUpdatesCache.fetchedAt > 0 && cacheAge < NUST_ADMISSIONS_REFRESH_MS) {
+  const cacheAge = now - Number(nustUpdatesCache.lastSuccessAt || nustUpdatesCache.fetchedAt || 0);
+  if (!force && nustUpdatesCache.lastSuccessAt > 0 && cacheAge < NUST_ADMISSIONS_REFRESH_MS) {
     return;
   }
   if (nustUpdatesCache.refreshInFlight) {
@@ -8130,33 +8260,66 @@ async function refreshNustAdmissionsCache({ force = false } = {}) {
   nustUpdatesCache.refreshInFlight = true;
   nustUpdatesCache.lastAttemptAt = now;
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15_000);
-
-    const response = await fetch('https://ugadmissions.nust.edu.pk/', {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'NET360-App/1.0 (NUST admissions parser)',
-        Accept: 'text/html,application/xhtml+xml',
-      },
-    });
-
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      throw new Error(`NUST source returned status ${response.status}.`);
+    if (!nustUpdatesCache.contentHash) {
+      await hydrateNustAdmissionsCacheFromMongo();
     }
 
-    const html = await response.text();
+    const html = await fetchOfficialNustPortalHtml();
     const parsed = parseNustAdmissionsFeed(html);
+    const previousDates = Array.isArray(nustUpdatesCache.dates) ? nustUpdatesCache.dates : [];
+    const previousNotices = filterNustNotices(nustUpdatesCache.notices);
+    const dates = parsed.dates.length ? parsed.dates : previousDates.filter((item) => !String(item.key || '').includes('default'));
+    const notices = parsed.notices.length ? parsed.notices : previousNotices;
+    if (!dates.length) {
+      throw new Error('NUST parser found no public series dates; keeping last valid data.');
+    }
 
-    nustUpdatesCache.fetchedAt = Date.now();
+    const extras = parsed.extras || {};
+    const contentHash = buildNustContentHash({ dates, notices, extras });
+    const previousHash = String(nustUpdatesCache.contentHash || '');
+    const changed = Boolean(contentHash && contentHash !== previousHash);
+    const successAt = new Date();
+
+    nustUpdatesCache.dates = dates;
+    nustUpdatesCache.notices = notices;
+    nustUpdatesCache.updates = notices.map((item) => ({ title: item.title, subtitle: item.subtitle }));
+    nustUpdatesCache.contentHash = contentHash;
+    nustUpdatesCache.sessionLabel = String(extras.sessionLabel || '');
+    nustUpdatesCache.fetchedAt = successAt.getTime();
+    nustUpdatesCache.lastSuccessAt = successAt.getTime();
     nustUpdatesCache.lastError = '';
-    nustUpdatesCache.dates = parsed.dates;
-    nustUpdatesCache.notices = parsed.notices;
-    nustUpdatesCache.updates = parsed.notices.map((item) => ({ title: item.title, subtitle: item.subtitle }));
+
+    await persistNustAdmissionSnapshot({
+      contentHash,
+      sourceUrl: NUST_UG_PORTAL_URL,
+      sessionLabel: nustUpdatesCache.sessionLabel,
+      dates,
+      notices,
+      extras,
+      lastSuccessAt: successAt,
+      lastAttemptAt: successAt,
+      lastError: '',
+    });
+
+    if (changed) {
+      broadcastNustAdmissionsUpdate();
+      if (previousHash) {
+        void notifyVerifiedStudentsOfNustAdmission({ contentHash, notices }).catch((error) => {
+          console.warn('[nust-cache] notify failed:', error?.message || error);
+        });
+      }
+    }
   } catch (error) {
     nustUpdatesCache.lastError = error instanceof Error ? error.message : 'Unknown refresh error';
+    console.warn('[nust-cache] refresh failed; keeping last valid data:', nustUpdatesCache.lastError);
+    try {
+      await persistNustAdmissionSnapshot({
+        lastAttemptAt: new Date(),
+        lastError: nustUpdatesCache.lastError,
+      });
+    } catch {
+      // keep serving last valid in-memory/Mongo snapshot
+    }
   } finally {
     nustUpdatesCache.refreshInFlight = false;
   }
@@ -9184,7 +9347,13 @@ app.get('/api/public/nust-admissions-feed', async (_req, res) => {
 
   res.json({
     source,
-    fetchedAt: nustUpdatesCache.fetchedAt ? new Date(nustUpdatesCache.fetchedAt).toISOString() : null,
+    fetchedAt: nustUpdatesCache.lastSuccessAt || nustUpdatesCache.fetchedAt
+      ? new Date(nustUpdatesCache.lastSuccessAt || nustUpdatesCache.fetchedAt).toISOString()
+      : null,
+    lastUpdatedFromNust: nustUpdatesCache.lastSuccessAt
+      ? new Date(nustUpdatesCache.lastSuccessAt).toISOString()
+      : null,
+    sessionLabel: nustUpdatesCache.sessionLabel || '',
     refreshIntervalMs: NUST_ADMISSIONS_REFRESH_MS,
     dates: Array.isArray(nustUpdatesCache.dates) && nustUpdatesCache.dates.length
       ? nustUpdatesCache.dates
@@ -19263,11 +19432,12 @@ async function bootstrap() {
         console.warn('[openai] Skipping startup probe (MongoDB not connected).');
       }
 
-      try {
-        await refreshNustAdmissionsCache({ force: true });
-      } catch (error) {
-        console.error('[startup] NUST admissions cache refresh failed (non-fatal):', error?.message || error);
-      }
+        try {
+          await hydrateNustAdmissionsCacheFromMongo();
+          await refreshNustAdmissionsCache({ force: true });
+        } catch (error) {
+          console.error('[startup] NUST admissions cache refresh failed (non-fatal):', error?.message || error);
+        }
 
       setInterval(() => {
         void refreshNustAdmissionsCache({ force: true }).catch((err) => {

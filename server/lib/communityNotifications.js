@@ -40,6 +40,7 @@ export const communityNotifyEvent = {
   ),
   supportUserWindow: (userId, notifiedAtMs) => communityNotifyEventKey('support.user-window', userId, notifiedAtMs),
   supportAdminWindow: (userId, notifiedAtMs) => communityNotifyEventKey('support.admin-window', userId, notifiedAtMs),
+  nustAdmission: (contentHash) => communityNotifyEventKey('nust.admission', contentHash),
 };
 
 export function communityChatWindowKey(connectionId, recipientId) {
