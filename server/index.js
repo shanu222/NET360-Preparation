@@ -2265,7 +2265,10 @@ function serializeCommunityMessage(item) {
 function serializeSupportMessage(item) {
   return {
     id: String(item._id),
+    messageId: String(item._id),
+    conversationId: String(item.userId),
     userId: String(item.userId),
+    senderId: String(item.senderUserId || (item.senderRole === 'user' ? item.userId : '') || ''),
     senderRole: String(item.senderRole || 'user'),
     messageType: String(item.messageType || 'text'),
     text: String(item.text || ''),
@@ -2330,10 +2333,13 @@ function sanitizeSupportClientMessageId(value) {
  * @param {'support.message'|'support.message.updated'} type
  */
 function emitSupportChatEvent(type, message, { clientMessageId = '' } = {}) {
+  const conversationId = String(message.userId || '');
   const data = {
     type,
-    userId: String(message.userId || ''),
+    conversationId,
+    userId: conversationId,
     messageId: String(message.id || ''),
+    senderId: String(message.senderUserId || message.userId || ''),
     senderRole: String(message.senderRole || 'user'),
     message,
     ...(clientMessageId ? { clientMessageId } : {}),
@@ -12003,47 +12009,63 @@ app.get('/api/admin/community/reports', authMiddleware, requireAdmin, async (_re
 });
 
 app.get('/api/admin/support-chat/conversations', authMiddleware, requireAdmin, async (_req, res) => {
-  const recentMessages = await SupportChatMessageModel.find({})
-    .sort({ createdAt: -1 })
-    .limit(2000)
-    .lean();
+  const grouped = await SupportChatMessageModel.aggregate([
+    { $sort: { createdAt: -1 } },
+    {
+      $group: {
+        _id: '$userId',
+        lastMessageText: { $first: '$text' },
+        lastMessageType: { $first: '$messageType' },
+        lastAttachmentName: { $first: '$attachment.name' },
+        lastMessageAt: { $first: '$createdAt' },
+        unreadForAdmin: {
+          $sum: {
+            $cond: [
+              { $and: [{ $eq: ['$senderRole', 'user'] }, { $eq: ['$readByAdmin', false] }] },
+              1,
+              0,
+            ],
+          },
+        },
+      },
+    },
+    { $sort: { lastMessageAt: -1 } },
+    { $limit: 500 },
+  ]);
 
-  const byUserId = new Map();
-  for (const item of recentMessages) {
-    const userId = String(item.userId);
-    if (!byUserId.has(userId)) {
-      byUserId.set(userId, {
-        userId,
-        lastMessageText: String(item.text || ''),
-        lastMessageAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
-        unreadForAdmin: 0,
-      });
-    }
-    if (item.senderRole === 'user' && !item.readByAdmin) {
-      byUserId.get(userId).unreadForAdmin += 1;
-    }
-  }
-
-  const userIds = Array.from(byUserId.keys());
-  const users = userIds.length
-    ? await UserModel.find({ _id: { $in: userIds } }).select('firstName lastName email phone').lean()
-    : [];
+  const userIds = grouped.map((row) => row._id).filter(Boolean);
+  const [users, profiles, livePresence] = await Promise.all([
+    userIds.length
+      ? UserModel.find({ _id: { $in: userIds } }).select('firstName lastName email phone').lean()
+      : [],
+    userIds.length
+      ? CommunityProfileModel.find({ userId: { $in: userIds } }).select('userId username').lean()
+      : [],
+    listPresence().catch(() => []),
+  ]);
   const userMap = new Map(users.map((item) => [String(item._id), item]));
+  const usernameById = new Map(profiles.map((item) => [String(item.userId), String(item.username || '')]));
+  const presenceById = new Map((livePresence || []).map((record) => [String(record.userId), record.status === 'away' ? 'away' : 'online']));
 
-  const conversations = Array.from(byUserId.values())
-    .map((entry) => {
-      const user = userMap.get(entry.userId);
-      return {
-        userId: entry.userId,
-        userName: user ? `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim() : 'Unknown User',
-        email: user?.email || '',
-        mobileNumber: user?.phone || '',
-        lastMessageText: entry.lastMessageText,
-        lastMessageAt: entry.lastMessageAt,
-        unreadForAdmin: entry.unreadForAdmin,
-      };
-    })
-    .sort((a, b) => new Date(String(b.lastMessageAt || 0)).getTime() - new Date(String(a.lastMessageAt || 0)).getTime());
+  const conversations = grouped.map((entry) => {
+    const userId = String(entry._id);
+    const user = userMap.get(userId);
+    const lastText = String(entry.lastMessageText || '').trim();
+    const lastPreview = lastText
+      || (entry.lastMessageType === 'file' ? String(entry.lastAttachmentName || 'Shared a file') : '');
+    return {
+      userId,
+      conversationId: userId,
+      userName: user ? `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim() : 'Unknown User',
+      username: usernameById.get(userId) || '',
+      email: user?.email || '',
+      mobileNumber: user?.phone || '',
+      lastMessageText: lastPreview,
+      lastMessageAt: entry.lastMessageAt ? new Date(entry.lastMessageAt).toISOString() : null,
+      unreadForAdmin: Number(entry.unreadForAdmin || 0),
+      presenceStatus: presenceById.get(userId) || 'offline',
+    };
+  });
 
   res.json({ conversations });
 });

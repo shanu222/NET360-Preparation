@@ -1307,17 +1307,23 @@ interface AdminCommunityReport {
 
 interface AdminSupportConversation {
   userId: string;
+  conversationId?: string;
   userName: string;
+  username?: string;
   email: string;
   mobileNumber: string;
   lastMessageText: string;
   lastMessageAt: string | null;
   unreadForAdmin: number;
+  presenceStatus?: 'online' | 'away' | 'offline' | string;
 }
 
 interface AdminSupportMessage {
   id: string;
+  messageId?: string;
+  conversationId?: string;
   userId: string;
+  senderId?: string;
   senderRole: 'user' | 'admin';
   messageType?: 'text' | 'file' | string;
   text: string;
@@ -1363,22 +1369,36 @@ const ADMIN_SUPPORT_TYPING_TTL_MS = 4_000;
 const ADMIN_SUPPORT_TYPING_EMIT_MIN_INTERVAL_MS = 1_500;
 const ADMIN_SUPPORT_TYPING_IDLE_STOP_MS = 2_500;
 
+function supportMessageSortKey(item: AdminSupportMessage) {
+  return `${item.createdAt || ''}:${item.id || ''}`;
+}
+
+function sortAdminSupportMessages(list: AdminSupportMessage[]): AdminSupportMessage[] {
+  return list.slice().sort((a, b) => {
+    const ta = new Date(a.createdAt || 0).getTime();
+    const tb = new Date(b.createdAt || 0).getTime();
+    if (ta !== tb) return ta - tb;
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  });
+}
+
 /** Insert or replace by stable message id; keeps a known file payload when the event omits it. */
 function upsertAdminSupportMessage(list: AdminSupportMessage[], incoming: AdminSupportMessage): AdminSupportMessage[] {
-  const id = String(incoming.id || '');
+  const id = String(incoming.id || incoming.messageId || '');
   if (!id) return list;
-  const index = list.findIndex((row) => String(row.id) === id);
-  if (index < 0) return [...list, incoming];
+  const normalized = { ...incoming, id };
+  const index = list.findIndex((row) => String(row.id) === id || String(row.messageId || '') === id);
+  if (index < 0) return sortAdminSupportMessages([...list, normalized]);
   const existing = list[index];
   const next = list.slice();
   next[index] = {
     ...existing,
-    ...incoming,
-    attachment: incoming.attachment && !incoming.attachment.dataUrl && existing.attachment?.dataUrl
-      ? { ...incoming.attachment, dataUrl: existing.attachment.dataUrl }
-      : incoming.attachment ?? existing.attachment ?? null,
+    ...normalized,
+    attachment: normalized.attachment && !normalized.attachment.dataUrl && existing.attachment?.dataUrl
+      ? { ...normalized.attachment, dataUrl: existing.attachment.dataUrl }
+      : normalized.attachment ?? existing.attachment ?? null,
   };
-  return next;
+  return supportMessageSortKey(existing) === supportMessageSortKey(next[index]) ? next : sortAdminSupportMessages(next);
 }
 
 /**
@@ -1390,17 +1410,35 @@ function touchSupportConversation(
   userId: string,
   message: AdminSupportMessage,
   unreadDelta: number,
+  identity: Partial<AdminSupportConversation> = {},
 ): AdminSupportConversation[] {
+  const preview = String(message.text || (message.messageType === 'file' ? message.attachment?.name || 'Shared a file' : ''));
   const index = list.findIndex((row) => row.userId === userId);
-  if (index < 0) return list;
-  const current = list[index];
+  const current = index >= 0
+    ? list[index]
+    : {
+      userId,
+      conversationId: userId,
+      userName: identity.userName || 'Student',
+      username: identity.username || '',
+      email: identity.email || '',
+      mobileNumber: identity.mobileNumber || '',
+      lastMessageText: '',
+      lastMessageAt: null,
+      unreadForAdmin: 0,
+      presenceStatus: identity.presenceStatus || 'online',
+    };
   const updated: AdminSupportConversation = {
     ...current,
-    lastMessageText: String(message.text || (message.messageType === 'file' ? message.attachment?.name || 'Shared a file' : '')),
-    lastMessageAt: message.createdAt || new Date().toISOString(),
+    ...identity,
+    userId,
+    conversationId: current.conversationId || userId,
+    lastMessageText: preview || current.lastMessageText,
+    lastMessageAt: message.createdAt || current.lastMessageAt || new Date().toISOString(),
     unreadForAdmin: Math.max(0, Number(current.unreadForAdmin || 0) + unreadDelta),
   };
-  return [updated, ...list.slice(0, index), ...list.slice(index + 1)];
+  const without = index >= 0 ? [...list.slice(0, index), ...list.slice(index + 1)] : list;
+  return [updated, ...without];
 }
 
 interface LoginUser {
@@ -2928,7 +2966,7 @@ export default function AdminApp() {
     const needle = supportConversationQuery.trim().toLowerCase();
     if (!needle) return supportConversations;
     return supportConversations.filter((item) => {
-      const blob = [item.userName, item.email, item.mobileNumber, item.lastMessageText].join(' ').toLowerCase();
+      const blob = [item.userName, item.username, item.email, item.mobileNumber, item.lastMessageText].join(' ').toLowerCase();
       return blob.includes(needle);
     });
   }, [supportConversations, supportConversationQuery]);
@@ -3598,7 +3636,6 @@ export default function AdminApp() {
         hasMore: false,
       } as AdminSubscriptionManagementUsersPayload, { timeoutMs: ADMIN_SUBSCRIPTION_USERS_TIMEOUT_MS, retryCount: 1 }),
       fetchAdminBootstrapStep('community-reports', '/api/admin/community/reports', activeToken, { reports: [] as AdminCommunityReport[] }),
-      fetchAdminBootstrapStep('support-chat', '/api/admin/support-chat/conversations', activeToken, { conversations: [] as AdminSupportConversation[] }, { timeoutMs: 12_000 }),
       fetchAdminBootstrapStep('mcq-bank-structure', '/api/admin/mcq-bank/structure', activeToken, { structure: [] as AdminMcqBankStructureItem[] }),
       fetchAdminBootstrapStep('configurations', '/api/admin/configurations', activeToken, {
         variables: [],
@@ -3618,7 +3655,6 @@ export default function AdminApp() {
         paidServicesUsersPayload,
         subscriptionManagementUsersPayload,
         communityReportsPayload,
-        supportConversationsPayload,
         structurePayload,
         configVariablesPayload,
       ] = await deferredSteps;
@@ -3633,7 +3669,6 @@ export default function AdminApp() {
       setPaidServicesUsers(paidServicesUsersPayload.users || []);
       applySubscriptionManagementPayload(subscriptionManagementUsersPayload);
       setCommunityReports(communityReportsPayload.reports || []);
-      setSupportConversations(supportConversationsPayload.conversations || []);
       setMcqStructure(structurePayload.structure || []);
       setConfigVariables(configVariablesPayload.variables || []);
       setConfigInfraSnapshot(configVariablesPayload.infraSnapshot?.items || []);
@@ -3672,7 +3707,6 @@ export default function AdminApp() {
       paidServicesUsersPayload,
       subscriptionManagementUsersPayload,
       communityReportsPayload,
-      supportConversationsPayload,
       structurePayload,
       configVariablesPayload,
     ] = await deferredSteps;
@@ -3689,7 +3723,6 @@ export default function AdminApp() {
     setPaidServicesUsers(paidServicesUsersPayload.users || []);
     applySubscriptionManagementPayload(subscriptionManagementUsersPayload);
     setCommunityReports(communityReportsPayload.reports || []);
-    setSupportConversations(supportConversationsPayload.conversations || []);
     setMcqStructure(structurePayload.structure || []);
     setConfigVariables(configVariablesPayload.variables || []);
     setConfigInfraSnapshot(configVariablesPayload.infraSnapshot?.items || []);
@@ -4548,8 +4581,13 @@ export default function AdminApp() {
       // The admin may have switched threads while this request was in flight.
       if (selectedSupportUserIdRef.current !== userId) return;
       setActiveSupportUser(payload.user || null);
-      setSupportMessages(payload.messages || []);
+      setSupportMessages(sortAdminSupportMessages(payload.messages || []));
       supportThreadLoadedForRef.current = userId;
+      setSupportConversations((prev) => prev.map((row) => (
+        row.userId === userId
+          ? { ...row, unreadForAdmin: 0, userName: payload.user?.name || row.userName, email: payload.user?.email || row.email, mobileNumber: payload.user?.mobileNumber || row.mobileNumber }
+          : row
+      )));
     } catch (error) {
       if (!silent) handleApiError(error, 'Could not load support thread.');
     } finally {
@@ -4561,7 +4599,9 @@ export default function AdminApp() {
     if (!activeToken) return;
     try {
       const payload = await apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations', {}, activeToken);
-      setSupportConversations(payload.conversations || []);
+      if (Array.isArray(payload.conversations)) {
+        setSupportConversations(payload.conversations);
+      }
     } catch (error) {
       const status = Number((error as { status?: number } | null)?.status || 0);
       if (status === 401 || status === 403) {
@@ -4841,12 +4881,6 @@ export default function AdminApp() {
 
     if (latestUserMessageId !== lastUserMessageInThreadRef.current) {
       lastUserMessageInThreadRef.current = latestUserMessageId;
-      playNotificationTone();
-      showNeutralToast('New message in active support thread');
-      notifyAdminDesktop(
-        'NET360 Active Thread',
-        latestUserMessage?.text || 'You have a new message in the active support thread.',
-      );
     }
   }, [supportMessages]);
 
@@ -4903,13 +4937,14 @@ export default function AdminApp() {
 
       if (type === 'support.message') {
         const fromStudent = String(message.senderRole || event.senderRole || '') === 'user';
-        if (!supportConversationsRef.current.some((row) => row.userId === userId)) {
-          // First message from this student: fetch the list to get name/email.
-          scheduleSupportResync(0);
-        } else {
-          // Unread only counts student messages in threads the admin is not looking at.
-          setSupportConversations((prev) => touchSupportConversation(prev, userId, message, fromStudent && !isSelectedThread ? 1 : 0));
-        }
+        const known = supportConversationsRef.current.some((row) => row.userId === userId);
+        setSupportConversations((prev) => touchSupportConversation(
+          prev,
+          userId,
+          message,
+          fromStudent && !isSelectedThread ? 1 : 0,
+        ));
+        if (!known) scheduleSupportResync(0);
       }
 
       if (isSelectedThread) {
@@ -4983,6 +5018,11 @@ export default function AdminApp() {
     }, intervalMs);
     return () => window.clearInterval(timer);
   }, [authToken, ready, supportRealtimeStatus]);
+
+  useEffect(() => {
+    if (!authToken || !ready) return;
+    void refreshSupportConversationsRef.current();
+  }, [authToken, ready, activeSection]);
 
   useEffect(() => {
     setBulkAnalysisReady(false);
@@ -8503,13 +8543,22 @@ export default function AdminApp() {
 
                   <div className="max-h-[500px] space-y-2 overflow-auto">
                   {!filteredSupportConversations.length ? (
-                    <p className="p-2 text-sm text-muted-foreground">No support conversations yet.</p>
+                    <p className="p-2 text-sm text-muted-foreground">
+                      {supportConversationQuery.trim()
+                        ? 'No conversations match that search.'
+                        : 'No support conversations yet.'}
+                    </p>
                   ) : null}
                   {filteredSupportConversations.map((conversation) => (
                     <button
                       key={conversation.userId}
                       type="button"
-                      onClick={() => setSelectedSupportUserId(conversation.userId)}
+                      onClick={() => {
+                        setSelectedSupportUserId(conversation.userId);
+                        setSupportConversations((prev) => prev.map((row) => (
+                          row.userId === conversation.userId ? { ...row, unreadForAdmin: 0 } : row
+                        )));
+                      }}
                       className={`admin-support-conversation w-full rounded-md border px-2.5 py-2 text-left transition ${
                         selectedSupportUserId === conversation.userId
                           ? 'admin-support-conversation-active border-indigo-300 bg-indigo-50'
@@ -8517,13 +8566,30 @@ export default function AdminApp() {
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <p className="line-clamp-1 text-sm font-medium">{conversation.userName || conversation.email}</p>
+                        <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                          <span
+                            className={`inline-flex h-2 w-2 shrink-0 rounded-full ${
+                              conversation.presenceStatus === 'online'
+                                ? 'bg-emerald-500'
+                                : conversation.presenceStatus === 'away'
+                                  ? 'bg-amber-400'
+                                  : 'bg-slate-300'
+                            }`}
+                            title={conversation.presenceStatus === 'online' ? 'Online' : conversation.presenceStatus === 'away' ? 'Away' : 'Offline'}
+                          />
+                          <span className="line-clamp-1">{conversation.userName || conversation.email || 'Student'}</span>
+                        </p>
                         {conversation.unreadForAdmin > 0 ? (
-                          <Badge className="admin-support-unread-badge bg-rose-600 text-white">{conversation.unreadForAdmin}</Badge>
+                          <Badge className="admin-support-unread-badge bg-rose-600 text-white">{conversation.unreadForAdmin} unread</Badge>
                         ) : null}
                       </div>
-                      <p className="line-clamp-1 text-xs text-muted-foreground">{conversation.email || 'No email'}</p>
+                      <p className="line-clamp-1 text-xs text-muted-foreground">
+                        {[conversation.username ? `@${conversation.username}` : '', conversation.email, conversation.mobileNumber].filter(Boolean).join(' · ') || 'No contact details'}
+                      </p>
                       <p className="admin-support-conversation-preview mt-1 line-clamp-2 text-xs text-slate-600">{conversation.lastMessageText || 'No message text'}</p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        {conversation.lastMessageAt ? new Date(conversation.lastMessageAt).toLocaleString() : ''}
+                      </p>
                     </button>
                   ))}
                   </div>
