@@ -71,6 +71,17 @@ export async function initSocketIo(httpServer, opts) {
     onStudentPresenceUnregister,
   } = opts;
 
+  // Resolve the adapter BEFORE attaching Socket.IO to the HTTP server. `new Server(httpServer)`
+  // starts accepting handshakes immediately, so awaiting Redis afterwards let connections in
+  // before the auth middleware / connection handler existed (and swapping adapters later would
+  // drop their room membership).
+  let redisAdapterPair = null;
+  try {
+    redisAdapterPair = await getSocketIoAdapterRedisClients();
+  } catch (e) {
+    console.error('[redis] connection failed', e?.message || e);
+  }
+
   const io = new Server(httpServer, {
     path: '/socket.io',
     cors: {
@@ -85,16 +96,10 @@ export async function initSocketIo(httpServer, opts) {
     },
   });
 
-  try {
-    const pair = await getSocketIoAdapterRedisClients();
-    if (pair?.pub && pair?.sub) {
-      io.adapter(createAdapter(pair.pub, pair.sub));
-      console.log('[socket.io] Redis adapter enabled');
-    } else {
-      console.warn('[socket.io] Running without Redis adapter');
-    }
-  } catch (e) {
-    console.error('[redis] connection failed', e?.message || e);
+  if (redisAdapterPair?.pub && redisAdapterPair?.sub) {
+    io.adapter(createAdapter(redisAdapterPair.pub, redisAdapterPair.sub));
+    console.log('[socket.io] Redis adapter enabled');
+  } else {
     console.warn('[socket.io] Running without Redis adapter');
   }
 

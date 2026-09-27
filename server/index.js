@@ -43,7 +43,7 @@ import {
 } from './lib/studentDeletionChannel.js';
 import { getBuildInfo } from './lib/buildInfo.js';
 import { logAuthDebug, normalizeAuthDebugRoute, shouldAuthDebugRoute } from './lib/authDebug.js';
-import { getRedisMain, isRedisConfigured, isRedisReady } from './services/redis.js';
+import { getRedisMain, isRedisConfigured, isRedisReady, isSocketIoRedisAdapterReady } from './services/redis.js';
 import { cacheGetJson, cacheSetJson, cacheKey, cacheDel, invalidateCommunityLeaderboardCache, invalidateQuizLeaderboardCache, invalidateUserSubscriptionCache } from './utils/cache.js';
 import {
   initSocketIo,
@@ -8154,6 +8154,7 @@ app.get('/api/health', async (_req, res) => {
     redis: {
       configured: isRedisConfigured(),
       ready: isRedisReady(),
+      socketIoAdapter: isSocketIoRedisAdapterReady(),
     },
     socketIo: {
       enabled: Boolean(getIo()),
