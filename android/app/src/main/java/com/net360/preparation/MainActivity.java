@@ -30,7 +30,7 @@ import ee.forgr.capacitor.social.login.SocialLoginPlugin;
  */
 public class MainActivity extends BridgeActivity implements ModifiedMainActivityForSocialLoginPlugin {
   private static final String TAG = "NET360MainActivity";
-  private static final String WEBVIEW_ASSET_TOKEN = "material-nav-3";
+  private static final String WEBVIEW_ASSET_TOKEN = "material-nav-4";
 
   @Override
   public void onCreate(Bundle savedInstanceState) {

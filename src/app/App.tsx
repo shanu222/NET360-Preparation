@@ -216,10 +216,13 @@ function isRestorableAndroidRoute(route: string) {
 const ANDROID_PRIMARY_NAV: Array<{ id: SectionId; label: string; icon: typeof Home }> = [
   { id: 'home', label: 'Home', icon: Home },
   { id: 'practice-board', label: 'Practice', icon: Pencil },
+  { id: 'preparation', label: 'Material', icon: BookOpen },
   { id: 'tests', label: 'Tests', icon: FileText },
   { id: 'community', label: 'Community', icon: Users },
   { id: 'profile', label: 'Profile', icon: User },
 ];
+
+const ANDROID_FOOTER_IDS = new Set(ANDROID_PRIMARY_NAV.map((item) => item.id));
 
 const STUDENT_NAVIGATION_ITEMS: Array<{ id: SectionId; label: string; icon: typeof Home }> = [
   { id: 'home', label: 'Dashboard', icon: Home },
@@ -1250,7 +1253,7 @@ export default function App() {
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-8 [scrollbar-gutter:stable]">
                       <SidebarNavigation
-                        navigationItems={STUDENT_NAVIGATION_ITEMS}
+                        navigationItems={androidApp ? STUDENT_NAVIGATION_ITEMS.filter((item) => !ANDROID_FOOTER_IDS.has(item.id)) : STUDENT_NAVIGATION_ITEMS}
                         activeTab={activeTab}
                         smartMentorTabId={smartMentorTabId}
                         navigate={navigateWithTransition}
