@@ -4507,21 +4507,21 @@ async function loadUserForNotify(userId) {
   return UserModel.findById(userId).select('firstName lastName email role requiresEmailVerification emailVerifiedAt authProvider authProviderDetail').lean();
 }
 
-async function queueCommunityNotice({ eventKey, toUser, subject, title, paragraphs }) {
+async function queueCommunityNotice({ eventKey, toUser, subject, title, paragraphs, openUrl }) {
   const dest = normalizeEmail(toUser?.email);
   if (!dest || (toUser?.role || 'student') === 'admin') return;
   if (accountNeedsEmailVerification(toUser)) return;
   const claimed = await claimCommunityNotificationDelivery(eventKey, toUser._id);
   if (!claimed) return;
   const greeting = String(toUser.firstName || '').trim() || 'there';
-  const openUrl = communityAppUrl();
+  const destUrl = openUrl || communityAppUrl();
   const footer = 'This is a notification only. You cannot accept, reject, or reply from email. Open NET360 to respond.';
   const text = [
     `Hi ${greeting},`,
     '',
     ...paragraphs,
     '',
-    `Open NET360 to respond: ${openUrl}`,
+    `Open NET360 to respond: ${destUrl}`,
     '',
     footer,
     '',
@@ -4532,10 +4532,27 @@ async function queueCommunityNotice({ eventKey, toUser, subject, title, paragrap
     greeting: escapeNotifyHtml(greeting),
     paragraphs: paragraphs.map((p) => escapeNotifyHtml(p)),
     ctaLabel: 'Open NET360',
-    ctaUrl: escapeNotifyHtml(openUrl),
+    ctaUrl: escapeNotifyHtml(destUrl),
     footer,
   });
   void dispatchNotificationEmail({ to: dest, subject, text, html });
+}
+
+async function notifyCommunityDirectMessage(fromUserId, toUserId, messageId) {
+  if (String(fromUserId || '') === String(toUserId || '')) return;
+  const [fromUser, toUser] = await Promise.all([loadUserForNotify(fromUserId), loadUserForNotify(toUserId)]);
+  if (!toUser) return;
+  const who = studentNotifyName(fromUser);
+  await queueCommunityNotice({
+    eventKey: communityNotifyEvent.communityMessage(messageId),
+    toUser,
+    subject: 'NET360: new Community message',
+    title: 'New Community message',
+    paragraphs: [
+      `${who} sent you a new Community message.`,
+      'Open NET360 to view and reply. Email replies are ignored.',
+    ],
+  });
 }
 
 async function notifyCommunityConnectionRequested(fromUserId, toUserId, requestId) {
@@ -4882,11 +4899,13 @@ async function listAdminNotificationEmails() {
 }
 
 async function notifyAdminsOfSupportMessage(user, message) {
+  const messageId = String(message?.id || message?._id || '').trim();
   const preview = String(message?.text || (message?.messageType === 'file' ? message?.attachment?.name || 'Shared a file' : '')).trim().slice(0, 240);
   const who = studentNotifyName(user);
   const openUrl = supportAdminAppUrl();
   const emails = await listAdminNotificationEmails();
-  if (!emails.length) return;
+  if (!emails.length || !messageId) return;
+  const eventKey = communityNotifyEvent.supportUserMessage(messageId);
   const subject = `[NET360 Support] ${who}: ${preview || 'New message'}`;
   const footer = 'This is a notification only. Reply from the NET360 Admin Support Chat panel. Do not reply to this email.';
   const text = [
@@ -4912,8 +4931,26 @@ async function notifyAdminsOfSupportMessage(user, message) {
     footer,
   });
   for (const to of emails) {
+    const claimed = await claimCommunityNotificationDelivery(eventKey, `admin:${to}`);
+    if (!claimed) continue;
     void dispatchNotificationEmail({ to, subject, text, html });
   }
+}
+
+async function notifyUserOfSupportAdminReply(userId, messageId) {
+  const toUser = await loadUserForNotify(userId);
+  if (!toUser) return;
+  await queueCommunityNotice({
+    eventKey: communityNotifyEvent.supportAdminReply(messageId),
+    toUser,
+    subject: 'NET360: Admin replied to your Support Chat',
+    title: 'Admin replied to your Support Chat',
+    paragraphs: [
+      'Admin has replied to your Support Chat.',
+      'Open NET360 to view and reply. You cannot reply or take action from this email.',
+    ],
+    openUrl: resolveNet360PublicWebBaseUrl(),
+  });
 }
 
 function buildAccountDeletionSessionFingerprint(req, user) {
@@ -11270,6 +11307,7 @@ app.post('/api/community/messages/:connectionId', ...studentPremiumSurface, asyn
     status: 'sent',
     message: serializedMessage,
   });
+  void notifyCommunityDirectMessage(req.user._id, otherUserId, serializedMessage.id);
 
   res.status(201).json({
     message: serializeCommunityMessage(created),
@@ -12946,6 +12984,7 @@ app.post('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmi
 
   const serialized = serializeSupportMessage(created);
   emitSupportChatEvent('support.message', serializeSupportMessageForEvent(created), { clientMessageId });
+  void notifyUserOfSupportAdminReply(userId, serialized.id);
 
   res.status(201).json({
     message: serialized,

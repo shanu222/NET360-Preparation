@@ -26,6 +26,9 @@ export const communityNotifyEvent = {
   quizResponse: (challengeId, action) => communityNotifyEventKey('quiz.response', challengeId, action),
   quizResult: (challengeId) => communityNotifyEventKey('quiz.result', challengeId),
   badgeUnlock: (badgeId) => communityNotifyEventKey('badge.unlock', badgeId),
+  communityMessage: (messageId) => communityNotifyEventKey('community.message', messageId),
+  supportUserMessage: (messageId) => communityNotifyEventKey('support.user-message', messageId),
+  supportAdminReply: (messageId) => communityNotifyEventKey('support.admin-reply', messageId),
 };
 
 export function isRecentCommunityEvent(value, now = Date.now(), lookbackMs = COMMUNITY_NOTIFY_LOOKBACK_MS) {

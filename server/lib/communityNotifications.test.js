@@ -20,6 +20,9 @@ test('event keys are unique per event and user-facing status', () => {
     communityNotifyEvent.quizResponse('q-1', 'decline'),
   );
   assert.equal(communityNotifyEvent.quizResult('q-1'), 'quiz.result:q-1');
+  assert.equal(communityNotifyEvent.communityMessage('msg-1'), 'community.message:msg-1');
+  assert.equal(communityNotifyEvent.supportUserMessage('sup-1'), 'support.user-message:sup-1');
+  assert.equal(communityNotifyEvent.supportAdminReply('sup-2'), 'support.admin-reply:sup-2');
 });
 
 test('recent-event window treats pending-age dates as relevant', () => {
