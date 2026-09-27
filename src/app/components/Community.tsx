@@ -260,7 +260,16 @@ const PROFILE_PICTURE_ALLOWED_MIME_TYPES = new Set([
   'image/svg+xml',
 ]);
 const PROFILE_PICTURE_MAX_BYTES = 3 * 1024 * 1024;
-const CHAT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
+const CHAT_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const COMMUNITY_FILE_ALLOWED_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/x-pdf',
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+]);
+const COMMUNITY_FILE_ALLOWED_EXTENSIONS = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.webp']);
 const QUICK_CHAT_EMOJIS = ['😀', '😂', '🔥', '👏', '❤️', '👍'];
 const ENCRYPTION_LABEL = 'Messages are end-to-end encrypted.';
 const COMMUNITY_CACHE_PREFIX = 'net360:community-cache:';
@@ -288,20 +297,42 @@ function readExpiredCommunityCachePayload<T>(path: string): T | null {
 
 const CHAT_ATTACHMENT_ACCEPT = [
   '.pdf',
-  '.doc',
-  '.docx',
-  '.xls',
-  '.xlsx',
-  '.ppt',
-  '.pptx',
-  '.txt',
   '.jpg',
   '.jpeg',
   '.png',
-  '.gif',
   '.webp',
-  '.svg',
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
 ].join(',');
+
+function communityFileExtension(name: string) {
+  const raw = String(name || '').trim().toLowerCase();
+  const dot = raw.lastIndexOf('.');
+  return dot >= 0 ? raw.slice(dot) : '';
+}
+
+function isAllowedCommunityChatFile(file: File) {
+  const mime = String(file.type || '').toLowerCase();
+  const extension = communityFileExtension(file.name);
+  if (COMMUNITY_FILE_ALLOWED_MIME_TYPES.has(mime)) return true;
+  if (!mime && COMMUNITY_FILE_ALLOWED_EXTENSIONS.has(extension)) return true;
+  return false;
+}
+
+function isSafeCommunityImageMime(mimeType: string) {
+  return ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(String(mimeType || '').toLowerCase());
+}
+
+function isSafeCommunityPdfMime(mimeType: string) {
+  const mime = String(mimeType || '').toLowerCase();
+  return mime === 'application/pdf' || mime === 'application/x-pdf';
+}
+
+function isSafeCommunityImageDataUrl(dataUrl: string) {
+  return /^data:image\/(jpeg|jpg|png|webp);/i.test(String(dataUrl || ''));
+}
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -374,6 +405,107 @@ const CommunityAvatar = memo(function CommunityAvatar({
   return (
     <div className={`${sizeClass} grid place-items-center rounded-full border bg-slate-100 text-[11px] font-medium text-slate-600`}>
       {fallback}
+    </div>
+  );
+});
+
+const SafeChatAttachment = memo(function SafeChatAttachment({
+  messageId,
+  attachment,
+  token,
+}: {
+  messageId: string;
+  attachment: MessageAttachment;
+  token: string | null;
+}) {
+  const [imageUrl, setImageUrl] = useState('');
+  const mimeType = String(attachment.mimeType || '').toLowerCase();
+  const isImage = isSafeCommunityImageMime(mimeType);
+  const isPdf = isSafeCommunityPdfMime(mimeType);
+  const localImageUrl = isImage && isSafeCommunityImageDataUrl(attachment.dataUrl) ? attachment.dataUrl : '';
+
+  useEffect(() => {
+    if (!isImage || localImageUrl || !token || !messageId) {
+      setImageUrl('');
+      return;
+    }
+    let objectUrl = '';
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { blob } = await downloadBinary(`/api/community/messages/${encodeURIComponent(messageId)}/attachment`, {}, token);
+        if (cancelled) return;
+        if (!blob.type.startsWith('image/')) return;
+        objectUrl = URL.createObjectURL(blob);
+        setImageUrl(objectUrl);
+      } catch {
+        if (!cancelled) setImageUrl('');
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [isImage, localImageUrl, messageId, token]);
+
+  const openSecureAttachment = async (download: boolean) => {
+    if (!token || !messageId) {
+      showErrorToast('Sign in again to open this file.');
+      return;
+    }
+    try {
+      const query = download ? '?download=1' : '';
+      const { blob, filename } = await downloadBinary(
+        `/api/community/messages/${encodeURIComponent(messageId)}/attachment${query}`,
+        {},
+        token,
+      );
+      const objectUrl = URL.createObjectURL(blob);
+      if (download) {
+        const link = document.createElement('a');
+        link.href = objectUrl;
+        link.download = filename || attachment.name || 'community-file';
+        link.rel = 'noopener';
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+      } else {
+        window.open(objectUrl, '_blank', 'noopener,noreferrer');
+      }
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch {
+      showErrorToast('Could not open this file securely.');
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <p>{attachment.name || 'Shared a file'}</p>
+      {isImage && (localImageUrl || imageUrl) ? (
+        <img
+          src={localImageUrl || imageUrl}
+          alt={attachment.name || 'Shared image'}
+          className="max-h-56 max-w-full rounded-lg object-contain"
+        />
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {isPdf ? (
+          <button
+            type="button"
+            className="text-xs underline underline-offset-2"
+            onClick={() => void openSecureAttachment(false)}
+          >
+            Open PDF
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="text-xs underline underline-offset-2"
+          onClick={() => void openSecureAttachment(true)}
+        >
+          {isPdf ? 'Download PDF' : isImage ? 'Download image' : 'Download file'}
+        </button>
+      </div>
     </div>
   );
 });
@@ -1807,17 +1939,25 @@ function CommunityInner() {
     const selected = event.target.files?.[0] || null;
     if (!selected) return;
 
+    if (!isAllowedCommunityChatFile(selected)) {
+      showErrorToast('Unsupported file type. Attach a PDF or an image (JPG, JPEG, PNG, or WEBP).');
+      event.currentTarget.value = '';
+      return;
+    }
+
     if (selected.size > CHAT_ATTACHMENT_MAX_BYTES) {
-      showErrorToast('File exceeds 8MB size limit.');
+      showErrorToast('File is too large. Attachments must be 10MB or smaller.');
       event.currentTarget.value = '';
       return;
     }
 
     try {
       const dataUrl = await fileToDataUrl(selected);
+      const mimeType = String(selected.type || '').toLowerCase()
+        || (communityFileExtension(selected.name) === '.pdf' ? 'application/pdf' : 'application/octet-stream');
       setMessageAttachment({
         name: selected.name,
-        mimeType: String(selected.type || 'application/octet-stream').toLowerCase(),
+        mimeType,
         size: selected.size,
         dataUrl,
       });
@@ -3263,38 +3403,12 @@ function CommunityInner() {
                       type="button"
                       size="sm"
                       variant="outline"
-                      onClick={() => void sendCallInvite('audio')}
-                      disabled={activeConnection.canMessage === false || isSendingMessage}
-                    >
-                      Audio Call
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void sendCallInvite('video')}
-                      disabled={activeConnection.canMessage === false || isSendingMessage}
-                    >
-                      Video Call
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
                       onClick={() => messageFileInputRef.current?.click()}
                       disabled={activeConnection.canMessage === false || isSendingMessage}
                     >
                       Attach File
                     </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => (isRecordingVoice ? stopVoiceRecording() : void startVoiceRecording())}
-                      disabled={activeConnection.canMessage === false || isSendingMessage}
-                    >
-                      {isRecordingVoice ? 'Stop Voice' : 'Voice Note'}
-                    </Button>
+                    <span className="self-center text-[11px] text-muted-foreground">PDF or JPG/PNG/WEBP, up to 10MB</span>
                     <Button type="button" size="sm" variant="outline" onClick={() => void toggleBlockConnection()} disabled={isBlockingConnection || isSendingMessage}>
                       {isBlockingConnection ? 'Updating...' : activeConnection.blockedByMe ? 'Unblock' : 'Block'}
                     </Button>
@@ -3354,10 +3468,11 @@ function CommunityInner() {
                         </div>
                       ) : null}
                       {item.messageType === 'file' && item.attachment ? (
-                        <div className="space-y-1">
-                          <p>{item.text || 'Shared a file'}</p>
-                          <a href={item.attachment.dataUrl} download={item.attachment.name} className="text-xs underline underline-offset-2">{item.attachment.name}</a>
-                        </div>
+                        <SafeChatAttachment
+                          messageId={item.id}
+                          attachment={item.attachment}
+                          token={token}
+                        />
                       ) : null}
                       {item.messageType === 'voice' && item.attachment ? (
                         <div className="space-y-1">

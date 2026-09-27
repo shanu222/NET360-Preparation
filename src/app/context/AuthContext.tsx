@@ -58,7 +58,7 @@ interface AuthContextValue {
     password: string;
     firstName?: string;
     lastName?: string;
-  }) => Promise<void>;
+  }) => Promise<{ verificationRequired?: boolean; email?: string } | void>;
   sendRecoveryEmail: (email: string) => Promise<void>;
   deleteAccount: (params: { password: string; confirmationText: string }) => Promise<{ message: string }>;
   requestAccountDeletionLink: (params: { confirmationText: string }) => Promise<{ message: string; expiresAt?: string }>;
@@ -864,6 +864,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           backendLoginCode: extractAuthErrorCode(error),
           activeSessionStatus: extractAuthErrorCode(error) === 'ACTIVE_SESSION_ELSEWHERE' ? 'conflict' : 'unknown',
         });
+        if (extractAuthErrorCode(error).toUpperCase() === 'EMAIL_NOT_VERIFIED' && firebaseAuth) {
+          void signOut(firebaseAuth).catch(() => undefined);
+        }
         if (!isNativeRuntime || attempt >= attempts - 1 || !isLikelyTransientAuthFailure(error)) {
           break;
         }
@@ -1125,9 +1128,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
     const credential = await createUserWithEmailAndPassword(activeAuth, email, password);
     const firebaseIdToken = await credential.user.getIdToken();
-    let payload: { token?: string; refreshToken?: string; user: AuthUser };
+    let payload: {
+      token?: string;
+      refreshToken?: string;
+      user?: AuthUser;
+      verificationRequired?: boolean;
+      email?: string;
+    };
     try {
-      payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+      payload = await apiRequest<{
+        token?: string;
+        refreshToken?: string;
+        user?: AuthUser;
+        verificationRequired?: boolean;
+        email?: string;
+      }>(
         '/api/auth/register',
         {
           method: 'POST',
@@ -1147,7 +1162,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw error;
     }
 
-    const stabilizedPayload = await finalizeNativeAuthTransport(payload, 'register');
+    if (payload?.verificationRequired) {
+      await signOut(activeAuth).catch(() => undefined);
+      return {
+        verificationRequired: true,
+        email: String(payload.email || email),
+      };
+    }
+
+    const stabilizedPayload = await finalizeNativeAuthTransport(payload as { token?: string; refreshToken?: string; user: AuthUser }, 'register');
     applyAuthPayload(stabilizedPayload);
   }, [applyAuthPayload, deviceId, ensureNativeAuthBootstrap, finalizeNativeAuthTransport]);
 

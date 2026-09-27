@@ -41,6 +41,15 @@ import {
   normalizeAuthProviderDetail,
   resolveStudentDeletionChannel,
 } from './lib/studentDeletionChannel.js';
+import {
+  accountNeedsEmailVerification,
+  applyVerificationTokenToUser,
+  evaluateVerificationSendLimit,
+  generateEmailVerifyRawToken,
+  isGoogleSignInProvider,
+  markEmailVerified,
+  clearEmailVerificationToken,
+} from './lib/emailVerification.js';
 import { getBuildInfo } from './lib/buildInfo.js';
 import { logAuthDebug, normalizeAuthDebugRoute, shouldAuthDebugRoute } from './lib/authDebug.js';
 import { getRedisMain, isRedisConfigured, isRedisReady, isSocketIoRedisAdapterReady } from './services/redis.js';
@@ -114,6 +123,17 @@ import { CommunityReportModel } from './models/CommunityReport.js';
 import { CommunityBlockModel } from './models/CommunityBlock.js';
 import { CommunityRoomPostModel } from './models/CommunityRoomPost.js';
 import { CommunityQuizChallengeModel } from './models/CommunityQuizChallenge.js';
+import {
+  COMMUNITY_FILE_ALLOWED_MIME_TYPES,
+  COMMUNITY_FILE_MAX_BYTES,
+  COMMUNITY_NOTIFY_LOOKBACK_MS,
+  claimCommunityNotificationDelivery,
+  communityFileMimeMatchesKind,
+  communityNotifyEvent,
+  isRecentCommunityEvent,
+  safeCommunityAttachmentContentType,
+  sniffCommunityFileKind,
+} from './lib/communityNotifications.js';
 import { SignupRequestModel } from './models/SignupRequest.js';
 import { SignupTokenModel } from './models/SignupToken.js';
 import { PremiumSubscriptionRequestModel } from './models/PremiumSubscriptionRequest.js';
@@ -1431,6 +1451,30 @@ app.use(
 );
 
 app.use(
+  '/api/auth/resend-verification',
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 8,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
+    message: { error: 'Too many verification email requests. Please try again later.' },
+  }),
+);
+
+app.use(
+  '/api/auth/verify-email',
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
+    message: { error: 'Too many email verification attempts. Please try again later.' },
+  }),
+);
+
+app.use(
   '/api/auth/verify-delete-token',
   rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -1613,7 +1657,7 @@ const MCQ_SELECT = 'externalId contentFingerprint subject part chapter section t
 const PRACTICE_BOARD_SELECT = 'subject difficulty questionText questionFile questionImageUrl solutionText solutionFile solutionImageUrl source createdAt';
 const PRACTICE_BOARD_CLIENT_SELECT = 'subject difficulty questionText solutionText questionImageUrl solutionImageUrl source createdAt questionFile.name questionFile.mimeType questionFile.size solutionFile.name solutionFile.mimeType solutionFile.size';
 
-const CHAT_ATTACHMENT_MAX_FILE_BYTES = 8 * 1024 * 1024;
+const CHAT_ATTACHMENT_MAX_FILE_BYTES = COMMUNITY_FILE_MAX_BYTES;
 const CHAT_ATTACHMENT_ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
   'application/msword',
@@ -2191,7 +2235,7 @@ function isAllowedChatAttachmentMime(mimeTypeRaw) {
   return CHAT_ATTACHMENT_ALLOWED_MIME_TYPES.has(mimeType);
 }
 
-function normalizeChatAttachment(input, { allowAudio = false } = {}) {
+function normalizeChatAttachment(input, { allowAudio = false, allowedMimeTypes = null, maxBytes = CHAT_ATTACHMENT_MAX_FILE_BYTES, requireSafeCommunityFile = false } = {}) {
   if (input == null) return null;
   if (typeof input !== 'object') return null;
 
@@ -2208,16 +2252,29 @@ function normalizeChatAttachment(input, { allowAudio = false } = {}) {
   }
 
   const mimeType = String(input.mimeType || parsed.mimeType || 'application/octet-stream').trim().toLowerCase();
-  if (!isAllowedChatAttachmentMime(mimeType)) {
+  const allowed = allowedMimeTypes instanceof Set ? allowedMimeTypes : null;
+  if (allowed) {
+    if (!allowed.has(mimeType)) {
+      throw new Error(`Unsupported file type for ${name}. Use PDF, JPG, JPEG, PNG, or WEBP.`);
+    }
+  } else if (!isAllowedChatAttachmentMime(mimeType)) {
     throw new Error(`Unsupported attachment type for ${name}.`);
   }
   if (!allowAudio && mimeType.startsWith('audio/')) {
     throw new Error('Audio attachments are only allowed for voice notes.');
   }
 
+  if (requireSafeCommunityFile) {
+    const kind = sniffCommunityFileKind(parsed.buffer);
+    if (kind === 'unsafe' || !communityFileMimeMatchesKind(mimeType, kind)) {
+      throw new Error(`Unsupported or unsafe file for ${name}. Use a real PDF or JPG/PNG/WEBP image.`);
+    }
+  }
+
   const size = Number(input.size || parsed.buffer.length || 0);
-  if (!size || size > CHAT_ATTACHMENT_MAX_FILE_BYTES) {
-    throw new Error(`File ${name} exceeds the ${Math.floor(CHAT_ATTACHMENT_MAX_FILE_BYTES / (1024 * 1024))}MB limit.`);
+  const limitBytes = Number(maxBytes || CHAT_ATTACHMENT_MAX_FILE_BYTES);
+  if (!size || size > limitBytes) {
+    throw new Error(`File ${name} exceeds the ${Math.floor(limitBytes / (1024 * 1024))}MB limit.`);
   }
 
   return {
@@ -4395,14 +4452,67 @@ async function dispatchNotificationEmail({ to, subject, text, html }) {
   }
 }
 
-async function loadUserForNotify(userId) {
-  if (!isValidObjectId(String(userId || ''))) return null;
-  return UserModel.findById(userId).select('firstName lastName email role').lean();
+function emailNotVerifiedBody(user) {
+  return {
+    error: 'Verify your email before signing in. Check your inbox for the NET360 verification link.',
+    code: 'EMAIL_NOT_VERIFIED',
+    email: user?.email || '',
+  };
 }
 
-function queueCommunityNotice({ toUser, subject, title, paragraphs }) {
+async function sendStudentEmailVerification(user) {
+  const limit = evaluateVerificationSendLimit(user);
+  if (!limit.allowed) {
+    return { sent: false, reason: limit.reason, retryAfterSeconds: limit.retryAfterSeconds };
+  }
+  const rawToken = generateEmailVerifyRawToken();
+  applyVerificationTokenToUser(user, rawToken, hashToken);
+  await user.save();
+  const verifyUrl = `${resolveNet360PublicWebBaseUrl()}/verify-email?token=${encodeURIComponent(rawToken)}`;
+  const greeting = String(user.firstName || '').trim() || 'there';
+  const paragraphs = [
+    'Confirm this email address to finish creating your NET360 account. You cannot sign in until your email is verified.',
+    'This link expires in 24 hours and can be used only once.',
+  ];
+  const text = [
+    `Hi ${greeting},`,
+    '',
+    ...paragraphs,
+    '',
+    verifyUrl,
+    '',
+    'If you did not create a NET360 account, you can ignore this email.',
+    '',
+    '— NET360 Preparation',
+  ].join('\n');
+  const html = notificationShell({
+    title: 'Verify your email',
+    greeting: escapeNotifyHtml(greeting),
+    paragraphs: paragraphs.map((p) => escapeNotifyHtml(p)),
+    ctaLabel: 'Verify email',
+    ctaUrl: escapeNotifyHtml(verifyUrl),
+    footer: 'If you did not create a NET360 account, you can ignore this email.',
+  });
+  await dispatchNotificationEmail({
+    to: user.email,
+    subject: 'Verify your NET360 email address',
+    text,
+    html,
+  });
+  return { sent: true, reason: '', retryAfterSeconds: 0 };
+}
+
+async function loadUserForNotify(userId) {
+  if (!isValidObjectId(String(userId || ''))) return null;
+  return UserModel.findById(userId).select('firstName lastName email role requiresEmailVerification emailVerifiedAt authProvider authProviderDetail').lean();
+}
+
+async function queueCommunityNotice({ eventKey, toUser, subject, title, paragraphs }) {
   const dest = normalizeEmail(toUser?.email);
   if (!dest || (toUser?.role || 'student') === 'admin') return;
+  if (accountNeedsEmailVerification(toUser)) return;
+  const claimed = await claimCommunityNotificationDelivery(eventKey, toUser._id);
+  if (!claimed) return;
   const greeting = String(toUser.firstName || '').trim() || 'there';
   const openUrl = communityAppUrl();
   const footer = 'This is a notification only. You cannot accept, reject, or reply from email. Open NET360 to respond.';
@@ -4428,11 +4538,12 @@ function queueCommunityNotice({ toUser, subject, title, paragraphs }) {
   void dispatchNotificationEmail({ to: dest, subject, text, html });
 }
 
-async function notifyCommunityConnectionRequested(fromUserId, toUserId) {
+async function notifyCommunityConnectionRequested(fromUserId, toUserId, requestId) {
   const [fromUser, toUser] = await Promise.all([loadUserForNotify(fromUserId), loadUserForNotify(toUserId)]);
   if (!toUser) return;
   const who = studentNotifyName(fromUser);
-  queueCommunityNotice({
+  await queueCommunityNotice({
+    eventKey: communityNotifyEvent.connectionRequest(requestId),
     toUser,
     subject: 'NET360: new Community connection request',
     title: 'Community connection request',
@@ -4443,12 +4554,13 @@ async function notifyCommunityConnectionRequested(fromUserId, toUserId) {
   });
 }
 
-async function notifyCommunityConnectionResponded(fromUserId, toUserId, status) {
+async function notifyCommunityConnectionResponded(fromUserId, toUserId, status, requestId) {
   const [fromUser, toUser] = await Promise.all([loadUserForNotify(fromUserId), loadUserForNotify(toUserId)]);
   if (!fromUser) return;
   const who = studentNotifyName(toUser);
   const accepted = String(status) === 'accepted';
-  queueCommunityNotice({
+  await queueCommunityNotice({
+    eventKey: communityNotifyEvent.connectionResponse(requestId, accepted ? 'accepted' : 'rejected'),
     toUser: fromUser,
     subject: accepted ? 'NET360: your Community request was accepted' : 'NET360: your Community request was declined',
     title: accepted ? 'Connection request accepted' : 'Connection request declined',
@@ -4461,11 +4573,12 @@ async function notifyCommunityConnectionResponded(fromUserId, toUserId, status) 
   });
 }
 
-async function notifyQuizChallengeCreated(challengerUserId, opponentUserId) {
+async function notifyQuizChallengeCreated(challengerUserId, opponentUserId, challengeId) {
   const [challenger, opponent] = await Promise.all([loadUserForNotify(challengerUserId), loadUserForNotify(opponentUserId)]);
   if (!opponent) return;
   const who = studentNotifyName(challenger);
-  queueCommunityNotice({
+  await queueCommunityNotice({
+    eventKey: communityNotifyEvent.quizInvite(challengeId),
     toUser: opponent,
     subject: 'NET360: new Quiz Battle request',
     title: 'Quiz Battle request',
@@ -4478,7 +4591,8 @@ async function notifyQuizChallengeCreated(challengerUserId, opponentUserId) {
 
 function notifyBadgeUnlocked(toUser, badge) {
   if (!toUser || !badge) return;
-  queueCommunityNotice({
+  void queueCommunityNotice({
+    eventKey: communityNotifyEvent.badgeUnlock(badge.id),
     toUser,
     subject: `NET360: you unlocked ${badge.label}`,
     title: 'Achievement unlocked',
@@ -4594,12 +4708,13 @@ async function syncAchievementNoticesAndNotify(user, badges) {
   return synced.notices;
 }
 
-async function notifyQuizChallengeResponded(challengerUserId, opponentUserId, action) {
+async function notifyQuizChallengeResponded(challengerUserId, opponentUserId, action, challengeId) {
   const [challenger, opponent] = await Promise.all([loadUserForNotify(challengerUserId), loadUserForNotify(opponentUserId)]);
   if (!challenger) return;
   const who = studentNotifyName(opponent);
   const accepted = String(action) === 'accept';
-  queueCommunityNotice({
+  await queueCommunityNotice({
+    eventKey: communityNotifyEvent.quizResponse(challengeId, accepted ? 'accept' : 'decline'),
     toUser: challenger,
     subject: accepted ? 'NET360: your Quiz Battle was accepted' : 'NET360: your Quiz Battle was declined',
     title: accepted ? 'Quiz Battle accepted' : 'Quiz Battle declined',
@@ -4610,6 +4725,141 @@ async function notifyQuizChallengeResponded(challengerUserId, opponentUserId, ac
       'Open NET360 → Community → Quiz Battles to continue. Email replies are ignored.',
     ],
   });
+}
+
+async function notifyQuizChallengeCompleted(challenge) {
+  if (!challenge?._id) return;
+  const [challenger, opponent] = await Promise.all([
+    loadUserForNotify(challenge.challengerUserId),
+    loadUserForNotify(challenge.opponentUserId),
+  ]);
+  const winnerId = challenge.winnerUserId ? String(challenge.winnerUserId) : '';
+  const winner = winnerId && winnerId === String(challenge.challengerUserId)
+    ? challenger
+    : winnerId && winnerId === String(challenge.opponentUserId)
+      ? opponent
+      : null;
+  const resultLine = winner
+    ? `${studentNotifyName(winner)} won this Quiz Battle.`
+    : 'This Quiz Battle ended in a draw.';
+  const eventKey = communityNotifyEvent.quizResult(challenge._id);
+  for (const toUser of [challenger, opponent]) {
+    if (!toUser) continue;
+    await queueCommunityNotice({
+      eventKey,
+      toUser,
+      subject: 'NET360: Quiz Battle result',
+      title: 'Quiz Battle result',
+      paragraphs: [
+        resultLine,
+        'Open NET360 → Community → Quiz Battles to view the full result. Email replies are ignored.',
+      ],
+    });
+  }
+}
+
+const communityNotifyBackfillAt = new Map();
+const COMMUNITY_NOTIFY_USER_BACKFILL_COOLDOWN_MS = 10 * 60 * 1000;
+
+async function backfillCommunityNotificationsForUser(userId) {
+  const id = String(userId || '').trim();
+  if (!isValidObjectId(id)) return;
+
+  const incomingPending = await CommunityConnectionRequestModel.find({
+    toUserId: id,
+    status: 'pending',
+  }).select('_id fromUserId toUserId status').lean();
+  for (const request of incomingPending) {
+    await notifyCommunityConnectionRequested(request.fromUserId, request.toUserId, request._id);
+  }
+
+  const handledRequests = await CommunityConnectionRequestModel.find({
+    fromUserId: id,
+    status: { $in: ['accepted', 'rejected'] },
+  }).select('_id fromUserId toUserId status updatedAt createdAt').lean();
+  for (const request of handledRequests) {
+    if (!isRecentCommunityEvent(request.updatedAt || request.createdAt)) continue;
+    await notifyCommunityConnectionResponded(request.fromUserId, request.toUserId, request.status, request._id);
+  }
+
+  const pendingQuizzes = await CommunityQuizChallengeModel.find({
+    opponentUserId: id,
+    status: 'pending',
+  }).select('_id challengerUserId opponentUserId status').lean();
+  for (const challenge of pendingQuizzes) {
+    await notifyQuizChallengeCreated(challenge.challengerUserId, challenge.opponentUserId, challenge._id);
+  }
+
+  const declinedQuizzes = await CommunityQuizChallengeModel.find({
+    challengerUserId: id,
+    status: 'declined',
+  }).select('_id challengerUserId opponentUserId status updatedAt endedAt createdAt').lean();
+  for (const challenge of declinedQuizzes) {
+    if (!isRecentCommunityEvent(challenge.endedAt || challenge.updatedAt || challenge.createdAt)) continue;
+    await notifyQuizChallengeResponded(challenge.challengerUserId, challenge.opponentUserId, 'decline', challenge._id);
+  }
+
+  const acceptedQuizzes = await CommunityQuizChallengeModel.find({
+    challengerUserId: id,
+    status: { $in: ['accepted', 'in_progress', 'completed'] },
+  }).select('_id challengerUserId opponentUserId status acceptedAt updatedAt createdAt').lean();
+  for (const challenge of acceptedQuizzes) {
+    if (!isRecentCommunityEvent(challenge.acceptedAt || challenge.updatedAt || challenge.createdAt)) continue;
+    await notifyQuizChallengeResponded(challenge.challengerUserId, challenge.opponentUserId, 'accept', challenge._id);
+  }
+
+  const completedQuizzes = await CommunityQuizChallengeModel.find({
+    $or: [{ challengerUserId: id }, { opponentUserId: id }],
+    status: 'completed',
+  }).select('_id challengerUserId opponentUserId winnerUserId status endedAt updatedAt createdAt').lean();
+  for (const challenge of completedQuizzes) {
+    if (!isRecentCommunityEvent(challenge.endedAt || challenge.updatedAt || challenge.createdAt)) continue;
+    await notifyQuizChallengeCompleted(challenge);
+  }
+}
+
+function scheduleCommunityNotificationBackfillForUser(userId) {
+  const id = String(userId || '').trim();
+  if (!id) return;
+  const last = Number(communityNotifyBackfillAt.get(id) || 0);
+  if (Date.now() - last < COMMUNITY_NOTIFY_USER_BACKFILL_COOLDOWN_MS) return;
+  communityNotifyBackfillAt.set(id, Date.now());
+  void backfillCommunityNotificationsForUser(id).catch((error) => {
+    console.warn('[community-notify] user backfill failed:', error?.message || error);
+  });
+}
+
+async function backfillCommunityNotificationsGlobal() {
+  const userIds = new Set();
+  const pendingRequests = await CommunityConnectionRequestModel.find({ status: 'pending' }).select('toUserId').lean();
+  for (const item of pendingRequests) userIds.add(String(item.toUserId));
+
+  const recentHandled = await CommunityConnectionRequestModel.find({
+    status: { $in: ['accepted', 'rejected'] },
+    updatedAt: { $gte: new Date(Date.now() - COMMUNITY_NOTIFY_LOOKBACK_MS) },
+  }).select('fromUserId').lean();
+  for (const item of recentHandled) userIds.add(String(item.fromUserId));
+
+  const pendingQuizzes = await CommunityQuizChallengeModel.find({ status: 'pending' }).select('opponentUserId').lean();
+  for (const item of pendingQuizzes) userIds.add(String(item.opponentUserId));
+
+  const recentQuizzes = await CommunityQuizChallengeModel.find({
+    status: { $in: ['accepted', 'declined', 'in_progress', 'completed'] },
+    updatedAt: { $gte: new Date(Date.now() - COMMUNITY_NOTIFY_LOOKBACK_MS) },
+  }).select('challengerUserId opponentUserId').lean();
+  for (const item of recentQuizzes) {
+    userIds.add(String(item.challengerUserId));
+    userIds.add(String(item.opponentUserId));
+  }
+
+  const ids = Array.from(userIds).filter((value) => isValidObjectId(value));
+  for (let i = 0; i < ids.length; i += 1) {
+    await backfillCommunityNotificationsForUser(ids[i]);
+    if (i > 0 && i % 20 === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+  console.log(`[community-notify] backfill scanned ${ids.length} user(s)`);
 }
 
 async function listAdminNotificationEmails() {
@@ -6405,6 +6655,8 @@ function userPublic(user) {
     hsscPercentage: user.hsscPercentage || '',
     testDate: user.testDate || '',
     role: user.role || 'student',
+    emailVerified: Boolean(user.emailVerifiedAt) || user.requiresEmailVerification !== true,
+    requiresEmailVerification: user.requiresEmailVerification === true,
     authProvider: String(user.authProvider || 'local'),
     authProviderDetail: normalizeAuthProviderDetail(user.authProviderDetail),
     deletionChannel: classifyStudentDeletionChannelSync(user),
@@ -8105,6 +8357,12 @@ async function authMiddleware(req, res, next) {
       return;
     }
 
+    if (accountNeedsEmailVerification(user)) {
+      clearAuthCookies(res, req);
+      res.status(403).json(emailNotVerifiedBody(user));
+      return;
+    }
+
     const role = user.role || 'student';
     const userId = String(user._id || '');
 
@@ -8931,6 +9189,9 @@ async function createDirectStudentAccount(req, res) {
     if (firstName) user.firstName = firstName;
     if (lastName) user.lastName = lastName;
     user.authProvider = 'firebase';
+    if (firebaseIdentity.signInProvider) {
+      user.authProviderDetail = normalizeAuthProviderDetail(firebaseIdentity.signInProvider);
+    }
     user.firebaseUid = firebaseIdentity.uid;
     user.securityQuestion = '';
     user.securityAnswerHash = '';
@@ -8961,6 +9222,10 @@ async function createDirectStudentAccount(req, res) {
   }
 
   const passwordHash = await bcrypt.hash(`firebase:${firebaseIdentity.uid}:${crypto.randomUUID()}`, 12);
+  const isGoogleSignup = isGoogleSignInProvider(firebaseIdentity.signInProvider);
+  const authProviderDetail = normalizeAuthProviderDetail(
+    firebaseIdentity.signInProvider || (isGoogleSignup ? 'google' : 'password'),
+  );
   const activeSession = {
     sessionId: crypto.randomUUID(),
     deviceId,
@@ -8978,11 +9243,14 @@ async function createDirectStudentAccount(req, res) {
     phone: '',
     role: 'student',
     authProvider: 'firebase',
+    authProviderDetail,
     firebaseUid: firebaseIdentity.uid,
     securityQuestion: '',
     securityAnswerHash: '',
     securityAnswerEncrypted: '',
-    activeSession,
+    requiresEmailVerification: !isGoogleSignup,
+    emailVerifiedAt: isGoogleSignup ? new Date() : null,
+    activeSession: isGoogleSignup ? activeSession : null,
     preferences: defaultPreferences(),
     progress: defaultProgress(),
   });
@@ -8992,6 +9260,17 @@ async function createDirectStudentAccount(req, res) {
   });
   if (syncedTrial?.subscription) {
     user.subscription = syncedTrial.subscription;
+  }
+
+  if (!isGoogleSignup) {
+    await sendStudentEmailVerification(user);
+    res.status(201).json({
+      ok: true,
+      verificationRequired: true,
+      email: user.email,
+      message: 'Check your email to verify your account before signing in.',
+    });
+    return;
   }
 
   const payload = await issueAuthPayload(user, req);
@@ -9014,6 +9293,86 @@ app.post('/api/auth/register', async (req, res) => {
     await createDirectStudentAccount(req, res);
   } catch {
     res.status(500).json({ error: 'Registration failed.' });
+  }
+});
+
+app.get('/api/auth/verify-email', async (req, res) => {
+  const rawToken = String(req.query?.token || '').trim();
+  if (!rawToken || rawToken.length > 256) {
+    res.status(400).json({
+      error: 'This verification link is missing or invalid.',
+      code: 'INVALID_VERIFICATION_TOKEN',
+    });
+    return;
+  }
+  try {
+    const tokenHash = hashToken(rawToken);
+    const user = await UserModel.findOne({ emailVerifyTokenHash: tokenHash });
+    if (!user) {
+      res.status(400).json({
+        error: 'This verification link is invalid or has already been used.',
+        code: 'INVALID_VERIFICATION_TOKEN',
+      });
+      return;
+    }
+    if (user.emailVerifiedAt || user.requiresEmailVerification !== true) {
+      clearEmailVerificationToken(user);
+      await user.save();
+      res.json({ ok: true, alreadyVerified: true, email: user.email });
+      return;
+    }
+    if (!user.emailVerifyExpiresAt || new Date(user.emailVerifyExpiresAt).getTime() <= Date.now()) {
+      res.status(400).json({
+        error: 'This verification link has expired. Request a new verification email.',
+        code: 'VERIFICATION_TOKEN_EXPIRED',
+      });
+      return;
+    }
+    markEmailVerified(user);
+    await user.save();
+    res.json({ ok: true, email: user.email });
+  } catch (error) {
+    console.error('[auth/verify-email]', error?.message || error);
+    res.status(500).json({ error: 'Could not verify this email. Please try again.' });
+  }
+});
+
+app.post('/api/auth/resend-verification', async (req, res) => {
+  const generic = {
+    ok: true,
+    message: 'If this account needs verification, we sent a new email.',
+  };
+  const email = normalizeEmail(req.body?.email || '');
+  if (!isValidEmail(email)) {
+    res.status(400).json({ error: 'Enter a valid email address.' });
+    return;
+  }
+  try {
+    const escaped = escapeRegexLiteral(email, 254);
+    const user = escaped
+      ? await UserModel.findOne({ email: { $regex: `^${escaped}$`, $options: 'i' } })
+      : null;
+    if (!user || !accountNeedsEmailVerification(user)) {
+      res.status(200).json(generic);
+      return;
+    }
+    const result = await sendStudentEmailVerification(user);
+    if (!result.sent) {
+      const retryAfterSeconds = Number(result.retryAfterSeconds || 60);
+      res.setHeader('Retry-After', String(retryAfterSeconds));
+      res.status(429).json({
+        error: result.reason === 'cooldown'
+          ? 'Please wait a moment before requesting another verification email.'
+          : 'Too many verification emails. Please try again later.',
+        code: 'VERIFICATION_EMAIL_RATE_LIMITED',
+        retryAfterSeconds,
+      });
+      return;
+    }
+    res.status(200).json(generic);
+  } catch (error) {
+    console.error('[auth/resend-verification]', error?.message || error);
+    res.status(200).json(generic);
   }
 });
 
@@ -9049,11 +9408,18 @@ app.post('/api/auth/register-fallback', async (req, res) => {
       firstName: sanitizeHumanName(req.body?.firstName || ''),
       lastName: sanitizeHumanName(req.body?.lastName || ''),
       role: 'student',
+      authProvider: 'local',
+      authProviderDetail: 'password',
+      requiresEmailVerification: true,
+      emailVerifiedAt: null,
       preferences: defaultPreferences(),
       progress: defaultProgress(),
     });
+    await sendStudentEmailVerification(user);
     res.status(201).json({
       ok: true,
+      verificationRequired: true,
+      email: user.email,
       user: {
         id: String(user._id),
         email: user.email,
@@ -9157,6 +9523,17 @@ app.post('/api/auth/login', async (req, res) => {
 
     if (!IS_PRODUCTION || String(process.env.NET360_AUTH_DEBUG || '').trim() === '1') {
       console.log('[auth/login] user:', { id: String(user._id), email: user.email });
+    }
+
+    if (!envAdminAttempt && accountNeedsEmailVerification(user)) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.email_not_verified',
+        severity: 'info',
+        actorUserId: user._id,
+        actorEmail: user.email,
+      });
+      res.status(403).json(emailNotVerifiedBody(user));
+      return;
     }
 
     if (!envAdminAttempt) {
@@ -9371,6 +9748,12 @@ app.post('/api/auth/refresh', async (req, res) => {
       });
       clearAuthCookies(res, req);
       res.status(401).json({ error: 'User not found.' });
+      return;
+    }
+
+    if (accountNeedsEmailVerification(user)) {
+      clearAuthCookies(res, req);
+      res.status(403).json(emailNotVerifiedBody(user));
       return;
     }
 
@@ -10074,9 +10457,12 @@ app.put('/api/auth/preferences', authMiddleware, async (req, res) => {
 
 async function communityGuard(req, res) {
   const blocked = await ensureCommunityAccess(req.user._id);
-  if (!blocked) return false;
-  res.status(403).json({ error: blocked.reason, code: blocked.code || 'COMMUNITY_BLOCKED' });
-  return true;
+  if (blocked) {
+    res.status(403).json({ error: blocked.reason, code: blocked.code || 'COMMUNITY_BLOCKED' });
+    return true;
+  }
+  scheduleCommunityNotificationBackfillForUser(req.user._id);
+  return false;
 }
 
 async function communityWriteGuard(req, res) {
@@ -10418,7 +10804,7 @@ app.post('/api/community/connections/request', ...studentPremiumSurface, async (
     toUserId,
     requestId: String(created._id),
   });
-  void notifyCommunityConnectionRequested(req.user._id, toUserId);
+  void notifyCommunityConnectionRequested(req.user._id, toUserId, created._id);
 
   res.status(201).json({ requestId: String(created._id) });
 });
@@ -10526,7 +10912,7 @@ app.post('/api/community/connections/requests/:requestId/respond', ...studentPre
     fromUserId: String(request.fromUserId),
     toUserId: String(request.toUserId),
   });
-  void notifyCommunityConnectionResponded(request.fromUserId, request.toUserId, request.status);
+  void notifyCommunityConnectionResponded(request.fromUserId, request.toUserId, request.status, request._id);
   res.json({ ok: true, status: request.status });
 });
 
@@ -10719,6 +11105,56 @@ app.get('/api/community/messages/:connectionId', ...studentPremiumSurface, async
   });
 });
 
+app.get('/api/community/messages/:messageId/attachment', ...studentPremiumSurface, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const messageId = String(req.params.messageId || '').trim();
+  if (!isValidObjectId(messageId)) {
+    res.status(400).json({ error: 'Valid message id is required.' });
+    return;
+  }
+
+  const message = await CommunityMessageModel.findById(messageId).lean();
+  if (!message?.connectionId) {
+    res.status(404).json({ error: 'Message not found.' });
+    return;
+  }
+
+  const connection = await CommunityConnectionModel.findById(message.connectionId).lean();
+  if (!connection) {
+    res.status(404).json({ error: 'Connection not found.' });
+    return;
+  }
+  const myId = String(req.user._id);
+  if (![String(connection.participantA), String(connection.participantB)].includes(myId)) {
+    res.status(403).json({ error: 'Access denied for this chat.' });
+    return;
+  }
+
+  const parsed = parseDataUrl(message.attachment?.dataUrl || '');
+  if (!parsed?.buffer?.length) {
+    res.status(404).json({ error: 'This file is no longer available.' });
+    return;
+  }
+
+  const kind = sniffCommunityFileKind(parsed.buffer);
+  if (kind === 'unsafe') {
+    res.status(400).json({ error: 'This file cannot be opened safely.' });
+    return;
+  }
+
+  const forceDownload = String(req.query?.download || '') === '1';
+  const contentType = safeCommunityAttachmentContentType(message.attachment?.mimeType || parsed.mimeType, kind);
+  const fileName = buildSafeDownloadName(message.attachment?.name, 'community-file');
+  const canInline = (kind === 'pdf' || kind === 'jpeg' || kind === 'png' || kind === 'webp') && !forceDownload;
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Length', String(parsed.buffer.length));
+  res.setHeader('Content-Disposition', `${canInline ? 'inline' : 'attachment'}; filename="${fileName}"`);
+  res.send(parsed.buffer);
+});
+
 app.post('/api/community/messages/:connectionId', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
@@ -10766,7 +11202,12 @@ app.post('/api/community/messages/:connectionId', ...studentPremiumSurface, asyn
 
   try {
     if (messageType === 'file') {
-      attachment = normalizeChatAttachment(req.body?.attachment, { allowAudio: false });
+      attachment = normalizeChatAttachment(req.body?.attachment, {
+        allowAudio: false,
+        allowedMimeTypes: COMMUNITY_FILE_ALLOWED_MIME_TYPES,
+        maxBytes: COMMUNITY_FILE_MAX_BYTES,
+        requireSafeCommunityFile: true,
+      });
       if (!attachment) {
         res.status(400).json({ error: 'Attachment is required for file message.' });
         return;
@@ -11218,7 +11659,7 @@ app.post('/api/community/quiz-challenges', ...studentPremiumSurface, async (req,
         challengeType: normalizedChallengeType,
       },
     });
-    void notifyQuizChallengeCreated(currentUser._id, opponentUser._id);
+    void notifyQuizChallengeCreated(currentUser._id, opponentUser._id, challenge._id);
 
     const loaded = await CommunityQuizChallengeModel.findById(challenge._id).lean();
     res.status(201).json({ challenge: serializeQuizChallenge(loaded, req.user._id) });
@@ -11274,7 +11715,7 @@ app.post('/api/community/quiz-challenges/:id/respond', ...studentPremiumSurface,
           status: String(challenge.status || ''),
         },
       });
-      void notifyQuizChallengeResponded(challenge.challengerUserId, challenge.opponentUserId, action);
+      void notifyQuizChallengeResponded(challenge.challengerUserId, challenge.opponentUserId, action, challenge._id);
       res.json({ challenge: serializeQuizChallenge(challenge.toObject(), req.user._id) });
       return;
     }
@@ -11305,7 +11746,7 @@ app.post('/api/community/quiz-challenges/:id/respond', ...studentPremiumSurface,
         status: String(challenge.status || ''),
       },
     });
-    void notifyQuizChallengeResponded(challenge.challengerUserId, challenge.opponentUserId, action);
+    void notifyQuizChallengeResponded(challenge.challengerUserId, challenge.opponentUserId, action, challenge._id);
 
     res.json({ challenge: serializeQuizChallenge(challenge.toObject(), req.user._id) });
   } catch (error) {
@@ -11483,6 +11924,7 @@ app.post('/api/community/quiz-challenges/:id/submit', ...studentPremiumSurface, 
     await challenge.save();
     if (String(challenge.status) === 'completed') {
       await applyQuizStatsToProfiles(challenge);
+      void notifyQuizChallengeCompleted(challenge);
     }
 
     broadcastSyncEvent({
@@ -18701,6 +19143,9 @@ async function bootstrap() {
         } catch (error) {
           console.error('[openai] Startup probe failed unexpectedly:', error?.message || error);
         }
+        void backfillCommunityNotificationsGlobal().catch((error) => {
+          console.warn('[community-notify] startup backfill failed:', error?.message || error);
+        });
       } else {
         const rs = mongoConnection?.readyState ?? '(no connection)';
         console.warn(`[startup] MongoDB not ready (readyState=${rs}). Background reconnect may be active; see [mongo] logs.`);

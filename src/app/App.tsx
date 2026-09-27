@@ -80,6 +80,9 @@ const DeleteAccountHelpPage = lazyWithRetry(() =>
 const ConfirmAccountDeletionPageLazy = lazyWithRetry(() =>
   import('./components/ConfirmAccountDeletionPage').then((m) => ({ default: m.ConfirmAccountDeletionPage })),
 );
+const VerifyEmailPageLazy = lazyWithRetry(() =>
+  import('./components/VerifyEmailPage').then((m) => ({ default: m.VerifyEmailPage })),
+);
 const SupportChatWidgetLazy = lazyWithRetry(() =>
   import('./components/SupportChatWidget').then((m) => ({ default: m.SupportChatWidget })),
 );
@@ -495,10 +498,15 @@ export default function App() {
     const normalized = location.pathname === '/' ? '/' : location.pathname.replace(/\/+$/, '');
     return normalized === '/confirm-account-deletion';
   }, [location.pathname]);
+  const isVerifyEmailRoute = useMemo(() => {
+    const normalized = location.pathname === '/' ? '/' : location.pathname.replace(/\/+$/, '');
+    return normalized === '/verify-email';
+  }, [location.pathname]);
+  const isStandaloneAuthRoute = isConfirmAccountDeletionRoute || isVerifyEmailRoute;
 
   /** Native: unauthenticated users always land on Login (Profile), never Dashboard first. */
   useEffect(() => {
-    if (authLoading || isConfirmAccountDeletionRoute) return;
+    if (authLoading || isStandaloneAuthRoute) return;
     const isNativeRuntime = Boolean(
       (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.(),
     );
@@ -506,7 +514,7 @@ export default function App() {
     if (!user && activeTab === 'home') {
       navigate(PATH_BY_SECTION.profile, { replace: true });
     }
-  }, [authLoading, user, activeTab, navigate, isConfirmAccountDeletionRoute]);
+  }, [authLoading, user, activeTab, navigate, isStandaloneAuthRoute]);
 
   useEffect(() => {
     if (activeTab === 'profile') {
@@ -927,16 +935,20 @@ export default function App() {
   // keep the session warm (no SessionReady flash / remount delay).
   return (
       <SessionReady>
-      {isConfirmAccountDeletionRoute ? (
+      {isConfirmAccountDeletionRoute || isVerifyEmailRoute ? (
         <>
           <Helmet>
             <link rel="canonical" href={canonicalUrl} />
-            <title>Confirm account deletion | NET360 Preparation</title>
+            <title>
+              {isVerifyEmailRoute
+                ? 'Verify email | NET360 Preparation'
+                : 'Confirm account deletion | NET360 Preparation'}
+            </title>
             <meta name="robots" content="noindex, nofollow" />
           </Helmet>
           <div className="net360-viewport flex min-h-dvh min-h-screen flex-col bg-[#f1f5f9] p-3 text-[#0f172a]" style={{ colorScheme: 'light' }}>
             <Suspense fallback={<PageRouteFallback />}>
-              <ConfirmAccountDeletionPageLazy />
+              {isVerifyEmailRoute ? <VerifyEmailPageLazy /> : <ConfirmAccountDeletionPageLazy />}
             </Suspense>
           </div>
         </>

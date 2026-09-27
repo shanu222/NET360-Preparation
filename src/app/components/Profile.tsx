@@ -8,8 +8,9 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { Award, Bot, ChevronDown, ChevronUp, FlaskConical, GraduationCap, Loader2, LogOut, MessageCircle, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
+import { Award, Bot, ChevronDown, ChevronUp, FlaskConical, GraduationCap, Loader2, LogOut, Mail, MessageCircle, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
 import { showSuccessToast, showErrorToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
+import { apiRequest } from '../lib/api';
 import { SessionConflictModal } from './SessionConflictModal';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
@@ -55,12 +56,15 @@ type AuthActionState = 'idle' | 'loggingIn' | 'creatingAccount';
 type AuthErrorLike = Error & {
   code?: string;
   status?: number;
+  retryAfterSeconds?: number;
   payload?: {
     code?: string;
     message?: string;
+    email?: string;
     canForceLogin?: boolean;
     existingDevice?: string;
     existingPlatform?: string;
+    retryAfterSeconds?: number;
   };
 };
 
@@ -120,6 +124,12 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
   if (rawCode === 'GOOGLE_OAUTH_ANDROID_MISCONFIG' || rawCode === 'GOOGLE_SIGN_IN_FAILED') {
     return 'Google Sign-In could not be completed. Please try again.';
   }
+  if (code === 'EMAIL_NOT_VERIFIED') {
+    return 'Verify your email before signing in. Check your inbox for the NET360 verification link.';
+  }
+  if (rawCode.includes('email-already-in-use') || message.includes('email-already-in-use')) {
+    return 'This email is already registered. Sign in, or resend the verification email if you have not verified yet.';
+  }
   if (code === 'ACTIVE_SESSION_ELSEWHERE' || code === 'SESSION_DISABLED_TEMP' || code === 'ACTIVE_SESSION_EXISTS') {
     return 'Your account is already signed in on another device.';
   }
@@ -177,6 +187,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const [isSavingTargetProgram, setIsSavingTargetProgram] = useState(false);
   const [isSavingPersonalInfo, setIsSavingPersonalInfo] = useState(false);
   const [isSavingPreparationDetails, setIsSavingPreparationDetails] = useState(false);
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState('');
+  const [verificationResendCooldown, setVerificationResendCooldown] = useState(0);
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
 
   const targetProgramOptions = useMemo(() => NET_TARGET_PROGRAM_OPTIONS, []);
   const selectedTargetProgramLabel =
@@ -243,6 +256,14 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     return () => window.clearInterval(timer);
   }, [forgotCooldownSeconds]);
 
+  useEffect(() => {
+    if (verificationResendCooldown <= 0) return;
+    const timer = window.setInterval(() => {
+      setVerificationResendCooldown((current) => (current > 0 ? current - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [verificationResendCooldown]);
+
 
   const displayFirstName = cleanProfileNamePart(localProfile.firstName);
   const displayLastName = cleanProfileNamePart(localProfile.lastName);
@@ -284,13 +305,19 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         }
 
         setAuthActionState('creatingAccount');
-        await registerWithToken({
+        const result = await registerWithToken({
           email: authForm.email,
           password: authForm.password,
           firstName: authForm.firstName,
           lastName: authForm.lastName,
         });
         setAuthActionState('idle');
+        if (result?.verificationRequired) {
+          setPendingVerificationEmail(result.email || authForm.email);
+          setAuthMode('login');
+          showSuccessToast('Check your email to verify your account.');
+          return;
+        }
         showSuccessToast('Account created successfully.');
       } else {
         setAuthActionState('loggingIn');
@@ -317,8 +344,14 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         showSuccessToast('Logged in successfully.');
       }
     } catch (error) {
-      const typed = error as Error & { status?: number };
+      const typed = error as AuthErrorLike;
       setAuthActionState('idle');
+      const code = String(typed?.code || typed?.payload?.code || '').toUpperCase();
+      const rawCode = String(typed?.code || '').toLowerCase();
+      const message = String(typed?.message || '').toLowerCase();
+      if (code === 'EMAIL_NOT_VERIFIED' || rawCode.includes('email-already-in-use') || message.includes('email-already-in-use')) {
+        setPendingVerificationEmail(String(typed?.payload?.email || authForm.email));
+      }
       const friendly = loginFriendlyAuthError(
           error,
           isRegisterMode ? 'Could not create your account. Please try again.' : 'Unable to sign you in. Please check your email and password.',
@@ -327,6 +360,35 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         setRegisterConflictBanner(friendly);
       }
       showErrorToast(friendly);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    if (verificationResendCooldown > 0 || isResendingVerification) return;
+    const email = pendingVerificationEmail || authForm.email;
+    if (!email) {
+      showErrorToast('Enter your email address.');
+      return;
+    }
+    setIsResendingVerification(true);
+    try {
+      await apiRequest('/api/auth/resend-verification', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      }, null);
+      showSuccessToast('If this account needs verification, we sent a new email. Check your inbox and spam folder.');
+      setVerificationResendCooldown(60);
+    } catch (error) {
+      const typed = error as AuthErrorLike;
+      const wait = Number(typed.retryAfterSeconds || typed.payload?.retryAfterSeconds || 60);
+      if (typed.status === 429 || String(typed.code || typed.payload?.code || '').toUpperCase() === 'VERIFICATION_EMAIL_RATE_LIMITED') {
+        setVerificationResendCooldown(Math.max(1, wait));
+        showNeutralToast(`Please wait ${Math.max(1, wait)}s before requesting another verification email.`);
+      } else {
+        handleApiError(error, 'Could not send a verification email. Please try again.');
+      }
+    } finally {
+      setIsResendingVerification(false);
     }
   };
 
@@ -657,6 +719,34 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {pendingVerificationEmail ? (
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-950" role="status" aria-live="polite">
+                  <div className="flex items-start gap-2">
+                    <Mail className="mt-0.5 h-4 w-4 shrink-0 text-indigo-700" aria-hidden />
+                    <div className="min-w-0 space-y-1">
+                      <p className="font-semibold text-indigo-950">Check your email to verify your account.</p>
+                      <p className="text-indigo-900">
+                        We sent a verification link to{' '}
+                        <span className="break-all font-medium">{pendingVerificationEmail}</span>.
+                        You must verify before you can sign in.
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-3 h-10 w-full border-indigo-200 bg-white !text-indigo-700 hover:bg-indigo-50 hover:!text-indigo-800"
+                    disabled={verificationResendCooldown > 0 || isResendingVerification}
+                    onClick={() => void handleResendVerification()}
+                  >
+                    {isResendingVerification
+                      ? 'Sending...'
+                      : verificationResendCooldown > 0
+                      ? `Resend in ${verificationResendCooldown}s`
+                      : 'Resend verification email'}
+                  </Button>
+                </div>
+              ) : null}
               {isRecoveryMode ? (
                 <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
                   <div className="space-y-1">
