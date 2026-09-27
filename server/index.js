@@ -7111,6 +7111,56 @@ function practiceBoardFilePayload(questionId, kind, file, legacyUrl, embedFiles)
   };
 }
 
+function parsePracticeBoardExcludeIds(query = {}) {
+  const raw = [];
+  const add = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(add);
+      return;
+    }
+    String(value || '')
+      .split(',')
+      .forEach((part) => {
+        const id = String(part || '').trim();
+        if (id) raw.push(id);
+      });
+  };
+  add(query.excludeId);
+  add(query.excludeIds);
+
+  const unique = [];
+  const seen = new Set();
+  for (const id of raw) {
+    if (!isValidObjectId(id) || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(new mongoose.Types.ObjectId(id));
+    if (unique.length >= 200) break;
+  }
+  return unique;
+}
+
+function practiceBoardUsableQuestionMatch() {
+  return {
+    $or: [
+      { questionText: { $regex: /\S/ } },
+      { 'questionFile.dataUrl': { $exists: true, $nin: [null, ''] } },
+      { 'questionFile.name': { $exists: true, $nin: [null, ''] } },
+      { questionImageUrl: { $exists: true, $nin: [null, ''] } },
+    ],
+  };
+}
+
+async function pickRandomPracticeBoardQuestion(filter) {
+  const sampled = await PracticeBoardQuestionModel.aggregate([
+    { $match: filter },
+    { $sample: { size: 1 } },
+    { $project: { _id: 1 } },
+  ]);
+  const pickedId = sampled[0]?._id;
+  if (!pickedId) return null;
+  return PracticeBoardQuestionModel.findById(pickedId).select(PRACTICE_BOARD_CLIENT_SELECT).lean();
+}
+
 function serializePracticeBoardQuestion(item, options = {}) {
   const embedFiles = options.embedFiles === true;
   const questionId = String(item?._id || item?.id || '').trim();
@@ -13357,23 +13407,20 @@ app.get('/api/practice-board/questions/random', async (req, res) => {
   try {
     const subject = String(req.query.subject || '').trim().toLowerCase();
     const difficulty = String(req.query.difficulty || '').trim();
-    const excludeId = String(req.query.excludeId || '').trim();
+    const excludeIds = parsePracticeBoardExcludeIds(req.query);
 
-    const filter = {};
+    const filter = { ...practiceBoardUsableQuestionMatch() };
     if (subject) filter.subject = subject;
     if (difficulty) filter.difficulty = difficulty;
-    if (excludeId && isValidObjectId(excludeId)) {
-      filter._id = { $ne: new mongoose.Types.ObjectId(excludeId) };
-    }
+    if (excludeIds.length) filter._id = { $nin: excludeIds };
 
-    const idDocs = await PracticeBoardQuestionModel.find(filter).select('_id').lean();
-    if (!idDocs.length) {
-      res.status(404).json({ error: 'No practice board questions found for this selection.' });
-      return;
+    let item = await pickRandomPracticeBoardQuestion(filter);
+    if (!item && excludeIds.length) {
+      const retryFilter = { ...practiceBoardUsableQuestionMatch() };
+      if (subject) retryFilter.subject = subject;
+      if (difficulty) retryFilter.difficulty = difficulty;
+      item = await pickRandomPracticeBoardQuestion(retryFilter);
     }
-
-    const picked = idDocs[Math.floor(Math.random() * idDocs.length)];
-    const item = await PracticeBoardQuestionModel.findById(picked._id).select(PRACTICE_BOARD_CLIENT_SELECT).lean();
     if (!item) {
       res.status(404).json({ error: 'No practice board questions found for this selection.' });
       return;

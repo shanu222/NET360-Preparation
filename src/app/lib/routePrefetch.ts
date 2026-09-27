@@ -7,7 +7,10 @@ const loaders: Record<string, () => Promise<unknown>> = {
   programs: () => import('../components/ProgramExplorer'),
   'schools-campuses': () => import('../components/NUSTSchoolsCampuses'),
   'net-types': () => import('../components/NETTypes'),
-  'practice-board': () => import('../components/PracticeBoard'),
+  'practice-board': () => import('../components/PracticeBoard').then((module) => {
+    void module.warmPracticeBoardQuestion?.();
+    return module;
+  }),
   'question-contribution': () => import('../components/QuestionContribution'),
   preparation: () => import('../components/Preparation'),
   tests: () => import('../components/Tests'),

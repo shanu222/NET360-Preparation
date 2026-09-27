@@ -52,6 +52,7 @@ interface BoardQuestion {
 
 const RANDOM_QUESTION_CACHE_KEY = 'net360-practice-board-random-v1';
 const QUESTION_BANK_CACHE_KEY = 'net360-practice-board-bank-v1';
+const SESSION_SEEN_KEY = 'net360-practice-board-seen-v1';
 
 function readCachedQuestion(): BoardQuestion | null {
   try {
@@ -65,7 +66,7 @@ function readCachedQuestion(): BoardQuestion | null {
 
 function writeCachedQuestion(question: BoardQuestion | null) {
   try {
-    if (!question) return;
+    if (!isUsableBoardQuestion(question)) return;
     localStorage.setItem(RANDOM_QUESTION_CACHE_KEY, JSON.stringify(question));
   } catch {
     // Ignore localStorage restrictions.
@@ -91,8 +92,95 @@ function writeCachedQuestionBank(questions: BoardQuestion[]) {
   }
 }
 
-function isImageMimeType(mimeType?: string | null) {
-  return /^image\/(png|jpe?g)$/i.test(String(mimeType || ''));
+function isUsableBoardQuestion(question: BoardQuestion | null | undefined): question is BoardQuestion {
+  if (!question?.id) return false;
+  return Boolean(
+    String(question.questionText || '').trim()
+    || question.questionFile?.dataUrl
+    || question.questionFile?.name,
+  );
+}
+
+function readSessionSeenIds(): string[] {
+  try {
+    const raw = sessionStorage.getItem(SESSION_SEEN_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(String).filter(Boolean).slice(-200) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeSessionSeenIds(ids: string[]) {
+  try {
+    sessionStorage.setItem(SESSION_SEEN_KEY, JSON.stringify(ids.slice(-200)));
+  } catch {
+    // Ignore sessionStorage restrictions.
+  }
+}
+
+function rememberSeenQuestion(id: string) {
+  const next = [...new Set([...readSessionSeenIds(), String(id || '').trim()].filter(Boolean))].slice(-200);
+  writeSessionSeenIds(next);
+  return next;
+}
+
+function isImageMimeType(mimeType?: string | null, fileName?: string | null) {
+  const mime = String(mimeType || '').trim().toLowerCase();
+  if (mime.startsWith('image/') && mime !== 'image/svg+xml') return true;
+  return /\.(png|jpe?g|jpg|webp|gif)$/i.test(String(fileName || ''));
+}
+
+function buildRandomQuestionQuery(excludeIds: string[] = []) {
+  const unique = [...new Set(excludeIds.map((id) => String(id || '').trim()).filter(Boolean))].slice(0, 80);
+  const params = new URLSearchParams();
+  if (unique.length) params.set('excludeId', unique[unique.length - 1]);
+  if (unique.length > 1) params.set('excludeIds', unique.join(','));
+  const query = params.toString();
+  return query ? `?${query}` : '';
+}
+
+async function requestRandomBoardQuestion(excludeIds: string[] = []): Promise<BoardQuestion | null> {
+  const payload = await apiRequest<{ question: BoardQuestion }>(
+    `/api/practice-board/questions/random${buildRandomQuestionQuery(excludeIds)}`,
+    { retryCount: 1, retryDelayMs: 400, timeoutMs: 12_000 },
+  );
+  return isUsableBoardQuestion(payload?.question) ? payload.question : null;
+}
+
+function prefetchBoardQuestionMedia(question: BoardQuestion | null | undefined) {
+  if (!isUsableBoardQuestion(question)) return;
+  for (const file of [question.questionFile, question.solutionFile]) {
+    const src = resolvePracticeBoardMediaSrc(file?.dataUrl);
+    if (!src || src.startsWith('data:')) continue;
+    if (!isImageMimeType(file?.mimeType, file?.name) && !src.includes('/files/')) continue;
+    const img = new Image();
+    img.decoding = 'async';
+    img.src = src;
+  }
+}
+
+let warmQuestionPromise: Promise<BoardQuestion | null> | null = null;
+
+export function warmPracticeBoardQuestion() {
+  if (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('view') === 'question-bank') {
+    return Promise.resolve(null);
+  }
+  if (!warmQuestionPromise) {
+    warmQuestionPromise = requestRandomBoardQuestion(readSessionSeenIds()).catch(() => null);
+  }
+  return warmQuestionPromise;
+}
+
+function consumeWarmedQuestion() {
+  const pending = warmQuestionPromise;
+  warmQuestionPromise = null;
+  return pending;
+}
+
+if (typeof window !== 'undefined') {
+  void warmPracticeBoardQuestion();
 }
 
 function resolvePracticeBoardMediaSrc(dataUrl?: string | null) {
@@ -150,7 +238,7 @@ function PracticeBoardImage({
         src={resolvePracticeBoardMediaSrc(src)}
         alt={alt}
         className="max-h-56 w-auto max-w-full object-contain sm:max-h-72"
-        loading="lazy"
+        loading="eager"
         decoding="async"
       />
       <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950/45 via-transparent to-transparent opacity-80 transition group-hover:opacity-100" />
@@ -174,9 +262,12 @@ const SHARED_PEN_COLORS = [
 
 export function PracticeBoard() {
   const isQuestionBankView = new URLSearchParams(window.location.search).get('view') === 'question-bank';
-  const [activeQuestion, setActiveQuestion] = useState<BoardQuestion | null>(() => readCachedQuestion());
+  const [activeQuestion, setActiveQuestion] = useState<BoardQuestion | null>(() => {
+    const cached = readCachedQuestion();
+    return isUsableBoardQuestion(cached) ? cached : null;
+  });
   const [showAnswer, setShowAnswer] = useState(false);
-  const [loadingQuestion, setLoadingQuestion] = useState(true);
+  const [loadingQuestion, setLoadingQuestion] = useState(() => !isUsableBoardQuestion(readCachedQuestion()));
   const [questionBankLoading, setQuestionBankLoading] = useState(false);
   const [questionBankQuery, setQuestionBankQuery] = useState('');
   const [questionBankSubject, setQuestionBankSubject] = useState('');
@@ -199,6 +290,10 @@ export function PracticeBoard() {
   const strokesRef = useRef<Stroke[]>([]);
   const currentStrokeRef = useRef<Stroke | null>(null);
   const isDrawingRef = useRef(false);
+  const currentIdRef = useRef(activeQuestion?.id || '');
+  const preloadRef = useRef<BoardQuestion | null>(null);
+  const preloadInFlightRef = useRef<Promise<BoardQuestion | null> | null>(null);
+  const advancingRef = useRef(false);
 
   const formatSubjectLabel = useCallback((subject: string) => {
     const normalized = String(subject || '').trim().toLowerCase();
@@ -367,60 +462,121 @@ export function PracticeBoard() {
     redrawCanvas();
   }, [redrawCanvas]);
 
-  const fetchRandomQuestion = useCallback(async (excludeId?: string) => {
-    setLoadingQuestion(true);
-    const cachedWhileLoading = readCachedQuestion();
-    if (cachedWhileLoading && (!excludeId || cachedWhileLoading.id !== excludeId)) {
-      setActiveQuestion(cachedWhileLoading);
-    }
-    try {
-      const query = excludeId ? `?excludeId=${encodeURIComponent(excludeId)}` : '';
-      const payload = await apiRequest<{ question: BoardQuestion }>(
-        `/api/practice-board/questions/random${query}`,
-        { retryCount: 1, retryDelayMs: 600, timeoutMs: 20_000 },
-      );
-      setActiveQuestion(payload?.question || null);
-      writeCachedQuestion(payload?.question || null);
-      logNativeEvent('practice-board', 'random-question-loaded', {
-        hasQuestion: Boolean(payload?.question),
-        subject: payload?.question?.subject || '',
+  const applyQuestion = useCallback((question: BoardQuestion) => {
+    currentIdRef.current = question.id;
+    rememberSeenQuestion(question.id);
+    setActiveQuestion(question);
+    writeCachedQuestion(question);
+    setShowAnswer(false);
+    prefetchBoardQuestionMedia(question);
+    logNativeEvent('practice-board', 'random-question-loaded', {
+      hasQuestion: true,
+      subject: question.subject || '',
+    });
+  }, []);
+
+  const ensurePreload = useCallback(async () => {
+    if (preloadRef.current && preloadRef.current.id !== currentIdRef.current) return preloadRef.current;
+    if (preloadInFlightRef.current) return preloadInFlightRef.current;
+
+    const promise = requestRandomBoardQuestion(readSessionSeenIds())
+      .then(async (question) => {
+        if (question && question.id !== currentIdRef.current) return question;
+        return requestRandomBoardQuestion([currentIdRef.current].filter(Boolean));
+      })
+      .then((question) => {
+        if (question && question.id !== currentIdRef.current) {
+          preloadRef.current = question;
+          prefetchBoardQuestionMedia(question);
+        }
+        return question;
+      })
+      .catch(() => null)
+      .finally(() => {
+        if (preloadInFlightRef.current === promise) preloadInFlightRef.current = null;
       });
-      setShowAnswer(false);
-    } catch (error) {
-      const status = Number((error as { status?: number })?.status || 0);
-      const message = String((error as Error)?.message || '').toLowerCase();
-      const isEmptyBank = status === 404 || message.includes('no practice board question');
-      const isSlowNetwork = !isEmptyBank && (
-        message.includes('timeout')
-        || message.includes('took too long')
-        || message.includes('network error')
-        || message.includes('failed to fetch')
-        || (error as { code?: string })?.code === 'REQUEST_TIMEOUT'
-      );
-      const cached = readCachedQuestion();
-      logNativeEvent('practice-board', 'random-question-failed', {
-        message: (error as Error)?.message || String(error),
-        fallbackToCache: Boolean(cached),
-      }, 'error');
-      if (isEmptyBank) {
-        setActiveQuestion(null);
+
+    preloadInFlightRef.current = promise;
+    return promise;
+  }, []);
+
+  const reportQuestionLoadError = useCallback((error: unknown, fallbackQuestion?: BoardQuestion | null) => {
+    const status = Number((error as { status?: number })?.status || 0);
+    const message = String((error as Error)?.message || '').toLowerCase();
+    const isEmptyBank = status === 404 || message.includes('no practice board question');
+    const isSlowNetwork = !isEmptyBank && (
+      message.includes('timeout')
+      || message.includes('took too long')
+      || message.includes('network error')
+      || message.includes('failed to fetch')
+      || (error as { code?: string })?.code === 'REQUEST_TIMEOUT'
+    );
+    logNativeEvent('practice-board', 'random-question-failed', {
+      message: (error as Error)?.message || String(error),
+      fallbackToCache: Boolean(fallbackQuestion),
+    }, 'error');
+    return { isEmptyBank, isSlowNetwork };
+  }, []);
+
+  const goToNextQuestion = useCallback(async () => {
+    if (advancingRef.current) return;
+    advancingRef.current = true;
+    const currentId = currentIdRef.current;
+    try {
+      const ready = preloadRef.current && preloadRef.current.id !== currentId
+        ? preloadRef.current
+        : null;
+      if (ready) {
+        preloadRef.current = null;
+        applyQuestion(ready);
+        void ensurePreload();
         return;
       }
-      if (cached) {
-        setActiveQuestion(cached);
-        setShowAnswer(false);
-        showWarningToast('Could not load due to slow internet. Showing your last available question.');
+
+      if (preloadInFlightRef.current) {
+        const incoming = await preloadInFlightRef.current;
+        if (incoming && incoming.id !== currentIdRef.current) {
+          preloadRef.current = null;
+          applyQuestion(incoming);
+          void ensurePreload();
+          return;
+        }
+      }
+
+      setLoadingQuestion(true);
+      const next = await requestRandomBoardQuestion(readSessionSeenIds());
+      if (next) {
+        applyQuestion(next);
+        void ensurePreload();
         return;
       }
-      if (isSlowNetwork) {
-        showErrorToast('Could not load due to slow internet. Please try again.');
+      const fallback = await requestRandomBoardQuestion([currentIdRef.current].filter(Boolean));
+      if (fallback) {
+        applyQuestion(fallback);
+        void ensurePreload();
         return;
       }
       showErrorToast('Could not load a practice board question. Please try again.');
+    } catch (error) {
+      const cached = isUsableBoardQuestion(readCachedQuestion()) ? readCachedQuestion() : null;
+      const { isEmptyBank, isSlowNetwork } = reportQuestionLoadError(error, cached);
+      if (isEmptyBank) {
+        if (!activeQuestion) setActiveQuestion(null);
+        return;
+      }
+      if (cached && cached.id !== currentId) {
+        applyQuestion(cached);
+        showWarningToast('Could not load due to slow internet. Showing your last available question.');
+        return;
+      }
+      showErrorToast(isSlowNetwork
+        ? 'Could not load due to slow internet. Please try again.'
+        : 'Could not load a practice board question. Please try again.');
     } finally {
       setLoadingQuestion(false);
+      advancingRef.current = false;
     }
-  }, []);
+  }, [activeQuestion, applyQuestion, ensurePreload, reportQuestionLoadError]);
 
   const fetchQuestionBank = useCallback(async () => {
     setQuestionBankLoading(true);
@@ -469,8 +625,66 @@ export function PracticeBoard() {
       void fetchQuestionBank();
       return;
     }
-    void fetchRandomQuestion();
-  }, [fetchQuestionBank, fetchRandomQuestion, isQuestionBankView]);
+
+    let cancelled = false;
+    const cached = isUsableBoardQuestion(readCachedQuestion()) ? readCachedQuestion() : null;
+    if (cached) {
+      currentIdRef.current = cached.id;
+      rememberSeenQuestion(cached.id);
+      prefetchBoardQuestionMedia(cached);
+    }
+
+    (async () => {
+      try {
+        const warmed = await (consumeWarmedQuestion() || requestRandomBoardQuestion(readSessionSeenIds()));
+        if (cancelled) return;
+
+        if (cached) {
+          if (isUsableBoardQuestion(warmed) && warmed.id !== cached.id) {
+            preloadRef.current = warmed;
+            prefetchBoardQuestionMedia(warmed);
+          }
+          if (!preloadRef.current) void ensurePreload();
+          return;
+        }
+
+        if (isUsableBoardQuestion(warmed)) {
+          applyQuestion(warmed);
+          void ensurePreload();
+          return;
+        }
+
+        const first = await requestRandomBoardQuestion(readSessionSeenIds());
+        if (cancelled) return;
+        if (first) {
+          applyQuestion(first);
+          void ensurePreload();
+          return;
+        }
+        setActiveQuestion(null);
+      } catch (error) {
+        if (cancelled) return;
+        const { isEmptyBank, isSlowNetwork } = reportQuestionLoadError(error, cached);
+        if (isEmptyBank) {
+          if (!cached) setActiveQuestion(null);
+          return;
+        }
+        if (cached) {
+          void ensurePreload();
+          return;
+        }
+        showErrorToast(isSlowNetwork
+          ? 'Could not load due to slow internet. Please try again.'
+          : 'Could not load a practice board question. Please try again.');
+      } finally {
+        if (!cancelled) setLoadingQuestion(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [applyQuestion, ensurePreload, fetchQuestionBank, isQuestionBankView, reportQuestionLoadError]);
 
   useEffect(() => {
     resizeCanvas();
@@ -483,8 +697,8 @@ export function PracticeBoard() {
   const solutionFile = useMemo(() => activeQuestion?.solutionFile || null, [activeQuestion]);
   const questionText = String(activeQuestion?.questionText || '').trim();
   const solutionText = String(activeQuestion?.solutionText || '').trim();
-  const questionImage = questionFile && isImageMimeType(questionFile.mimeType) ? questionFile : null;
-  const solutionImage = solutionFile && isImageMimeType(solutionFile.mimeType) ? solutionFile : null;
+  const questionImage = questionFile && isImageMimeType(questionFile.mimeType, questionFile.name) ? questionFile : null;
+  const solutionImage = solutionFile && isImageMimeType(solutionFile.mimeType, solutionFile.name) ? solutionFile : null;
 
   useEffect(() => {
     setFullSizeImage(null);
@@ -625,10 +839,10 @@ export function PracticeBoard() {
               </Button>
               <Button
                 className="w-full bg-gradient-to-r from-indigo-600 to-violet-500 text-white sm:w-auto"
-                onClick={() => void fetchRandomQuestion(activeQuestion?.id)}
-                disabled={loadingQuestion}
+                onClick={() => void goToNextQuestion()}
+                disabled={!activeQuestion && loadingQuestion}
               >
-                {loadingQuestion ? 'Loading...' : 'Next Question'}
+                {loadingQuestion && !activeQuestion ? 'Loading...' : 'Next Question'}
               </Button>
             </div>
           </div>
