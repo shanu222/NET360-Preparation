@@ -156,6 +156,33 @@ function practiceBoardApiPath(raw?: string | null) {
   }
 }
 
+const PRACTICE_BOARD_MEDIA_CACHE = 'net360-practice-board-media-v1';
+
+async function readPersistentPracticeBoardBlob(absoluteUrl: string) {
+  if (typeof caches === 'undefined' || !absoluteUrl) return null;
+  try {
+    const cache = await caches.open(PRACTICE_BOARD_MEDIA_CACHE);
+    const match = await cache.match(absoluteUrl);
+    if (!match) return null;
+    const blob = await match.blob();
+    return blob && blob.size >= 8 ? blob : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writePersistentPracticeBoardBlob(absoluteUrl: string, blob: Blob) {
+  if (typeof caches === 'undefined' || !absoluteUrl || !blob || blob.size < 8) return;
+  try {
+    const cache = await caches.open(PRACTICE_BOARD_MEDIA_CACHE);
+    await cache.put(absoluteUrl, new Response(blob.slice(0, blob.size, blob.type), {
+      headers: { 'Content-Type': blob.type || 'application/octet-stream' },
+    }));
+  } catch {
+    // Ignore quota or private-mode cache failures.
+  }
+}
+
 function loadPracticeBoardMediaSrc(raw?: string | null): Promise<string> {
   const resolved = resolvePracticeBoardMediaSrc(raw);
   if (!resolved) return Promise.resolve('');
@@ -164,15 +191,17 @@ function loadPracticeBoardMediaSrc(raw?: string | null): Promise<string> {
   if (!apiPath) return Promise.resolve(resolved);
   const cached = practiceBoardMediaCache.get(apiPath);
   if (cached) return cached;
-  const pending = downloadBinary(apiPath)
-    .then(({ blob }) => {
-      if (!blob || blob.size < 8) throw new Error('empty practice board file');
-      return URL.createObjectURL(blob);
-    })
-    .catch((error) => {
-      practiceBoardMediaCache.delete(apiPath);
-      throw error;
-    });
+  const pending = (async () => {
+    const stored = await readPersistentPracticeBoardBlob(resolved);
+    if (stored) return URL.createObjectURL(stored);
+    const { blob } = await downloadBinary(apiPath);
+    if (!blob || blob.size < 8) throw new Error('empty practice board file');
+    await writePersistentPracticeBoardBlob(resolved, blob);
+    return URL.createObjectURL(blob);
+  })().catch((error) => {
+    practiceBoardMediaCache.delete(apiPath);
+    throw error;
+  });
   practiceBoardMediaCache.set(apiPath, pending);
   return pending;
 }
@@ -187,14 +216,18 @@ async function requestRandomBoardQuestion(excludeIds: string[] = []): Promise<Bo
   return question;
 }
 
-function prefetchBoardQuestionMedia(question: BoardQuestion | null | undefined) {
+function isBoardImageFile(file?: { dataUrl?: string | null; mimeType?: string | null; name?: string | null } | null) {
+  const raw = file?.dataUrl;
+  if (!raw) return false;
+  return isImageMimeType(file?.mimeType, file?.name) || String(raw).includes('/files/');
+}
+
+function prefetchBoardQuestionMedia(question: BoardQuestion | null | undefined, includeSolution = true) {
   if (!isUsableBoardQuestion(question)) return;
-  for (const file of [question.questionFile, question.solutionFile]) {
-    const raw = file?.dataUrl;
-    if (!raw) continue;
-    if (!isImageMimeType(file?.mimeType, file?.name) && !String(raw).includes('/files/')) continue;
-    void loadPracticeBoardMediaSrc(raw).catch(() => undefined);
-  }
+  const files = [question.questionFile, includeSolution ? question.solutionFile : null].filter(isBoardImageFile);
+  files.forEach((file) => {
+    void loadPracticeBoardMediaSrc(file?.dataUrl).catch(() => '');
+  });
 }
 
 let warmQuestionPromise: Promise<BoardQuestion | null> | null = null;
@@ -269,7 +302,8 @@ function PracticeBoardImage({
   useEffect(() => {
     let cancelled = false;
     setFailed(false);
-    setDisplaySrc('');
+    const immediate = resolvePracticeBoardMediaSrc(src);
+    setDisplaySrc(immediate && !practiceBoardApiPath(immediate) && !practiceBoardApiPath(src) ? immediate : '');
     void loadPracticeBoardMediaSrc(src)
       .then((next) => {
         if (cancelled) return;
@@ -280,6 +314,10 @@ function PracticeBoardImage({
         setDisplaySrc(next);
       })
       .catch(() => {
+        if (!cancelled && immediate) {
+          setDisplaySrc(immediate);
+          return;
+        }
         if (!cancelled) setFailed(true);
       });
     return () => {
@@ -298,7 +336,7 @@ function PracticeBoardImage({
   if (!displaySrc) {
     return (
       <div className={`mt-3 flex min-h-28 w-full items-center justify-center rounded-xl border bg-white px-4 py-6 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-200 ${frameClassName}`}>
-        Loading question…
+        {alt === 'Answer' ? 'Loading answer…' : 'Loading question…'}
       </div>
     );
   }
@@ -781,6 +819,11 @@ export function PracticeBoard() {
     setFullSizeImage(null);
   }, [activeQuestion?.id]);
 
+  useEffect(() => {
+    if (!showAnswer || !activeQuestion) return;
+    prefetchBoardQuestionMedia(activeQuestion, true);
+  }, [showAnswer, activeQuestion]);
+
   if (isQuestionBankView) {
     return (
       <div className="min-w-0 space-y-4">
@@ -997,7 +1040,22 @@ export function PracticeBoard() {
       </Card>
 
       <Dialog open={Boolean(fullSizeImage)} onOpenChange={(open) => { if (!open) setFullSizeImage(null); }}>
-        <DialogContent className="net360-fullscreen-media gap-0 overflow-hidden border-0 bg-slate-950 p-0 text-white shadow-none [&>button]:text-white [&>button]:hover:bg-white/10 [&>button]:hover:text-white">
+        <DialogContent
+          className="net360-fullscreen-media gap-0 overflow-hidden border-0 bg-slate-950 p-0 text-white shadow-none [&>button]:text-white [&>button]:hover:bg-white/10 [&>button]:hover:text-white"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            width: '100vw',
+            height: '100dvh',
+            maxWidth: 'none',
+            maxHeight: 'none',
+            margin: 0,
+            transform: 'none',
+            translate: 'none',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
           <div className="shrink-0 border-b border-white/10 px-4 py-3 pr-14 pt-[max(0.75rem,env(safe-area-inset-top))]">
             <DialogTitle className="text-sm font-semibold tracking-wide text-white">
               {fullSizeImage?.title || 'Preview'}
@@ -1006,12 +1064,27 @@ export function PracticeBoard() {
               Tap outside or press Esc to close
             </DialogDescription>
           </div>
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.18),transparent_58%),#020617] px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+          <div
+            className="net360-fullscreen-stage bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.18),transparent_58%),#020617]"
+            style={{ position: 'relative', flex: '1 1 0%', minHeight: 0, width: '100%' }}
+          >
             {fullSizeImage ? (
               <img
                 src={fullSizeImage.src}
                 alt={fullSizeImage.alt}
-                className="max-h-full max-w-full object-contain"
+                style={{
+                  position: 'absolute',
+                  top: '0.75rem',
+                  right: '0.75rem',
+                  bottom: 'max(0.75rem, env(safe-area-inset-bottom))',
+                  left: '0.75rem',
+                  width: 'calc(100% - 1.5rem)',
+                  height: 'calc(100% - 1.5rem)',
+                  maxWidth: '100%',
+                  maxHeight: '100%',
+                  objectFit: 'contain',
+                  objectPosition: 'center center',
+                }}
               />
             ) : null}
           </div>

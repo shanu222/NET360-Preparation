@@ -1,6 +1,7 @@
 package com.net360.preparation;
 
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
@@ -29,6 +30,7 @@ import ee.forgr.capacitor.social.login.SocialLoginPlugin;
  */
 public class MainActivity extends BridgeActivity implements ModifiedMainActivityForSocialLoginPlugin {
   private static final String TAG = "NET360MainActivity";
+  private static final String WEBVIEW_ASSET_TOKEN = "material-nav-3";
 
   @Override
   public void onCreate(Bundle savedInstanceState) {
@@ -36,6 +38,8 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
 
     WebView webView = this.bridge != null ? this.bridge.getWebView() : null;
     if (webView == null) return;
+
+    refreshWebViewAssetsIfNeeded(webView);
 
     WebSettings settings = webView.getSettings();
     settings.setJavaScriptEnabled(true);
@@ -57,6 +61,21 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     webView.setNestedScrollingEnabled(true);
     webView.setSaveEnabled(true);
     webView.addJavascriptInterface(new PdfBridge(), "NET360NativeFiles");
+  }
+
+  /**
+   * WebView can keep the previous localhost bundle after an update. Drop that cache once per asset token.
+   */
+  private void refreshWebViewAssetsIfNeeded(WebView webView) {
+    try {
+      SharedPreferences prefs = getSharedPreferences("net360_webview", MODE_PRIVATE);
+      if (WEBVIEW_ASSET_TOKEN.equals(prefs.getString("asset_token", ""))) return;
+      webView.clearCache(true);
+      prefs.edit().putString("asset_token", WEBVIEW_ASSET_TOKEN).apply();
+      webView.reload();
+    } catch (Exception error) {
+      Log.w(TAG, "WebView asset refresh skipped", error);
+    }
   }
 
   /**

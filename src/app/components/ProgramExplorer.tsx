@@ -228,9 +228,9 @@ function ProgramCard({
         <Badge className="shrink-0 bg-gradient-to-r from-indigo-500 to-violet-500 text-white">{tag}</Badge>
       </div>
 
-      <div className="flex items-center justify-between border-t border-indigo-100 pt-3">
-        <p className="text-sm text-slate-500">{tag}</p>
-        <Badge variant="outline" className="border-indigo-200 text-indigo-500">{tag}</Badge>
+      <div className="flex items-center justify-between gap-3 border-t border-indigo-200 pt-4">
+        <p className="text-base font-semibold text-slate-800">{tag}</p>
+        <Badge variant="outline" className="border-indigo-300 bg-white px-3 py-1 text-sm font-semibold text-indigo-800">{tag}</Badge>
       </div>
     </div>
   );

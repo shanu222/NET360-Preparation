@@ -213,6 +213,14 @@ function isRestorableAndroidRoute(route: string) {
   }
 }
 
+const ANDROID_PRIMARY_NAV: Array<{ id: SectionId; label: string; icon: typeof Home }> = [
+  { id: 'home', label: 'Home', icon: Home },
+  { id: 'practice-board', label: 'Practice', icon: Pencil },
+  { id: 'tests', label: 'Tests', icon: FileText },
+  { id: 'community', label: 'Community', icon: Users },
+  { id: 'profile', label: 'Profile', icon: User },
+];
+
 const STUDENT_NAVIGATION_ITEMS: Array<{ id: SectionId; label: string; icon: typeof Home }> = [
   { id: 'home', label: 'Dashboard', icon: Home },
   { id: 'guide', label: 'NUST Guide', icon: BookOpen },
@@ -505,7 +513,8 @@ export default function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const [, startRouteTransition] = useTransition();
-  const { user, loading: authLoading } = useAuth();
+  const { user, token, loading: authLoading } = useAuth();
+  const [androidApp, setAndroidApp] = useState(() => isNativeAndroidRuntime());
   const activeTab = useMemo(() => resolveSectionFromLocation(location.pathname, location.hash), [location.hash, location.pathname]);
   const [profileVisited, setProfileVisited] = useState(
     () => resolveSectionFromLocation(
@@ -567,6 +576,10 @@ export default function App() {
       setProfileVisited(true);
     }
   }, [activeTab]);
+
+  useEffect(() => {
+    if (isNativeAndroidRuntime()) setAndroidApp(true);
+  }, []);
 
   const navigateWithTransition = useCallback(
     (to: string) => {
@@ -673,11 +686,52 @@ export default function App() {
   }, [activeTab]);
 
   useEffect(() => {
-    const rows = Array.from(document.querySelectorAll<HTMLElement>('.net360-swipe-row'));
-    if (!rows.length) return;
+    const pressableSelector = 'button, a[href], [role="button"], [role="tab"], [role="menuitem"], [data-slot="tabs-trigger"], [data-slot="switch"], summary, label[for]';
+    let clearTimer = 0;
+    let pressedAt = 0;
 
-    const cleanupFns: Array<() => void> = [];
+    const removePressed = () => {
+      document.querySelectorAll('.net360-pressed').forEach((element) => {
+        element.classList.remove('net360-pressed');
+      });
+    };
 
+    const clearPressed = () => {
+      window.clearTimeout(clearTimer);
+      const wait = Math.max(0, 140 - (Date.now() - pressedAt));
+      clearTimer = window.setTimeout(removePressed, wait);
+    };
+
+    const onPressStart = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof Element)) return;
+      const control = target.closest(pressableSelector);
+      if (!(control instanceof HTMLElement)) return;
+      if (control.matches(':disabled') || control.getAttribute('aria-disabled') === 'true') return;
+      window.clearTimeout(clearTimer);
+      removePressed();
+      pressedAt = Date.now();
+      control.classList.add('net360-pressed');
+    };
+
+    document.addEventListener('pointerdown', onPressStart, true);
+    document.addEventListener('touchstart', onPressStart, true);
+    document.addEventListener('pointerup', clearPressed, true);
+    document.addEventListener('pointercancel', clearPressed, true);
+    document.addEventListener('touchend', clearPressed, true);
+    document.addEventListener('touchcancel', clearPressed, true);
+    return () => {
+      clearPressed();
+      document.removeEventListener('pointerdown', onPressStart, true);
+      document.removeEventListener('touchstart', onPressStart, true);
+      document.removeEventListener('pointerup', clearPressed, true);
+      document.removeEventListener('pointercancel', clearPressed, true);
+      document.removeEventListener('touchend', clearPressed, true);
+      document.removeEventListener('touchcancel', clearPressed, true);
+    };
+  }, []);
+
+  useEffect(() => {
     const updateRowScrollState = (row: HTMLElement) => {
       const maxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
       const canScroll = maxScrollLeft > 1;
@@ -688,148 +742,213 @@ export default function App() {
     };
 
     const syncRowLayout = () => {
-      rows.forEach((row) => {
+      document.querySelectorAll<HTMLElement>('.net360-swipe-row').forEach((row) => {
         const maxScrollLeft = Math.max(0, row.scrollWidth - row.clientWidth);
-        if (row.scrollLeft > maxScrollLeft) {
-          row.scrollLeft = maxScrollLeft;
-        }
+        if (row.scrollLeft > maxScrollLeft) row.scrollLeft = maxScrollLeft;
         updateRowScrollState(row);
       });
     };
 
-    const enableDragFallback = (row: HTMLElement) => {
-      let pointerActive = false;
-      let touchActive = false;
-      let isDragging = false;
-      let startX = 0;
-      let startY = 0;
-      let startScrollLeft = 0;
-      let suppressClickUntil = 0;
-
-      const shouldSkipTarget = (target: EventTarget | null) => {
-        if (!(target instanceof Element)) return false;
-        return Boolean(target.closest('button, a, input, textarea, select, [role="button"], [data-no-drag-scroll]'));
-      };
-
-      const markDrag = () => {
-        isDragging = true;
-        row.dataset.dragging = 'true';
-        suppressClickUntil = Date.now() + 500;
-      };
-
-      const endGesture = () => {
-        pointerActive = false;
-        touchActive = false;
-        if (isDragging) suppressClickUntil = Date.now() + 500;
-        row.dataset.dragging = 'false';
-        window.setTimeout(() => {
-          isDragging = false;
-        }, 520);
-      };
-
-      const onPointerDown = (event: PointerEvent) => {
-        if (event.pointerType !== 'mouse' || event.button !== 0) return;
-        if (shouldSkipTarget(event.target)) return;
-        pointerActive = true;
-        isDragging = false;
-        startX = event.clientX;
-        startScrollLeft = row.scrollLeft;
-        row.dataset.dragging = 'false';
-        row.setPointerCapture?.(event.pointerId);
-      };
-
-      const onPointerMove = (event: PointerEvent) => {
-        if (!pointerActive) return;
-        const deltaX = event.clientX - startX;
-        if (!isDragging && Math.abs(deltaX) > 6) markDrag();
-        if (!isDragging) return;
-        row.scrollLeft = startScrollLeft - deltaX;
-        updateRowScrollState(row);
-      };
-
-      const onPointerUp = (event: PointerEvent) => {
-        if (!pointerActive) return;
-        row.releasePointerCapture?.(event.pointerId);
-        endGesture();
-      };
-
-      const onTouchStart = (event: TouchEvent) => {
-        if (event.touches.length !== 1) return;
-        const touch = event.touches[0];
-        touchActive = true;
-        isDragging = false;
-        startX = touch.clientX;
-        startY = touch.clientY;
-        startScrollLeft = row.scrollLeft;
-        row.dataset.dragging = 'false';
-      };
-
-      const onTouchMove = (event: TouchEvent) => {
-        if (!touchActive || event.touches.length !== 1) return;
-        const touch = event.touches[0];
-        const deltaX = touch.clientX - startX;
-        const deltaY = touch.clientY - startY;
-        if (!isDragging) {
-          if (Math.abs(deltaX) < 8 && Math.abs(deltaY) < 8) return;
-          if (Math.abs(deltaY) > Math.abs(deltaX)) {
-            touchActive = false;
-            return;
-          }
-          markDrag();
-        }
-        row.scrollLeft = startScrollLeft - deltaX;
-        updateRowScrollState(row);
-        if (event.cancelable) event.preventDefault();
-      };
-
-      const onScroll = () => {
-        updateRowScrollState(row);
-      };
-
-      const onClickCapture = (event: MouseEvent) => {
-        if (!isDragging && Date.now() > suppressClickUntil) return;
-        event.preventDefault();
-        event.stopPropagation();
-      };
-
-      const onPointerUpCapture = (event: PointerEvent) => {
-        if (event.pointerType === 'mouse') return;
-        if (!isDragging && Date.now() > suppressClickUntil) return;
-        event.preventDefault();
-        event.stopPropagation();
-      };
-
-      row.addEventListener('pointerdown', onPointerDown, { passive: true });
-      row.addEventListener('pointermove', onPointerMove, { passive: true });
-      row.addEventListener('pointerup', onPointerUp);
-      row.addEventListener('pointercancel', onPointerUp);
-      row.addEventListener('touchstart', onTouchStart, { passive: true });
-      row.addEventListener('touchmove', onTouchMove, { passive: false });
-      row.addEventListener('touchend', endGesture, { passive: true });
-      row.addEventListener('touchcancel', endGesture, { passive: true });
-      row.addEventListener('scroll', onScroll, { passive: true });
-      row.addEventListener('click', onClickCapture, true);
-      row.addEventListener('pointerup', onPointerUpCapture, true);
-      updateRowScrollState(row);
-
-      return () => {
-        row.removeEventListener('pointerdown', onPointerDown);
-        row.removeEventListener('pointermove', onPointerMove);
-        row.removeEventListener('pointerup', onPointerUp);
-        row.removeEventListener('pointercancel', onPointerUp);
-        row.removeEventListener('touchstart', onTouchStart);
-        row.removeEventListener('touchmove', onTouchMove);
-        row.removeEventListener('touchend', endGesture);
-        row.removeEventListener('touchcancel', endGesture);
-        row.removeEventListener('scroll', onScroll);
-        row.removeEventListener('click', onClickCapture, true);
-        row.removeEventListener('pointerup', onPointerUpCapture, true);
-      };
+    const rowFromTarget = (target: EventTarget | null) => {
+      if (!(target instanceof Element)) return null;
+      const found = target.closest('.net360-swipe-row');
+      return found instanceof HTMLElement ? found : null;
     };
 
-    rows.forEach((row) => {
-      cleanupFns.push(enableDragFallback(row));
-    });
+    let row: HTMLElement | null = null;
+    let pointerActive = false;
+    let touchActive = false;
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startScrollLeft = 0;
+    let lastX = 0;
+    let lastTime = 0;
+    let velocity = 0;
+    let suppressClickUntil = 0;
+    let flingFrame = 0;
+    let dragResetTimer = 0;
+
+    const maxScrollLeft = () => (row ? Math.max(0, row.scrollWidth - row.clientWidth) : 0);
+
+    const stopFling = () => {
+      if (!flingFrame) return;
+      window.cancelAnimationFrame(flingFrame);
+      flingFrame = 0;
+    };
+
+    const releasePressed = () => {
+      document.querySelectorAll('.net360-pressed').forEach((element) => {
+        element.classList.remove('net360-pressed');
+      });
+    };
+
+    const finishDrag = () => {
+      if (row) {
+        row.dataset.dragging = 'false';
+        row.style.scrollBehavior = '';
+        updateRowScrollState(row);
+      }
+    };
+
+    const markDrag = () => {
+      if (!row || isDragging) return;
+      isDragging = true;
+      row.dataset.dragging = 'true';
+      row.style.scrollBehavior = 'auto';
+      suppressClickUntil = Date.now() + 500;
+      releasePressed();
+    };
+
+    const startFling = () => {
+      const activeRow = row;
+      if (!activeRow) return;
+      stopFling();
+      let speed = Math.max(-48, Math.min(48, velocity));
+      const step = () => {
+        const max = Math.max(0, activeRow.scrollWidth - activeRow.clientWidth);
+        const next = activeRow.scrollLeft + speed;
+        const clamped = Math.max(0, Math.min(max, next));
+        activeRow.scrollLeft = clamped;
+        updateRowScrollState(activeRow);
+        speed *= 0.92;
+        if (clamped !== next || Math.abs(speed) < 0.12) {
+          flingFrame = 0;
+          activeRow.dataset.dragging = 'false';
+          activeRow.style.scrollBehavior = '';
+          updateRowScrollState(activeRow);
+          return;
+        }
+        flingFrame = window.requestAnimationFrame(step);
+      };
+      flingFrame = window.requestAnimationFrame(step);
+    };
+
+    const endGesture = () => {
+      if (!pointerActive && !touchActive) return;
+      const wasDragging = isDragging;
+      const releaseSpeed = velocity;
+      pointerActive = false;
+      touchActive = false;
+      document.removeEventListener('touchmove', onTouchMove);
+      if (wasDragging) suppressClickUntil = Date.now() + 500;
+      window.clearTimeout(dragResetTimer);
+      dragResetTimer = window.setTimeout(() => {
+        isDragging = false;
+      }, 420);
+      if (wasDragging && Math.abs(releaseSpeed) > 0.4) {
+        velocity = releaseSpeed;
+        startFling();
+        return;
+      }
+      finishDrag();
+    };
+
+    const trackVelocity = (clientX: number) => {
+      const now = performance.now();
+      const elapsed = Math.max(8, now - lastTime);
+      const instant = ((lastX - clientX) / elapsed) * 16;
+      velocity = Math.max(-56, Math.min(56, velocity * 0.6 + instant * 0.4));
+      lastX = clientX;
+      lastTime = now;
+    };
+
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.pointerType !== 'mouse' || event.button !== 0) return;
+      const found = rowFromTarget(event.target);
+      if (!found) return;
+      if (event.target instanceof Element && event.target.closest('button, a, input, textarea, select, [role="button"], [data-no-drag-scroll]')) return;
+      stopFling();
+      row = found;
+      if (maxScrollLeft() <= 1) return;
+      pointerActive = true;
+      isDragging = false;
+      velocity = 0;
+      startX = event.clientX;
+      lastX = event.clientX;
+      lastTime = performance.now();
+      startScrollLeft = found.scrollLeft;
+      found.dataset.dragging = 'false';
+    };
+
+    const onPointerMove = (event: PointerEvent) => {
+      if (!pointerActive || !row) return;
+      const deltaX = event.clientX - startX;
+      if (!isDragging && Math.abs(deltaX) > 3) markDrag();
+      if (!isDragging) return;
+      trackVelocity(event.clientX);
+      const max = maxScrollLeft();
+      row.scrollLeft = Math.max(0, Math.min(max, startScrollLeft - deltaX));
+    };
+
+    const onTouchStart = (event: TouchEvent) => {
+      if (event.touches.length !== 1) return;
+      const found = rowFromTarget(event.target);
+      if (!found) return;
+      stopFling();
+      row = found;
+      if (maxScrollLeft() <= 1) {
+        row = null;
+        return;
+      }
+      const touch = event.touches[0];
+      touchActive = true;
+      isDragging = false;
+      velocity = 0;
+      startX = touch.clientX;
+      startY = touch.clientY;
+      lastX = touch.clientX;
+      lastTime = performance.now();
+      startScrollLeft = found.scrollLeft;
+      found.style.scrollBehavior = 'auto';
+      found.dataset.dragging = 'false';
+      document.addEventListener('touchmove', onTouchMove, { passive: false });
+    };
+
+    const onTouchMove = (event: TouchEvent) => {
+      if (!touchActive || !row || event.touches.length !== 1) return;
+      const touch = event.touches[0];
+      const deltaX = touch.clientX - startX;
+      const deltaY = touch.clientY - startY;
+      if (!isDragging) {
+        if (Math.abs(deltaX) < 4 && Math.abs(deltaY) < 4) return;
+        if (Math.abs(deltaY) > Math.abs(deltaX) + 6) {
+          touchActive = false;
+          row.style.scrollBehavior = '';
+          document.removeEventListener('touchmove', onTouchMove);
+          return;
+        }
+        markDrag();
+      }
+      trackVelocity(touch.clientX);
+      const max = maxScrollLeft();
+      row.scrollLeft = Math.max(0, Math.min(max, startScrollLeft - deltaX));
+      if (event.cancelable) event.preventDefault();
+    };
+
+    const onClickCapture = (event: MouseEvent) => {
+      if (!isDragging && Date.now() > suppressClickUntil) return;
+      if (!rowFromTarget(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const onScroll = (event: Event) => {
+      const target = event.target;
+      if (!(target instanceof HTMLElement) || !target.classList.contains('net360-swipe-row')) return;
+      if (isDragging || flingFrame) return;
+      updateRowScrollState(target);
+    };
+
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('pointermove', onPointerMove, true);
+    document.addEventListener('pointerup', endGesture, true);
+    document.addEventListener('pointercancel', endGesture, true);
+    document.addEventListener('touchstart', onTouchStart, { capture: true, passive: true });
+    document.addEventListener('touchend', endGesture, true);
+    document.addEventListener('touchcancel', endGesture, true);
+    document.addEventListener('click', onClickCapture, true);
+    document.addEventListener('scroll', onScroll, true);
 
     const onResize = () => syncRowLayout();
     const onOrientationChange = () => {
@@ -842,13 +961,26 @@ export default function App() {
     window.visualViewport?.addEventListener('resize', onResize);
 
     syncRowLayout();
-    window.setTimeout(syncRowLayout, 80);
+
+    const layoutTimers = [window.setTimeout(syncRowLayout, 80), window.setTimeout(syncRowLayout, 400)];
 
     return () => {
+      stopFling();
+      layoutTimers.forEach((timer) => window.clearTimeout(timer));
+      window.clearTimeout(dragResetTimer);
+      document.removeEventListener('touchmove', onTouchMove);
+      document.removeEventListener('pointerdown', onPointerDown, true);
+      document.removeEventListener('pointermove', onPointerMove, true);
+      document.removeEventListener('pointerup', endGesture, true);
+      document.removeEventListener('pointercancel', endGesture, true);
+      document.removeEventListener('touchstart', onTouchStart, true);
+      document.removeEventListener('touchend', endGesture, true);
+      document.removeEventListener('touchcancel', endGesture, true);
+      document.removeEventListener('click', onClickCapture, true);
+      document.removeEventListener('scroll', onScroll, true);
       window.removeEventListener('resize', onResize);
       window.removeEventListener('orientationchange', onOrientationChange);
       window.visualViewport?.removeEventListener('resize', onResize);
-      cleanupFns.forEach((fn) => fn());
     };
   }, [activeTab]);
 
@@ -1075,16 +1207,16 @@ export default function App() {
         <meta name="twitter:description" content={pageDescription} />
         <meta name="twitter:image" content={shareImageUrl} />
       </Helmet>
-      <div className="net360-viewport flex min-h-dvh min-h-screen min-w-0 max-w-full flex-col overflow-x-clip p-1 sm:p-3 md:p-5 xl:p-6">
-        <div className="net360-shell mx-auto flex w-full min-w-0 max-w-[min(100%,1600px)] flex-col gap-2 rounded-[20px] border border-white/70 bg-white/65 p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] backdrop-blur-xl sm:gap-3 sm:rounded-[24px] sm:p-2 xl:rounded-[28px]">
-          <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-hidden rounded-2xl border border-white/80 bg-gradient-to-br from-white/85 to-[#f2f4ff]/80 backdrop-blur sm:rounded-3xl">
+      <div className={`net360-viewport flex min-h-dvh min-h-screen min-w-0 max-w-full flex-1 flex-col overflow-x-clip p-0${androidApp ? ' net360-has-tabbar' : ''}`}>
+        <div className="net360-shell mx-auto flex w-full min-w-0 max-w-[min(100%,1600px)] flex-1 flex-col">
+          <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-hidden">
             {/* Header */}
-            <header className="net360-header sticky top-0 z-40 flex min-h-14 items-center gap-1 overflow-hidden rounded-t-2xl border-b border-indigo-100/70 bg-white/65 px-2 py-1.5 backdrop-blur-xl sm:min-h-16 sm:gap-2 sm:px-5 sm:py-0 sm:rounded-t-3xl">
+            <header className="net360-header sticky top-0 z-40 flex min-h-[4.5rem] items-center gap-2 border-b border-indigo-100/80 bg-[#f7f8ff] px-3 py-2 dark:border-slate-700/80 dark:bg-[#12182e] sm:min-h-[4.75rem] sm:gap-3 sm:px-5">
               <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:gap-3">
                 <Sheet open={sidebarMenuOpen} onOpenChange={setSidebarMenuOpen}>
                   <SheetTrigger asChild>
-                    <Button variant="ghost" size="icon" className="touch-manipulation shrink-0 rounded-xl min-h-10 min-w-10 sm:min-h-11 sm:min-w-11" aria-label="Open navigation menu">
-                      <Menu className="w-5 h-5" />
+                    <Button variant="ghost" size="icon" className="touch-manipulation shrink-0 rounded-xl min-h-11 min-w-11" aria-label="Open navigation menu">
+                      <Menu className="h-5 w-5" />
                     </Button>
                   </SheetTrigger>
                   <SheetContent
@@ -1129,8 +1261,8 @@ export default function App() {
                     </div>
                   </SheetContent>
                 </Sheet>
-                <div className="flex min-w-0 items-center gap-2">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-indigo-100 bg-transparent shadow-[0_6px_12px_rgba(76,93,172,0.14)]">
+                <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden">
+                  <div className="net360-header-mark flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-indigo-100 bg-transparent shadow-[0_6px_12px_rgba(76,93,172,0.14)]">
                     <img
                       src={brandLogoUrl()}
                       alt="NET360 logo"
@@ -1141,35 +1273,34 @@ export default function App() {
                       loading="lazy"
                     />
                   </div>
-                  <div className="min-w-0">
-                    <p className="min-w-0 max-w-full text-base leading-snug text-indigo-950 line-clamp-2 sm:line-clamp-1 sm:text-lg md:line-clamp-none md:text-xl">
+                  <div className="min-w-0 flex-1 overflow-hidden">
+                    <p className="net360-header-title text-lg font-semibold leading-none text-indigo-950 sm:text-xl">
                       <span className="sr-only">Current page: </span>
                       {activeTitle}
                     </p>
-                    <p className="hidden text-xs text-slate-500 sm:block">My page</p>
                   </div>
                 </div>
               </div>
-              <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-2">
+              <div className="net360-header-actions ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="inline-flex min-h-10 min-w-10 touch-manipulation items-center justify-center rounded-xl text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white sm:min-h-9 sm:min-w-9 sm:w-auto sm:px-2.5"
+                  className="inline-flex min-h-11 min-w-11 touch-manipulation items-center justify-center rounded-xl text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 dark:text-slate-100 dark:hover:bg-slate-800 dark:hover:text-white sm:w-auto sm:px-2.5"
                   onClick={() => setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'))}
                   aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
                   title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
                 >
-                  {themeMode === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+                  {themeMode === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
                   <span className="ml-1 hidden text-xs font-medium sm:inline">{themeMode === 'dark' ? 'Light' : 'Dark'}</span>
                 </Button>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="touch-manipulation min-h-10 min-w-10 rounded-xl text-slate-600 hover:bg-indigo-50 sm:min-h-9 sm:min-w-9"
+                  className="touch-manipulation min-h-11 min-w-11 rounded-xl text-slate-700 hover:bg-indigo-50 dark:text-slate-100"
                   onClick={() => showSuccessToast('We will show your updates here.')}
                   aria-label="Notifications"
                 >
-                  <Bell className="w-4 h-4" />
+                  <Bell className="h-5 w-5" />
                 </Button>
                 <div className="hidden sm:block">
                   <PremiumCountdownBadge compact />
@@ -1177,13 +1308,13 @@ export default function App() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="touch-manipulation min-h-10 min-w-10 rounded-xl text-slate-600 hover:bg-indigo-50 sm:min-h-9 sm:min-w-9"
+                  className="touch-manipulation min-h-11 min-w-11 rounded-xl text-slate-700 hover:bg-indigo-50 dark:text-slate-100"
                   onClick={() => {
                     window.dispatchEvent(new CustomEvent('net360:open-support-chat'));
                   }}
                   aria-label="Open chat"
                 >
-                  <MessageSquare className="w-4 h-4" />
+                  <MessageSquare className="h-5 w-5" />
                 </Button>
                 <HeaderAuthControl onOpenProfile={() => navigate(PATH_BY_SECTION.profile)} />
               </div>
@@ -1207,6 +1338,30 @@ export default function App() {
                 <Suspense fallback={<PageRouteFallback />}>{mainSection}</Suspense>
               ) : null}
             </main>
+            {androidApp ? (
+              <nav className="net360-tabbar" aria-label="Primary">
+                {ANDROID_PRIMARY_NAV.map((item) => {
+                  const Icon = item.icon;
+                  const selected = activeTab === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={selected ? 'is-selected' : undefined}
+                      aria-current={selected ? 'page' : undefined}
+                      aria-label={`Go to ${item.label}`}
+                      onClick={() => {
+                        if (item.id === 'community') preloadCommunityCache(token);
+                        navigateWithTransition(PATH_BY_SECTION[item.id]);
+                      }}
+                    >
+                      <Icon aria-hidden="true" />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+            ) : null}
           </section>
         </div>
       </div>

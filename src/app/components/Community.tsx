@@ -2646,9 +2646,16 @@ function CommunityInner() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3">
-                <Switch checked={shareProfilePicture} onCheckedChange={setShareProfilePicture} />
-                <p className="text-sm text-muted-foreground">Allow other students to view my profile picture</p>
+              <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-200/80 bg-white/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                <Label htmlFor="share-picture" className="min-w-0 cursor-pointer text-sm leading-snug text-muted-foreground">
+                  Allow other students to view my profile picture
+                </Label>
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className={`text-xs font-semibold ${shareProfilePicture ? 'text-indigo-600 dark:text-indigo-300' : 'text-slate-500'}`}>
+                    {shareProfilePicture ? 'On' : 'Off'}
+                  </span>
+                  <Switch checked={shareProfilePicture} onCheckedChange={setShareProfilePicture} id="share-picture" aria-label="Allow other students to view my profile picture" />
+                </div>
               </div>
 
               <div className="flex flex-wrap gap-2">
