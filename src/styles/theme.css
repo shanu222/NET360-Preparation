@@ -1265,6 +1265,26 @@ html {
   isolation: isolate;
 }
 
+/* Own/sent chat bubbles: global `p` color must not override white text. */
+.chat-bubble-own,
+.chat-bubble-own p,
+.chat-bubble-own span,
+.chat-bubble-own a,
+.dark .chat-bubble-own,
+.dark .chat-bubble-own p,
+.dark .chat-bubble-own span,
+.dark .chat-bubble-own a {
+  color: #ffffff !important;
+}
+
+.chat-bubble-own .text-indigo-100,
+.chat-bubble-own .text-indigo-100\/90,
+.chat-bubble-own .text-indigo-100\/85,
+.chat-bubble-own .text-emerald-100,
+.dark .chat-bubble-own .text-emerald-100 {
+  color: #e0e7ff !important;
+}
+
 /* Select panels portal to document.body. Keep the option list fully opaque
    and above page content so labels/fields never show through. */
 [data-radix-popper-content-wrapper]:has([data-slot='select-content']),

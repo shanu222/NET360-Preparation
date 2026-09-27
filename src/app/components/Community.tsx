@@ -3238,7 +3238,7 @@ function CommunityInner() {
                             key={item.id}
                             className={`max-w-[88%] rounded-2xl p-2.5 text-sm shadow-sm transition-all duration-200 ${
                               isMine
-                                ? 'ml-auto bg-gradient-to-br from-indigo-600 to-violet-600 text-white'
+                                ? 'chat-bubble-own ml-auto bg-gradient-to-br from-indigo-600 to-violet-600 text-white'
                                 : 'bg-white text-slate-800 ring-1 ring-slate-200 dark:bg-slate-800/90 dark:text-slate-100 dark:ring-slate-600'
                             }`}
                           >

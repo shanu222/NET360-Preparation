@@ -8619,7 +8619,7 @@ export default function AdminApp() {
                         key={item.id}
                         className={`admin-support-bubble max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                           item.senderRole === 'admin'
-                            ? 'admin-support-bubble-admin ml-auto bg-indigo-600 text-white'
+                            ? 'admin-support-bubble-admin chat-bubble-own ml-auto bg-indigo-600 text-white'
                             : 'admin-support-bubble-user mr-auto border bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100'
                         }`}
                       >

@@ -877,7 +877,7 @@ export function SupportChatWidget() {
                         data-last-own={item.senderRole === 'user' && !messages.slice(index + 1).some((row) => row.senderRole === 'user') ? 'true' : undefined}
                         className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                           item.senderRole === 'user'
-                            ? 'ml-auto bg-emerald-600 text-white dark:bg-emerald-500 dark:text-emerald-950'
+                            ? 'chat-bubble-own ml-auto bg-emerald-600 text-white dark:bg-emerald-600 dark:text-white'
                             : 'mr-auto border bg-white text-slate-700 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100'
                         } ${item.deliveryState === 'pending' ? 'opacity-70' : ''} ${item.deliveryState === 'failed' ? 'ring-2 ring-rose-400' : ''}`}
                         aria-busy={item.deliveryState === 'pending' || undefined}
