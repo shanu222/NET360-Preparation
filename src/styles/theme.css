@@ -1285,6 +1285,45 @@ html {
   color: #e0e7ff !important;
 }
 
+@keyframes net360-badge-pop {
+  0% { transform: scale(0.72); opacity: 0; }
+  65% { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes net360-confetti-fall {
+  0% { transform: translateY(-8px) rotate(0deg); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: translateY(92px) rotate(220deg); opacity: 0; }
+}
+
+.net360-badge-pop {
+  animation: net360-badge-pop 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.net360-badge-confetti {
+  pointer-events: none;
+  position: absolute;
+  inset: 0.4rem 0.8rem auto;
+  height: 4.5rem;
+}
+
+.net360-badge-confetti span {
+  position: absolute;
+  top: 0;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 1px;
+  animation: net360-confetti-fall 1.15s ease-out forwards;
+}
+
+.net360-badge-confetti span:nth-child(1) { left: 8%; background: #6366f1; animation-delay: 0ms; }
+.net360-badge-confetti span:nth-child(2) { left: 24%; background: #22c55e; animation-delay: 70ms; }
+.net360-badge-confetti span:nth-child(3) { left: 40%; background: #f59e0b; animation-delay: 40ms; }
+.net360-badge-confetti span:nth-child(4) { left: 56%; background: #ec4899; animation-delay: 110ms; }
+.net360-badge-confetti span:nth-child(5) { left: 72%; background: #06b6d4; animation-delay: 20ms; }
+.net360-badge-confetti span:nth-child(6) { left: 88%; background: #8b5cf6; animation-delay: 90ms; }
+
 /* Select panels portal to document.body. Keep the option list fully opaque
    and above page content so labels/fields never show through. */
 [data-radix-popper-content-wrapper]:has([data-slot='select-content']),

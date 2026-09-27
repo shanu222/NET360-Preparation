@@ -63,6 +63,14 @@ import {
   sweepExpiredPresence,
 } from './services/communityPresence.js';
 import { notificationShell } from './services/notificationEmail.js';
+import {
+  applyAchievementNotices,
+  buildAchievementCertificatePdf,
+  buildCommunityAchievementBadges,
+  catalogEntry,
+  serializeAchievementBadges,
+  unlockedAtForBadge,
+} from './lib/communityAchievements.js';
 import { subscriptionExpiryRefresh, requireTrialOrPremiumContent } from './middleware/subscriptionGate.js';
 import {
   mergedSubscription,
@@ -4466,6 +4474,124 @@ async function notifyQuizChallengeCreated(challengerUserId, opponentUserId) {
       'Open NET360 → Community → Quiz Battles to accept or decline. Email replies are ignored.',
     ],
   });
+}
+
+function notifyBadgeUnlocked(toUser, badge) {
+  if (!toUser || !badge) return;
+  queueCommunityNotice({
+    toUser,
+    subject: `NET360: you unlocked ${badge.label}`,
+    title: 'Achievement unlocked',
+    paragraphs: [
+      `Congratulations! You unlocked the ${badge.label} badge.`,
+      badge.description || 'This achievement is now part of your NET360 Community profile.',
+      'Open NET360 → Community → Leaderboard to view your badge and download your certificate. Email replies are ignored.',
+    ],
+  });
+}
+
+async function loadBrandLogoBuffer() {
+  const logoUrl = String(process.env.PUBLIC_BRAND_LOGO_URL || '').trim();
+  if (logoUrl && typeof fetch === 'function') {
+    try {
+      const logoResponse = await fetch(logoUrl);
+      if (logoResponse.ok) {
+        return Buffer.from(await logoResponse.arrayBuffer());
+      }
+    } catch {
+      // fall through to local file
+    }
+  }
+  try {
+    return Buffer.from(await fs.readFile(path.join(process.cwd(), 'public', 'net360-logo.png')));
+  } catch {
+    return null;
+  }
+}
+
+async function loadCommunityAchievementContext(userId) {
+  const me = await UserModel.findById(userId).lean();
+  if (!me) return null;
+
+  const attempts = await AttemptModel.find({ userId }).sort({ attemptedAt: -1 }).limit(300).lean();
+  const physicsAttempts = attempts.filter((item) => String(item.subject || '').toLowerCase() === 'physics');
+  const physicsAverage = physicsAttempts.length
+    ? physicsAttempts.reduce((sum, item) => sum + Number(item.score || 0), 0) / physicsAttempts.length
+    : 0;
+
+  const { start } = getPeriodBounds('weekly');
+  const rows = await AttemptModel.find({ attemptedAt: { $gte: start } }).lean();
+  const scoreMap = new Map();
+  for (const row of rows) {
+    const key = String(row.userId);
+    const bucket = scoreMap.get(key) || { scoreSum: 0, tests: 0 };
+    bucket.scoreSum += Number(row.score || 0);
+    bucket.tests += 1;
+    scoreMap.set(key, bucket);
+  }
+  const weeklyBoard = Array.from(scoreMap.entries())
+    .map(([id, bucket]) => ({ userId: id, score: bucket.tests ? bucket.scoreSum / bucket.tests : 0 }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+  const top10Ids = new Set(weeklyBoard.map((item) => String(item.userId)));
+
+  const streak = longestRecentStreak(attempts.map((item) => item.attemptedAt));
+  const solved = Number(me.progress?.questionsSolved || 0);
+  const avg = Number(me.progress?.averageScore || 0);
+
+  const myAnswers = await CommunityRoomPostModel.aggregate([
+    { $unwind: '$answers' },
+    { $match: { 'answers.authorUserId': me._id } },
+    { $group: { _id: null, totalUpvotes: { $sum: '$answers.upvotes' }, answersCount: { $sum: 1 } } },
+  ]);
+  const answerStats = myAnswers[0] || { totalUpvotes: 0, answersCount: 0 };
+
+  const badges = buildCommunityAchievementBadges({
+    userId: me._id,
+    solved,
+    avg,
+    physicsAttemptsCount: physicsAttempts.length,
+    physicsAverage,
+    streak,
+    top10Ids,
+    contributorUpvotes: Number(answerStats.totalUpvotes || 0),
+  });
+
+  return {
+    me,
+    badges,
+    stats: {
+      solved,
+      averageScore: Number(avg.toFixed(1)),
+      streak,
+      contributorUpvotes: Number(answerStats.totalUpvotes || 0),
+      contributorAnswers: Number(answerStats.answersCount || 0),
+    },
+  };
+}
+
+async function syncAchievementNoticesAndNotify(user, badges) {
+  const profile = await getOrCreateCommunityProfile(user);
+  const earnedBadgeIds = badges.filter((badge) => badge.earned).map((badge) => badge.id);
+  const synced = applyAchievementNotices({
+    notices: profile.achievementNotices,
+    trackingStartedAt: profile.achievementTrackingStartedAt,
+    earnedBadgeIds,
+    now: new Date(),
+  });
+  if (synced.changed) {
+    profile.achievementNotices = synced.notices;
+    profile.achievementTrackingStartedAt = synced.trackingStartedAt;
+    await profile.save();
+  }
+  if (synced.newlyUnlocked.length) {
+    const notifyUser = await loadUserForNotify(user._id);
+    for (const badgeId of synced.newlyUnlocked) {
+      const badge = badges.find((item) => item.id === badgeId) || catalogEntry(badgeId);
+      notifyBadgeUnlocked(notifyUser, badge);
+    }
+  }
+  return synced.notices;
 }
 
 async function notifyQuizChallengeResponded(challengerUserId, opponentUserId, action) {
@@ -11889,66 +12015,58 @@ app.post('/api/community/discussion-posts/:postId/upvote', ...studentPremiumSurf
 app.get('/api/community/achievements', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
 
-  const me = await UserModel.findById(req.user._id).lean();
-  if (!me) {
+  const snapshot = await loadCommunityAchievementContext(req.user._id);
+  if (!snapshot) {
     res.status(404).json({ error: 'User not found.' });
     return;
   }
 
-  const attempts = await AttemptModel.find({ userId: req.user._id }).sort({ attemptedAt: -1 }).limit(300).lean();
-  const physicsAttempts = attempts.filter((item) => String(item.subject || '').toLowerCase() === 'physics');
-  const physicsAverage = physicsAttempts.length
-    ? physicsAttempts.reduce((sum, item) => sum + Number(item.score || 0), 0) / physicsAttempts.length
-    : 0;
-
-  const weeklyBoard = await (async () => {
-    const { start } = getPeriodBounds('weekly');
-    const rows = await AttemptModel.find({ attemptedAt: { $gte: start } }).lean();
-    const scoreMap = new Map();
-    for (const row of rows) {
-      const key = String(row.userId);
-      const bucket = scoreMap.get(key) || { scoreSum: 0, tests: 0 };
-      bucket.scoreSum += Number(row.score || 0);
-      bucket.tests += 1;
-      scoreMap.set(key, bucket);
-    }
-    return Array.from(scoreMap.entries())
-      .map(([userId, bucket]) => ({ userId, score: bucket.tests ? bucket.scoreSum / bucket.tests : 0 }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 10);
-  })();
-  const top10Ids = new Set(weeklyBoard.map((item) => String(item.userId)));
-
-  const streak = longestRecentStreak(attempts.map((item) => item.attemptedAt));
-  const solved = Number(me.progress?.questionsSolved || 0);
-  const avg = Number(me.progress?.averageScore || 0);
-
-  const myAnswers = await CommunityRoomPostModel.aggregate([
-    { $unwind: '$answers' },
-    { $match: { 'answers.authorUserId': req.user._id } },
-    { $group: { _id: null, totalUpvotes: { $sum: '$answers.upvotes' }, answersCount: { $sum: 1 } } },
-  ]);
-  const answerStats = myAnswers[0] || { totalUpvotes: 0, answersCount: 0 };
-
-  const badges = [
-    { id: 'practice-master', label: 'Practice Master', icon: 'ðŸ“˜', earned: solved >= 1000, progress: solved, target: 1000 },
-    { id: 'accuracy-king', label: 'Accuracy King', icon: 'ðŸŽ¯', earned: avg >= 90, progress: Number(avg.toFixed(1)), target: 90 },
-    { id: 'physics-expert', label: 'Physics Expert', icon: 'ðŸ§ ', earned: physicsAttempts.length >= 5 && physicsAverage >= 85, progress: Number(physicsAverage.toFixed(1)), target: 85 },
-    { id: 'study-streak-7', label: '7-Day Study Streak', icon: 'ðŸ”¥', earned: streak >= 7, progress: streak, target: 7 },
-    { id: 'leaderboard-top10', label: 'Top 10 Leaderboard', icon: 'ðŸ†', earned: top10Ids.has(String(req.user._id)), progress: top10Ids.has(String(req.user._id)) ? 10 : 0, target: 10 },
-    { id: 'doubt-contributor', label: 'Contributor Badge', icon: 'ðŸ…', earned: Number(answerStats.totalUpvotes || 0) >= 10, progress: Number(answerStats.totalUpvotes || 0), target: 10 },
-  ];
-
+  const notices = await syncAchievementNoticesAndNotify(req.user, snapshot.badges);
   res.json({
-    badges,
-    stats: {
-      solved,
-      averageScore: Number(avg.toFixed(1)),
-      streak,
-      contributorUpvotes: Number(answerStats.totalUpvotes || 0),
-      contributorAnswers: Number(answerStats.answersCount || 0),
-    },
+    badges: serializeAchievementBadges(snapshot.badges, notices),
+    stats: snapshot.stats,
   });
+});
+
+app.get('/api/community/achievements/:badgeId/certificate', ...studentPremiumSurface, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+
+  const badgeId = String(req.params.badgeId || '').trim();
+  if (!catalogEntry(badgeId)) {
+    res.status(404).json({ error: 'Achievement not found.' });
+    return;
+  }
+
+  const snapshot = await loadCommunityAchievementContext(req.user._id);
+  if (!snapshot) {
+    res.status(404).json({ error: 'User not found.' });
+    return;
+  }
+
+  const badge = snapshot.badges.find((item) => item.id === badgeId);
+  if (!badge?.earned) {
+    res.status(403).json({ error: 'Unlock this badge on NET360 before downloading a certificate.' });
+    return;
+  }
+
+  const profile = await getOrCreateCommunityProfile(req.user);
+  const notices = await syncAchievementNoticesAndNotify(req.user, snapshot.badges);
+  const unlockedAt = unlockedAtForBadge(notices, badgeId) || profile.updatedAt || new Date();
+  const studentName = [snapshot.me.firstName, snapshot.me.lastName].filter(Boolean).join(' ').trim()
+    || snapshot.me.email
+    || 'NET360 Student';
+  const logoBuffer = await loadBrandLogoBuffer();
+  const pdf = await buildAchievementCertificatePdf({
+    studentName,
+    badgeLabel: badge.label,
+    description: badge.description,
+    unlockedAt,
+    logoBuffer,
+  });
+  const slug = badge.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || badge.id;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="NET360-${slug}-certificate.pdf"`);
+  res.send(pdf);
 });
 
 app.get('/api/community/study-partners', ...studentPremiumSurface, async (req, res) => {

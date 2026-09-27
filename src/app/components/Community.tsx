@@ -11,7 +11,8 @@ import { Skeleton } from './ui/skeleton';
 import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { apiRequest } from '../lib/api';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
+import { apiRequest, downloadBinary } from '../lib/api';
 import { navigateToExamSameTab } from '../lib/examWindowLaunch';
 import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl } from '../lib/authSession';
@@ -147,9 +148,31 @@ interface BadgeRow {
   id: string;
   label: string;
   icon: string;
+  description?: string;
   earned: boolean;
   progress: number;
   target: number;
+  unlockedAt?: string | null;
+}
+
+const BADGE_ICON_BY_ID: Record<string, string> = {
+  'practice-master': '\u{1F4DA}',
+  'accuracy-king': '\u{1F3AF}',
+  'physics-expert': '\u{1F9E0}',
+  'study-streak-7': '\u{1F525}',
+  'leaderboard-top10': '\u{1F3C6}',
+  'doubt-contributor': '\u{1F3C5}',
+};
+
+function badgeIcon(badge: BadgeRow) {
+  return BADGE_ICON_BY_ID[badge.id] || (badge.icon && !badge.icon.includes('\u00F0') ? badge.icon : '\u{1F3C6}');
+}
+
+function formatBadgeUnlockDate(value?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 interface LeaderboardRow extends CommunityUser {
@@ -508,6 +531,8 @@ function CommunityInner() {
 
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
   const [badges, setBadges] = useState<BadgeRow[]>([]);
+  const [selectedBadge, setSelectedBadge] = useState<BadgeRow | null>(null);
+  const [isDownloadingCertificate, setIsDownloadingCertificate] = useState(false);
 
   const [quizChallenges, setQuizChallenges] = useState<QuizChallengeRow[]>([]);
   const [quizLeaderboard, setQuizLeaderboard] = useState<QuizLeaderboardRow[]>([]);
@@ -2094,6 +2119,27 @@ function CommunityInner() {
     setActiveTab('discussion-rooms');
   };
 
+  const downloadBadgeCertificate = async (badge: BadgeRow) => {
+    if (!token || !badge.earned || isDownloadingCertificate) return;
+    setIsDownloadingCertificate(true);
+    try {
+      const { blob, filename } = await downloadBinary(`/api/community/achievements/${encodeURIComponent(badge.id)}/certificate`, {}, token);
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename || `NET360-${badge.id}-certificate.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      showSuccessToast('Certificate downloaded.');
+    } catch (error) {
+      handleApiError(error, 'Could not download the certificate.');
+    } finally {
+      setIsDownloadingCertificate(false);
+    }
+  };
+
   if (!token || !user) {
     return (
       <Card>
@@ -3080,14 +3126,71 @@ function CommunityInner() {
             </CardHeader>
             <CardContent className="grid min-h-[120px] gap-2 md:grid-cols-2 xl:grid-cols-3">
               {badges.map((badge) => (
-                <div key={badge.id} className={`rounded-lg border p-3 ${badge.earned ? 'border-emerald-300 bg-emerald-50/60' : ''}`}>
-                  <p className="text-sm">{badge.icon} {badge.label}</p>
+                <button
+                  key={badge.id}
+                  type="button"
+                  disabled={!badge.earned}
+                  onClick={() => {
+                    if (badge.earned) setSelectedBadge(badge);
+                  }}
+                  className={`rounded-lg border p-3 text-left transition ${
+                    badge.earned
+                      ? 'border-emerald-300 bg-emerald-50/60 hover:border-emerald-400 hover:shadow-sm'
+                      : 'cursor-default opacity-95'
+                  }`}
+                >
+                  <p className="text-sm">
+                    <span className="mr-1" aria-hidden="true">{badgeIcon(badge)}</span>
+                    {badge.label}
+                  </p>
                   <p className="text-xs text-muted-foreground">{badge.progress}/{badge.target}</p>
                   <Badge variant={badge.earned ? 'default' : 'outline'} className="mt-2">{badge.earned ? 'Unlocked' : 'Locked'}</Badge>
-                </div>
+                </button>
               ))}
             </CardContent>
           </Card>
+
+          <Dialog open={Boolean(selectedBadge)} onOpenChange={(open) => { if (!open) setSelectedBadge(null); }}>
+            <DialogContent className="overflow-hidden sm:max-w-lg">
+              {selectedBadge ? (
+                <div className="net360-badge-celebrate relative">
+                  <div className="net360-badge-confetti" aria-hidden="true">
+                    <span /><span /><span /><span /><span /><span />
+                  </div>
+                  <DialogHeader>
+                    <DialogTitle className="text-center text-xl">Congratulations</DialogTitle>
+                    <DialogDescription className="text-center">
+                      You unlocked this NET360 achievement.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="net360-badge-pop rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 p-5 text-center dark:border-indigo-500/40 dark:from-slate-900 dark:via-slate-950 dark:to-indigo-950">
+                    <p className="text-5xl" aria-hidden="true">{badgeIcon(selectedBadge)}</p>
+                    <p className="mt-3 text-lg font-semibold text-slate-900 dark:text-slate-50">{selectedBadge.label}</p>
+                    <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                      {selectedBadge.description || 'This badge is now part of your NET360 Community profile.'}
+                    </p>
+                    {formatBadgeUnlockDate(selectedBadge.unlockedAt) ? (
+                      <p className="mt-3 text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                        Unlocked {formatBadgeUnlockDate(selectedBadge.unlockedAt)}
+                      </p>
+                    ) : null}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Progress {selectedBadge.progress}/{selectedBadge.target}
+                    </p>
+                  </div>
+                  <DialogFooter className="mt-2 sm:justify-center">
+                    <Button
+                      type="button"
+                      onClick={() => void downloadBadgeCertificate(selectedBadge)}
+                      disabled={isDownloadingCertificate}
+                    >
+                      {isDownloadingCertificate ? 'Preparing PDF…' : 'Download certificate'}
+                    </Button>
+                  </DialogFooter>
+                </div>
+              ) : null}
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         <TabsContent value="messages" className="mt-0 space-y-4">
