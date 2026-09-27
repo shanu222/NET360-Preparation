@@ -127,10 +127,14 @@ import {
   COMMUNITY_FILE_ALLOWED_MIME_TYPES,
   COMMUNITY_FILE_MAX_BYTES,
   COMMUNITY_NOTIFY_LOOKBACK_MS,
+  claimChatNotificationWindow,
   claimCommunityNotificationDelivery,
+  communityChatWindowKey,
   communityFileMimeMatchesKind,
   communityNotifyEvent,
   isRecentCommunityEvent,
+  markChatNotificationSpeaker,
+  supportChatWindowKey,
   safeCommunityAttachmentContentType,
   sniffCommunityFileKind,
 } from './lib/communityNotifications.js';
@@ -4538,13 +4542,17 @@ async function queueCommunityNotice({ eventKey, toUser, subject, title, paragrap
   void dispatchNotificationEmail({ to: dest, subject, text, html });
 }
 
-async function notifyCommunityDirectMessage(fromUserId, toUserId, messageId) {
+async function notifyCommunityDirectMessage(fromUserId, toUserId, connectionId, messageId) {
   if (String(fromUserId || '') === String(toUserId || '')) return;
+  if (!String(connectionId || '').trim()) return;
+  await markChatNotificationSpeaker(communityChatWindowKey(connectionId, fromUserId));
+  const windowClaim = await claimChatNotificationWindow(communityChatWindowKey(connectionId, toUserId));
+  if (!windowClaim.allowed) return;
   const [fromUser, toUser] = await Promise.all([loadUserForNotify(fromUserId), loadUserForNotify(toUserId)]);
   if (!toUser) return;
   const who = studentNotifyName(fromUser);
   await queueCommunityNotice({
-    eventKey: communityNotifyEvent.communityMessage(messageId),
+    eventKey: communityNotifyEvent.communityChatWindow(connectionId, toUserId, windowClaim.notifiedAtMs),
     toUser,
     subject: 'NET360: new Community message',
     title: 'New Community message',
@@ -4900,12 +4908,16 @@ async function listAdminNotificationEmails() {
 
 async function notifyAdminsOfSupportMessage(user, message) {
   const messageId = String(message?.id || message?._id || '').trim();
+  const studentId = String(user?._id || user?.id || '').trim();
   const preview = String(message?.text || (message?.messageType === 'file' ? message?.attachment?.name || 'Shared a file' : '')).trim().slice(0, 240);
   const who = studentNotifyName(user);
   const openUrl = supportAdminAppUrl();
   const emails = await listAdminNotificationEmails();
-  if (!emails.length || !messageId) return;
-  const eventKey = communityNotifyEvent.supportUserMessage(messageId);
+  if (!emails.length || !messageId || !studentId) return;
+  await markChatNotificationSpeaker(supportChatWindowKey(studentId, 'user'));
+  const windowClaim = await claimChatNotificationWindow(supportChatWindowKey(studentId, 'admin'));
+  if (!windowClaim.allowed) return;
+  const eventKey = communityNotifyEvent.supportUserWindow(studentId, windowClaim.notifiedAtMs);
   const subject = `[NET360 Support] ${who}: ${preview || 'New message'}`;
   const footer = 'This is a notification only. Reply from the NET360 Admin Support Chat panel. Do not reply to this email.';
   const text = [
@@ -4938,10 +4950,15 @@ async function notifyAdminsOfSupportMessage(user, message) {
 }
 
 async function notifyUserOfSupportAdminReply(userId, messageId) {
+  const studentId = String(userId || '').trim();
+  if (!studentId) return;
+  await markChatNotificationSpeaker(supportChatWindowKey(studentId, 'admin'));
+  const windowClaim = await claimChatNotificationWindow(supportChatWindowKey(studentId, 'user'));
+  if (!windowClaim.allowed) return;
   const toUser = await loadUserForNotify(userId);
   if (!toUser) return;
   await queueCommunityNotice({
-    eventKey: communityNotifyEvent.supportAdminReply(messageId),
+    eventKey: communityNotifyEvent.supportAdminWindow(studentId, windowClaim.notifiedAtMs),
     toUser,
     subject: 'NET360: Admin replied to your Support Chat',
     title: 'Admin replied to your Support Chat',
@@ -11315,7 +11332,7 @@ app.post('/api/community/messages/:connectionId', ...studentPremiumSurface, asyn
     status: 'sent',
     message: serializedMessage,
   });
-  void notifyCommunityDirectMessage(req.user._id, otherUserId, serializedMessage.id);
+  void notifyCommunityDirectMessage(req.user._id, otherUserId, connectionId, serializedMessage.id);
 
   res.status(201).json({
     message: serializeCommunityMessage(created),

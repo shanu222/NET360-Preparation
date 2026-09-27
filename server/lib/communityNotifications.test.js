@@ -1,13 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  CHAT_NOTIFY_WINDOW_MS,
   COMMUNITY_FILE_MAX_BYTES,
   buildNotificationDeliveryId,
+  communityChatWindowKey,
   communityFileMimeMatchesKind,
   communityNotifyEvent,
   isRecentCommunityEvent,
   notificationRecipientKey,
+  shouldSendChatWindowNotification,
   sniffCommunityFileKind,
+  supportChatWindowKey,
   tryReserveLocalDeliveryId,
 } from './communityNotifications.js';
 
@@ -26,6 +30,42 @@ test('event keys are unique per event and user-facing status', () => {
   assert.equal(communityNotifyEvent.communityMessage('msg-1'), 'community.message:msg-1');
   assert.equal(communityNotifyEvent.supportUserMessage('sup-1'), 'support.user-message:sup-1');
   assert.equal(communityNotifyEvent.supportAdminReply('sup-2'), 'support.admin-reply:sup-2');
+  assert.equal(
+    communityNotifyEvent.communityChatWindow('conn-1', 'user-b', 1000),
+    'community.chat-window:conn-1:user-b:1000',
+  );
+  assert.equal(communityNotifyEvent.supportUserWindow('user-1', 2000), 'support.user-window:user-1:2000');
+  assert.equal(communityNotifyEvent.supportAdminWindow('user-1', 3000), 'support.admin-window:user-1:3000');
+});
+
+test('chat window keys are per conversation and recipient side', () => {
+  assert.equal(communityChatWindowKey('conn-1', 'user-b'), 'community:conn-1:to:user-b');
+  assert.notEqual(communityChatWindowKey('conn-1', 'user-b'), communityChatWindowKey('conn-1', 'user-a'));
+  assert.equal(supportChatWindowKey('user-1', 'admin'), 'support:user-1:to:admin');
+  assert.equal(supportChatWindowKey('user-1', 'user'), 'support:user-1:to:user');
+  assert.notEqual(supportChatWindowKey('user-1', 'admin'), supportChatWindowKey('user-1', 'user'));
+});
+
+test('chat email window sends once until reply or 30 minutes', () => {
+  const t0 = Date.parse('2026-09-27T12:00:00.000Z');
+  assert.equal(shouldSendChatWindowNotification(null, t0), true);
+  assert.equal(shouldSendChatWindowNotification({ lastNotifiedAt: null, lastReplyAt: null }, t0), true);
+  assert.equal(
+    shouldSendChatWindowNotification({ lastNotifiedAt: new Date(t0), lastReplyAt: null }, t0 + 5 * 60 * 1000),
+    false,
+  );
+  assert.equal(
+    shouldSendChatWindowNotification({ lastNotifiedAt: new Date(t0), lastReplyAt: null }, t0 + CHAT_NOTIFY_WINDOW_MS),
+    true,
+  );
+  assert.equal(
+    shouldSendChatWindowNotification({
+      lastNotifiedAt: new Date(t0),
+      lastReplyAt: new Date(t0 + 60 * 1000),
+    }, t0 + 2 * 60 * 1000),
+    true,
+  );
+  assert.equal(CHAT_NOTIFY_WINDOW_MS, 30 * 60 * 1000);
 });
 
 test('recent-event window treats pending-age dates as relevant', () => {

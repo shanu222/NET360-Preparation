@@ -1,8 +1,10 @@
 import { CommunityNotificationDeliveryModel } from '../models/CommunityNotificationDelivery.js';
+import { ChatNotificationWindowModel } from '../models/ChatNotificationWindow.js';
 import { getRedisMain } from '../services/redis.js';
 
 const localClaimedDeliveryIds = new Set();
 const NOTIFY_DEDUP_TTL_SEC = 90 * 24 * 60 * 60;
+export const CHAT_NOTIFY_WINDOW_MS = 30 * 60 * 1000;
 
 export const COMMUNITY_FILE_MAX_BYTES = 10 * 1024 * 1024;
 export const COMMUNITY_NOTIFY_LOOKBACK_MS = 90 * 24 * 60 * 60 * 1000;
@@ -33,7 +35,30 @@ export const communityNotifyEvent = {
   communityMessage: (messageId) => communityNotifyEventKey('community.message', messageId),
   supportUserMessage: (messageId) => communityNotifyEventKey('support.user-message', messageId),
   supportAdminReply: (messageId) => communityNotifyEventKey('support.admin-reply', messageId),
+  communityChatWindow: (connectionId, recipientId, notifiedAtMs) => (
+    communityNotifyEventKey('community.chat-window', connectionId, `${recipientId}:${notifiedAtMs}`)
+  ),
+  supportUserWindow: (userId, notifiedAtMs) => communityNotifyEventKey('support.user-window', userId, notifiedAtMs),
+  supportAdminWindow: (userId, notifiedAtMs) => communityNotifyEventKey('support.admin-window', userId, notifiedAtMs),
 };
+
+export function communityChatWindowKey(connectionId, recipientId) {
+  return `community:${String(connectionId || '').trim()}:to:${String(recipientId || '').trim()}`;
+}
+
+export function supportChatWindowKey(userId, toward) {
+  const side = String(toward || '').trim() === 'admin' ? 'admin' : 'user';
+  return `support:${String(userId || '').trim()}:to:${side}`;
+}
+
+export function shouldSendChatWindowNotification(window, now = Date.now()) {
+  if (!window?.lastNotifiedAt) return true;
+  const lastNotified = new Date(window.lastNotifiedAt).getTime();
+  if (!Number.isFinite(lastNotified)) return true;
+  const lastReply = window.lastReplyAt ? new Date(window.lastReplyAt).getTime() : 0;
+  if (Number.isFinite(lastReply) && lastReply >= lastNotified) return true;
+  return now - lastNotified >= CHAT_NOTIFY_WINDOW_MS;
+}
 
 export function isRecentCommunityEvent(value, now = Date.now(), lookbackMs = COMMUNITY_NOTIFY_LOOKBACK_MS) {
   if (!value) return false;
@@ -162,4 +187,84 @@ export async function claimCommunityNotificationDelivery(eventKey, userId, email
     console.warn('[notify] delivery claim failed:', error?.message || error);
     return false;
   }
+}
+
+async function clearRedisChatWindow(windowKey) {
+  try {
+    const redis = await getRedisMain();
+    if (!redis?.isReady) return;
+    await redis.del(`notify:chat-window:${windowKey}`);
+  } catch {
+    // Mongo window state remains the source of truth.
+  }
+}
+
+async function stampRedisChatWindow(windowKey, notifiedAtMs) {
+  try {
+    const redis = await getRedisMain();
+    if (!redis?.isReady) return;
+    await redis.set(
+      `notify:chat-window:${windowKey}`,
+      String(notifiedAtMs),
+      { EX: Math.ceil(CHAT_NOTIFY_WINDOW_MS / 1000) },
+    );
+  } catch {
+    // Mongo window state remains the source of truth.
+  }
+}
+
+export async function markChatNotificationSpeaker(windowKey) {
+  const key = String(windowKey || '').trim();
+  if (!key) return;
+  const now = new Date();
+  await ChatNotificationWindowModel.updateOne(
+    { windowKey: key },
+    { $set: { lastReplyAt: now }, $setOnInsert: { windowKey: key, lastNotifiedAt: null } },
+    { upsert: true },
+  );
+  await clearRedisChatWindow(key);
+}
+
+export async function claimChatNotificationWindow(windowKey) {
+  const key = String(windowKey || '').trim();
+  if (!key) return { allowed: false, notifiedAtMs: 0 };
+  const now = new Date();
+  const nowMs = now.getTime();
+
+  let doc = await ChatNotificationWindowModel.findOne({ windowKey: key });
+  if (!doc) {
+    try {
+      doc = await ChatNotificationWindowModel.create({
+        windowKey: key,
+        lastNotifiedAt: now,
+        lastReplyAt: null,
+      });
+      await stampRedisChatWindow(key, nowMs);
+      return { allowed: true, notifiedAtMs: nowMs };
+    } catch (error) {
+      if (!error || error.code !== 11000) {
+        console.warn('[notify] chat window create failed:', error?.message || error);
+        return { allowed: false, notifiedAtMs: 0 };
+      }
+      doc = await ChatNotificationWindowModel.findOne({ windowKey: key });
+    }
+  }
+
+  if (!doc || !shouldSendChatWindowNotification(doc, nowMs)) {
+    return { allowed: false, notifiedAtMs: 0 };
+  }
+
+  const previousNotifiedAt = doc.lastNotifiedAt || null;
+  const updated = await ChatNotificationWindowModel.findOneAndUpdate(
+    {
+      windowKey: key,
+      lastNotifiedAt: previousNotifiedAt,
+    },
+    { $set: { lastNotifiedAt: now } },
+    { new: true },
+  );
+  if (!updated) return { allowed: false, notifiedAtMs: 0 };
+
+  await stampRedisChatWindow(key, nowMs);
+  return { allowed: true, notifiedAtMs: nowMs };
 }
