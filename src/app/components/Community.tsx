@@ -11,13 +11,23 @@ import { Skeleton } from './ui/skeleton';
 import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { apiRequest, buildSseStreamUrl, API_BASE } from '../lib/api';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
+import { apiRequest, downloadBinary } from '../lib/api';
+import { openOrSaveBlobOnDevice } from '../lib/nativeFileAccess';
 import { navigateToExamSameTab } from '../lib/examWindowLaunch';
 import { getMediaUrl } from '../lib/publicMedia';
-import { bearerForLaunchUrl, shouldPersistAuthTokens } from '../lib/authSession';
-import { io, type Socket } from 'socket.io-client';
+import { bearerForLaunchUrl } from '../lib/authSession';
 import { App as CapacitorApp } from '@capacitor/app';
 import { logNativeEvent } from '../lib/nativeDiagnostics';
+import { consumeBriefNativeHide, markNativeDocumentHidden } from '../lib/nativeForeground';
+import {
+  acquireRealtimeSocket,
+  isRealtimeConnected,
+  reconnectRealtimeIfNeeded,
+  releaseRealtimeSocket,
+  setRealtimeAuthToken,
+  subscribeRealtimeStatus,
+} from '../lib/realtimeSocket';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import { PremiumLockScreen } from './subscription/PremiumLockScreen';
@@ -26,6 +36,7 @@ import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, show
 
 interface CommunityUser {
   id: string;
+  userId?: string;
   firstName?: string;
   lastName?: string;
   targetProgram?: string;
@@ -49,11 +60,19 @@ interface CommunityUser {
   communityInterests?: string[];
   presenceStatus?: 'online' | 'away' | 'offline';
   studyingSubject?: string;
+  activity?: string;
 }
 
 interface OnlineStudentRow extends CommunityUser {
   presenceStatus?: 'online' | 'away' | 'offline';
   studyingSubject?: string;
+  activity?: string;
+}
+
+function isOwnCommunityRow(row: { id?: string; userId?: string } | null | undefined, selfId: string) {
+  const self = String(selfId || '').trim();
+  if (!self || !row) return false;
+  return String(row.id || '') === self || String(row.userId || '') === self;
 }
 
 interface CommunityRequestRow {
@@ -131,9 +150,31 @@ interface BadgeRow {
   id: string;
   label: string;
   icon: string;
+  description?: string;
   earned: boolean;
   progress: number;
   target: number;
+  unlockedAt?: string | null;
+}
+
+const BADGE_ICON_BY_ID: Record<string, string> = {
+  'practice-master': '\u{1F4DA}',
+  'accuracy-king': '\u{1F3AF}',
+  'physics-expert': '\u{1F9E0}',
+  'study-streak-7': '\u{1F525}',
+  'leaderboard-top10': '\u{1F3C6}',
+  'doubt-contributor': '\u{1F3C5}',
+};
+
+function badgeIcon(badge: BadgeRow) {
+  return BADGE_ICON_BY_ID[badge.id] || (badge.icon && !badge.icon.includes('\u00F0') ? badge.icon : '\u{1F3C6}');
+}
+
+function formatBadgeUnlockDate(value?: string | null) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return '';
+  return date.toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
 interface LeaderboardRow extends CommunityUser {
@@ -221,7 +262,16 @@ const PROFILE_PICTURE_ALLOWED_MIME_TYPES = new Set([
   'image/svg+xml',
 ]);
 const PROFILE_PICTURE_MAX_BYTES = 3 * 1024 * 1024;
-const CHAT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
+const CHAT_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;
+const COMMUNITY_FILE_ALLOWED_MIME_TYPES = new Set([
+  'application/pdf',
+  'application/x-pdf',
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/webp',
+]);
+const COMMUNITY_FILE_ALLOWED_EXTENSIONS = new Set(['.pdf', '.jpg', '.jpeg', '.png', '.webp']);
 const QUICK_CHAT_EMOJIS = ['😀', '😂', '🔥', '👏', '❤️', '👍'];
 const ENCRYPTION_LABEL = 'Messages are end-to-end encrypted.';
 const COMMUNITY_CACHE_PREFIX = 'net360:community-cache:';
@@ -249,20 +299,42 @@ function readExpiredCommunityCachePayload<T>(path: string): T | null {
 
 const CHAT_ATTACHMENT_ACCEPT = [
   '.pdf',
-  '.doc',
-  '.docx',
-  '.xls',
-  '.xlsx',
-  '.ppt',
-  '.pptx',
-  '.txt',
   '.jpg',
   '.jpeg',
   '.png',
-  '.gif',
   '.webp',
-  '.svg',
+  'application/pdf',
+  'image/jpeg',
+  'image/png',
+  'image/webp',
 ].join(',');
+
+function communityFileExtension(name: string) {
+  const raw = String(name || '').trim().toLowerCase();
+  const dot = raw.lastIndexOf('.');
+  return dot >= 0 ? raw.slice(dot) : '';
+}
+
+function isAllowedCommunityChatFile(file: File) {
+  const mime = String(file.type || '').toLowerCase();
+  const extension = communityFileExtension(file.name);
+  if (COMMUNITY_FILE_ALLOWED_MIME_TYPES.has(mime)) return true;
+  if (!mime && COMMUNITY_FILE_ALLOWED_EXTENSIONS.has(extension)) return true;
+  return false;
+}
+
+function isSafeCommunityImageMime(mimeType: string) {
+  return ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'].includes(String(mimeType || '').toLowerCase());
+}
+
+function isSafeCommunityPdfMime(mimeType: string) {
+  const mime = String(mimeType || '').toLowerCase();
+  return mime === 'application/pdf' || mime === 'application/x-pdf';
+}
+
+function isSafeCommunityImageDataUrl(dataUrl: string) {
+  return /^data:image\/(jpeg|jpg|png|webp);/i.test(String(dataUrl || ''));
+}
 
 function fileToDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -339,6 +411,99 @@ const CommunityAvatar = memo(function CommunityAvatar({
   );
 });
 
+const SafeChatAttachment = memo(function SafeChatAttachment({
+  messageId,
+  attachment,
+  token,
+}: {
+  messageId: string;
+  attachment: MessageAttachment;
+  token: string | null;
+}) {
+  const [imageUrl, setImageUrl] = useState('');
+  const mimeType = String(attachment.mimeType || '').toLowerCase();
+  const isImage = isSafeCommunityImageMime(mimeType);
+  const isPdf = isSafeCommunityPdfMime(mimeType);
+  const localImageUrl = isImage && isSafeCommunityImageDataUrl(attachment.dataUrl) ? attachment.dataUrl : '';
+
+  useEffect(() => {
+    if (!isImage || localImageUrl || !token || !messageId) {
+      setImageUrl('');
+      return;
+    }
+    let objectUrl = '';
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { blob } = await downloadBinary(`/api/community/messages/${encodeURIComponent(messageId)}/attachment`, {}, token);
+        if (cancelled) return;
+        if (!blob.type.startsWith('image/')) return;
+        objectUrl = URL.createObjectURL(blob);
+        setImageUrl(objectUrl);
+      } catch {
+        if (!cancelled) setImageUrl('');
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [isImage, localImageUrl, messageId, token]);
+
+  const openSecureAttachment = async (download: boolean) => {
+    if (!token || !messageId) {
+      showErrorToast('Sign in again to open this file.');
+      return;
+    }
+    try {
+      const query = download ? '?download=1' : '';
+      const { blob, filename } = await downloadBinary(
+        `/api/community/messages/${encodeURIComponent(messageId)}/attachment${query}`,
+        {},
+        token,
+      );
+      await openOrSaveBlobOnDevice(
+        blob,
+        filename || attachment.name || 'community-file',
+        download ? 'download' : 'open',
+      );
+    } catch {
+      showErrorToast('Could not open this file securely.');
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <p>{attachment.name || 'Shared a file'}</p>
+      {isImage && (localImageUrl || imageUrl) ? (
+        <img
+          src={localImageUrl || imageUrl}
+          alt={attachment.name || 'Shared image'}
+          className="max-h-56 max-w-full rounded-lg object-contain"
+        />
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {isPdf ? (
+          <button
+            type="button"
+            className="text-xs underline underline-offset-2"
+            onClick={() => void openSecureAttachment(false)}
+          >
+            Open PDF
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="text-xs underline underline-offset-2"
+          onClick={() => void openSecureAttachment(true)}
+        >
+          {isPdf ? 'Download PDF' : isImage ? 'Download image' : 'Download file'}
+        </button>
+      </div>
+    </div>
+  );
+});
+
 function displayName(user: CommunityUser) {
   const full = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
   return full || user.username || 'Student';
@@ -346,6 +511,74 @@ function displayName(user: CommunityUser) {
 
 function canSendConnectionRequest(status?: string) {
   return !status || status === 'none';
+}
+
+type RosterActionKind = 'chat' | 'quiz' | 'room';
+
+/** Tab each roster action lands on; the pressed state clears once that tab is actually active. */
+const ROSTER_ACTION_TARGET_TAB: Record<RosterActionKind, string> = {
+  chat: 'messages',
+  quiz: 'quiz-battles',
+  room: 'discussion-rooms',
+};
+
+const PRESENCE_ROW_COMPARE_KEYS: Array<keyof OnlineStudentRow> = [
+  'presenceStatus',
+  'studyingSubject',
+  'activity',
+  'connectionStatus',
+  'lastSeenAt',
+  'doNotDisturb',
+  'hideOnlineStatus',
+  'firstName',
+  'lastName',
+  'username',
+  'profilePictureUrl',
+  'targetNetType',
+];
+
+function presenceRowEquals(a: OnlineStudentRow, b: OnlineStudentRow) {
+  return PRESENCE_ROW_COMPARE_KEYS.every((key) => a[key] === b[key]);
+}
+
+/**
+ * Merge an authoritative server snapshot into the current roster: dedupe by stable user id,
+ * keep the server's order, and reuse row objects whose visible fields did not change so React
+ * only re-renders the affected tiles. Returns `prev` untouched when nothing changed.
+ */
+function mergePresenceRoster(prev: OnlineStudentRow[], next: OnlineStudentRow[]): OnlineStudentRow[] {
+  const prevById = new Map(prev.map((row) => [String(row.id), row]));
+  const seen = new Set<string>();
+  const merged: OnlineStudentRow[] = [];
+  let changed = false;
+
+  for (const incoming of next) {
+    const id = String(incoming?.id || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const existing = prevById.get(id);
+    if (existing && presenceRowEquals(existing, incoming)) {
+      merged.push(existing);
+    } else {
+      merged.push({ ...incoming, id });
+      changed = true;
+    }
+  }
+
+  if (!changed && merged.length === prev.length && merged.every((row, index) => row === prev[index])) {
+    return prev;
+  }
+  return merged;
+}
+
+function upsertCommunityMessage(list: MessageRow[], incoming: MessageRow): MessageRow[] {
+  const id = String(incoming?.id || '');
+  if (!id) return list;
+  const index = list.findIndex((row) => String(row.id) === id);
+  if (index === -1) return [...list, incoming];
+  const next = list.slice();
+  next[index] = { ...list[index], ...incoming, id };
+  return next;
 }
 
 function CommunityInner() {
@@ -357,6 +590,18 @@ function CommunityInner() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('discover-students');
   const [leaderboardPeriod, setLeaderboardPeriod] = useState<'weekly' | 'monthly'>('weekly');
+
+  useEffect(() => {
+    const activity = activeTab === 'quiz-battles'
+      ? 'Quiz Battle'
+      : activeTab === 'discussion-rooms'
+        ? 'Study Room'
+        : 'Community';
+    window.dispatchEvent(new CustomEvent('net360:presence-activity', { detail: { activity } }));
+    return () => {
+      window.dispatchEvent(new CustomEvent('net360:presence-activity', { detail: { activity: '' } }));
+    };
+  }, [activeTab]);
 
   const [profile, setProfile] = useState<CommunityUser | null>(null);
   const [usernameInput, setUsernameInput] = useState('');
@@ -378,16 +623,21 @@ function CommunityInner() {
   const [presenceLoading, setPresenceLoading] = useState(false);
   const [remoteTyping, setRemoteTyping] = useState(false);
   const [studyingSubjectPing, setStudyingSubjectPing] = useState('');
-  const [sseDropped, setSseDropped] = useState(false);
+  /** True while the shared realtime socket is not connected (drives the "Reconnecting…" badge + faster fallback polling). */
+  const [realtimeDown, setRealtimeDown] = useState(() => !isRealtimeConnected('student'));
 
-  const communitySocketRef = useRef<Socket | null>(null);
   const messageThreadEndRef = useRef<HTMLDivElement | null>(null);
   const activeConnectionIdRef = useRef('');
   const typingEmitTimerRef = useRef<number | null>(null);
   const typingStopTimerRef = useRef<number | null>(null);
   const typingIdleTimerRef = useRef<number | null>(null);
   const lastSendFingerprintRef = useRef('');
-  const loadPresenceRef = useRef<() => Promise<void>>(async () => {});
+  const loadPresenceRef = useRef<(options?: { silent?: boolean }) => Promise<void>>(async () => {});
+  const presenceRequestSeqRef = useRef(0);
+  const presenceReconcileTimerRef = useRef<number | null>(null);
+  const pingPresenceRef = useRef<() => void>(() => {});
+  const [connectingUserIds, setConnectingUserIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [pendingRosterAction, setPendingRosterAction] = useState<{ userId: string; kind: RosterActionKind } | null>(null);
   const [searchResults, setSearchResults] = useState<Array<CommunityUser & { connectionStatus?: string }>>([]);
   const [profilePreview, setProfilePreview] = useState<CommunityUser | null>(null);
   const [studyPartnersProfilePreview, setStudyPartnersProfilePreview] = useState<CommunityUser | null>(null);
@@ -407,6 +657,8 @@ function CommunityInner() {
 
   const [leaderboard, setLeaderboard] = useState<LeaderboardRow[]>([]);
   const [badges, setBadges] = useState<BadgeRow[]>([]);
+  const [selectedBadge, setSelectedBadge] = useState<BadgeRow | null>(null);
+  const [isDownloadingCertificate, setIsDownloadingCertificate] = useState(false);
 
   const [quizChallenges, setQuizChallenges] = useState<QuizChallengeRow[]>([]);
   const [quizLeaderboard, setQuizLeaderboard] = useState<QuizLeaderboardRow[]>([]);
@@ -458,6 +710,7 @@ function CommunityInner() {
   const memoryCacheRef = useRef<Map<string, CommunityCacheEntry>>(new Map());
   const inFlightGetRef = useRef<Map<string, Promise<unknown>>>(new Map());
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
+  const refreshQueuedRef = useRef(false);
   const searchDebounceRef = useRef<number | null>(null);
   const messageFileInputRef = useRef<HTMLInputElement | null>(null);
   const voiceRecorderRef = useRef<MediaRecorder | null>(null);
@@ -538,11 +791,10 @@ function CommunityInner() {
     if (!options?.force) {
       const cached = readCachedPayload<T>(path);
       if (cached) return cached;
-    }
-
-    const inFlight = inFlightGetRef.current.get(path);
-    if (inFlight) {
-      return inFlight as Promise<T>;
+      const inFlight = inFlightGetRef.current.get(path);
+      if (inFlight) {
+        return inFlight as Promise<T>;
+      }
     }
 
     const requestPromise = apiRequest<T>(path, {}, token)
@@ -639,22 +891,51 @@ function CommunityInner() {
     setRoomPosts(payload.posts || []);
   }, [token, requestCached]);
 
-  const loadPresence = useCallback(async () => {
+  /**
+   * Presence roster: the server snapshot is authoritative. Event-driven reconciliations are
+   * silent (no "Refreshing…" state) and merge by stable user id so unchanged tiles keep their
+   * object identity. Only the manual "Refresh roster" button shows a loading state.
+   */
+  const loadPresence = useCallback(async (options?: { silent?: boolean }) => {
     if (!token) return;
-    setPresenceLoading(true);
+    const silent = options?.silent !== false;
+    const seq = ++presenceRequestSeqRef.current;
+    if (!silent) setPresenceLoading(true);
     try {
       const payload = await apiRequest<{ online: OnlineStudentRow[] }>('/api/community/presence', {}, token);
-      setOnlineStudents(payload.online || []);
+      // A newer request already started; let it win to avoid applying a stale snapshot.
+      if (seq !== presenceRequestSeqRef.current) return;
+      const selfId = String(user?.id || '');
+      const others = (payload.online || []).filter((row) => !isOwnCommunityRow(row, selfId));
+      setOnlineStudents((prev) => mergePresenceRoster(prev, others));
     } catch {
-      setOnlineStudents([]);
+      // Keep the last known roster; a transient failure must not blank the list.
     } finally {
-      setPresenceLoading(false);
+      if (!silent && seq === presenceRequestSeqRef.current) setPresenceLoading(false);
     }
-  }, [token]);
+  }, [token, user?.id]);
 
   useEffect(() => {
     loadPresenceRef.current = loadPresence;
   }, [loadPresence]);
+
+  /** Coalesce bursts of presence events (many users pinging) into one quiet reconciliation. */
+  const schedulePresenceReconcile = useCallback((delayMs = 250) => {
+    if (presenceReconcileTimerRef.current != null) return;
+    presenceReconcileTimerRef.current = window.setTimeout(() => {
+      presenceReconcileTimerRef.current = null;
+      void loadPresenceRef.current({ silent: true });
+    }, delayMs);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (presenceReconcileTimerRef.current != null) {
+        window.clearTimeout(presenceReconcileTimerRef.current);
+        presenceReconcileTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     activeConnectionIdRef.current = activeConnectionId;
@@ -704,10 +985,14 @@ function CommunityInner() {
     if (!token) return;
 
     if (refreshInFlightRef.current) {
+      refreshQueuedRef.current = true;
       return refreshInFlightRef.current;
     }
 
     refreshInFlightRef.current = (async () => {
+      let passForce = force;
+      do {
+      refreshQueuedRef.current = false;
       const [
         profilePayload,
         requestsPayload,
@@ -715,11 +1000,11 @@ function CommunityInner() {
         roomsPayload,
         partnersPayload,
       ] = await Promise.all([
-        requestCached<{ profile: CommunityUser }>('/api/community/profile', { force }),
-        requestCached<{ incoming: CommunityRequestRow[]; outgoing: CommunityRequestRow[] }>('/api/community/connections/requests', { force }),
-        requestCached<{ connections: ConnectionRow[] }>('/api/community/connections', { force }),
-        requestCached<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms', { force }),
-        requestCached<{ studyPartners: Array<{ compatibility: number; user: CommunityUser; reasons?: string[] }> }>('/api/community/study-partners', { force }),
+        requestCached<{ profile: CommunityUser }>('/api/community/profile', { force: passForce }),
+        requestCached<{ incoming: CommunityRequestRow[]; outgoing: CommunityRequestRow[] }>('/api/community/connections/requests', { force: passForce }),
+        requestCached<{ connections: ConnectionRow[] }>('/api/community/connections', { force: passForce }),
+        requestCached<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms', { force: passForce }),
+        requestCached<{ studyPartners: Array<{ compatibility: number; user: CommunityUser; reasons?: string[] }> }>('/api/community/study-partners', { force: passForce }),
       ]);
 
       setProfile(profilePayload.profile || null);
@@ -748,7 +1033,7 @@ function CommunityInner() {
       const nextRoomId = activeRoomId || (roomsPayload.rooms?.[0]?.id || '');
       setActiveRoomId(nextRoomId);
       if (nextRoomId) {
-        await loadDiscussionRoomPosts(nextRoomId, force);
+        await loadDiscussionRoomPosts(nextRoomId, passForce);
       } else {
         setRoomPosts([]);
       }
@@ -756,12 +1041,14 @@ function CommunityInner() {
       const nextConnectionId = activeConnectionId || (connectionsPayload.connections?.[0]?.connectionId || '');
       setActiveConnectionId(nextConnectionId);
       if (nextConnectionId) {
-        const messagePayload = await requestCached<{ messages: MessageRow[] }>(`/api/community/messages/${nextConnectionId}`, { force, ttlMs: 15_000 });
+        const messagePayload = await requestCached<{ messages: MessageRow[] }>(`/api/community/messages/${nextConnectionId}`, { force: passForce, ttlMs: 15_000 });
         setMessages(messagePayload.messages || []);
       } else {
         setMessages([]);
       }
-      void loadPresence();
+      void loadPresence({ silent: true });
+      passForce = true;
+      } while (refreshQueuedRef.current);
     })().finally(() => {
       refreshInFlightRef.current = null;
     });
@@ -770,9 +1057,13 @@ function CommunityInner() {
   }, [token, requestCached, activeRoomId, activeConnectionId, loadDiscussionRoomPosts, loadPresence]);
 
   const refreshCommunityRef = useRef(refreshCommunity);
+  const invalidateCommunityCacheRef = useRef(invalidateCommunityCache);
   useEffect(() => {
     refreshCommunityRef.current = refreshCommunity;
   }, [refreshCommunity]);
+  useEffect(() => {
+    invalidateCommunityCacheRef.current = invalidateCommunityCache;
+  }, [invalidateCommunityCache]);
 
   useLayoutEffect(() => {
     if (!token) return;
@@ -845,13 +1136,19 @@ function CommunityInner() {
     }
   }, [token]);
 
+  // Initial load, once per signed-in user. Deliberately NOT keyed on `refreshCommunity`/`token`:
+  // `refreshCommunity` changes identity whenever the active room/connection changes and `token`
+  // rotates on every silent refresh — both used to re-run this effect and reload everything,
+  // which is where the repeated "Could not load community data." toasts came from when any of
+  // the parallel requests failed mid-session. Socket events + the reconcile poll keep data fresh.
+  const initialLoadUserId = String(user?.id || '');
   useEffect(() => {
-    if (!token) return;
+    if (!token || !initialLoadUserId) return;
 
     let cancelled = false;
     void (async () => {
       try {
-        await refreshCommunity(false);
+        await refreshCommunityRef.current(false);
       } catch (error) {
         if (!cancelled) {
           handleApiError(error, 'Could not load community data.');
@@ -861,7 +1158,8 @@ function CommunityInner() {
     return () => {
       cancelled = true;
     };
-  }, [token, refreshCommunity]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialLoadUserId, Boolean(token)]);
 
   useEffect(() => {
     if (!token) return;
@@ -919,11 +1217,15 @@ function CommunityInner() {
   useEffect(() => {
     if (!token || activeTab !== 'messages' || !activeConnectionId) return;
     const onVis = () => {
-      if (document.visibilityState === 'visible') {
-        void refreshActiveMessages();
+      if (document.hidden) {
+        markNativeDocumentHidden();
+        return;
       }
+      if (consumeBriefNativeHide()) return;
+      void refreshActiveMessages();
     };
     const onFocus = () => {
+      if (consumeBriefNativeHide()) return;
       void refreshActiveMessages();
     };
     document.addEventListener('visibilitychange', onVis);
@@ -979,16 +1281,21 @@ function CommunityInner() {
       }
     };
 
+    // Socket.IO `sync` events are the primary update path (the server emits
+    // community.message.*, community.connection.*, community.discussion.*, community.quiz.*).
+    // Poll only as a bounded fallback while the realtime channel is down; otherwise reconcile
+    // quietly once a minute.
+    const intervalMs = realtimeDown ? 15_000 : 60_000;
     const intervalId = window.setInterval(() => {
       if (document.hidden) return;
       void poll();
-    }, 5000);
+    }, intervalMs);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [token, activeConnectionId, activeRoomId, activeTab, leaderboardPeriod, requestCached, loadLeaderboardAndBadges, loadQuizData]);
+  }, [token, activeConnectionId, activeRoomId, activeTab, leaderboardPeriod, requestCached, loadLeaderboardAndBadges, loadQuizData, realtimeDown]);
 
   useEffect(() => {
     return () => {
@@ -1001,6 +1308,14 @@ function CommunityInner() {
     };
   }, []);
 
+  const studyingSubjectPingRef = useRef('');
+  useEffect(() => {
+    studyingSubjectPingRef.current = studyingSubjectPing;
+  }, [studyingSubjectPing]);
+
+  // Presence heartbeat (away flag + "currently studying"). The server broadcasts an update to
+  // every student on each ping, so this must not fire per keystroke: the interval reads the
+  // latest subject from a ref and subject edits are debounced separately below.
   useEffect(() => {
     if (!token) return;
 
@@ -1011,12 +1326,13 @@ function CommunityInner() {
           method: 'POST',
           body: JSON.stringify({
             away: document.hidden,
-            studyingSubject: studyingSubjectPing.trim() || undefined,
+            studyingSubject: studyingSubjectPingRef.current.trim() || undefined,
           }),
         },
         token,
       ).catch(() => {});
     };
+    pingPresenceRef.current = ping;
 
     ping();
     const id = window.setInterval(() => {
@@ -1028,28 +1344,41 @@ function CommunityInner() {
     return () => {
       window.clearInterval(id);
       document.removeEventListener('visibilitychange', onVis);
+      pingPresenceRef.current = () => {};
     };
-  }, [token, studyingSubjectPing]);
+  }, [token]);
 
+  // Debounced publish of "currently studying" edits (one ping after typing pauses).
+  const studyingSubjectDirtyRef = useRef(false);
   useEffect(() => {
     if (!token) return;
+    if (!studyingSubjectDirtyRef.current) {
+      studyingSubjectDirtyRef.current = true;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      pingPresenceRef.current();
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [token, studyingSubjectPing]);
+
+  // Keep the shared socket's credentials current without recreating it (a token rotation must
+  // never tear the socket down — that showed as offline→online flicker for everyone else).
+  useEffect(() => {
+    setRealtimeAuthToken('student', token);
+  }, [token]);
+
+  const hasAuth = Boolean(token);
+  const authUserId = String(user?.id || '');
+
+  // Subscribe to the ONE shared Socket.IO connection (see lib/realtimeSocket.ts). This effect
+  // only attaches/detaches listeners; the connection itself outlives the Community page.
+  useEffect(() => {
+    if (!hasAuth || !authUserId) return;
 
     let closed = false;
-    let reconnectTimer: number | null = null;
-    let source: EventSource | null = null;
     let disconnectToastShown = false;
     let fullRefreshTimer: number | null = null;
-
-    const closeSse = () => {
-      if (reconnectTimer) {
-        window.clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-      if (source) {
-        source.close();
-        source = null;
-      }
-    };
 
     const scheduleFullCommunityRefresh = () => {
       if (document.hidden) return;
@@ -1060,8 +1389,22 @@ function CommunityInner() {
       }, 160);
     };
 
-    const applyCommunityPayload = (parsed: { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string }) => {
+    const applyCommunityPayload = (parsed: {
+      type?: string;
+      action?: string;
+      connectionId?: string;
+      typing?: boolean;
+      userId?: string;
+      status?: string;
+      activity?: string;
+      studyingSubject?: string;
+      lastSeenAt?: string;
+      message?: MessageRow;
+    }) => {
       const t = String(parsed.type || '');
+      // The shared socket also carries non-community events (support chat, subscription,
+      // profile...). Only community.* events may trigger a Community reload.
+      if (!t.startsWith('community.')) return;
       if (t === 'community.typing' && parsed.connectionId === activeConnectionIdRef.current) {
         if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
         startTransition(() => {
@@ -1075,7 +1418,31 @@ function CommunityInner() {
         return;
       }
       if (t === 'community.presence') {
-        startTransition(() => void loadPresenceRef.current());
+        const uid = String(parsed.userId || '').trim();
+        // Our own presence changes are not part of our roster.
+        if (uid && uid === authUserId) return;
+        if (parsed.action === 'offline' && uid) {
+          setOnlineStudents((prev) => (
+            prev.some((row) => String(row.id) === uid || String(row.userId) === uid)
+              ? prev.filter((row) => String(row.id) !== uid && String(row.userId) !== uid)
+              : prev
+          ));
+          return;
+        }
+        if (parsed.action === 'update' && uid) {
+          setOnlineStudents((prev) => prev.map((row) => {
+            if (String(row.id) !== uid && String(row.userId) !== uid) return row;
+            return {
+              ...row,
+              presenceStatus: parsed.status === 'away' ? 'away' : 'online',
+              activity: parsed.activity !== undefined ? String(parsed.activity) : row.activity,
+              studyingSubject: parsed.studyingSubject !== undefined ? String(parsed.studyingSubject) : row.studyingSubject,
+              lastSeenAt: parsed.lastSeenAt || row.lastSeenAt,
+            };
+          }));
+          return;
+        }
+        schedulePresenceReconcile(0);
         return;
       }
       if (t === 'community.message.read') {
@@ -1085,126 +1452,119 @@ function CommunityInner() {
         return;
       }
       if (t === 'community.message.sent') {
-        startTransition(() => void loadPresenceRef.current());
+        const incoming = parsed.message;
+        if (incoming?.id && String(incoming.connectionId || parsed.connectionId || '') === activeConnectionIdRef.current) {
+          setMessages((prev) => upsertCommunityMessage(prev, incoming));
+        }
+        invalidateCommunityCacheRef.current('/api/community/messages');
+        invalidateCommunityCacheRef.current('/api/community/connections');
+        if (document.hidden) return;
+        scheduleFullCommunityRefresh();
+        return;
+      }
+      if (t.startsWith('community.connection.')) {
+        invalidateCommunityCacheRef.current('/api/community/connections');
+        invalidateCommunityCacheRef.current('/api/community');
+        if (document.hidden) return;
+        scheduleFullCommunityRefresh();
+        return;
       }
       if (document.hidden) return;
       scheduleFullCommunityRefresh();
     };
 
-    const openSse = () => {
-      if (closed || communitySocketRef.current?.connected) return;
-      closeSse();
-      setSseDropped(false);
-      disconnectToastShown = false;
+    const socket = acquireRealtimeSocket('student');
 
-      source = new EventSource(buildSseStreamUrl(token), { withCredentials: true });
-      source.addEventListener('sync', (event: Event) => {
-        const me = event as MessageEvent;
-        let parsed: { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string } = {};
-        try {
-          parsed = JSON.parse(String(me.data || '{}'));
-        } catch {
-          parsed = {};
-        }
-        applyCommunityPayload(parsed);
-      });
-      source.addEventListener('heartbeat', () => {});
-      source.onerror = () => {
-        setSseDropped(true);
-        if (!disconnectToastShown) {
-          disconnectToastShown = true;
-          showNeutralToast('Connection lost. Reconnecting…');
-        }
-        closeSse();
-        if (closed) return;
-        reconnectTimer = window.setTimeout(() => openSse(), 3000);
-      };
+    const onConnect = () => {
+      logNativeEvent('socket', 'community-connect', { recovered: Boolean(socket.recovered) });
+      setRealtimeDown(false);
+      disconnectToastShown = false;
+      // The server registered our presence on this handshake; restore our away/"studying" meta
+      // and reconcile the roster in case events were missed while disconnected.
+      pingPresenceRef.current();
+      schedulePresenceReconcile(0);
     };
 
-    const socket = io(API_BASE, {
-      path: '/socket.io',
-      ...(shouldPersistAuthTokens() ? { auth: { token } } : {}),
-      withCredentials: true,
-      transports: ['websocket', 'polling'],
-      reconnectionAttempts: 50,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 15000,
-      randomizationFactor: 0.5,
-      timeout: 25000,
-    });
-    communitySocketRef.current = socket;
-
-    socket.on('connect', () => {
-      logNativeEvent('socket', 'community-connect', { transport: socket.io.engine?.transport?.name || 'unknown' });
-      closeSse();
-      setSseDropped(false);
-    });
-
-    socket.on('disconnect', () => {
-      logNativeEvent('socket', 'community-disconnect', { reason: 'socket-disconnect' }, 'warn');
-      setSseDropped(true);
+    const onDisconnect = (reason: string) => {
+      logNativeEvent('socket', 'community-disconnect', { reason: String(reason || 'socket-disconnect') }, 'warn');
+      if (closed || reason === 'io client disconnect') return;
+      setRealtimeDown(true);
       if (!disconnectToastShown) {
         disconnectToastShown = true;
         showNeutralToast('Connection lost. Reconnecting…');
       }
-      openSse();
+    };
+
+    // auth.session_revoked / subscription.refresh are forwarded app-wide by lib/realtimeSocket.ts.
+    const onSync = (data: unknown) => {
+      const parsed = (data && typeof data === 'object')
+        ? (data as { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string })
+        : {};
+      applyCommunityPayload(parsed);
+    };
+
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.on('sync', onSync);
+    const unsubscribeStatus = subscribeRealtimeStatus('student', (status) => {
+      if (closed) return;
+      setRealtimeDown(status !== 'connected');
     });
 
-    socket.on('sync', (data: unknown) => {
-      const parsed = (data && typeof data === 'object')
-        ? (data as { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string; previousSessionId?: string })
-        : {};
-      if (parsed.type === 'auth.session_revoked' && parsed.previousSessionId) {
-        window.dispatchEvent(
-          new CustomEvent('net360:session-revoked', { detail: { previousSessionId: parsed.previousSessionId, userId: parsed.userId } }),
-        );
-        return;
-      }
-      applyCommunityPayload(parsed);
-    });
+    // The shared socket may already be connected (e.g. Support Chat acquired it first, or we
+    // are returning to this page): run the same resync as a fresh connect would.
+    if (socket.connected) {
+      setRealtimeDown(false);
+      pingPresenceRef.current();
+      schedulePresenceReconcile(0);
+    } else {
+      setRealtimeDown(true);
+    }
 
     const handleConnectivityResume = () => {
       if (closed) return;
       logNativeEvent('socket', 'community-resume-reconnect');
-      if (socket.disconnected) {
-        socket.connect();
-      }
-      openSse();
-      startTransition(() => void loadPresenceRef.current());
+      reconnectRealtimeIfNeeded('student');
+      schedulePresenceReconcile(0);
     };
     const onOnline = () => {
       handleConnectivityResume();
     };
     const onVisibilityChange = () => {
-      if (!document.hidden) {
-        handleConnectivityResume();
+      if (document.hidden) {
+        markNativeDocumentHidden();
+        return;
       }
+      if (consumeBriefNativeHide()) return;
+      handleConnectivityResume();
     };
     window.addEventListener('online', onOnline);
     document.addEventListener('visibilitychange', onVisibilityChange);
     const appStateListenerPromise = CapacitorApp
       .addListener('appStateChange', ({ isActive }) => {
-        if (isActive) {
-          handleConnectivityResume();
+        if (!isActive) {
+          markNativeDocumentHidden();
+          return;
         }
+        if (consumeBriefNativeHide()) return;
+        handleConnectivityResume();
       })
       .catch(() => null);
-
-    openSse();
 
     return () => {
       closed = true;
       window.removeEventListener('online', onOnline);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       void appStateListenerPromise.then((listener) => listener?.remove());
-      closeSse();
-      socket.removeAllListeners();
-      socket.close();
-      communitySocketRef.current = null;
+      unsubscribeStatus();
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.off('sync', onSync);
+      releaseRealtimeSocket('student', socket);
       if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
       if (fullRefreshTimer != null) window.clearTimeout(fullRefreshTimer);
     };
-  }, [token]);
+  }, [hasAuth, authUserId, schedulePresenceReconcile]);
 
   useEffect(() => {
     return () => {
@@ -1375,9 +1735,13 @@ function CommunityInner() {
     };
   }, [token, searchQuery, searchUsers]);
 
+  const connectingUserIdsRef = useRef<Set<string>>(new Set());
   const sendConnectionRequest = async (toUserId: string) => {
     if (!token) return;
+    // One request per user at a time: a double click must not send two invitations.
+    if (connectingUserIdsRef.current.has(toUserId)) return;
     const status = [
+      ...onlineStudents,
       ...searchResults,
       ...studyPartners.map((item) => item.user),
       ...allCommunityUsers,
@@ -1388,18 +1752,33 @@ function CommunityInner() {
       return;
     }
 
+    connectingUserIdsRef.current.add(toUserId);
+    setConnectingUserIds(new Set(connectingUserIdsRef.current));
     try {
       await apiRequest('/api/community/connections/request', {
         method: 'POST',
         body: JSON.stringify({ toUserId }),
       }, token);
       showSuccessToast('Connection request sent.');
+      setOnlineStudents((prev) => prev.map((row) => (
+        row.id === toUserId ? { ...row, connectionStatus: 'pending-sent' } : row
+      )));
       invalidateCommunityCache('/api/community');
-      await refreshCommunity(true);
-      await searchUsers(searchQuery, true, true);
+      await Promise.all([refreshCommunity(true), searchUsers(searchQuery, true, true)]);
     } catch (error) {
       handleApiError(error, 'Could not send request.');
+    } finally {
+      connectingUserIdsRef.current.delete(toUserId);
+      setConnectingUserIds(new Set(connectingUserIdsRef.current));
     }
+  };
+
+  const connectButtonLabel = (status: string | undefined, userId: string) => {
+    if (connectingUserIds.has(userId)) return 'Connecting…';
+    if (status === 'connected') return 'Connected';
+    if (status === 'pending-sent') return 'Request sent';
+    if (status === 'pending-received') return 'Respond to request';
+    return 'Connect';
   };
 
   const respondToRequest = async (requestId: string, action: 'accept' | 'reject') => {
@@ -1512,31 +1891,32 @@ function CommunityInner() {
       }
     }, 2500);
 
-    const sendOnce = async () => {
-      await apiRequest(`/api/community/messages/${activeConnectionId}`, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      }, token);
-    };
+    const sendOnce = async () => apiRequest<{ message: MessageRow }>(`/api/community/messages/${activeConnectionId}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token);
 
     try {
       setIsSendingMessage(true);
+      let created: { message: MessageRow } | null = null;
       try {
-        await sendOnce();
+        created = await sendOnce();
       } catch (firstError) {
         await new Promise((r) => setTimeout(r, 400));
         try {
-          await sendOnce();
+          created = await sendOnce();
         } catch {
           throw firstError;
         }
+      }
+      if (created?.message?.id) {
+        setMessages((prev) => upsertCommunityMessage(prev, created.message));
       }
       showSuccessToast('Message sent.');
       setMessageInput('');
       setMessageAttachment(null);
       invalidateCommunityCache('/api/community/messages');
       await refreshActiveMessages();
-      await refreshCommunity(true);
     } catch (error) {
       handleApiError(error, 'Could not send message.');
       showErrorToast('Delivery failed. You can try again.');
@@ -1563,17 +1943,25 @@ function CommunityInner() {
     const selected = event.target.files?.[0] || null;
     if (!selected) return;
 
+    if (!isAllowedCommunityChatFile(selected)) {
+      showErrorToast('Unsupported file type. Attach a PDF or an image (JPG, JPEG, PNG, or WEBP).');
+      event.currentTarget.value = '';
+      return;
+    }
+
     if (selected.size > CHAT_ATTACHMENT_MAX_BYTES) {
-      showErrorToast('File exceeds 8MB size limit.');
+      showErrorToast('File is too large. Attachments must be 10MB or smaller.');
       event.currentTarget.value = '';
       return;
     }
 
     try {
       const dataUrl = await fileToDataUrl(selected);
+      const mimeType = String(selected.type || '').toLowerCase()
+        || (communityFileExtension(selected.name) === '.pdf' ? 'application/pdf' : 'application/octet-stream');
       setMessageAttachment({
         name: selected.name,
-        mimeType: String(selected.type || 'application/octet-stream').toLowerCase(),
+        mimeType,
         size: selected.size,
         dataUrl,
       });
@@ -1692,7 +2080,7 @@ function CommunityInner() {
       voiceStartAtRef.current = Date.now();
       recorder.start();
       setIsRecordingVoice(true);
-      showNeutralToast('Recording voice note... tap Stop to send.');
+      showNeutralToast('Recording voice note…');
     } catch {
       showErrorToast('Microphone permission denied or unavailable.');
     }
@@ -1832,21 +2220,61 @@ function CommunityInner() {
 
   const trendingRooms = useMemo(() => [...rooms].sort((a, b) => (Number(b.posts) || 0) - (Number(a.posts) || 0)), [rooms]);
 
+  // Roster tile actions navigate within the page. The pressed state is set synchronously on
+  // click (so the tap is acknowledged) and cleared by the effect below once the target tab has
+  // actually rendered — not by a timer.
+  const beginRosterAction = (userId: string, kind: RosterActionKind) => {
+    if (pendingRosterAction) return false;
+    setPendingRosterAction({ userId, kind });
+    return true;
+  };
+
+  useEffect(() => {
+    if (!pendingRosterAction) return;
+    if (activeTab === ROSTER_ACTION_TARGET_TAB[pendingRosterAction.kind]) {
+      setPendingRosterAction(null);
+    }
+  }, [activeTab, pendingRosterAction]);
+
   const openChatWithUser = (userId: string) => {
+    if (!beginRosterAction(userId, 'chat')) return;
     const row = connections.find((c) => c.user.id === userId);
     if (row) {
       setActiveConnectionId(row.connectionId);
       setActiveTab('messages');
-      showInfoToast('Opening messages.');
+      showInfoToast('Messages');
       return;
     }
-    showInfoToast('Send a connection request first to unlock chat.');
+    // Nothing to open: release the pressed state immediately and explain.
+    setPendingRosterAction(null);
+    showInfoToast('Connect to start chatting.');
   };
 
   const inviteToQuizBattleFromPresence = (userId: string) => {
+    if (!beginRosterAction(userId, 'quiz')) return;
     setQuizOpponentUserId(userId);
     setActiveTab('quiz-battles');
-    showInfoToast('Configure the battle, then tap Send Challenge.');
+    showInfoToast('Quiz Battles');
+  };
+
+  const openStudyRoomFromPresence = (userId: string) => {
+    if (!beginRosterAction(userId, 'room')) return;
+    if (rooms[0]?.id) setActiveRoomId(rooms[0].id);
+    setActiveTab('discussion-rooms');
+  };
+
+  const downloadBadgeCertificate = async (badge: BadgeRow) => {
+    if (!token || !badge.earned || isDownloadingCertificate) return;
+    setIsDownloadingCertificate(true);
+    try {
+      const { blob, filename } = await downloadBinary(`/api/community/achievements/${encodeURIComponent(badge.id)}/certificate`, {}, token);
+      await openOrSaveBlobOnDevice(blob, filename || `NET360-${badge.id}-certificate.pdf`, 'download');
+      showSuccessToast('Certificate downloaded.');
+    } catch (error) {
+      handleApiError(error, 'Could not download the certificate.');
+    } finally {
+      setIsDownloadingCertificate(false);
+    }
   };
 
   if (!token || !user) {
@@ -1911,34 +2339,32 @@ function CommunityInner() {
             <CardHeader>
               <CardTitle className="flex flex-wrap items-center gap-2 text-balance">
                 Online students
-                {sseDropped ? (
-                  <Badge variant="outline" className="border-amber-300 text-amber-800 dark:text-amber-200">Reconnecting…</Badge>
+                {realtimeDown ? (
+                  <Badge variant="outline" className="border-amber-300 text-amber-800 dark:text-amber-200" aria-live="polite">Connecting…</Badge>
                 ) : (
                   <Badge className="bg-emerald-600 text-white shadow-sm">Live</Badge>
                 )}
               </CardTitle>
-              <CardDescription>
-                Real-time roster via your open session. Others only see you if you don&apos;t hide your status in your profile.
-              </CardDescription>
+              <CardDescription>Students currently online.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  <Label>Currently studying (optional, shown on your tile)</Label>
-                  <Input
-                    value={studyingSubjectPing}
-                    onChange={(e) => setStudyingSubjectPing(e.target.value)}
-                    placeholder="e.g. Integration techniques"
-                  />
-                </div>
-                <Button type="button" variant="outline" className="shrink-0" onClick={() => void loadPresence()} disabled={presenceLoading}>
-                  {presenceLoading ? 'Refreshing…' : 'Refresh roster'}
-                </Button>
+              <div className="min-w-0 space-y-1.5">
+                <Label>Currently studying</Label>
+                <Input
+                  value={studyingSubjectPing}
+                  onChange={(e) => setStudyingSubjectPing(e.target.value)}
+                  placeholder="e.g. Integration techniques"
+                />
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {onlineStudents.map((s) => {
-                  const netStatus = [...allCommunityUsers, ...searchResults].find((x) => x.id === s.id)?.connectionStatus;
+                  if (isOwnCommunityRow(s, String(user.id))) return null;
+                  const netStatus = s.connectionStatus
+                    || [...allCommunityUsers, ...searchResults].find((x) => x.id === s.id)?.connectionStatus;
+                  const pendingKind = pendingRosterAction?.userId === s.id ? pendingRosterAction.kind : null;
+                  const isConnecting = connectingUserIds.has(s.id);
+                  const tileName = displayName(s);
                   return (
                     <div
                       key={s.id}
@@ -1955,16 +2381,23 @@ function CommunityInner() {
                       <div className="flex items-center gap-3 pr-12">
                         <CommunityAvatar userLike={s} sizeClass="h-12 w-12 ring-2 ring-white shadow-md dark:ring-slate-800" />
                         <div className="min-w-0">
-                          <p className="truncate font-semibold">{displayName(s)}</p>
+                          <p className="flex min-w-0 items-center gap-1.5 font-semibold">
+                            <span className="truncate">{tileName}</span>
+                          </p>
                           <p className="truncate text-xs text-muted-foreground">{s.username ? `@${s.username}` : 'Student'}</p>
                           <p className="truncate text-xs font-medium text-indigo-700 dark:text-indigo-300">
                             {(s.targetNetType || 'net-engineering').replace(/-/g, ' ')}
                           </p>
                         </div>
                       </div>
+                      {s.activity ? (
+                        <p className="mt-3 text-xs font-medium text-slate-700 dark:text-slate-200">
+                          {s.activity}
+                        </p>
+                      ) : null}
                       {s.studyingSubject ? (
-                        <p className="mt-3 rounded-lg border border-slate-200/80 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-800 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100">
-                          <span className="text-muted-foreground">Focus: </span>
+                        <p className={`${s.activity ? 'mt-1' : 'mt-3'} rounded-lg border border-slate-200/80 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-800 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100`}>
+                          <span className="text-muted-foreground">Currently studying: </span>
                           <span className="font-medium">{s.studyingSubject}</span>
                         </p>
                       ) : null}
@@ -1972,42 +2405,66 @@ function CommunityInner() {
                         <p className="mt-1 text-[10px] text-muted-foreground">Last seen {new Date(s.lastSeenAt).toLocaleString()}</p>
                       ) : null}
                       <div className="mt-4 flex flex-wrap gap-2">
-                        <Button type="button" size="sm" variant="secondary" className="shadow-sm" onClick={() => openChatWithUser(s.id)}>
-                          Chat
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="secondary"
+                          className="shadow-sm"
+                          onClick={() => openChatWithUser(s.id)}
+                          disabled={netStatus !== 'connected' || Boolean(pendingRosterAction)}
+                          aria-busy={pendingKind === 'chat'}
+                          aria-label={netStatus !== 'connected' ? `Chat locked until connected with ${tileName}` : pendingKind === 'chat' ? `Opening chat with ${tileName}` : `Chat with ${tileName}`}
+                        >
+                          {pendingKind === 'chat' ? 'Opening…' : 'Chat'}
                         </Button>
                         <Button
                           type="button"
                           size="sm"
                           variant="outline"
-                          onClick={() => void sendConnectionRequest(s.id)}
-                          disabled={!canSendConnectionRequest(netStatus)}
+                          onClick={() => {
+                            if (netStatus === 'pending-received') {
+                              setActiveTab('discover-students');
+                              return;
+                            }
+                            void sendConnectionRequest(s.id);
+                          }}
+                          disabled={isConnecting || (netStatus !== 'pending-received' && !canSendConnectionRequest(netStatus))}
+                          aria-busy={isConnecting}
+                          aria-label={`${connectButtonLabel(netStatus, s.id)} — ${tileName}`}
                         >
-                          Connect
+                          {connectButtonLabel(netStatus, s.id)}
                         </Button>
-                        <Button type="button" size="sm" variant="outline" onClick={() => inviteToQuizBattleFromPresence(s.id)}>
-                          Quiz battle
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => inviteToQuizBattleFromPresence(s.id)}
+                          disabled={Boolean(pendingRosterAction)}
+                          aria-busy={pendingKind === 'quiz'}
+                          aria-label={pendingKind === 'quiz' ? `Starting quiz battle with ${tileName}` : `Quiz battle with ${tileName}`}
+                        >
+                          {pendingKind === 'quiz' ? 'Starting…' : 'Quiz battle'}
                         </Button>
                         <Button
                           type="button"
                           size="sm"
                           variant="ghost"
                           className="text-indigo-700 dark:text-indigo-300"
-                          onClick={() => {
-                            if (rooms[0]?.id) setActiveRoomId(rooms[0].id);
-                            setActiveTab('discussion-rooms');
-                          }}
+                          onClick={() => openStudyRoomFromPresence(s.id)}
+                          disabled={Boolean(pendingRosterAction)}
+                          aria-busy={pendingKind === 'room'}
+                          aria-label={pendingKind === 'room' ? 'Opening study room' : 'Open study room'}
                         >
-                          Study room
+                          {pendingKind === 'room' ? 'Opening…' : 'Study room'}
                         </Button>
                       </div>
                     </div>
                   );
                 })}
               </div>
-              {!onlineStudents.length && !presenceLoading ? (
+              {!onlineStudents.some((s) => !isOwnCommunityRow(s, String(user.id))) && !presenceLoading ? (
                 <div className="rounded-xl border border-dashed p-8 text-center">
-                  <p className="text-sm font-medium text-slate-800 dark:text-slate-100">No visible classmates online</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Study sessions spike after school hours — invite friends or jump into Discussion Rooms meanwhile.</p>
+                  <p className="text-sm font-medium text-slate-800 dark:text-slate-100">No other students are currently online.</p>
                 </div>
               ) : null}
             </CardContent>
@@ -2020,11 +2477,7 @@ function CommunityInner() {
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <CardTitle>Community Profile</CardTitle>
-                  <CardDescription>
-                    {isCommunityProfileExpanded
-                      ? 'Set your NET goals and preferences so matching is productive.'
-                      : 'Saved profile summary. Use Edit Profile to update details.'}
-                  </CardDescription>
+                  <CardDescription>Your community profile.</CardDescription>
                   <div className="mt-3 space-y-1">
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span>Profile strength</span>
@@ -2160,13 +2613,12 @@ function CommunityInner() {
               </div>
 
               <div className="space-y-1.5">
-                <Label>Interests &amp; focus tags (comma separated)</Label>
+                <Label>Interests</Label>
                 <Input
                   value={interestsInput}
                   onChange={(e) => setInterestsInput(e.target.value)}
                   placeholder="calculus, group study, late-night sessions"
                 />
-                <p className="text-xs text-muted-foreground">Shown on your card for better matches (max 12 tags).</p>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
@@ -2174,14 +2626,12 @@ function CommunityInner() {
                   <Switch checked={hideOnlineStatus} onCheckedChange={setHideOnlineStatus} id="hide-online" />
                   <Label htmlFor="hide-online" className="cursor-pointer text-sm leading-snug">
                     Hide my online status
-                    <span className="mt-0.5 block text-xs font-normal text-muted-foreground">Others won&apos;t see you in Online; you still see everyone.</span>
                   </Label>
                 </div>
                 <div className="flex items-center gap-3 rounded-lg border border-slate-200/80 bg-white/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
                   <Switch checked={doNotDisturb} onCheckedChange={setDoNotDisturb} id="dnd-mode" />
                   <Label htmlFor="dnd-mode" className="cursor-pointer text-sm leading-snug">
                     Do not disturb
-                    <span className="mt-0.5 block text-xs font-normal text-muted-foreground">Quiet live typing signals to you from peers.</span>
                   </Label>
                 </div>
               </div>
@@ -2210,7 +2660,7 @@ function CommunityInner() {
             <Card className="min-h-[120px] min-w-0 xl:col-span-1">
               <CardHeader>
                 <CardTitle>Find Students</CardTitle>
-                <CardDescription>Search users, send connection requests, and build your study network.</CardDescription>
+                <CardDescription>Search for students.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex flex-col gap-2 sm:flex-row">
@@ -2239,7 +2689,15 @@ function CommunityInner() {
                         <Badge variant="outline">{result.connectionStatus || 'none'}</Badge>
                         <div className="flex w-full flex-wrap gap-1 sm:w-auto">
                           {canSendConnectionRequest(result.connectionStatus) ? (
-                            <Button size="sm" className="w-full sm:w-auto" onClick={() => void sendConnectionRequest(result.id)}>Connect</Button>
+                            <Button
+                              size="sm"
+                              className="w-full sm:w-auto"
+                              onClick={() => void sendConnectionRequest(result.id)}
+                              disabled={connectingUserIds.has(result.id)}
+                              aria-busy={connectingUserIds.has(result.id)}
+                            >
+                              {connectingUserIds.has(result.id) ? 'Connecting…' : 'Connect'}
+                            </Button>
                           ) : (
                             <Button size="sm" variant="secondary" className="w-full sm:w-auto" disabled>
                               {result.connectionStatus === 'connected'
@@ -2262,11 +2720,7 @@ function CommunityInner() {
                     </div>
                   ))}
                   {!searchLoading && !searchResults.length ? (
-                    <p className="text-xs text-muted-foreground">
-                      {searchQuery.trim()
-                        ? 'No students match that search. Try a different spelling or another name.'
-                        : 'Type a name or username to find study peers.'}
-                    </p>
+                    <p className="text-xs text-muted-foreground">No students found.</p>
                   ) : null}
                 </div>
               </CardContent>
@@ -2275,7 +2729,7 @@ function CommunityInner() {
             <Card className="min-w-0 xl:col-span-2">
               <CardHeader>
                 <CardTitle>Connection Requests</CardTitle>
-                <CardDescription>Accept genuine requests and reject unknown users.</CardDescription>
+                <CardDescription>Incoming and outgoing requests.</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-2">
@@ -2340,7 +2794,7 @@ function CommunityInner() {
           <Card className="min-w-0">
             <CardHeader>
               <CardTitle>Smart Study Partner Matching</CardTitle>
-              <CardDescription>Find best-fit partners based on NET goals, level, timing, and score range.</CardDescription>
+              <CardDescription>Suggested study partners.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2 max-h-[560px] overflow-auto">
               {studyPartners.map((item) => (
@@ -2360,7 +2814,15 @@ function CommunityInner() {
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {canSendConnectionRequest(item.user.connectionStatus) ? (
-                      <Button size="sm" className="w-full sm:w-auto" onClick={() => void sendConnectionRequest(item.user.id)}>Connect</Button>
+                      <Button
+                        size="sm"
+                        className="w-full sm:w-auto"
+                        onClick={() => void sendConnectionRequest(item.user.id)}
+                        disabled={connectingUserIds.has(item.user.id)}
+                        aria-busy={connectingUserIds.has(item.user.id)}
+                      >
+                        {connectingUserIds.has(item.user.id) ? 'Connecting…' : 'Connect'}
+                      </Button>
                     ) : (
                       <Button size="sm" variant="secondary" className="w-full sm:w-auto" disabled>
                         {item.user.connectionStatus === 'connected'
@@ -2411,14 +2873,10 @@ function CommunityInner() {
             <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>Topic Discussion Rooms</CardTitle>
-                <CardDescription>Join subject rooms and solve doubts together.</CardDescription>
+                <CardDescription>Subject discussion rooms.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-2 max-h-[560px] overflow-auto">
-                <div className="mb-2 rounded-lg border border-amber-200/70 bg-amber-50/70 p-2 text-xs text-amber-950 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-50">
-                  <p className="font-semibold">Pinned study tip</p>
-                  <p className="mt-1 text-[11px] opacity-90">Use clear doubt titles, show your working, and upvote helpful explanations so the room stays high-signal for everyone.</p>
-                </div>
-                <p className="text-xs font-medium text-muted-foreground">Trending by activity</p>
+                <p className="text-xs font-medium text-muted-foreground">Trending</p>
                 <div className="flex flex-wrap gap-1 pb-2">
                   {trendingRooms.slice(0, 4).map((room) => (
                     <button
@@ -2448,7 +2906,7 @@ function CommunityInner() {
             <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>Room Feed</CardTitle>
-                <CardDescription>Ask concepts, discuss MCQs, and use doubt exchange with upvotes.</CardDescription>
+                <CardDescription>Room discussions.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="rounded-lg border p-3 space-y-2">
@@ -2518,14 +2976,14 @@ function CommunityInner() {
             <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>Create Quiz Challenge</CardTitle>
-                <CardDescription>Challenge any student in async or live timed MCQ battle mode.</CardDescription>
+                <CardDescription>Create a quiz challenge.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="space-y-1.5">
                   <Label>Challenge Opponent</Label>
                   <Select value={quizOpponentUserId} onValueChange={setQuizOpponentUserId}>
                     <SelectTrigger><SelectValue placeholder="Select student" /></SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="net360-opaque-select">
                       {allCommunityUsers.map((item) => (
                         <SelectItem key={item.id} value={item.id}>
                           {displayName(item)}
@@ -2624,7 +3082,7 @@ function CommunityInner() {
               <Card>
                 <CardHeader>
                   <CardTitle>Challenge Inbox & History</CardTitle>
-                  <CardDescription>Accept invites, start attempts, and review outcomes.</CardDescription>
+                  <CardDescription>Your quiz challenges.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-2 max-h-[280px] overflow-auto">
                   {quizChallenges.map((challenge) => {
@@ -2685,7 +3143,7 @@ function CommunityInner() {
                     <>
                       {(selectedQuizChallenge.status === 'in_progress' || selectedQuizChallenge.status === 'accepted') && !selectedQuizChallenge.myResult.submitted ? (
                         <>
-                          <p className="text-xs text-muted-foreground">Challenge is active. Launching opens the secured exam interface.</p>
+                          <p className="text-xs text-muted-foreground">Challenge is active.</p>
                           {selectedQuizChallenge.challengeType === 'live' ? (
                             <div className="rounded-md border bg-slate-50 p-2 text-xs text-muted-foreground">
                               <p>Your progress: {selectedQuizChallenge.myLiveProgress?.answeredCount || 0}/{selectedQuizChallenge.questionCount}</p>
@@ -2710,7 +3168,7 @@ function CommunityInner() {
                       )}
                     </>
                   ) : (
-                    <p className="text-sm text-muted-foreground">Select a challenge from inbox/history.</p>
+                    <p className="text-sm text-muted-foreground">Select a challenge.</p>
                   )}
                 </CardContent>
               </Card>
@@ -2719,7 +3177,7 @@ function CommunityInner() {
                 <Card>
                   <CardHeader>
                     <CardTitle>Your Quiz Profile</CardTitle>
-                    <CardDescription>Wins, matches, and performance trend.</CardDescription>
+                    <CardDescription>Your quiz results.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-1 text-sm">
                     <p>Total wins: {quizLeaderboard.find((row) => row.userId === user.id)?.totalWins || 0}</p>
@@ -2733,7 +3191,7 @@ function CommunityInner() {
                 <Card>
                   <CardHeader>
                     <CardTitle>Quiz Battles Leaderboard</CardTitle>
-                    <CardDescription>Top performers by wins, win rate, and volume.</CardDescription>
+                    <CardDescription>Top performers.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-2 max-h-[220px] overflow-auto" ref={quizLeaderboardScrollRef}>
                     <div className="relative w-full" style={{ height: quizLeaderboardVirtual.getTotalSize() }}>
@@ -2765,7 +3223,7 @@ function CommunityInner() {
           <Card>
             <CardHeader>
               <CardTitle>Competitive Leaderboard</CardTitle>
-              <CardDescription>Weekly and monthly ranks from tests, accuracy, and improvement.</CardDescription>
+              <CardDescription>Weekly and monthly rankings.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex items-center gap-2">
@@ -2801,18 +3259,75 @@ function CommunityInner() {
           <Card>
             <CardHeader>
               <CardTitle>Achievement Badges</CardTitle>
-              <CardDescription>Gamified milestones for consistency and contribution.</CardDescription>
+              <CardDescription>Your badges.</CardDescription>
             </CardHeader>
             <CardContent className="grid min-h-[120px] gap-2 md:grid-cols-2 xl:grid-cols-3">
               {badges.map((badge) => (
-                <div key={badge.id} className={`rounded-lg border p-3 ${badge.earned ? 'border-emerald-300 bg-emerald-50/60' : ''}`}>
-                  <p className="text-sm">{badge.icon} {badge.label}</p>
+                <button
+                  key={badge.id}
+                  type="button"
+                  disabled={!badge.earned}
+                  onClick={() => {
+                    if (badge.earned) setSelectedBadge(badge);
+                  }}
+                  className={`rounded-lg border p-3 text-left transition ${
+                    badge.earned
+                      ? 'border-emerald-300 bg-emerald-50/60 hover:border-emerald-400 hover:shadow-sm'
+                      : 'cursor-default opacity-95'
+                  }`}
+                >
+                  <p className="text-sm">
+                    <span className="mr-1" aria-hidden="true">{badgeIcon(badge)}</span>
+                    {badge.label}
+                  </p>
                   <p className="text-xs text-muted-foreground">{badge.progress}/{badge.target}</p>
                   <Badge variant={badge.earned ? 'default' : 'outline'} className="mt-2">{badge.earned ? 'Unlocked' : 'Locked'}</Badge>
-                </div>
+                </button>
               ))}
             </CardContent>
           </Card>
+
+          <Dialog open={Boolean(selectedBadge)} onOpenChange={(open) => { if (!open) setSelectedBadge(null); }}>
+            <DialogContent className="overflow-hidden sm:max-w-lg">
+              {selectedBadge ? (
+                <div className="net360-badge-celebrate relative">
+                  <div className="net360-badge-confetti" aria-hidden="true">
+                    <span /><span /><span /><span /><span /><span />
+                  </div>
+                  <DialogHeader>
+                    <DialogTitle className="text-center text-xl">Congratulations</DialogTitle>
+                    <DialogDescription className="text-center">
+                      You unlocked this NET360 achievement.
+                    </DialogDescription>
+                  </DialogHeader>
+                  <div className="net360-badge-pop rounded-2xl border border-indigo-200 bg-gradient-to-br from-indigo-50 via-white to-violet-50 p-5 text-center dark:border-indigo-500/40 dark:from-slate-900 dark:via-slate-950 dark:to-indigo-950">
+                    <p className="text-5xl" aria-hidden="true">{badgeIcon(selectedBadge)}</p>
+                    <p className="mt-3 text-lg font-semibold text-slate-900 dark:text-slate-50">{selectedBadge.label}</p>
+                    <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                      {selectedBadge.description || 'This badge is now part of your NET360 Community profile.'}
+                    </p>
+                    {formatBadgeUnlockDate(selectedBadge.unlockedAt) ? (
+                      <p className="mt-3 text-xs font-medium text-indigo-700 dark:text-indigo-300">
+                        Unlocked {formatBadgeUnlockDate(selectedBadge.unlockedAt)}
+                      </p>
+                    ) : null}
+                    <p className="mt-2 text-xs text-muted-foreground">
+                      Progress {selectedBadge.progress}/{selectedBadge.target}
+                    </p>
+                  </div>
+                  <DialogFooter className="mt-2 sm:justify-center">
+                    <Button
+                      type="button"
+                      onClick={() => void downloadBadgeCertificate(selectedBadge)}
+                      disabled={isDownloadingCertificate}
+                    >
+                      {isDownloadingCertificate ? 'Preparing PDF…' : 'Download certificate'}
+                    </Button>
+                  </DialogFooter>
+                </div>
+              ) : null}
+            </DialogContent>
+          </Dialog>
         </TabsContent>
 
         <TabsContent value="messages" className="mt-0 space-y-4">
@@ -2820,7 +3335,7 @@ function CommunityInner() {
             <Card className="min-w-0 xl:col-span-1">
               <CardHeader>
                 <CardTitle>Connected Students</CardTitle>
-                <CardDescription>Choose a connection to open private chat.</CardDescription>
+                <CardDescription>Your connections.</CardDescription>
               </CardHeader>
               <CardContent>
                 <ScrollArea className="h-[420px] pr-2 sm:h-[500px]">
@@ -2865,7 +3380,7 @@ function CommunityInner() {
                         <span className="text-xs text-muted-foreground">Status hidden or offline</span>
                       )}
                     </span>
-                  ) : 'Select a connection to start chatting.'}
+                  ) : 'Select a conversation.'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -2885,38 +3400,12 @@ function CommunityInner() {
                       type="button"
                       size="sm"
                       variant="outline"
-                      onClick={() => void sendCallInvite('audio')}
-                      disabled={activeConnection.canMessage === false || isSendingMessage}
-                    >
-                      Audio Call
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => void sendCallInvite('video')}
-                      disabled={activeConnection.canMessage === false || isSendingMessage}
-                    >
-                      Video Call
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
                       onClick={() => messageFileInputRef.current?.click()}
                       disabled={activeConnection.canMessage === false || isSendingMessage}
                     >
                       Attach File
                     </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => (isRecordingVoice ? stopVoiceRecording() : void startVoiceRecording())}
-                      disabled={activeConnection.canMessage === false || isSendingMessage}
-                    >
-                      {isRecordingVoice ? 'Stop Voice' : 'Voice Note'}
-                    </Button>
+                    <span className="self-center text-[11px] text-muted-foreground">PDF or JPG/PNG/WEBP, up to 10MB</span>
                     <Button type="button" size="sm" variant="outline" onClick={() => void toggleBlockConnection()} disabled={isBlockingConnection || isSendingMessage}>
                       {isBlockingConnection ? 'Updating...' : activeConnection.blockedByMe ? 'Unblock' : 'Block'}
                     </Button>
@@ -2963,7 +3452,7 @@ function CommunityInner() {
                             key={item.id}
                             className={`max-w-[88%] rounded-2xl p-2.5 text-sm shadow-sm transition-all duration-200 ${
                               isMine
-                                ? 'ml-auto bg-gradient-to-br from-indigo-600 to-violet-600 text-white'
+                                ? 'chat-bubble-own ml-auto bg-gradient-to-br from-indigo-600 to-violet-600 text-white'
                                 : 'bg-white text-slate-800 ring-1 ring-slate-200 dark:bg-slate-800/90 dark:text-slate-100 dark:ring-slate-600'
                             }`}
                           >
@@ -2976,10 +3465,11 @@ function CommunityInner() {
                         </div>
                       ) : null}
                       {item.messageType === 'file' && item.attachment ? (
-                        <div className="space-y-1">
-                          <p>{item.text || 'Shared a file'}</p>
-                          <a href={item.attachment.dataUrl} download={item.attachment.name} className="text-xs underline underline-offset-2">{item.attachment.name}</a>
-                        </div>
+                        <SafeChatAttachment
+                          messageId={item.id}
+                          attachment={item.attachment}
+                          token={token}
+                        />
                       ) : null}
                       {item.messageType === 'voice' && item.attachment ? (
                         <div className="space-y-1">
@@ -3048,7 +3538,7 @@ function CommunityInner() {
                         bumpTypingFromInput();
                       }
                     }}
-                    placeholder={activeConnection ? 'Type a respectful message...' : 'Select connection first'}
+                    placeholder={activeConnection ? 'Type a message...' : 'Select a conversation'}
                     disabled={!activeConnection || isSendingMessage || activeConnection.canMessage === false}
                   />
                   <Button type="submit" className="w-full sm:w-auto" disabled={!activeConnection || isSendingMessage || !messageInput.trim() || activeConnection.canMessage === false}>
@@ -3057,12 +3547,12 @@ function CommunityInner() {
                 </form>
                 {activeConnection ? (
                   <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
-                    <Label>Report this conversation (safety)</Label>
+                    <Label>Report this conversation</Label>
                     <Textarea
                       value={reportReason}
                       onChange={(e) => setReportReason(e.target.value)}
                       className="min-h-[80px]"
-                      placeholder="Share what happened. Harmful users are auto-restricted and reviewed by admin."
+                      placeholder="Describe what happened."
                     />
                     <Button variant="outline" onClick={() => void reportConversation()} disabled={!reportReason.trim()}>
                       Submit report

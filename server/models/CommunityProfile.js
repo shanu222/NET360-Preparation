@@ -22,6 +22,17 @@ const communityProfileSchema = new mongoose.Schema(
     doNotDisturb: { type: Boolean, default: false },
     lastSeenAt: { type: Date, default: null },
     communityInterests: { type: [String], default: [] },
+    achievementTrackingStartedAt: { type: Date, default: null },
+    achievementNotices: {
+      type: [
+        {
+          badgeId: { type: String, default: '' },
+          unlockedAt: { type: Date, default: null },
+          notifiedAt: { type: Date, default: null },
+        },
+      ],
+      default: [],
+    },
     quizStats: {
       totalWins: { type: Number, default: 0 },
       totalMatchesPlayed: { type: Number, default: 0 },

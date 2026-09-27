@@ -8,8 +8,9 @@ import { Label } from './ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Badge } from './ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from './ui/avatar';
-import { Award, Bot, ChevronDown, ChevronUp, FlaskConical, GraduationCap, Loader2, LogOut, MessageCircle, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
+import { Award, Bot, ChevronDown, ChevronUp, FlaskConical, GraduationCap, Loader2, LogOut, Mail, MessageCircle, RefreshCw, Settings, Target, UserRound } from 'lucide-react';
 import { showSuccessToast, showErrorToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
+import { apiRequest } from '../lib/api';
 import { SessionConflictModal } from './SessionConflictModal';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
@@ -55,12 +56,15 @@ type AuthActionState = 'idle' | 'loggingIn' | 'creatingAccount';
 type AuthErrorLike = Error & {
   code?: string;
   status?: number;
+  retryAfterSeconds?: number;
   payload?: {
     code?: string;
     message?: string;
+    email?: string;
     canForceLogin?: boolean;
     existingDevice?: string;
     existingPlatform?: string;
+    retryAfterSeconds?: number;
   };
 };
 
@@ -93,6 +97,21 @@ function isActiveSessionElsewhere(error: unknown): boolean {
     || message.includes('active on another device');
 }
 
+function cleanProfileNamePart(value: string | undefined) {
+  const trimmed = String(value || '').trim();
+  if (!trimmed || trimmed === '-' || trimmed === '—') return '';
+  return trimmed;
+}
+
+function profileAvatarInitials(firstName: string, lastName: string) {
+  const firstLetters = cleanProfileNamePart(firstName).replace(/[^a-zA-Z]/g, '');
+  const lastLetters = cleanProfileNamePart(lastName).replace(/[^a-zA-Z]/g, '');
+  if (firstLetters && lastLetters) return `${firstLetters[0]}${lastLetters[0]}`.toUpperCase();
+  if (firstLetters.length >= 2) return firstLetters.slice(0, 2).toUpperCase();
+  if (firstLetters) return firstLetters[0].toUpperCase();
+  return 'ST';
+}
+
 function loginFriendlyAuthError(error: unknown, fallback: string): string {
   const typed = error as AuthErrorLike;
   const code = String(typed?.code || typed?.payload?.code || '').toUpperCase();
@@ -104,6 +123,17 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
   }
   if (rawCode === 'GOOGLE_OAUTH_ANDROID_MISCONFIG' || rawCode === 'GOOGLE_SIGN_IN_FAILED') {
     return 'Google Sign-In could not be completed. Please try again.';
+  }
+  if (code === 'EMAIL_NOT_VERIFIED') {
+    return 'Verify your email before signing in. Check your inbox for the NET360 verification link.';
+  }
+  if (
+    code === 'EMAIL_ALREADY_REGISTERED'
+    || rawCode.includes('email-already-in-use')
+    || message.includes('email-already-in-use')
+    || message.includes('already registered')
+  ) {
+    return 'This email is already registered. Please sign in.';
   }
   if (code === 'ACTIVE_SESSION_ELSEWHERE' || code === 'SESSION_DISABLED_TEMP' || code === 'ACTIVE_SESSION_EXISTS') {
     return 'Your account is already signed in on another device.';
@@ -162,6 +192,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const [isSavingTargetProgram, setIsSavingTargetProgram] = useState(false);
   const [isSavingPersonalInfo, setIsSavingPersonalInfo] = useState(false);
   const [isSavingPreparationDetails, setIsSavingPreparationDetails] = useState(false);
+  const [pendingVerificationEmail, setPendingVerificationEmail] = useState('');
+  const [verificationResendCooldown, setVerificationResendCooldown] = useState(0);
+  const [isResendingVerification, setIsResendingVerification] = useState(false);
 
   const targetProgramOptions = useMemo(() => NET_TARGET_PROGRAM_OPTIONS, []);
   const selectedTargetProgramLabel =
@@ -228,12 +261,22 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     return () => window.clearInterval(timer);
   }, [forgotCooldownSeconds]);
 
+  useEffect(() => {
+    if (verificationResendCooldown <= 0) return;
+    const timer = window.setInterval(() => {
+      setVerificationResendCooldown((current) => (current > 0 ? current - 1 : 0));
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [verificationResendCooldown]);
 
-  const avatarText = useMemo(() => {
-    const first = localProfile.firstName?.trim()[0] ?? 'S';
-    const last = localProfile.lastName?.trim()[0] ?? 'T';
-    return `${first}${last}`.toUpperCase();
-  }, [localProfile.firstName, localProfile.lastName]);
+
+  const displayFirstName = cleanProfileNamePart(localProfile.firstName);
+  const displayLastName = cleanProfileNamePart(localProfile.lastName);
+  const displayEmail = String(localProfile.email || user?.email || '').trim();
+  const avatarText = useMemo(
+    () => profileAvatarInitials(displayFirstName, displayLastName),
+    [displayFirstName, displayLastName],
+  );
 
   const updateField = (key: keyof typeof localProfile, value: string) => {
     setLocalProfile((previous) => ({ ...previous, [key]: value }));
@@ -267,13 +310,19 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         }
 
         setAuthActionState('creatingAccount');
-        await registerWithToken({
+        const result = await registerWithToken({
           email: authForm.email,
           password: authForm.password,
           firstName: authForm.firstName,
           lastName: authForm.lastName,
         });
         setAuthActionState('idle');
+        if (result?.verificationRequired) {
+          setPendingVerificationEmail(result.email || authForm.email);
+          setAuthMode('login');
+          showSuccessToast('Check your email to verify your account.');
+          return;
+        }
         showSuccessToast('Account created successfully.');
       } else {
         setAuthActionState('loggingIn');
@@ -300,8 +349,14 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         showSuccessToast('Logged in successfully.');
       }
     } catch (error) {
-      const typed = error as Error & { status?: number };
+      const typed = error as AuthErrorLike;
       setAuthActionState('idle');
+      const code = String(typed?.code || typed?.payload?.code || '').toUpperCase();
+      const rawCode = String(typed?.code || '').toLowerCase();
+      const message = String(typed?.message || '').toLowerCase();
+      if (code === 'EMAIL_NOT_VERIFIED') {
+        setPendingVerificationEmail(String(typed?.payload?.email || authForm.email));
+      }
       const friendly = loginFriendlyAuthError(
           error,
           isRegisterMode ? 'Could not create your account. Please try again.' : 'Unable to sign you in. Please check your email and password.',
@@ -310,6 +365,35 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         setRegisterConflictBanner(friendly);
       }
       showErrorToast(friendly);
+    }
+  };
+
+  const handleResendVerification = async () => {
+    if (verificationResendCooldown > 0 || isResendingVerification) return;
+    const email = pendingVerificationEmail || authForm.email;
+    if (!email) {
+      showErrorToast('Enter your email address.');
+      return;
+    }
+    setIsResendingVerification(true);
+    try {
+      await apiRequest('/api/auth/resend-verification', {
+        method: 'POST',
+        body: JSON.stringify({ email }),
+      }, null);
+      showSuccessToast('If this account needs verification, we sent a new email. Check your inbox and spam folder.');
+      setVerificationResendCooldown(60);
+    } catch (error) {
+      const typed = error as AuthErrorLike;
+      const wait = Number(typed.retryAfterSeconds || typed.payload?.retryAfterSeconds || 60);
+      if (typed.status === 429 || String(typed.code || typed.payload?.code || '').toUpperCase() === 'VERIFICATION_EMAIL_RATE_LIMITED') {
+        setVerificationResendCooldown(Math.max(1, wait));
+        showNeutralToast(`Please wait ${Math.max(1, wait)}s before requesting another verification email.`);
+      } else {
+        handleApiError(error, 'Could not send a verification email. Please try again.');
+      }
+    } finally {
+      setIsResendingVerification(false);
     }
   };
 
@@ -514,11 +598,17 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
 
   const isDeleteConfirmationValid = deleteAccountConfirmationText.trim() === 'DELETE';
   const authProvider = String(user?.authProvider || '').toLowerCase();
-  const isGoogleSsoAuth = authProvider === 'firebase' || authProvider === 'google';
-  const isPasswordAuth = authProvider === 'local' || authProvider === 'password';
+  const authProviderDetail = String(user?.authProviderDetail || '').toLowerCase();
+  const isGoogleSsoAuth = authProvider === 'google'
+    || authProviderDetail === 'google'
+    || authProviderDetail === 'google.com';
+  const deletionChannel = String(user?.deletionChannel || '').toLowerCase();
+  const showDeletionEmailLink = deletionChannel === 'email-link'
+    || (!deletionChannel && isGoogleSsoAuth);
+  const showPasswordDelete = !showDeletionEmailLink;
   const isDeletePasswordProvided = deleteAccountPassword.trim().length > 0;
   const canSubmitPasswordDelete = isDeleteConfirmationValid && isDeletePasswordProvided && !isDeletingAccount;
-  const canSendDeletionLink = isDeleteConfirmationValid && isGoogleSsoAuth && !isRequestingDeletionLink;
+  const canSendDeletionLink = isDeleteConfirmationValid && showDeletionEmailLink && !isRequestingDeletionLink;
 
   const handleRequestDeletionLink = async () => {
     setDeleteAccountAttempted(true);
@@ -554,7 +644,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
 
   const handleDeleteAccount = async () => {
     setDeleteAccountAttempted(true);
-    if (!isPasswordAuth) {
+    if (!showPasswordDelete) {
       showErrorToast('Use the secure email link to delete a Google Sign-In account.');
       return;
     }
@@ -634,6 +724,34 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {pendingVerificationEmail ? (
+                <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 text-sm text-indigo-950" role="status" aria-live="polite">
+                  <div className="flex items-start gap-2">
+                    <Mail className="mt-0.5 h-4 w-4 shrink-0 text-indigo-700" aria-hidden />
+                    <div className="min-w-0 space-y-1">
+                      <p className="font-semibold text-indigo-950">Check your email to verify your account.</p>
+                      <p className="text-indigo-900">
+                        We sent a verification link to{' '}
+                        <span className="break-all font-medium">{pendingVerificationEmail}</span>.
+                        You must verify before you can sign in.
+                      </p>
+                    </div>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="mt-3 h-10 w-full border-indigo-200 bg-white !text-indigo-700 hover:bg-indigo-50 hover:!text-indigo-800"
+                    disabled={verificationResendCooldown > 0 || isResendingVerification}
+                    onClick={() => void handleResendVerification()}
+                  >
+                    {isResendingVerification
+                      ? 'Sending...'
+                      : verificationResendCooldown > 0
+                      ? `Resend in ${verificationResendCooldown}s`
+                      : 'Resend verification email'}
+                  </Button>
+                </div>
+              ) : null}
               {isRecoveryMode ? (
                 <div className="space-y-2 rounded-xl border border-indigo-100 bg-indigo-50/40 p-3">
                   <div className="space-y-1">
@@ -826,14 +944,17 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                       type="button"
                       disabled={isAuthBusy}
                       onClick={() => void handleSocialAuth()}
-                      className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-[#dadce0] bg-white px-4 text-[15px] font-medium text-[#3c4043] shadow-sm transition-all duration-150 hover:bg-[#f8f9fa] hover:shadow-md active:scale-[0.98] active:bg-[#f1f3f4] disabled:cursor-not-allowed disabled:opacity-70 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4285F4] focus-visible:ring-offset-2 dark:border-[#dadce0] dark:bg-white dark:text-[#3c4043] dark:hover:bg-[#f8f9fa] dark:active:bg-[#f1f3f4]"
+                      className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-[#dadce0] bg-white px-4 text-[15px] font-medium text-[#202124] shadow-sm transition-all duration-150 hover:bg-[#f8f9fa] hover:shadow-md active:scale-[0.98] active:bg-[#f1f3f4] disabled:cursor-not-allowed disabled:opacity-70 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4285F4] focus-visible:ring-offset-2 dark:!border-[#dadce0] dark:!bg-white dark:!text-[#202124] dark:hover:!bg-[#f8f9fa] dark:active:!bg-[#f1f3f4]"
+                      style={{ color: '#202124', backgroundColor: '#ffffff' }}
                     >
                       {authActionState === 'loggingIn' ? (
                         <Loader2 className="h-5 w-5 shrink-0 animate-spin text-[#4285F4]" />
                       ) : (
                         <GoogleLogo className="h-5 w-5 shrink-0" />
                       )}
-                      <span>{authActionState === 'loggingIn' ? 'Signing in…' : 'Continue with Google'}</span>
+                      <span className="font-medium !text-[#202124]" style={{ color: '#202124' }}>
+                        {authActionState === 'loggingIn' ? 'Signing in…' : 'Continue with Google'}
+                      </span>
                     </button>
                     {isNativeRuntimePlatform() ? (
                       <p className="text-xs text-slate-500">
@@ -1004,8 +1125,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 <AvatarImage src={getMediaUrl(avatarPreview)} width={96} height={96} />
                 <AvatarFallback className="text-2xl">{avatarText}</AvatarFallback>
               </Avatar>
-              <h3>{`${localProfile.firstName || 'Student'} ${localProfile.lastName || ''}`.trim()}</h3>
-              <p className="text-sm text-muted-foreground">{localProfile.email || user.email}</p>
+              <h3>{`${displayFirstName || 'Student'} ${displayLastName}`.trim()}</h3>
+              <p className="text-sm text-muted-foreground break-all">{displayEmail}</p>
               <Button variant="outline" className="mt-4" onClick={triggerPhotoPicker}>Change Photo</Button>
               <input
                 ref={photoInputRef}
@@ -1088,9 +1209,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
           <CardContent className="space-y-4">
             {!isPersonalInfoExpanded ? (
               <div className="grid gap-2 rounded-lg border bg-slate-50/70 p-3 text-sm md:grid-cols-2">
-                <p><span className="text-muted-foreground">First Name:</span> {localProfile.firstName || 'Not set'}</p>
-                <p><span className="text-muted-foreground">Last Name:</span> {localProfile.lastName || 'Not set'}</p>
-                <p><span className="text-muted-foreground">Email:</span> {localProfile.email || user.email || 'Not set'}</p>
+                <p><span className="text-muted-foreground">First Name:</span> {displayFirstName || 'Not set'}</p>
+                <p><span className="text-muted-foreground">Last Name:</span> {displayLastName || 'Not set'}</p>
+                <p className="break-all"><span className="text-muted-foreground">Email:</span> {displayEmail || 'Not set'}</p>
                 <p><span className="text-muted-foreground">Phone:</span> {localProfile.phone || 'Not set'}</p>
                 <p className="md:col-span-2"><span className="text-muted-foreground">City:</span> {localProfile.city || 'Not set'}</p>
               </div>
@@ -1101,22 +1222,22 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
             <div className="grid md:grid-cols-2 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="first-name">First Name</Label>
-                <Input id="first-name" value={localProfile.firstName} disabled placeholder="John" />
+                <Input id="first-name" value={displayFirstName} disabled placeholder="Not set" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="last-name">Last Name</Label>
-                <Input id="last-name" value={localProfile.lastName} disabled placeholder="Doe" />
+                <Input id="last-name" value={displayLastName} disabled placeholder="Not set" />
               </div>
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="email">Email Address</Label>
-              <Input id="email" type="email" value={localProfile.email || user.email} disabled />
+              <Input id="email" type="text" value={displayEmail} disabled className="break-all" />
             </div>
 
             <div className="space-y-2">
               <Label htmlFor="phone">Phone Number</Label>
-              <Input id="phone" type="tel" value={localProfile.phone} disabled placeholder="+92 300 1234567" />
+              <Input id="phone" type="tel" value={localProfile.phone} disabled placeholder="Not set" />
             </div>
 
             <div className="space-y-2">
@@ -1191,7 +1312,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 <SelectTrigger id="target-program" className="h-10">
                   <SelectValue placeholder="Select program" />
                 </SelectTrigger>
-                <SelectContent className="max-h-80">
+                <SelectContent className="net360-opaque-select max-h-80">
                   {targetProgramOptions.map((option) => (
                     <SelectItem key={`${option.category}-${option.value}`} value={option.value}>
                       {option.label} ({option.category})
@@ -1362,7 +1483,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               ) : null}
             </div>
 
-            {isGoogleSsoAuth ? (
+            {showDeletionEmailLink ? (
               <div className="space-y-2">
                 <Label>Google Sign-In account</Label>
                 <p className="text-xs text-red-700/90">
@@ -1385,7 +1506,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                   <p className="text-xs font-medium text-red-700">Type DELETE above before sending the link.</p>
                 ) : null}
               </div>
-            ) : (
+            ) : null}
+            {showPasswordDelete ? (
               <div className="space-y-2">
                 <Label htmlFor="delete-account-password">Confirm with your registration password</Label>
                 <PasswordInput
@@ -1401,8 +1523,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                   <p className="text-xs font-medium text-red-700">Password is required for secure account deletion.</p>
                 ) : null}
               </div>
-            )}
-            {isPasswordAuth ? (
+            ) : null}
+            {showPasswordDelete ? (
             <Button
               variant="destructive"
               onClick={() => void handleDeleteAccount()}

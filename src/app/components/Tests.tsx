@@ -293,14 +293,18 @@ export function Tests({ onNavigate }: TestsProps) {
 
     launchingRef.current = true;
 
-    await waitUntilAuthHydrated(() => authLoadingRef.current);
+    if (!authReady) {
+      await waitUntilAuthHydrated(() => authLoadingRef.current);
+    }
     if (!readPersistedStudentAccessToken() && !tokenRef.current && !userRef.current) {
       showErrorToast('Please login first to start a test. Redirecting to login...');
       onNavigate?.('profile');
       launchingRef.current = false;
       return;
     }
-    await waitUntilClientAuthToken(() => resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current));
+    if (!authReady) {
+      await waitUntilClientAuthToken(() => resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current));
+    }
     if (!resolveSnapshotStudentAuthToken(tokenRef.current, userRef.current)) {
       if (import.meta.env.DEV) {
         console.warn('Auth not ready yet');
@@ -446,10 +450,13 @@ export function Tests({ onNavigate }: TestsProps) {
       }
     };
 
-    void loadAdaptiveRecommendation();
+    const timer = window.setTimeout(() => {
+      if (!cancelled) void loadAdaptiveRecommendation();
+    }, 600);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [selectedNetType, selectedSubject, subjectOptions, token]);
 
@@ -521,9 +528,13 @@ export function Tests({ onNavigate }: TestsProps) {
       </Card>
 
       <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <h2 className="text-lg text-indigo-950">Step 1: NET Type Selection</h2>
-          {selectedNetType ? <Badge className="bg-emerald-500">Selected: {selectedNetType.name}</Badge> : null}
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+          <h2 className="min-w-0 text-lg text-indigo-950 dark:text-slate-100">Step 1: NET Type Selection</h2>
+          {selectedNetType ? (
+            <Badge className="max-w-full whitespace-normal break-words bg-emerald-500 text-white">
+              Selected: {selectedNetType.name}
+            </Badge>
+          ) : null}
         </div>
 
         {!selectedNetType ? (
@@ -585,7 +596,7 @@ export function Tests({ onNavigate }: TestsProps) {
 
       {selectedNetType ? (
         <section className="space-y-3 opacity-100 translate-y-0 transition-all duration-300">
-          <h2 className="text-lg text-indigo-950">Step 2: Subjects & Distribution</h2>
+          <h2 className="min-w-0 text-lg text-indigo-950 dark:text-slate-100">Step 2: Subjects & Distribution</h2>
           <Card className="rounded-2xl border-indigo-100 bg-white/95 shadow-[0_12px_26px_rgba(93,109,201,0.10)]">
             <CardHeader>
               <CardTitle>{selectedNetType.name} Distribution</CardTitle>
@@ -618,7 +629,7 @@ export function Tests({ onNavigate }: TestsProps) {
 
       {selectedNetType ? (
         <section className="space-y-3 opacity-100 translate-y-0 transition-all duration-300">
-          <h2 className="text-lg text-indigo-950">Step 3: Test Type Selection</h2>
+          <h2 className="min-w-0 text-lg text-indigo-950 dark:text-slate-100">Step 3: Test Type Selection</h2>
 
           <Card className="rounded-2xl border-indigo-100 bg-white/95 shadow-[0_12px_26px_rgba(93,109,201,0.10)]">
             <CardHeader className="pb-2">

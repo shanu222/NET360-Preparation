@@ -3641,21 +3641,44 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const db = readDb();
     const subject = String(url.searchParams.get('subject') || '').trim().toLowerCase();
     const difficulty = String(url.searchParams.get('difficulty') || '').trim().toLowerCase();
-    const excludeId = String(url.searchParams.get('excludeId') || '').trim();
+    const excludeIds = new Set(
+      [
+        ...String(url.searchParams.get('excludeId') || '').split(','),
+        ...String(url.searchParams.get('excludeIds') || '').split(','),
+      ]
+        .map((id) => id.trim())
+        .filter(Boolean),
+    );
+    const isUsable = (item: LocalPracticeBoardQuestion) => Boolean(
+      String(item.questionText || '').trim()
+      || item.questionFile?.dataUrl
+      || item.questionFile?.name
+      || String((item as { questionImageUrl?: string }).questionImageUrl || '').trim(),
+    );
 
     const filtered = db.practiceBoardQuestions.filter((item) => {
+      if (!isUsable(item)) return false;
       if (subject && item.subject !== subject) return false;
       if (difficulty && item.difficulty.toLowerCase() !== difficulty) return false;
-      if (excludeId && item.id === excludeId) return false;
+      if (excludeIds.has(item.id)) return false;
       return true;
     });
 
-    if (!filtered.length) {
+    const pool = filtered.length
+      ? filtered
+      : db.practiceBoardQuestions.filter((item) => {
+        if (!isUsable(item)) return false;
+        if (subject && item.subject !== subject) return false;
+        if (difficulty && item.difficulty.toLowerCase() !== difficulty) return false;
+        return true;
+      });
+
+    if (!pool.length) {
       throw new Error('No practice board questions found for this selection.');
     }
 
-    const randomIndex = Math.floor(Math.random() * filtered.length);
-    const picked = filtered[randomIndex];
+    const randomIndex = Math.floor(Math.random() * pool.length);
+    const picked = pool[randomIndex];
     return { question: serializePracticeBoardQuestion(picked) } as T;
   }
 

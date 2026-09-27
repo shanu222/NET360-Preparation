@@ -36,18 +36,51 @@ import * as cheerio from 'cheerio';
 import mongoose from 'mongoose';
 import http from 'node:http';
 import { connectMongo, getMongoHealth } from './lib/mongo.js';
+import {
+  classifyStudentDeletionChannelSync,
+  normalizeAuthProviderDetail,
+  resolveStudentDeletionChannel,
+} from './lib/studentDeletionChannel.js';
+import {
+  accountNeedsEmailVerification,
+  applyVerificationTokenToUser,
+  evaluateVerificationSendLimit,
+  generateEmailVerifyRawToken,
+  isGoogleSignInProvider,
+  markEmailVerified,
+  clearEmailVerificationToken,
+} from './lib/emailVerification.js';
 import { getBuildInfo } from './lib/buildInfo.js';
 import { logAuthDebug, normalizeAuthDebugRoute, shouldAuthDebugRoute } from './lib/authDebug.js';
-import { getRedisMain, isRedisConfigured, isRedisReady } from './services/redis.js';
+import { getRedisMain, isRedisConfigured, isRedisReady, isSocketIoRedisAdapterReady } from './services/redis.js';
 import { cacheGetJson, cacheSetJson, cacheKey, cacheDel, invalidateCommunityLeaderboardCache, invalidateQuizLeaderboardCache, invalidateUserSubscriptionCache } from './utils/cache.js';
 import {
   initSocketIo,
   emitSocketSyncToStudentUser,
+  emitSocketSyncToStudents,
+  emitSocketSyncToAdmins,
   mirrorBroadcastSyncEvent,
   getIo,
   emitSubscriptionRefresh,
   disconnectStudentSocketsWithStaleSession,
+  disconnectAllStudentSockets,
+  countStudentSockets,
 } from './services/socket.js';
+import {
+  upsertPresence,
+  removePresence,
+  listPresence,
+  sweepExpiredPresence,
+} from './services/communityPresence.js';
+import { notificationShell } from './services/notificationEmail.js';
+import {
+  applyAchievementNotices,
+  buildAchievementCertificatePdf,
+  buildCommunityAchievementBadges,
+  catalogEntry,
+  serializeAchievementBadges,
+  unlockedAtForBadge,
+} from './lib/communityAchievements.js';
 import { subscriptionExpiryRefresh, requireTrialOrPremiumContent } from './middleware/subscriptionGate.js';
 import {
   mergedSubscription,
@@ -80,6 +113,13 @@ import { TestSessionModel } from './models/TestSession.js';
 import { AttemptModel } from './models/Attempt.js';
 import { AIUsageModel } from './models/AIUsage.js';
 import { PracticeBoardQuestionModel } from './models/PracticeBoardQuestion.js';
+import { NustAdmissionSnapshotModel } from './models/NustAdmissionSnapshot.js';
+import {
+  NUST_UG_PORTAL_URL,
+  buildNustContentHash,
+  extractNustAdmissionsFromHtml,
+  isSelectionListNotice,
+} from './lib/nustAdmissionsExtract.js';
 import { QuestionSubmissionModel } from './models/QuestionSubmission.js';
 import { ContributionPolicyModel } from './models/ContributionPolicy.js';
 import { SubmissionRestrictionModel } from './models/SubmissionRestriction.js';
@@ -91,6 +131,21 @@ import { CommunityReportModel } from './models/CommunityReport.js';
 import { CommunityBlockModel } from './models/CommunityBlock.js';
 import { CommunityRoomPostModel } from './models/CommunityRoomPost.js';
 import { CommunityQuizChallengeModel } from './models/CommunityQuizChallenge.js';
+import {
+  COMMUNITY_FILE_ALLOWED_MIME_TYPES,
+  COMMUNITY_FILE_MAX_BYTES,
+  COMMUNITY_NOTIFY_LOOKBACK_MS,
+  claimChatNotificationWindow,
+  claimCommunityNotificationDelivery,
+  communityChatWindowKey,
+  communityFileMimeMatchesKind,
+  communityNotifyEvent,
+  isRecentCommunityEvent,
+  markChatNotificationSpeaker,
+  supportChatWindowKey,
+  safeCommunityAttachmentContentType,
+  sniffCommunityFileKind,
+} from './lib/communityNotifications.js';
 import { SignupRequestModel } from './models/SignupRequest.js';
 import { SignupTokenModel } from './models/SignupToken.js';
 import { PremiumSubscriptionRequestModel } from './models/PremiumSubscriptionRequest.js';
@@ -142,7 +197,19 @@ function readCookie(req, key) {
   return String(cookies?.[key] || '').trim();
 }
 
-function buildAuthCookieOptions(maxAgeMs) {
+function resolveAuthCookieDomainForHost(req) {
+  const configured = String(AUTH_COOKIE_DOMAIN || '').trim();
+  if (!configured) return '';
+  const host = String(req?.headers?.host || '').split(':')[0].trim().toLowerCase();
+  if (!host) return '';
+  const normalized = configured.replace(/^\./, '').toLowerCase();
+  if (host === normalized || host.endsWith(`.${normalized}`)) {
+    return configured;
+  }
+  return '';
+}
+
+function buildAuthCookieOptions(maxAgeMs, req) {
   const options = {
     httpOnly: true,
     secure: AUTH_COOKIE_SECURE,
@@ -150,18 +217,19 @@ function buildAuthCookieOptions(maxAgeMs) {
     path: '/',
     maxAge: Math.max(1000, Math.floor(Number(maxAgeMs || 0))),
   };
-  if (AUTH_COOKIE_DOMAIN) {
-    options.domain = AUTH_COOKIE_DOMAIN;
+  const cookieDomain = resolveAuthCookieDomainForHost(req);
+  if (cookieDomain) {
+    options.domain = cookieDomain;
   }
   return options;
 }
 
-function setAuthCookies(res, accessToken, refreshToken) {
+function setAuthCookies(res, accessToken, refreshToken, req) {
   if (accessToken) {
-    res.cookie(ACCESS_TOKEN_COOKIE_NAME, String(accessToken), buildAuthCookieOptions(ACCESS_TOKEN_COOKIE_MAX_AGE_MS));
+    res.cookie(ACCESS_TOKEN_COOKIE_NAME, String(accessToken), buildAuthCookieOptions(ACCESS_TOKEN_COOKIE_MAX_AGE_MS, req));
   }
   if (refreshToken) {
-    res.cookie(REFRESH_TOKEN_COOKIE_NAME, String(refreshToken), buildAuthCookieOptions(REFRESH_TOKEN_TTL_MS));
+    res.cookie(REFRESH_TOKEN_COOKIE_NAME, String(refreshToken), buildAuthCookieOptions(REFRESH_TOKEN_TTL_MS, req));
   }
 }
 
@@ -173,9 +241,9 @@ function setAuthTransportDiagnosticsHeaders(req, res, payload) {
   res.setHeader('X-Net360-Auth-Cookies-Set', `access=${hasAccessCookie ? '1' : '0'};refresh=${hasRefreshCookie ? '1' : '0'}`);
 }
 
-function clearAuthCookies(res) {
+function clearAuthCookies(res, req) {
   const expiredOptions = {
-    ...buildAuthCookieOptions(1),
+    ...buildAuthCookieOptions(1, req),
     maxAge: 0,
   };
   res.clearCookie(ACCESS_TOKEN_COOKIE_NAME, expiredOptions);
@@ -214,10 +282,30 @@ function isNativeAppRequest(req) {
   }
 }
 
+function isCrossSiteBrowserRequest(req) {
+  try {
+    const origin = String(req?.headers?.origin || '').trim();
+    if (!origin) return false;
+    const originHost = new URL(origin).hostname.toLowerCase();
+    const apiHost = String(req?.headers?.host || '').split(':')[0].trim().toLowerCase();
+    if (!originHost || !apiHost) return false;
+    return originHost !== apiHost;
+  } catch {
+    return false;
+  }
+}
+
 function buildAuthJsonBody(req, payload) {
   if (!payload || typeof payload !== 'object') return payload;
-  // Native WebViews and admin panel can intermittently drop cross-origin cookies. Always include body tokens.
-  if (ISSUE_AUTH_BODY_TOKENS || isNativeAppRequest(req) || isAdminPanelRequest(req)) return payload;
+  // Cross-site browsers (www → Railway), native WebViews, and admin can drop cookies. Always include body tokens.
+  if (
+    ISSUE_AUTH_BODY_TOKENS
+    || isNativeAppRequest(req)
+    || isAdminPanelRequest(req)
+    || isCrossSiteBrowserRequest(req)
+  ) {
+    return payload;
+  }
   return { user: payload.user };
 }
 
@@ -289,7 +377,7 @@ const SIGNUP_TOKEN_TTL_MINUTES = Number(
 );
 const PREMIUM_TOKEN_TTL_HOURS = Number(process.env.PREMIUM_TOKEN_TTL_HOURS || 24);
 const NUST_UPDATES_CACHE_MS = Number(process.env.NUST_UPDATES_CACHE_MS || 60 * 1000);
-const NUST_ADMISSIONS_REFRESH_MS = clamp(Number(process.env.NUST_ADMISSIONS_REFRESH_MS || 3 * 60 * 60 * 1000), 15 * 60 * 1000, 24 * 60 * 60 * 1000);
+const NUST_ADMISSIONS_REFRESH_MS = clamp(Number(process.env.NUST_ADMISSIONS_REFRESH_MS || 45 * 60 * 1000), 30 * 60 * 1000, 60 * 60 * 1000);
 /** Community leaderboard Redis cache TTL (seconds). */
 const COMMUNITY_LEADERBOARD_CACHE_TTL_SEC = clamp(Number(process.env.COMMUNITY_LEADERBOARD_CACHE_TTL_SEC || 45), 15, 180);
 const QUIZ_LEADERBOARD_CACHE_TTL_SEC = clamp(Number(process.env.QUIZ_LEADERBOARD_CACHE_TTL_SEC || 50), 20, 180);
@@ -310,13 +398,39 @@ const ALLOW_QUERY_TOKEN_AUTH =
     : !IS_PRODUCTION;
 
 const MODEL_PROVIDER_KEY = process.env.MODEL_PROVIDER_API_KEY || process.env.OPENAI_API_KEY || '';
-const SMTP_HOST = String(process.env.SMTP_HOST || '').trim();
-const SMTP_PORT = Number(process.env.SMTP_PORT || 587);
-const SMTP_SECURE = String(process.env.SMTP_SECURE || 'false').toLowerCase() === 'true';
-const SMTP_USER = String(process.env.SMTP_USER || '').trim();
-const SMTP_PASS = String(process.env.SMTP_PASS || '').trim();
-const SMTP_FROM_EMAIL = String(process.env.SMTP_FROM_EMAIL || SMTP_USER).trim();
-const NET360_PUBLIC_APP_URL = String(process.env.NET360_PUBLIC_APP_URL || process.env.PUBLIC_APP_URL || '').trim();
+function unquoteEnv(value) {
+  return String(value || '').trim().replace(/^['"]+|['"]+$/g, '').trim();
+}
+const SMTP_HOST = unquoteEnv(process.env.SMTP_HOST || process.env.MAIL_HOST || process.env.EMAIL_HOST || '');
+const SMTP_PORT = Number(unquoteEnv(process.env.SMTP_PORT || process.env.MAIL_PORT || '587'));
+const SMTP_SECURE = unquoteEnv(process.env.SMTP_SECURE || '').toLowerCase() === 'true'
+  || Number(SMTP_PORT) === 465;
+const SMTP_USER = unquoteEnv(process.env.SMTP_USER || process.env.EMAIL_USER || process.env.MAIL_USER || '');
+const SMTP_PASS = unquoteEnv(
+  process.env.SMTP_PASS
+  || process.env.SMTP_PASSWORD
+  || process.env.EMAIL_PASS
+  || process.env.MAIL_PASS
+  || '',
+);
+const SMTP_FROM_EMAIL = unquoteEnv(
+  process.env.SMTP_FROM_EMAIL
+  || process.env.MAIL_FROM
+  || process.env.EMAIL_FROM
+  || SMTP_USER,
+);
+const RESEND_API_KEY = unquoteEnv(process.env.RESEND_API_KEY || '');
+const RESEND_FROM_EMAIL = unquoteEnv(
+  process.env.RESEND_FROM_EMAIL
+  || SMTP_FROM_EMAIL
+  || 'NET360 Preparation <beth.t@example.com>',
+);
+const NET360_PUBLIC_APP_URL = String(
+  process.env.NET360_PUBLIC_APP_URL
+  || process.env.PUBLIC_APP_URL
+  || process.env.APP_PUBLIC_URL
+  || '',
+).trim();
 const TWILIO_ACCOUNT_SID = String(process.env.TWILIO_ACCOUNT_SID || '').trim();
 const TWILIO_AUTH_TOKEN = String(process.env.TWILIO_AUTH_TOKEN || '').trim();
 const TWILIO_PHONE_NUMBER = String(process.env.TWILIO_PHONE_NUMBER || '').trim();
@@ -339,43 +453,180 @@ if (!Number.isFinite(SMTP_PORT) || SMTP_PORT <= 0) smtpMissingEnv.push('SMTP_POR
 if (!SMTP_USER) smtpMissingEnv.push('SMTP_USER');
 if (!SMTP_PASS) smtpMissingEnv.push('SMTP_PASS');
 if (!SMTP_FROM_EMAIL) smtpMissingEnv.push('SMTP_FROM_EMAIL');
-if (!NET360_PUBLIC_APP_URL) smtpMissingEnv.push('NET360_PUBLIC_APP_URL');
 
 const smtpRuntime = {
   enabled: smtpMissingEnv.length === 0,
   verifyAttempted: false,
   verified: false,
   verifyError: '',
+  activePort: 0,
 };
 
-const smtpTransporter = smtpRuntime.enabled
-  ? nodemailer.createTransport({
+const RESEND_TEST_FROM_EMAIL = 'NET360 Preparation <beth.t@example.com>';
+const resendRuntime = {
+  lastStatus: 0,
+  lastError: '',
+  lastFrom: '',
+  lastAt: '',
+  domains: [],
+};
+
+function sanitizeResendError(error) {
+  let message = error instanceof Error ? error.message : String(error || 'Resend error');
+  if (RESEND_API_KEY) message = message.split(RESEND_API_KEY).join('[resend-key]');
+  return message.replace(/re_[A-Za-z0-9_]+/g, '[resend-key]').slice(0, 220);
+}
+
+function addResendFromCandidate(list, seen, from) {
+  const value = String(from || '').trim();
+  if (!value) return;
+  const key = value.toLowerCase();
+  if (seen.has(key)) return;
+  seen.add(key);
+  list.push(value);
+}
+
+async function fetchResendDomains() {
+  if (!RESEND_API_KEY) return [];
+  const response = await fetch('https://api.resend.com/domains', {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${RESEND_API_KEY}` },
+  });
+  const body = await response.text().catch(() => '');
+  if (!response.ok) {
+    resendRuntime.lastStatus = response.status;
+    resendRuntime.lastError = sanitizeResendError(new Error(`Resend domains ${response.status}: ${String(body || '').slice(0, 160)}`));
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(body);
+    const rows = Array.isArray(parsed?.data) ? parsed.data : Array.isArray(parsed) ? parsed : [];
+    resendRuntime.domains = rows.map((row) => ({
+      name: String(row?.name || ''),
+      status: String(row?.status || ''),
+    })).filter((row) => row.name);
+    return rows;
+  } catch {
+    return [];
+  }
+}
+
+async function listResendFromCandidates() {
+  const seen = new Set();
+  const list = [];
+  const domains = await fetchResendDomains();
+  for (const row of domains) {
+    const name = String(row?.name || '').trim().toLowerCase();
+    const status = String(row?.status || '').trim().toLowerCase();
+    if (!name || !/verified/.test(status)) continue;
+    addResendFromCandidate(list, seen, `NET360 Preparation <noreply@${name}>`);
+  }
+  addResendFromCandidate(list, seen, RESEND_FROM_EMAIL);
+  addResendFromCandidate(list, seen, SMTP_FROM_EMAIL);
+  addResendFromCandidate(list, seen, 'NET360 Preparation <noreply@net360preparation.com>');
+  addResendFromCandidate(list, seen, RESEND_TEST_FROM_EMAIL);
+  return list;
+}
+
+function sanitizeSmtpError(error) {
+  let message = error instanceof Error ? error.message : String(error || 'SMTP error');
+  if (SMTP_USER) message = message.split(SMTP_USER).join('[smtp-user]');
+  if (SMTP_PASS) message = message.split(SMTP_PASS).join('[smtp-pass]');
+  return message.replace(/pass(word)?=[^,\s]+/gi, 'pass=[redacted]').slice(0, 220);
+}
+
+function createSmtpTransport(port, secure) {
+  return nodemailer.createTransport({
     host: SMTP_HOST,
-    port: SMTP_PORT,
-    secure: SMTP_SECURE,
+    port,
+    secure,
+    requireTLS: !secure && Number(port) === 587,
     auth: {
       user: SMTP_USER,
       pass: SMTP_PASS,
     },
-  })
-  : null;
+    tls: {
+      minVersion: 'TLSv1.2',
+    },
+    family: 4,
+    connectionTimeout: 12_000,
+    greetingTimeout: 12_000,
+    socketTimeout: 20_000,
+  });
+}
+
+const smtpTransports = smtpRuntime.enabled
+  ? {
+    primary: createSmtpTransport(SMTP_PORT, SMTP_SECURE),
+    fallback465: SMTP_PORT === 465
+      ? null
+      : createSmtpTransport(465, true),
+  }
+  : { primary: null, fallback465: null };
+
+const smtpTransporter = smtpTransports.primary;
+
+async function sendSmtpMail(mail) {
+  if (!smtpTransports.primary) {
+    throw new Error('SMTP transporter is not configured.');
+  }
+  const preferSsl = String(SMTP_HOST || '').toLowerCase().includes('privateemail.com') && SMTP_PORT !== 465;
+  const attempts = preferSsl
+    ? [
+      smtpTransports.fallback465 ? { port: 465, transporter: smtpTransports.fallback465 } : null,
+      { port: SMTP_PORT, transporter: smtpTransports.primary },
+    ]
+    : [
+      { port: SMTP_PORT, transporter: smtpTransports.primary },
+      smtpTransports.fallback465 ? { port: 465, transporter: smtpTransports.fallback465 } : null,
+    ];
+  let lastError = null;
+  for (const attempt of attempts.filter(Boolean)) {
+    try {
+      await attempt.transporter.sendMail(mail);
+      smtpRuntime.verified = true;
+      smtpRuntime.verifyError = '';
+      smtpRuntime.activePort = attempt.port;
+      return;
+    } catch (error) {
+      lastError = error;
+      smtpRuntime.verified = false;
+      smtpRuntime.verifyError = sanitizeSmtpError(error);
+      console.warn(`[smtp] sendMail failed port=${attempt.port}: ${smtpRuntime.verifyError}`);
+    }
+  }
+  throw lastError || new Error('SMTP send failed.');
+}
 
 async function verifySmtpTransport(reason = 'startup') {
-  if (!smtpTransporter) return false;
+  if (!smtpTransports.primary) return false;
   if (smtpRuntime.verified) return true;
   smtpRuntime.verifyAttempted = true;
-  try {
-    await smtpTransporter.verify();
-    smtpRuntime.verified = true;
-    smtpRuntime.verifyError = '';
-    console.log(`[smtp] transporter verified (${reason})`);
-    return true;
-  } catch (error) {
-    smtpRuntime.verified = false;
-    smtpRuntime.verifyError = (error instanceof Error ? error.message : String(error)).slice(0, 220);
-    console.warn(`[smtp] transporter verify failed (${reason}): ${smtpRuntime.verifyError}`);
-    return false;
+  const preferSsl = String(SMTP_HOST || '').toLowerCase().includes('privateemail.com') && SMTP_PORT !== 465;
+  const attempts = preferSsl
+    ? [
+      smtpTransports.fallback465 ? { port: 465, transporter: smtpTransports.fallback465 } : null,
+      { port: SMTP_PORT, transporter: smtpTransports.primary },
+    ]
+    : [
+      { port: SMTP_PORT, transporter: smtpTransports.primary },
+      smtpTransports.fallback465 ? { port: 465, transporter: smtpTransports.fallback465 } : null,
+    ];
+  for (const attempt of attempts.filter(Boolean)) {
+    try {
+      await attempt.transporter.verify();
+      smtpRuntime.verified = true;
+      smtpRuntime.verifyError = '';
+      smtpRuntime.activePort = attempt.port;
+      console.log(`[smtp] transporter verified (${reason}) port=${attempt.port}`);
+      return true;
+    } catch (error) {
+      smtpRuntime.verified = false;
+      smtpRuntime.verifyError = sanitizeSmtpError(error);
+      console.warn(`[smtp] transporter verify failed (${reason}) port=${attempt.port}: ${smtpRuntime.verifyError}`);
+    }
   }
+  return false;
 }
 
 if (!smtpRuntime.enabled) {
@@ -524,86 +775,9 @@ const PAYFAST_WALLET_ACCOUNT_TYPE_ID = String(process.env.PAYFAST_WALLET_ACCOUNT
 
 const app = express();
 
+// CORS is configured once below (corsMiddleware). Multiple CORS layers were removed
+// to avoid duplicate Access-Control-* headers that break some browser/HTTP2 responses.
 
-
-app.use(cors({
-  origin: function(origin, callback) {
-
-    if (!origin) {
-      return callback(null, true);
-    }
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    console.log("Blocked by CORS:", origin);
-
-    return callback(null, true);
-  },
-
-  credentials: true,
-
-  methods: [
-    "GET",
-    "POST",
-    "PUT",
-    "PATCH",
-    "DELETE",
-    "OPTIONS"
-  ],
-
-  allowedHeaders: [
-    "Origin",
-    "X-Requested-With",
-    "Content-Type",
-    "Accept",
-    "Authorization",
-    "x-net360-client-platform",
-    "x-net360-client-version",
-    "X-Net360-Auth-Transport-Preference",
-    "x-net360-auth-transport-preference",
-  ]
-}));
-
-app.options("*", cors());
-
-
-app.use((req, res, next) => {
-  
-
-  const origin = req.headers.origin;
-
-  if (origin && allowedOrigins.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
-  }
-
-  res.header(
-    'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-net360-client-platform, x-net360-client-version, X-Net360-Auth-Transport-Preference, x-net360-auth-transport-preference',
-  );
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-  res.header('Access-Control-Allow-Credentials', 'true');
-
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
-
-  next();
-});
-
-
-
-
-
-
-
-
-
-
-
-
-app.options('*', cors());
 
 const aiParseUpload = multer({
   storage: multer.memoryStorage(),
@@ -657,10 +831,101 @@ async function logSecurityEvent(req, {
   }
 }
 
-/** Active SSE tab ids per student user (multi-tab support). */
+/**
+ * Community presence. The shared record lives in Redis (services/communityPresence.js) and
+ * only exists while the client heartbeats; this map only tracks the realtime connections
+ * (Socket.IO sockets + SSE streams) held by THIS instance so a closed tab can go offline
+ * right away instead of waiting for the TTL.
+ */
 const studentPresenceClientIdsByUser = new Map();
-/** Ephemeral presence metadata (studying subject, away) keyed by userId string. */
-const studentPresenceMetaByUser = new Map();
+const studentLastSeenPersistedAt = new Map();
+/** First-seen identity snapshot so Redis records can list a name without a Mongo round-trip every beat. */
+const studentPresenceIdentityByUser = new Map();
+const STUDENT_PRESENCE_LAST_SEEN_PERSIST_MS = 5 * 60_000;
+/** A page reload closes the old socket and opens a new one; don't flash "offline" for that. */
+const STUDENT_PRESENCE_DISCONNECT_GRACE_MS = 5_000;
+
+function emitStudentPresenceEvent(action, userId, record = null) {
+  const data = { type: 'community.presence', action, userId: String(userId) };
+  if (record && action !== 'offline') {
+    data.status = record.status;
+    data.activity = record.activity;
+    data.studyingSubject = record.studyingSubject;
+    data.lastSeenAt = new Date(record.lastSeen).toISOString();
+  }
+  broadcastSyncEvent({ role: 'student', event: 'sync', data });
+}
+
+function persistStudentLastSeen(uid, force = false) {
+  const now = Date.now();
+  if (!force && now - Number(studentLastSeenPersistedAt.get(uid) || 0) < STUDENT_PRESENCE_LAST_SEEN_PERSIST_MS) return;
+  studentLastSeenPersistedAt.set(uid, now);
+  CommunityProfileModel.updateOne({ userId: uid }, { $set: { lastSeenAt: new Date(now) } }).catch(() => {});
+}
+
+/**
+ * Heartbeat / activity from the authenticated user (never a client-supplied id). Broadcasts
+ * `online` when the record is new and `update` only when status/activity actually changed.
+ * @param {string} userId
+ * @param {{ away?: boolean, activity?: string, studyingSubject?: string }} [patch]
+ */
+async function loadPresenceIdentity(userId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return {};
+  const cached = studentPresenceIdentityByUser.get(uid);
+  if (cached) return cached;
+  try {
+    const [u, p] = await Promise.all([
+      UserModel.findById(uid).select('firstName lastName').lean(),
+      CommunityProfileModel.findOne({ userId: uid }).select('username').lean(),
+    ]);
+    const identity = {
+      displayName: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim(),
+      username: String(p?.username || ''),
+    };
+    studentPresenceIdentityByUser.set(uid, identity);
+    return identity;
+  } catch {
+    return {};
+  }
+}
+
+async function touchStudentPresence(userId, patch = {}) {
+  const uid = String(userId || '').trim();
+  if (!uid) return null;
+  try {
+    const identity = patch.displayName || patch.username ? {} : await loadPresenceIdentity(uid);
+    const { record, previous } = await upsertPresence(uid, { ...identity, ...patch });
+    persistStudentLastSeen(uid);
+    if (!previous) {
+      emitStudentPresenceEvent('online', uid, record);
+    } else if (
+      previous.status !== record.status
+      || previous.activity !== record.activity
+      || previous.studyingSubject !== record.studyingSubject
+    ) {
+      emitStudentPresenceEvent('update', uid, record);
+    }
+    return record;
+  } catch (error) {
+    console.warn('[presence] touch failed:', error?.message || error);
+    return null;
+  }
+}
+
+async function endStudentPresence(userId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return;
+  try {
+    const removed = await removePresence(uid);
+    persistStudentLastSeen(uid, true);
+    studentLastSeenPersistedAt.delete(uid);
+    studentPresenceIdentityByUser.delete(uid);
+    if (removed) emitStudentPresenceEvent('offline', uid);
+  } catch (error) {
+    console.warn('[presence] end failed:', error?.message || error);
+  }
+}
 
 function registerStudentPresence(userId, clientId) {
   const uid = String(userId || '').trim();
@@ -670,54 +935,51 @@ function registerStudentPresence(userId, clientId) {
     set = new Set();
     studentPresenceClientIdsByUser.set(uid, set);
   }
-  const wasEmpty = set.size === 0;
   set.add(clientId);
-  if (!studentPresenceMetaByUser.has(uid)) {
-    studentPresenceMetaByUser.set(uid, { studyingSubject: '', away: false, lastPing: Date.now() });
-  } else {
-    const meta = studentPresenceMetaByUser.get(uid);
-    meta.lastPing = Date.now();
-  }
-  if (wasEmpty) {
-    broadcastSyncEvent({
-      role: 'student',
-      event: 'sync',
-      data: { type: 'community.presence', action: 'online', userId: uid },
-    });
-  }
+  void touchStudentPresence(uid);
 }
 
 function unregisterStudentPresence(userId, clientId) {
   const uid = String(userId || '').trim();
   if (!uid) return;
   const set = studentPresenceClientIdsByUser.get(uid);
-  if (!set) return;
-  set.delete(clientId);
-  if (!set.size) {
-    studentPresenceClientIdsByUser.delete(uid);
-    studentPresenceMetaByUser.delete(uid);
-    CommunityProfileModel.updateOne({ userId: uid }, { $set: { lastSeenAt: new Date() } }).catch(() => {});
-    broadcastSyncEvent({
-      role: 'student',
-      event: 'sync',
-      data: { type: 'community.presence', action: 'offline', userId: uid },
-    });
+  if (set) {
+    set.delete(clientId);
+    if (!set.size) studentPresenceClientIdsByUser.delete(uid);
   }
+  setTimeout(() => {
+    void (async () => {
+      if (studentPresenceClientIdsByUser.get(uid)?.size) return;
+      // Other API instances may still hold a socket for this user (Redis adapter); if that
+      // lookup fails, leave it to the heartbeat TTL rather than guessing.
+      const remote = await countStudentSockets(uid);
+      if (remote !== 0) return;
+      await endStudentPresence(uid);
+    })();
+  }, STUDENT_PRESENCE_DISCONNECT_GRACE_MS).unref?.();
 }
 
-function touchStudentPresenceMeta(userId, patch) {
-  const uid = String(userId || '').trim();
-  if (!uid) return;
-  const prev = studentPresenceMetaByUser.get(uid) || { studyingSubject: '', away: false, lastPing: 0 };
-  if (patch.studyingSubject !== undefined) {
-    prev.studyingSubject = String(patch.studyingSubject || '').trim().slice(0, 80);
-  }
-  if (patch.away !== undefined) {
-    prev.away = Boolean(patch.away);
-  }
-  prev.lastPing = Date.now();
-  studentPresenceMetaByUser.set(uid, prev);
+function heartbeatStudentPresence(userId, { away = false, activity } = {}) {
+  void touchStudentPresence(userId, { away, activity });
 }
+
+const STUDENT_PRESENCE_SWEEP_MS = 15_000;
+setInterval(() => {
+  // SSE streams (older clients) are a live connection too: keep their record fresh.
+  const sseUserIds = new Set(Array.from(sseClients.student.values()).map((client) => String(client.userId || '')));
+  for (const uid of sseUserIds) {
+    if (uid) void touchStudentPresence(uid);
+  }
+  void sweepExpiredPresence()
+    .then((expired) => {
+      for (const uid of expired) {
+        studentLastSeenPersistedAt.delete(uid);
+        studentPresenceIdentityByUser.delete(uid);
+        emitStudentPresenceEvent('offline', uid);
+      }
+    })
+    .catch(() => {});
+}, STUDENT_PRESENCE_SWEEP_MS).unref();
 
 function broadcastCommunityEventsToUserIds(targetUserIds, data) {
   const idSet = new Set(targetUserIds.map((x) => String(x || '')));
@@ -852,8 +1114,11 @@ const expressCorsDisabled = String(process.env.DISABLE_EXPRESS_CORS || '').toLow
  */
 function parseCorsAllowedOriginsList() {
   const raw = String(process.env.CORS_ALLOWED_ORIGINS || process.env.NET360_CORS_ORIGINS || '').trim();
-  if (!raw) return null;
-  const list = raw.split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean);
+  const fromEnv = raw
+    ? raw.split(',').map((s) => s.trim().replace(/\/+$/, '')).filter(Boolean)
+    : [];
+  const hardcoded = allowedOrigins.map((s) => String(s || '').trim().replace(/\/+$/, '')).filter(Boolean);
+  const list = [...new Set([...fromEnv, ...hardcoded])];
   return list.length ? list : null;
 }
 
@@ -981,6 +1246,8 @@ const corsMiddleware = cors({
       'x-requested-with',
       'X-Net360-Auth-Transport-Preference',
       'x-net360-auth-transport-preference',
+      'x-net360-device-id',
+      'X-Net360-Device-Id',
     ],
   exposedHeaders: ['Content-Length', 'Content-Type', 'X-Net360-Auth-Transport', 'X-Net360-Auth-Cookies-Set'],
   maxAge: 86_400,
@@ -1061,7 +1328,9 @@ if (!IS_PRODUCTION || String(process.env.NET360_LOG_REQUESTS || '').trim() === '
     next();
   });
 }
-app.use(express.json({ limit: `${MAX_JSON_BODY_MB}mb` }));
+app.use(express.json({
+  limit: `${MAX_JSON_BODY_MB}mb`,
+}));
 app.use(express.urlencoded({ extended: false, limit: `${MAX_JSON_BODY_MB}mb` }));
 app.use((req, res, next) => {
   req.body = sanitizePayload(req.body);
@@ -1194,6 +1463,30 @@ app.use(
 );
 
 app.use(
+  '/api/auth/resend-verification',
+  rateLimit({
+    windowMs: 60 * 60 * 1000,
+    max: 8,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
+    message: { error: 'Too many verification email requests. Please try again later.' },
+  }),
+);
+
+app.use(
+  '/api/auth/verify-email',
+  rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: skipOptionsPreflightForRateLimit,
+    message: { error: 'Too many email verification attempts. Please try again later.' },
+  }),
+);
+
+app.use(
   '/api/auth/verify-delete-token',
   rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -1296,8 +1589,11 @@ const DEFAULT_NUST_IMPORTANT_NOTICES = [
 const nustUpdatesCache = {
   fetchedAt: 0,
   lastAttemptAt: 0,
+  lastSuccessAt: 0,
   refreshInFlight: false,
   lastError: '',
+  contentHash: '',
+  sessionLabel: '',
   dates: DEFAULT_NUST_IMPORTANT_DATES,
   notices: DEFAULT_NUST_IMPORTANT_NOTICES,
   updates: [],
@@ -1374,8 +1670,9 @@ const COMMUNITY_MESSAGE_SELECT = 'connectionId senderUserId messageType text att
 const COMMUNITY_ROOM_POST_SELECT = 'roomId authorUserId type title text subject upvotes answers flagged createdAt';
 const MCQ_SELECT = 'externalId contentFingerprint subject part chapter section topic question questionImageUrl questionImage options optionMedia answer tip explanationText explanationImage shortTrickText shortTrickImage difficulty source createdAt subject_id part_id chapter_id section_id topic_id question_text question_image_url option_a option_b option_c option_d correct_answer explanation level';
 const PRACTICE_BOARD_SELECT = 'subject difficulty questionText questionFile questionImageUrl solutionText solutionFile solutionImageUrl source createdAt';
+const PRACTICE_BOARD_CLIENT_SELECT = 'subject difficulty questionText solutionText questionImageUrl solutionImageUrl source createdAt questionFile.name questionFile.mimeType questionFile.size solutionFile.name solutionFile.mimeType solutionFile.size';
 
-const CHAT_ATTACHMENT_MAX_FILE_BYTES = 8 * 1024 * 1024;
+const CHAT_ATTACHMENT_MAX_FILE_BYTES = COMMUNITY_FILE_MAX_BYTES;
 const CHAT_ATTACHMENT_ALLOWED_MIME_TYPES = new Set([
   'application/pdf',
   'application/msword',
@@ -1953,7 +2250,7 @@ function isAllowedChatAttachmentMime(mimeTypeRaw) {
   return CHAT_ATTACHMENT_ALLOWED_MIME_TYPES.has(mimeType);
 }
 
-function normalizeChatAttachment(input, { allowAudio = false } = {}) {
+function normalizeChatAttachment(input, { allowAudio = false, allowedMimeTypes = null, maxBytes = CHAT_ATTACHMENT_MAX_FILE_BYTES, requireSafeCommunityFile = false } = {}) {
   if (input == null) return null;
   if (typeof input !== 'object') return null;
 
@@ -1970,16 +2267,29 @@ function normalizeChatAttachment(input, { allowAudio = false } = {}) {
   }
 
   const mimeType = String(input.mimeType || parsed.mimeType || 'application/octet-stream').trim().toLowerCase();
-  if (!isAllowedChatAttachmentMime(mimeType)) {
+  const allowed = allowedMimeTypes instanceof Set ? allowedMimeTypes : null;
+  if (allowed) {
+    if (!allowed.has(mimeType)) {
+      throw new Error(`Unsupported file type for ${name}. Use PDF, JPG, JPEG, PNG, or WEBP.`);
+    }
+  } else if (!isAllowedChatAttachmentMime(mimeType)) {
     throw new Error(`Unsupported attachment type for ${name}.`);
   }
   if (!allowAudio && mimeType.startsWith('audio/')) {
     throw new Error('Audio attachments are only allowed for voice notes.');
   }
 
+  if (requireSafeCommunityFile) {
+    const kind = sniffCommunityFileKind(parsed.buffer);
+    if (kind === 'unsafe' || !communityFileMimeMatchesKind(mimeType, kind)) {
+      throw new Error(`Unsupported or unsafe file for ${name}. Use a real PDF or JPG/PNG/WEBP image.`);
+    }
+  }
+
   const size = Number(input.size || parsed.buffer.length || 0);
-  if (!size || size > CHAT_ATTACHMENT_MAX_FILE_BYTES) {
-    throw new Error(`File ${name} exceeds the ${Math.floor(CHAT_ATTACHMENT_MAX_FILE_BYTES / (1024 * 1024))}MB limit.`);
+  const limitBytes = Number(maxBytes || CHAT_ATTACHMENT_MAX_FILE_BYTES);
+  if (!size || size > limitBytes) {
+    throw new Error(`File ${name} exceeds the ${Math.floor(limitBytes / (1024 * 1024))}MB limit.`);
   }
 
   return {
@@ -2038,7 +2348,10 @@ function serializeCommunityMessage(item) {
 function serializeSupportMessage(item) {
   return {
     id: String(item._id),
+    messageId: String(item._id),
+    conversationId: String(item.userId),
     userId: String(item.userId),
+    senderId: String(item.senderUserId || (item.senderRole === 'user' ? item.userId : '') || ''),
     senderRole: String(item.senderRole || 'user'),
     messageType: String(item.messageType || 'text'),
     text: String(item.text || ''),
@@ -2052,7 +2365,75 @@ function serializeSupportMessage(item) {
       : null,
     reactions: serializeMessageReactions(item.reactions),
     createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+    // Additive read receipts (web "Seen" status); older clients ignore unknown fields.
+    readByUser: Boolean(item.readByUser),
+    readByAdmin: Boolean(item.readByAdmin),
   };
+}
+
+/**
+ * Read receipt: the other side opened the thread and the server marked messages read.
+ * `by: 'user'` -> admins update "Seen" on their replies; `by: 'admin'` -> the student does.
+ */
+function emitSupportReadReceipt(userId, by) {
+  const uid = String(userId || '');
+  if (!uid) return;
+  const data = { type: 'support.read', userId: uid, by, readAt: new Date().toISOString() };
+  try {
+    if (by === 'user') emitSocketSyncToAdmins(data);
+    else emitSocketSyncToStudentUser(uid, data);
+  } catch {
+    // non-fatal
+  }
+}
+
+/**
+ * Support-chat message as carried in realtime events. Identical to the REST shape except that
+ * file payloads (`attachment.dataUrl`, up to 8 MB base64) are omitted; receivers of a `file`
+ * message fetch the thread over REST to get the bytes.
+ */
+function serializeSupportMessageForEvent(item) {
+  const message = serializeSupportMessage(item);
+  if (message.attachment) {
+    message.attachment = { ...message.attachment, dataUrl: '' };
+  }
+  return message;
+}
+
+function sanitizeSupportClientMessageId(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw.length > 64 || !/^[A-Za-z0-9_-]+$/.test(raw)) return '';
+  return raw;
+}
+
+/**
+ * Realtime fan-out for support chat (Socket.IO only, additive to the REST contract).
+ * - the student's own sockets (`user:<id>` room) -> other tabs + sender reconciliation
+ * - every connected admin (`community-admins` room) -> live conversation list / open thread
+ * Deliberately NOT routed through the SSE `/api/stream` buckets: the admin SSE handler reloads
+ * the whole admin dataset on every `sync` event and the student stream triggers a foreground
+ * sync; neither is wanted per chat message.
+ * @param {'support.message'|'support.message.updated'} type
+ */
+function emitSupportChatEvent(type, message, { clientMessageId = '' } = {}) {
+  const conversationId = String(message.userId || '');
+  const data = {
+    type,
+    conversationId,
+    userId: conversationId,
+    messageId: String(message.id || ''),
+    senderId: String(message.senderUserId || message.userId || ''),
+    senderRole: String(message.senderRole || 'user'),
+    message,
+    ...(clientMessageId ? { clientMessageId } : {}),
+  };
+  try {
+    if (data.userId) emitSocketSyncToStudentUser(data.userId, data);
+    emitSocketSyncToAdmins(data);
+    console.log(`[support-chat] ${type} emitted id=${data.messageId} from=${data.senderRole} kind=${String(message.messageType || 'text')}`);
+  } catch (error) {
+    console.warn('[support-chat] realtime emit failed:', error?.message || error);
+  }
 }
 
 function normalizePlainText(value) {
@@ -3588,6 +3969,7 @@ async function verifyFirebaseUserToken(idToken) {
     uid: String(decoded.uid),
     email,
     authTimeMs,
+    signInProvider: String(decoded.firebase?.sign_in_provider || decoded.sign_in_provider || '').trim(),
   };
 }
 
@@ -3711,14 +4093,6 @@ function sanitizeHumanName(value, maxLen = 80) {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, maxLen);
-}
-
-function normalizeAuthProviderDetail(value) {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === 'google' || normalized === 'password' || normalized === 'firebase' || normalized === 'local') {
-    return normalized === 'firebase' ? 'password' : normalized;
-  }
-  return normalized || 'unknown';
 }
 
 function splitDisplayNameParts(displayName) {
@@ -3967,29 +4341,644 @@ function resolveNet360PublicWebBaseUrl() {
     }
   }
   if (IS_PRODUCTION) {
-    return 'https://net360preparation.com';
+    return 'https://www.net360preparation.com';
   }
   return 'http://localhost:5173';
 }
 
 async function ensureDeletionEmailDeliveryReady() {
-  if (!smtpRuntime.enabled || !smtpTransporter) {
-    return {
-      ok: false,
-      detail: 'Email delivery is temporarily unavailable.',
-    };
-  }
-  if (smtpRuntime.verified) {
+  if (RESEND_API_KEY) {
     return { ok: true, detail: '' };
   }
-  const verified = await verifySmtpTransport('delete-link');
-  if (!verified) {
+  if (!smtpRuntime.enabled || !smtpTransporter || !SMTP_FROM_EMAIL) {
     return {
       ok: false,
       detail: 'Email delivery is temporarily unavailable.',
     };
   }
+  if (!smtpRuntime.verified) {
+    void verifySmtpTransport('delete-link');
+  }
   return { ok: true, detail: '' };
+}
+
+async function postResendEmail({ from, to, subject, text, html }) {
+  const payload = {
+    from,
+    to: [to],
+    subject,
+    text,
+    html,
+  };
+  const response = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.text().catch(() => '');
+  resendRuntime.lastStatus = response.status;
+  resendRuntime.lastFrom = /resend\.dev/i.test(from) ? 'resend.dev' : 'custom';
+  resendRuntime.lastAt = new Date().toISOString();
+  if (!response.ok) {
+    let detail = String(body || '').slice(0, 180);
+    try {
+      const parsed = JSON.parse(body);
+      detail = String(parsed?.message || parsed?.name || detail);
+    } catch {
+      /* keep raw snippet */
+    }
+    const error = new Error(sanitizeResendError(new Error(`Resend ${response.status}: ${detail}`)));
+    resendRuntime.lastError = error.message;
+    throw error;
+  }
+  resendRuntime.lastError = '';
+}
+
+async function sendDeletionEmailViaResend({ to, subject, text, html }) {
+  const froms = await listResendFromCandidates();
+  let lastError = new Error('Resend from-address is not configured.');
+  for (let i = 0; i < froms.length; i += 1) {
+    try {
+      await postResendEmail({
+        from: froms[i],
+        to,
+        subject,
+        text,
+        html,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[resend] send failed from=${resendRuntime.lastFrom}: ${sanitizeResendError(error)}`);
+      if (i >= froms.length - 1) throw error;
+    }
+  }
+  throw lastError;
+}
+
+async function sendNotificationEmailViaResend({ to, subject, text, html }) {
+  const froms = await listResendFromCandidates();
+  let lastError = new Error('Resend from-address is not configured.');
+  for (let i = 0; i < froms.length; i += 1) {
+    try {
+      await postResendEmail({
+        from: froms[i],
+        to,
+        subject,
+        text,
+        html,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[resend] notify failed from=${resendRuntime.lastFrom}: ${sanitizeResendError(error)}`);
+      if (i >= froms.length - 1) throw error;
+    }
+  }
+  throw lastError;
+}
+
+function studentNotifyName(user) {
+  return [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() || 'a NET360 student';
+}
+
+function communityAppUrl() {
+  return `${resolveNet360PublicWebBaseUrl()}/community`;
+}
+
+function supportAdminAppUrl() {
+  return `${resolveNet360PublicWebBaseUrl()}/admin/support-chat`;
+}
+
+function escapeNotifyHtml(value) {
+  return escapeHtml(value);
+}
+
+async function dispatchNotificationEmail({ to, subject, text, html }) {
+  const dest = normalizeEmail(to);
+  if (!isValidEmail(dest) || !RESEND_API_KEY) return;
+  try {
+    await sendNotificationEmailViaResend({ to: dest, subject, text, html });
+  } catch (error) {
+    console.warn('[email] notification send failed:', sanitizeResendError(error));
+  }
+}
+
+function emailNotVerifiedBody(user) {
+  return {
+    error: 'Verify your email before signing in. Check your inbox for the NET360 verification link.',
+    code: 'EMAIL_NOT_VERIFIED',
+    email: user?.email || '',
+  };
+}
+
+async function sendStudentEmailVerification(user) {
+  const limit = evaluateVerificationSendLimit(user);
+  if (!limit.allowed) {
+    return { sent: false, reason: limit.reason, retryAfterSeconds: limit.retryAfterSeconds };
+  }
+  const rawToken = generateEmailVerifyRawToken();
+  applyVerificationTokenToUser(user, rawToken, hashToken);
+  await user.save();
+  const verifyUrl = `${resolveNet360PublicWebBaseUrl()}/verify-email?token=${encodeURIComponent(rawToken)}`;
+  const greeting = String(user.firstName || '').trim() || 'there';
+  const paragraphs = [
+    'Confirm this email address to finish creating your NET360 account. You cannot sign in until your email is verified.',
+    'This link expires in 24 hours and can be used only once.',
+  ];
+  const text = [
+    `Hi ${greeting},`,
+    '',
+    ...paragraphs,
+    '',
+    verifyUrl,
+    '',
+    'If you did not create a NET360 account, you can ignore this email.',
+    '',
+    '— NET360 Preparation',
+  ].join('\n');
+  const html = notificationShell({
+    title: 'Verify your email',
+    greeting: escapeNotifyHtml(greeting),
+    paragraphs: paragraphs.map((p) => escapeNotifyHtml(p)),
+    ctaLabel: 'Verify email',
+    ctaUrl: escapeNotifyHtml(verifyUrl),
+    footer: 'If you did not create a NET360 account, you can ignore this email.',
+  });
+  await dispatchNotificationEmail({
+    to: user.email,
+    subject: 'Verify your NET360 email address',
+    text,
+    html,
+  });
+  return { sent: true, reason: '', retryAfterSeconds: 0 };
+}
+
+async function loadUserForNotify(userId) {
+  if (!isValidObjectId(String(userId || ''))) return null;
+  return UserModel.findById(userId).select('firstName lastName email role requiresEmailVerification emailVerifiedAt authProvider authProviderDetail').lean();
+}
+
+async function queueCommunityNotice({ eventKey, toUser, subject, title, paragraphs, openUrl }) {
+  const dest = normalizeEmail(toUser?.email);
+  if (!dest || (toUser?.role || 'student') === 'admin') return;
+  if (accountNeedsEmailVerification(toUser)) return;
+  const claimed = await claimCommunityNotificationDelivery(eventKey, toUser._id, dest);
+  if (!claimed) return;
+  const greeting = String(toUser.firstName || '').trim() || 'there';
+  const destUrl = openUrl || communityAppUrl();
+  const footer = 'This is a notification only. You cannot accept, reject, or reply from email. Open NET360 to respond.';
+  const text = [
+    `Hi ${greeting},`,
+    '',
+    ...paragraphs,
+    '',
+    `Open NET360 to respond: ${destUrl}`,
+    '',
+    footer,
+    '',
+    '— NET360 Preparation',
+  ].join('\n');
+  const html = notificationShell({
+    title,
+    greeting: escapeNotifyHtml(greeting),
+    paragraphs: paragraphs.map((p) => escapeNotifyHtml(p)),
+    ctaLabel: 'Open NET360',
+    ctaUrl: escapeNotifyHtml(destUrl),
+    footer,
+  });
+  void dispatchNotificationEmail({ to: dest, subject, text, html });
+}
+
+async function notifyCommunityDirectMessage(fromUserId, toUserId, connectionId, messageId) {
+  if (String(fromUserId || '') === String(toUserId || '')) return;
+  if (!String(connectionId || '').trim()) return;
+  await markChatNotificationSpeaker(communityChatWindowKey(connectionId, fromUserId));
+  const windowClaim = await claimChatNotificationWindow(communityChatWindowKey(connectionId, toUserId));
+  if (!windowClaim.allowed) return;
+  const [fromUser, toUser] = await Promise.all([loadUserForNotify(fromUserId), loadUserForNotify(toUserId)]);
+  if (!toUser) return;
+  const who = studentNotifyName(fromUser);
+  await queueCommunityNotice({
+    eventKey: communityNotifyEvent.communityChatWindow(connectionId, toUserId, windowClaim.notifiedAtMs),
+    toUser,
+    subject: 'NET360: new Community message',
+    title: 'New Community message',
+    paragraphs: [
+      `${who} sent you a new Community message.`,
+      'Open NET360 to view and reply. Email replies are ignored.',
+    ],
+  });
+}
+
+async function notifyCommunityConnectionRequested(fromUserId, toUserId, requestId) {
+  const [fromUser, toUser] = await Promise.all([loadUserForNotify(fromUserId), loadUserForNotify(toUserId)]);
+  if (!toUser) return;
+  const who = studentNotifyName(fromUser);
+  await queueCommunityNotice({
+    eventKey: communityNotifyEvent.connectionRequest(requestId),
+    toUser,
+    subject: 'NET360: new Community connection request',
+    title: 'Community connection request',
+    paragraphs: [
+      `${who} sent you a connection request on NET360 Community.`,
+      'Open NET360 → Community to accept or reject this request. Email replies are ignored.',
+    ],
+  });
+}
+
+async function notifyCommunityConnectionResponded(fromUserId, toUserId, status, requestId) {
+  const [fromUser, toUser] = await Promise.all([loadUserForNotify(fromUserId), loadUserForNotify(toUserId)]);
+  if (!fromUser) return;
+  const who = studentNotifyName(toUser);
+  const accepted = String(status) === 'accepted';
+  await queueCommunityNotice({
+    eventKey: communityNotifyEvent.connectionResponse(requestId, accepted ? 'accepted' : 'rejected'),
+    toUser: fromUser,
+    subject: accepted ? 'NET360: your Community request was accepted' : 'NET360: your Community request was declined',
+    title: accepted ? 'Connection request accepted' : 'Connection request declined',
+    paragraphs: [
+      accepted
+        ? `${who} accepted your Community connection request.`
+        : `${who} declined your Community connection request.`,
+      'Open NET360 → Community to continue. Email replies are ignored.',
+    ],
+  });
+}
+
+async function notifyQuizChallengeCreated(challengerUserId, opponentUserId, challengeId) {
+  const [challenger, opponent] = await Promise.all([loadUserForNotify(challengerUserId), loadUserForNotify(opponentUserId)]);
+  if (!opponent) return;
+  const who = studentNotifyName(challenger);
+  await queueCommunityNotice({
+    eventKey: communityNotifyEvent.quizInvite(challengeId),
+    toUser: opponent,
+    subject: 'NET360: new Quiz Battle request',
+    title: 'Quiz Battle request',
+    paragraphs: [
+      `${who} challenged you to a Quiz Battle.`,
+      'Open NET360 → Community → Quiz Battles to accept or decline. Email replies are ignored.',
+    ],
+  });
+}
+
+function notifyBadgeUnlocked(toUser, badge) {
+  if (!toUser || !badge) return;
+  void queueCommunityNotice({
+    eventKey: communityNotifyEvent.badgeUnlock(badge.id),
+    toUser,
+    subject: `NET360: you unlocked ${badge.label}`,
+    title: 'Achievement unlocked',
+    paragraphs: [
+      `Congratulations! You unlocked the ${badge.label} badge.`,
+      badge.description || 'This achievement is now part of your NET360 Community profile.',
+      'Open NET360 → Community → Leaderboard to view your badge and download your certificate. Email replies are ignored.',
+    ],
+  });
+}
+
+async function loadBrandLogoBuffer() {
+  const logoUrl = String(process.env.PUBLIC_BRAND_LOGO_URL || '').trim();
+  if (logoUrl && typeof fetch === 'function') {
+    try {
+      const logoResponse = await fetch(logoUrl);
+      if (logoResponse.ok) {
+        return Buffer.from(await logoResponse.arrayBuffer());
+      }
+    } catch {
+      // fall through to local file
+    }
+  }
+  try {
+    return Buffer.from(await fs.readFile(path.join(process.cwd(), 'public', 'net360-logo.png')));
+  } catch {
+    return null;
+  }
+}
+
+async function loadCommunityAchievementContext(userId) {
+  const me = await UserModel.findById(userId).lean();
+  if (!me) return null;
+
+  const attempts = await AttemptModel.find({ userId }).sort({ attemptedAt: -1 }).limit(300).lean();
+  const physicsAttempts = attempts.filter((item) => String(item.subject || '').toLowerCase() === 'physics');
+  const physicsAverage = physicsAttempts.length
+    ? physicsAttempts.reduce((sum, item) => sum + Number(item.score || 0), 0) / physicsAttempts.length
+    : 0;
+
+  const { start } = getPeriodBounds('weekly');
+  const rows = await AttemptModel.find({ attemptedAt: { $gte: start } }).lean();
+  const scoreMap = new Map();
+  for (const row of rows) {
+    const key = String(row.userId);
+    const bucket = scoreMap.get(key) || { scoreSum: 0, tests: 0 };
+    bucket.scoreSum += Number(row.score || 0);
+    bucket.tests += 1;
+    scoreMap.set(key, bucket);
+  }
+  const weeklyBoard = Array.from(scoreMap.entries())
+    .map(([id, bucket]) => ({ userId: id, score: bucket.tests ? bucket.scoreSum / bucket.tests : 0 }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10);
+  const top10Ids = new Set(weeklyBoard.map((item) => String(item.userId)));
+
+  const streak = longestRecentStreak(attempts.map((item) => item.attemptedAt));
+  const solved = Number(me.progress?.questionsSolved || 0);
+  const avg = Number(me.progress?.averageScore || 0);
+
+  const myAnswers = await CommunityRoomPostModel.aggregate([
+    { $unwind: '$answers' },
+    { $match: { 'answers.authorUserId': me._id } },
+    { $group: { _id: null, totalUpvotes: { $sum: '$answers.upvotes' }, answersCount: { $sum: 1 } } },
+  ]);
+  const answerStats = myAnswers[0] || { totalUpvotes: 0, answersCount: 0 };
+
+  const badges = buildCommunityAchievementBadges({
+    userId: me._id,
+    solved,
+    avg,
+    physicsAttemptsCount: physicsAttempts.length,
+    physicsAverage,
+    streak,
+    top10Ids,
+    contributorUpvotes: Number(answerStats.totalUpvotes || 0),
+  });
+
+  return {
+    me,
+    badges,
+    stats: {
+      solved,
+      averageScore: Number(avg.toFixed(1)),
+      streak,
+      contributorUpvotes: Number(answerStats.totalUpvotes || 0),
+      contributorAnswers: Number(answerStats.answersCount || 0),
+    },
+  };
+}
+
+async function syncAchievementNoticesAndNotify(user, badges) {
+  const profile = await getOrCreateCommunityProfile(user);
+  const earnedBadgeIds = badges.filter((badge) => badge.earned).map((badge) => badge.id);
+  const synced = applyAchievementNotices({
+    notices: profile.achievementNotices,
+    trackingStartedAt: profile.achievementTrackingStartedAt,
+    earnedBadgeIds,
+    now: new Date(),
+  });
+  if (synced.changed) {
+    profile.achievementNotices = synced.notices;
+    profile.achievementTrackingStartedAt = synced.trackingStartedAt;
+    await profile.save();
+  }
+  if (synced.newlyUnlocked.length) {
+    const notifyUser = await loadUserForNotify(user._id);
+    for (const badgeId of synced.newlyUnlocked) {
+      const badge = badges.find((item) => item.id === badgeId) || catalogEntry(badgeId);
+      notifyBadgeUnlocked(notifyUser, badge);
+    }
+  }
+  return synced.notices;
+}
+
+async function notifyQuizChallengeResponded(challengerUserId, opponentUserId, action, challengeId) {
+  const [challenger, opponent] = await Promise.all([loadUserForNotify(challengerUserId), loadUserForNotify(opponentUserId)]);
+  if (!challenger) return;
+  const who = studentNotifyName(opponent);
+  const accepted = String(action) === 'accept';
+  await queueCommunityNotice({
+    eventKey: communityNotifyEvent.quizResponse(challengeId, accepted ? 'accept' : 'decline'),
+    toUser: challenger,
+    subject: accepted ? 'NET360: your Quiz Battle was accepted' : 'NET360: your Quiz Battle was declined',
+    title: accepted ? 'Quiz Battle accepted' : 'Quiz Battle declined',
+    paragraphs: [
+      accepted
+        ? `${who} accepted your Quiz Battle.`
+        : `${who} declined your Quiz Battle.`,
+      'Open NET360 → Community → Quiz Battles to continue. Email replies are ignored.',
+    ],
+  });
+}
+
+async function notifyQuizChallengeCompleted(challenge) {
+  if (!challenge?._id) return;
+  const [challenger, opponent] = await Promise.all([
+    loadUserForNotify(challenge.challengerUserId),
+    loadUserForNotify(challenge.opponentUserId),
+  ]);
+  const winnerId = challenge.winnerUserId ? String(challenge.winnerUserId) : '';
+  const winner = winnerId && winnerId === String(challenge.challengerUserId)
+    ? challenger
+    : winnerId && winnerId === String(challenge.opponentUserId)
+      ? opponent
+      : null;
+  const resultLine = winner
+    ? `${studentNotifyName(winner)} won this Quiz Battle.`
+    : 'This Quiz Battle ended in a draw.';
+  const eventKey = communityNotifyEvent.quizResult(challenge._id);
+  for (const toUser of [challenger, opponent]) {
+    if (!toUser) continue;
+    await queueCommunityNotice({
+      eventKey,
+      toUser,
+      subject: 'NET360: Quiz Battle result',
+      title: 'Quiz Battle result',
+      paragraphs: [
+        resultLine,
+        'Open NET360 → Community → Quiz Battles to view the full result. Email replies are ignored.',
+      ],
+    });
+  }
+}
+
+const communityNotifyBackfillAt = new Map();
+const COMMUNITY_NOTIFY_USER_BACKFILL_COOLDOWN_MS = 10 * 60 * 1000;
+
+async function backfillCommunityNotificationsForUser(userId) {
+  const id = String(userId || '').trim();
+  if (!isValidObjectId(id)) return;
+
+  const incomingPending = await CommunityConnectionRequestModel.find({
+    toUserId: id,
+    status: 'pending',
+  }).select('_id fromUserId toUserId status').lean();
+  for (const request of incomingPending) {
+    await notifyCommunityConnectionRequested(request.fromUserId, request.toUserId, request._id);
+  }
+
+  const handledRequests = await CommunityConnectionRequestModel.find({
+    fromUserId: id,
+    status: { $in: ['accepted', 'rejected'] },
+  }).select('_id fromUserId toUserId status updatedAt createdAt').lean();
+  for (const request of handledRequests) {
+    if (!isRecentCommunityEvent(request.updatedAt || request.createdAt)) continue;
+    await notifyCommunityConnectionResponded(request.fromUserId, request.toUserId, request.status, request._id);
+  }
+
+  const pendingQuizzes = await CommunityQuizChallengeModel.find({
+    opponentUserId: id,
+    status: 'pending',
+  }).select('_id challengerUserId opponentUserId status').lean();
+  for (const challenge of pendingQuizzes) {
+    await notifyQuizChallengeCreated(challenge.challengerUserId, challenge.opponentUserId, challenge._id);
+  }
+
+  const declinedQuizzes = await CommunityQuizChallengeModel.find({
+    challengerUserId: id,
+    status: 'declined',
+  }).select('_id challengerUserId opponentUserId status updatedAt endedAt createdAt').lean();
+  for (const challenge of declinedQuizzes) {
+    if (!isRecentCommunityEvent(challenge.endedAt || challenge.updatedAt || challenge.createdAt)) continue;
+    await notifyQuizChallengeResponded(challenge.challengerUserId, challenge.opponentUserId, 'decline', challenge._id);
+  }
+
+  const acceptedQuizzes = await CommunityQuizChallengeModel.find({
+    challengerUserId: id,
+    status: { $in: ['accepted', 'in_progress', 'completed'] },
+  }).select('_id challengerUserId opponentUserId status acceptedAt updatedAt createdAt').lean();
+  for (const challenge of acceptedQuizzes) {
+    if (!isRecentCommunityEvent(challenge.acceptedAt || challenge.updatedAt || challenge.createdAt)) continue;
+    await notifyQuizChallengeResponded(challenge.challengerUserId, challenge.opponentUserId, 'accept', challenge._id);
+  }
+
+  const completedQuizzes = await CommunityQuizChallengeModel.find({
+    $or: [{ challengerUserId: id }, { opponentUserId: id }],
+    status: 'completed',
+  }).select('_id challengerUserId opponentUserId winnerUserId status endedAt updatedAt createdAt').lean();
+  for (const challenge of completedQuizzes) {
+    if (!isRecentCommunityEvent(challenge.endedAt || challenge.updatedAt || challenge.createdAt)) continue;
+    await notifyQuizChallengeCompleted(challenge);
+  }
+}
+
+function scheduleCommunityNotificationBackfillForUser(userId) {
+  const id = String(userId || '').trim();
+  if (!id) return;
+  const last = Number(communityNotifyBackfillAt.get(id) || 0);
+  if (Date.now() - last < COMMUNITY_NOTIFY_USER_BACKFILL_COOLDOWN_MS) return;
+  communityNotifyBackfillAt.set(id, Date.now());
+  void backfillCommunityNotificationsForUser(id).catch((error) => {
+    console.warn('[community-notify] user backfill failed:', error?.message || error);
+  });
+}
+
+async function backfillCommunityNotificationsGlobal() {
+  const userIds = new Set();
+  const pendingRequests = await CommunityConnectionRequestModel.find({ status: 'pending' }).select('toUserId').lean();
+  for (const item of pendingRequests) userIds.add(String(item.toUserId));
+
+  const recentHandled = await CommunityConnectionRequestModel.find({
+    status: { $in: ['accepted', 'rejected'] },
+    updatedAt: { $gte: new Date(Date.now() - COMMUNITY_NOTIFY_LOOKBACK_MS) },
+  }).select('fromUserId').lean();
+  for (const item of recentHandled) userIds.add(String(item.fromUserId));
+
+  const pendingQuizzes = await CommunityQuizChallengeModel.find({ status: 'pending' }).select('opponentUserId').lean();
+  for (const item of pendingQuizzes) userIds.add(String(item.opponentUserId));
+
+  const recentQuizzes = await CommunityQuizChallengeModel.find({
+    status: { $in: ['accepted', 'declined', 'in_progress', 'completed'] },
+    updatedAt: { $gte: new Date(Date.now() - COMMUNITY_NOTIFY_LOOKBACK_MS) },
+  }).select('challengerUserId opponentUserId').lean();
+  for (const item of recentQuizzes) {
+    userIds.add(String(item.challengerUserId));
+    userIds.add(String(item.opponentUserId));
+  }
+
+  const ids = Array.from(userIds).filter((value) => isValidObjectId(value));
+  for (let i = 0; i < ids.length; i += 1) {
+    await backfillCommunityNotificationsForUser(ids[i]);
+    if (i > 0 && i % 20 === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  }
+  console.log(`[community-notify] backfill scanned ${ids.length} user(s)`);
+}
+
+async function listAdminNotificationEmails() {
+  const emails = new Set();
+  const add = (value) => {
+    const email = normalizeEmail(value);
+    if (email && isValidEmail(email)) emails.add(email);
+  };
+  add(ENV_ADMIN_LOGIN_EMAIL_RAW);
+  add(BOOTSTRAP_ADMIN_EMAIL_RAW);
+  add(NET360_SUPPORT_EMAIL);
+  add('shanu1998end@gmail.com');
+  try {
+    const admins = await UserModel.find({ role: 'admin' }).select('email').lean();
+    for (const admin of admins) add(admin.email);
+  } catch {
+    // still notify env-configured addresses
+  }
+  return Array.from(emails);
+}
+
+async function notifyAdminsOfSupportMessage(user, message) {
+  const messageId = String(message?.id || message?._id || '').trim();
+  const studentId = String(user?._id || user?.id || '').trim();
+  const preview = String(message?.text || (message?.messageType === 'file' ? message?.attachment?.name || 'Shared a file' : '')).trim().slice(0, 240);
+  const who = studentNotifyName(user);
+  const openUrl = supportAdminAppUrl();
+  const emails = await listAdminNotificationEmails();
+  if (!emails.length || !messageId || !studentId) return;
+  await markChatNotificationSpeaker(supportChatWindowKey(studentId, 'user'));
+  const windowClaim = await claimChatNotificationWindow(supportChatWindowKey(studentId, 'admin'));
+  if (!windowClaim.allowed) return;
+  const eventKey = communityNotifyEvent.supportUserWindow(studentId, windowClaim.notifiedAtMs);
+  const subject = `[NET360 Support] ${who}: ${preview || 'New message'}`;
+  const footer = 'This is a notification only. Reply from the NET360 Admin Support Chat panel. Do not reply to this email.';
+  const text = [
+    `${who} sent a Support Chat message.`,
+    '',
+    preview || '(file attachment)',
+    '',
+    `Open Admin Support Chat to reply: ${openUrl}`,
+    '',
+    footer,
+    '',
+    '— NET360 Preparation',
+  ].join('\n');
+  const html = notificationShell({
+    title: 'New Support Chat message',
+    greeting: 'Admin',
+    paragraphs: [
+      escapeNotifyHtml(`${who} sent a Support Chat message.`),
+      escapeNotifyHtml(preview || '(file attachment)'),
+    ],
+    ctaLabel: 'Open Admin Support Chat',
+    ctaUrl: escapeNotifyHtml(openUrl),
+    footer,
+  });
+  for (const to of emails) {
+    const claimed = await claimCommunityNotificationDelivery(eventKey, `admin:${to}`, to);
+    if (!claimed) continue;
+    void dispatchNotificationEmail({ to, subject, text, html });
+  }
+}
+
+async function notifyUserOfSupportAdminReply(userId, messageId) {
+  const studentId = String(userId || '').trim();
+  if (!studentId) return;
+  await markChatNotificationSpeaker(supportChatWindowKey(studentId, 'admin'));
+  const windowClaim = await claimChatNotificationWindow(supportChatWindowKey(studentId, 'user'));
+  if (!windowClaim.allowed) return;
+  const toUser = await loadUserForNotify(userId);
+  if (!toUser) return;
+  await queueCommunityNotice({
+    eventKey: communityNotifyEvent.supportAdminWindow(studentId, windowClaim.notifiedAtMs),
+    toUser,
+    subject: 'NET360: Admin replied to your Support Chat',
+    title: 'Admin replied to your Support Chat',
+    paragraphs: [
+      'Admin has replied to your Support Chat.',
+      'Open NET360 to view and reply. You cannot reply or take action from this email.',
+    ],
+    openUrl: resolveNet360PublicWebBaseUrl(),
+  });
 }
 
 function buildAccountDeletionSessionFingerprint(req, user) {
@@ -3998,16 +4987,6 @@ function buildAccountDeletionSessionFingerprint(req, user) {
   const ua = getUserAgent(req);
   const combined = `session:${sid}|device:${did}|ua:${ua}`;
   return crypto.createHash('sha256').update(combined, 'utf8').digest('hex').slice(0, 48);
-}
-
-function isGoogleManagedAuthProvider(authProvider, firebaseUid) {
-  const p = String(authProvider || 'local').trim().toLowerCase();
-  return p === 'firebase' || p === 'google' || Boolean(String(firebaseUid || '').trim());
-}
-
-function isPasswordManagedAuthProvider(authProvider) {
-  const p = String(authProvider || 'local').trim().toLowerCase();
-  return p === 'local' || p === 'password';
 }
 
 function resolveTrialIdentitySignals(req, user) {
@@ -4027,11 +5006,14 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
     return { status: 'failed', detail: 'Invalid destination email.' };
   }
   const readiness = await ensureDeletionEmailDeliveryReady();
-  if (!readiness.ok || !smtpTransporter || !SMTP_FROM_EMAIL) {
+  if (!readiness.ok) {
     return { status: 'failed', detail: readiness.detail || 'Email delivery is temporarily unavailable.' };
   }
   const greetingName = String(firstName || '').trim() || 'NET360 student';
-  const expiryLabel = expiresAt.toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  const expiryDate = expiresAt instanceof Date ? expiresAt : new Date(expiresAt);
+  const expiryLabel = Number.isFinite(expiryDate.getTime())
+    ? expiryDate.toISOString().replace('T', ' ').slice(0, 16) + ' UTC'
+    : '15 minutes from send';
   const subject = 'Confirm NET360 account deletion';
   const text = [
     `Hi ${greetingName},`,
@@ -4085,16 +5067,32 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
 </body></html>`;
 
   try {
-    await smtpTransporter.sendMail({
+    if (RESEND_API_KEY) {
+      await sendDeletionEmailViaResend({
+        to: toEmail,
+        subject,
+        text,
+        html,
+      });
+      console.log('[email] deletion link sent via Resend');
+      return { status: 'sent', detail: 'Deletion email sent.' };
+    }
+  } catch (resendError) {
+    console.warn('[email] Resend deletion send failed:', sanitizeResendError(resendError));
+  }
+
+  try {
+    await sendSmtpMail({
       from: SMTP_FROM_EMAIL,
       to: toEmail,
       subject,
       text,
       html,
     });
+    console.log('[email] deletion link sent via SMTP');
     return { status: 'sent', detail: 'Deletion email sent.' };
   } catch (error) {
-    return { status: 'failed', detail: error instanceof Error ? error.message : 'Email provider error.' };
+    return { status: 'failed', detail: sanitizeResendError(error) || sanitizeSmtpError(error) };
   }
 }
 
@@ -4242,7 +5240,7 @@ async function executePermanentStudentAccountDeletion(req, res, user) {
     }
   }
 
-  clearAuthCookies(res);
+  clearAuthCookies(res, req);
 
   await logSecurityEvent(req, {
     eventType: 'auth.delete_account_success',
@@ -5722,7 +6720,11 @@ function userPublic(user) {
     hsscPercentage: user.hsscPercentage || '',
     testDate: user.testDate || '',
     role: user.role || 'student',
+    emailVerified: Boolean(user.emailVerifiedAt) || user.requiresEmailVerification !== true,
+    requiresEmailVerification: user.requiresEmailVerification === true,
     authProvider: String(user.authProvider || 'local'),
+    authProviderDetail: normalizeAuthProviderDetail(user.authProviderDetail),
+    deletionChannel: classifyStudentDeletionChannelSync(user),
     preferences: { ...defaultPreferences(), ...(user.preferences || {}) },
     progress,
     subscription: {
@@ -5757,11 +6759,17 @@ function serializeSession(session) {
   };
 }
 
+function serializeIsoDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
 function serializeAttempt(attempt) {
   return {
     id: String(attempt._id),
-    sessionId: String(attempt.sessionId),
-    userId: String(attempt.userId),
+    sessionId: String(attempt.sessionId || ''),
+    userId: String(attempt.userId || ''),
     subject: attempt.subject,
     topic: attempt.topic,
     difficulty: attempt.difficulty,
@@ -5773,8 +6781,8 @@ function serializeAttempt(attempt) {
     unanswered: attempt.unanswered,
     submittedAnswers: attempt.submittedAnswers,
     durationMinutes: attempt.durationMinutes,
-    attemptedAt: new Date(attempt.attemptedAt).toISOString(),
-    submittedAt: new Date(attempt.submittedAt).toISOString(),
+    attemptedAt: serializeIsoDate(attempt.attemptedAt),
+    submittedAt: serializeIsoDate(attempt.submittedAt),
     metadata: attempt.metadata || {},
   };
 }
@@ -6075,50 +7083,144 @@ function serializeMcq(item) {
   };
 }
 
-function serializePracticeBoardQuestion(item) {
-  const legacyQuestionUrl = String(item.questionImageUrl || '').trim();
-  const legacySolutionUrl = String(item.solutionImageUrl || '').trim();
-  const normalizedQuestionFile = item.questionFile
-    ? {
-      name: String(item.questionFile.name || '').trim(),
-      mimeType: String(item.questionFile.mimeType || '').trim().toLowerCase(),
-      size: Number(item.questionFile.size || 0),
-      dataUrl: String(item.questionFile.dataUrl || '').trim(),
-    }
-    : (legacyQuestionUrl
-      ? {
-        name: 'question-image',
-        mimeType: 'image/*',
-        size: 0,
-        dataUrl: legacyQuestionUrl,
-      }
-      : null);
+function practiceBoardFilePayload(questionId, kind, file, legacyUrl, embedFiles) {
+  const nested = file && typeof file === 'object' ? file : null;
+  const nestedDataUrl = String(nested?.dataUrl || '').trim();
+  const fallbackUrl = String(legacyUrl || '').trim();
+  const hasStoredFile = Boolean(nested && (nested.name || nestedDataUrl || nested.mimeType));
+  if (!hasStoredFile && !fallbackUrl) return null;
 
-  const normalizedSolutionFile = item.solutionFile
-    ? {
-      name: String(item.solutionFile.name || '').trim(),
-      mimeType: String(item.solutionFile.mimeType || '').trim().toLowerCase(),
-      size: Number(item.solutionFile.size || 0),
-      dataUrl: String(item.solutionFile.dataUrl || '').trim(),
-    }
-    : (legacySolutionUrl
-      ? {
-        name: 'solution-image',
-        mimeType: 'image/*',
-        size: 0,
-        dataUrl: legacySolutionUrl,
-      }
-      : null);
+  const name = String(nested?.name || `${kind}-image`).trim() || `${kind}-image`;
+  let mimeType = String(nested?.mimeType || '').trim().toLowerCase();
+  if (!mimeType || mimeType === 'image/*') {
+    mimeType = fallbackUrl.startsWith('data:') ? 'application/octet-stream' : 'image/jpeg';
+  }
+  const size = Number(nested?.size || 0);
+  if (embedFiles) {
+    return {
+      name,
+      mimeType,
+      size,
+      dataUrl: nestedDataUrl || fallbackUrl,
+    };
+  }
+
+  if (fallbackUrl && !nestedDataUrl && (/^https?:\/\//i.test(fallbackUrl) || fallbackUrl.startsWith('data:'))) {
+    return {
+      name,
+      mimeType: mimeType === 'application/octet-stream' ? 'image/jpeg' : mimeType,
+      size,
+      dataUrl: fallbackUrl,
+    };
+  }
 
   return {
-    id: String(item._id),
+    name,
+    mimeType,
+    size,
+    dataUrl: `/api/practice-board/questions/${questionId}/files/${kind}`,
+  };
+}
+
+function parsePracticeBoardExcludeIds(query = {}) {
+  const raw = [];
+  const add = (value) => {
+    if (Array.isArray(value)) {
+      value.forEach(add);
+      return;
+    }
+    String(value || '')
+      .split(',')
+      .forEach((part) => {
+        const id = String(part || '').trim();
+        if (id) raw.push(id);
+      });
+  };
+  add(query.excludeId);
+  add(query.excludeIds);
+
+  const unique = [];
+  const seen = new Set();
+  for (const id of raw) {
+    if (!isValidObjectId(id) || seen.has(id)) continue;
+    seen.add(id);
+    unique.push(new mongoose.Types.ObjectId(id));
+    if (unique.length >= 200) break;
+  }
+  return unique;
+}
+
+function practiceBoardUsableQuestionMatch() {
+  return {
+    $or: [
+      { questionText: { $regex: /\S/ } },
+      { 'questionFile.dataUrl': { $exists: true, $nin: [null, ''] } },
+      { 'questionFile.name': { $exists: true, $nin: [null, ''] } },
+      { questionImageUrl: { $exists: true, $nin: [null, ''] } },
+    ],
+  };
+}
+
+async function pickRandomPracticeBoardQuestion(filter) {
+  const sampled = await PracticeBoardQuestionModel.aggregate([
+    { $match: filter },
+    { $sample: { size: 1 } },
+    { $project: { _id: 1 } },
+  ]);
+  const pickedId = sampled[0]?._id;
+  if (!pickedId) return null;
+  return PracticeBoardQuestionModel.findById(pickedId).select(PRACTICE_BOARD_CLIENT_SELECT).lean();
+}
+
+function serializePracticeBoardQuestion(item, options = {}) {
+  const embedFiles = options.embedFiles === true;
+  const questionId = String(item?._id || item?.id || '').trim();
+  return {
+    id: questionId,
     subject: String(item.subject || '').toLowerCase(),
     difficulty: String(item.difficulty || 'Medium'),
     questionText: String(item.questionText || '').trim(),
-    questionFile: normalizedQuestionFile,
+    questionFile: practiceBoardFilePayload(
+      questionId,
+      'question',
+      item.questionFile,
+      item.questionImageUrl,
+      embedFiles,
+    ),
     solutionText: String(item.solutionText || '').trim(),
-    solutionFile: normalizedSolutionFile,
+    solutionFile: practiceBoardFilePayload(
+      questionId,
+      'solution',
+      item.solutionFile,
+      item.solutionImageUrl,
+      embedFiles,
+    ),
   };
+}
+
+function sendPracticeBoardStoredFile(res, file, legacyUrl, downloadName) {
+  const nestedDataUrl = String(file?.dataUrl || '').trim();
+  const fallbackUrl = String(legacyUrl || '').trim();
+  const raw = nestedDataUrl || fallbackUrl;
+  if (!raw) {
+    res.status(404).json({ error: 'Practice board file not found.' });
+    return;
+  }
+  if (/^https?:\/\//i.test(raw)) {
+    res.redirect(302, raw);
+    return;
+  }
+  const parsed = parseDataUrl(raw);
+  if (!parsed?.buffer) {
+    res.status(404).json({ error: 'Practice board file not found.' });
+    return;
+  }
+  const mimeType = String(file?.mimeType || parsed.mimeType || 'application/octet-stream').trim() || 'application/octet-stream';
+  const safeName = String(file?.name || downloadName || 'practice-file').replace(/[\r\n"]/g, '');
+  res.setHeader('Content-Type', mimeType);
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
+  res.send(parsed.buffer);
 }
 
 function makeCommunityUsername(user) {
@@ -7017,19 +8119,138 @@ function parseNustNotices(html) {
 }
 
 function parseNustAdmissionsFeed(html) {
-  const dates = parseNustImportantDates(html);
-  const notices = filterNustNotices(parseNustNotices(html));
-
+  const extracted = extractNustAdmissionsFromHtml(html);
   return {
-    dates: dates.length ? dates : DEFAULT_NUST_IMPORTANT_DATES,
-    notices: notices.length ? notices : DEFAULT_NUST_IMPORTANT_NOTICES,
+    dates: extracted.dates,
+    notices: filterNustNotices(extracted.notices),
+    extras: extracted.extras || {},
   };
+}
+
+function applyNustSnapshotToCache(snapshot) {
+  if (!snapshot) return;
+  const dates = Array.isArray(snapshot.dates) ? snapshot.dates : [];
+  const notices = filterNustNotices(snapshot.notices);
+  if (dates.length) nustUpdatesCache.dates = dates;
+  if (notices.length) {
+    nustUpdatesCache.notices = notices;
+    nustUpdatesCache.updates = notices.map((item) => ({ title: item.title, subtitle: item.subtitle }));
+  }
+  nustUpdatesCache.contentHash = String(snapshot.contentHash || '');
+  nustUpdatesCache.sessionLabel = String(snapshot.sessionLabel || '');
+  nustUpdatesCache.lastError = String(snapshot.lastError || '');
+  if (snapshot.lastSuccessAt) {
+    const successAt = new Date(snapshot.lastSuccessAt).getTime();
+    if (Number.isFinite(successAt)) {
+      nustUpdatesCache.lastSuccessAt = successAt;
+      nustUpdatesCache.fetchedAt = successAt;
+    }
+  }
+}
+
+async function hydrateNustAdmissionsCacheFromMongo() {
+  try {
+    const snapshot = await NustAdmissionSnapshotModel.findOne({ key: 'latest' }).lean();
+    if (snapshot?.contentHash && Array.isArray(snapshot.dates) && snapshot.dates.length) {
+      applyNustSnapshotToCache(snapshot);
+    }
+  } catch (error) {
+    console.warn('[nust-cache] hydrate failed:', error?.message || error);
+  }
+}
+
+async function persistNustAdmissionSnapshot(fields) {
+  return NustAdmissionSnapshotModel.findOneAndUpdate(
+    { key: 'latest' },
+    { $set: { key: 'latest', ...fields } },
+    { upsert: true, new: true },
+  );
+}
+
+async function fetchOfficialNustPortalHtml() {
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const response = await fetch(NUST_UG_PORTAL_URL, {
+        signal: controller.signal,
+        redirect: 'follow',
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (compatible; NET360-AdmissionsMonitor/1.0; +https://net360preparation.com)',
+          Accept: 'text/html,application/xhtml+xml',
+        },
+      });
+      clearTimeout(timeout);
+      if (!response.ok) {
+        throw new Error(`NUST source returned status ${response.status}.`);
+      }
+      const html = await response.text();
+      if (!html || html.length < 400 || /just a moment|enable javascript and cookies/i.test(html)) {
+        throw new Error('NUST source returned an incomplete public page.');
+      }
+      return html;
+    } catch (error) {
+      lastError = error;
+      clearTimeout(timeout);
+      if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 1200));
+    }
+  }
+  throw lastError || new Error('NUST source fetch failed.');
+}
+
+async function notifyVerifiedStudentsOfNustAdmission({ contentHash, notices }) {
+  const eventKey = communityNotifyEvent.nustAdmission(contentHash);
+  const selection = (notices || []).some((item) => isSelectionListNotice(item));
+  const title = selection ? 'New NUST Selection List Available' : 'NUST admission update';
+  const subject = selection ? 'NET360: New NUST Selection List Available' : 'NET360: NUST admission information updated';
+  const paragraphs = selection
+    ? [
+      'A new public NUST selection/merit-list announcement is available.',
+      'Open NET360 or the official NUST Undergraduate Admission Portal to view the details.',
+      'NET360 cannot determine any individual selection status.',
+    ]
+    : [
+      'Official NUST undergraduate admission information has changed.',
+      'Open NET360 to review the latest dates and notices from the NUST portal.',
+    ];
+  const openUrl = `${resolveNet360PublicWebBaseUrl().replace(/\/$/, '')}/guide`;
+
+  const users = UserModel.find({
+    role: { $ne: 'admin' },
+    email: { $exists: true, $nin: [null, ''] },
+  }).select('firstName lastName email role requiresEmailVerification emailVerifiedAt authProvider').lean().cursor();
+
+  for await (const user of users) {
+    await queueCommunityNotice({
+      eventKey,
+      toUser: user,
+      subject,
+      title,
+      paragraphs,
+      openUrl,
+    });
+  }
+}
+
+function broadcastNustAdmissionsUpdate() {
+  const payload = {
+    type: 'nust.admissions.updated',
+    dates: nustUpdatesCache.dates,
+    notices: filterNustNotices(nustUpdatesCache.notices),
+    fetchedAt: nustUpdatesCache.lastSuccessAt
+      ? new Date(nustUpdatesCache.lastSuccessAt).toISOString()
+      : null,
+    sessionLabel: nustUpdatesCache.sessionLabel,
+    contentHash: nustUpdatesCache.contentHash,
+  };
+  emitSocketSyncToStudents(payload);
 }
 
 async function refreshNustAdmissionsCache({ force = false } = {}) {
   const now = Date.now();
-  const cacheAge = now - Number(nustUpdatesCache.fetchedAt || 0);
-  if (!force && nustUpdatesCache.fetchedAt > 0 && cacheAge < NUST_ADMISSIONS_REFRESH_MS) {
+  const cacheAge = now - Number(nustUpdatesCache.lastSuccessAt || nustUpdatesCache.fetchedAt || 0);
+  if (!force && nustUpdatesCache.lastSuccessAt > 0 && cacheAge < NUST_ADMISSIONS_REFRESH_MS) {
     return;
   }
   if (nustUpdatesCache.refreshInFlight) {
@@ -7039,33 +8260,66 @@ async function refreshNustAdmissionsCache({ force = false } = {}) {
   nustUpdatesCache.refreshInFlight = true;
   nustUpdatesCache.lastAttemptAt = now;
   try {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15_000);
-
-    const response = await fetch('https://ugadmissions.nust.edu.pk/', {
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'NET360-App/1.0 (NUST admissions parser)',
-        Accept: 'text/html,application/xhtml+xml',
-      },
-    });
-
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      throw new Error(`NUST source returned status ${response.status}.`);
+    if (!nustUpdatesCache.contentHash) {
+      await hydrateNustAdmissionsCacheFromMongo();
     }
 
-    const html = await response.text();
+    const html = await fetchOfficialNustPortalHtml();
     const parsed = parseNustAdmissionsFeed(html);
+    const previousDates = Array.isArray(nustUpdatesCache.dates) ? nustUpdatesCache.dates : [];
+    const previousNotices = filterNustNotices(nustUpdatesCache.notices);
+    const dates = parsed.dates.length ? parsed.dates : previousDates.filter((item) => !String(item.key || '').includes('default'));
+    const notices = parsed.notices.length ? parsed.notices : previousNotices;
+    if (!dates.length) {
+      throw new Error('NUST parser found no public series dates; keeping last valid data.');
+    }
 
-    nustUpdatesCache.fetchedAt = Date.now();
+    const extras = parsed.extras || {};
+    const contentHash = buildNustContentHash({ dates, notices, extras });
+    const previousHash = String(nustUpdatesCache.contentHash || '');
+    const changed = Boolean(contentHash && contentHash !== previousHash);
+    const successAt = new Date();
+
+    nustUpdatesCache.dates = dates;
+    nustUpdatesCache.notices = notices;
+    nustUpdatesCache.updates = notices.map((item) => ({ title: item.title, subtitle: item.subtitle }));
+    nustUpdatesCache.contentHash = contentHash;
+    nustUpdatesCache.sessionLabel = String(extras.sessionLabel || '');
+    nustUpdatesCache.fetchedAt = successAt.getTime();
+    nustUpdatesCache.lastSuccessAt = successAt.getTime();
     nustUpdatesCache.lastError = '';
-    nustUpdatesCache.dates = parsed.dates;
-    nustUpdatesCache.notices = parsed.notices;
-    nustUpdatesCache.updates = parsed.notices.map((item) => ({ title: item.title, subtitle: item.subtitle }));
+
+    await persistNustAdmissionSnapshot({
+      contentHash,
+      sourceUrl: NUST_UG_PORTAL_URL,
+      sessionLabel: nustUpdatesCache.sessionLabel,
+      dates,
+      notices,
+      extras,
+      lastSuccessAt: successAt,
+      lastAttemptAt: successAt,
+      lastError: '',
+    });
+
+    if (changed) {
+      broadcastNustAdmissionsUpdate();
+      if (previousHash) {
+        void notifyVerifiedStudentsOfNustAdmission({ contentHash, notices }).catch((error) => {
+          console.warn('[nust-cache] notify failed:', error?.message || error);
+        });
+      }
+    }
   } catch (error) {
     nustUpdatesCache.lastError = error instanceof Error ? error.message : 'Unknown refresh error';
+    console.warn('[nust-cache] refresh failed; keeping last valid data:', nustUpdatesCache.lastError);
+    try {
+      await persistNustAdmissionSnapshot({
+        lastAttemptAt: new Date(),
+        lastError: nustUpdatesCache.lastError,
+      });
+    } catch {
+      // keep serving last valid in-memory/Mongo snapshot
+    }
   } finally {
     nustUpdatesCache.refreshInFlight = false;
   }
@@ -7293,10 +8547,12 @@ async function issueAuthPayload(user, req) {
   user.refreshTokens = user.refreshTokens.slice(0, 5);
   await user.save();
 
+  const publicUser = userPublic(user);
+  publicUser.deletionChannel = await resolveStudentDeletionChannel(user, firebaseAdminAuth);
   return {
     token: accessToken,
     refreshToken,
-    user: userPublic(user),
+    user: publicUser,
   };
 }
 
@@ -7365,6 +8621,12 @@ async function authMiddleware(req, res, next) {
         severity: 'warning',
       });
       res.status(401).json({ error: 'User not found.' });
+      return;
+    }
+
+    if (accountNeedsEmailVerification(user)) {
+      clearAuthCookies(res, req);
+      res.status(403).json(emailNotVerifiedBody(user));
       return;
     }
 
@@ -7855,6 +9117,9 @@ async function refreshUserProgress(userId) {
 }
 
 app.get('/api/health', async (_req, res) => {
+  if (RESEND_API_KEY) {
+    await fetchResendDomains().catch(() => []);
+  }
   const build = getBuildInfo();
   const mongo = getMongoHealth();
   const memory = process.memoryUsage();
@@ -7886,12 +9151,36 @@ app.get('/api/health', async (_req, res) => {
       ADMIN_LOGIN_PASSWORD: Boolean(String(process.env.ADMIN_LOGIN_PASSWORD || process.env.ADMIN_PASSWORD || '').trim()),
       CORS_ALLOWED_ORIGINS: Boolean(String(process.env.CORS_ALLOWED_ORIGINS || process.env.NET360_CORS_ORIGINS || '').trim()),
       ISSUE_AUTH_BODY_TOKENS: String(process.env.ISSUE_AUTH_BODY_TOKENS ?? '(unset → default true)'),
+      AUTH_COOKIE_DOMAIN: Boolean(String(process.env.AUTH_COOKIE_DOMAIN || '').trim()),
+      SMTP_HOST: Boolean(SMTP_HOST),
+      SMTP_USER: Boolean(SMTP_USER),
+      SMTP_PASS: Boolean(SMTP_PASS),
+      SMTP_FROM_EMAIL: Boolean(SMTP_FROM_EMAIL),
+      RESEND_API_KEY: Boolean(RESEND_API_KEY),
+      RESEND_FROM_EMAIL: Boolean(RESEND_FROM_EMAIL),
+      NET360_PUBLIC_APP_URL: Boolean(NET360_PUBLIC_APP_URL),
+      REDIS_URL: Boolean(String(process.env.REDIS_URL || '').trim()),
+      REDIS_HOST: Boolean(String(process.env.REDIS_HOST || '').trim()),
       RAILWAY_ENVIRONMENT_NAME: String(process.env.RAILWAY_ENVIRONMENT_NAME || '').trim() || '(unset)',
       RAILWAY_SERVICE_NAME: String(process.env.RAILWAY_SERVICE_NAME || '').trim() || '(unset)',
+    },
+    smtp: {
+      configured: smtpRuntime.enabled,
+      verified: smtpRuntime.verified,
+      missingEnv: smtpMissingEnv,
+      publicAppUrlConfigured: Boolean(NET360_PUBLIC_APP_URL),
+      lastError: smtpRuntime.verifyError || '',
+      activePort: smtpRuntime.activePort || 0,
+      resendConfigured: Boolean(RESEND_API_KEY),
+      resendLastStatus: resendRuntime.lastStatus || 0,
+      resendLastError: resendRuntime.lastError || '',
+      resendLastFrom: resendRuntime.lastFrom || '',
+      resendDomains: Array.isArray(resendRuntime.domains) ? resendRuntime.domains : [],
     },
     redis: {
       configured: isRedisConfigured(),
       ready: isRedisReady(),
+      socketIoAdapter: isSocketIoRedisAdapterReady(),
     },
     socketIo: {
       enabled: Boolean(getIo()),
@@ -8058,7 +9347,13 @@ app.get('/api/public/nust-admissions-feed', async (_req, res) => {
 
   res.json({
     source,
-    fetchedAt: nustUpdatesCache.fetchedAt ? new Date(nustUpdatesCache.fetchedAt).toISOString() : null,
+    fetchedAt: nustUpdatesCache.lastSuccessAt || nustUpdatesCache.fetchedAt
+      ? new Date(nustUpdatesCache.lastSuccessAt || nustUpdatesCache.fetchedAt).toISOString()
+      : null,
+    lastUpdatedFromNust: nustUpdatesCache.lastSuccessAt
+      ? new Date(nustUpdatesCache.lastSuccessAt).toISOString()
+      : null,
+    sessionLabel: nustUpdatesCache.sessionLabel || '',
     refreshIntervalMs: NUST_ADMISSIONS_REFRESH_MS,
     dates: Array.isArray(nustUpdatesCache.dates) && nustUpdatesCache.dates.length
       ? nustUpdatesCache.dates
@@ -8142,7 +9437,8 @@ async function createDirectStudentAccount(req, res) {
 
   if (existingByFirebaseUid) {
     res.status(409).json({
-      error: duplicateAccountErrorMessage('email', hasActiveSubscription(existingByFirebaseUid)),
+      error: 'This email is already registered. Please sign in.',
+      code: 'EMAIL_ALREADY_REGISTERED',
     });
     return;
   }
@@ -8150,7 +9446,8 @@ async function createDirectStudentAccount(req, res) {
   if (existingByEmail) {
     if (!isLegacyStudentForFirebaseMigration(existingByEmail)) {
       res.status(409).json({
-        error: duplicateAccountErrorMessage('email', hasActiveSubscription(existingByEmail)),
+        error: 'This email is already registered. Please sign in.',
+        code: 'EMAIL_ALREADY_REGISTERED',
       });
       return;
     }
@@ -8167,6 +9464,9 @@ async function createDirectStudentAccount(req, res) {
     if (firstName) user.firstName = firstName;
     if (lastName) user.lastName = lastName;
     user.authProvider = 'firebase';
+    if (firebaseIdentity.signInProvider) {
+      user.authProviderDetail = normalizeAuthProviderDetail(firebaseIdentity.signInProvider);
+    }
     user.firebaseUid = firebaseIdentity.uid;
     user.securityQuestion = '';
     user.securityAnswerHash = '';
@@ -8189,7 +9489,7 @@ async function createDirectStudentAccount(req, res) {
     }
 
     const payload = await issueAuthPayload(user, req);
-    setAuthCookies(res, payload.token, payload.refreshToken);
+    setAuthCookies(res, payload.token, payload.refreshToken, req);
     setAuthTransportDiagnosticsHeaders(req, res, payload);
     mirrorStudentSessionRedis(user._id, user.activeSession.sessionId, deviceId);
     res.status(201).json(buildAuthJsonBody(req, payload));
@@ -8197,6 +9497,10 @@ async function createDirectStudentAccount(req, res) {
   }
 
   const passwordHash = await bcrypt.hash(`firebase:${firebaseIdentity.uid}:${crypto.randomUUID()}`, 12);
+  const isGoogleSignup = isGoogleSignInProvider(firebaseIdentity.signInProvider);
+  const authProviderDetail = normalizeAuthProviderDetail(
+    firebaseIdentity.signInProvider || (isGoogleSignup ? 'google' : 'password'),
+  );
   const activeSession = {
     sessionId: crypto.randomUUID(),
     deviceId,
@@ -8214,11 +9518,14 @@ async function createDirectStudentAccount(req, res) {
     phone: '',
     role: 'student',
     authProvider: 'firebase',
+    authProviderDetail,
     firebaseUid: firebaseIdentity.uid,
     securityQuestion: '',
     securityAnswerHash: '',
     securityAnswerEncrypted: '',
-    activeSession,
+    requiresEmailVerification: !isGoogleSignup,
+    emailVerifiedAt: isGoogleSignup ? new Date() : null,
+    activeSession: isGoogleSignup ? activeSession : null,
     preferences: defaultPreferences(),
     progress: defaultProgress(),
   });
@@ -8230,8 +9537,19 @@ async function createDirectStudentAccount(req, res) {
     user.subscription = syncedTrial.subscription;
   }
 
+  if (!isGoogleSignup) {
+    await sendStudentEmailVerification(user);
+    res.status(201).json({
+      ok: true,
+      verificationRequired: true,
+      email: user.email,
+      message: 'Check your email to verify your account before signing in.',
+    });
+    return;
+  }
+
   const payload = await issueAuthPayload(user, req);
-  setAuthCookies(res, payload.token, payload.refreshToken);
+  setAuthCookies(res, payload.token, payload.refreshToken, req);
   setAuthTransportDiagnosticsHeaders(req, res, payload);
   mirrorStudentSessionRedis(user._id, user.activeSession.sessionId, deviceId);
   res.status(201).json(buildAuthJsonBody(req, payload));
@@ -8250,6 +9568,86 @@ app.post('/api/auth/register', async (req, res) => {
     await createDirectStudentAccount(req, res);
   } catch {
     res.status(500).json({ error: 'Registration failed.' });
+  }
+});
+
+app.get('/api/auth/verify-email', async (req, res) => {
+  const rawToken = String(req.query?.token || '').trim();
+  if (!rawToken || rawToken.length > 256) {
+    res.status(400).json({
+      error: 'This verification link is missing or invalid.',
+      code: 'INVALID_VERIFICATION_TOKEN',
+    });
+    return;
+  }
+  try {
+    const tokenHash = hashToken(rawToken);
+    const user = await UserModel.findOne({ emailVerifyTokenHash: tokenHash });
+    if (!user) {
+      res.status(400).json({
+        error: 'This verification link is invalid or has already been used.',
+        code: 'INVALID_VERIFICATION_TOKEN',
+      });
+      return;
+    }
+    if (user.emailVerifiedAt || user.requiresEmailVerification !== true) {
+      clearEmailVerificationToken(user);
+      await user.save();
+      res.json({ ok: true, alreadyVerified: true, email: user.email });
+      return;
+    }
+    if (!user.emailVerifyExpiresAt || new Date(user.emailVerifyExpiresAt).getTime() <= Date.now()) {
+      res.status(400).json({
+        error: 'This verification link has expired. Request a new verification email.',
+        code: 'VERIFICATION_TOKEN_EXPIRED',
+      });
+      return;
+    }
+    markEmailVerified(user);
+    await user.save();
+    res.json({ ok: true, email: user.email });
+  } catch (error) {
+    console.error('[auth/verify-email]', error?.message || error);
+    res.status(500).json({ error: 'Could not verify this email. Please try again.' });
+  }
+});
+
+app.post('/api/auth/resend-verification', async (req, res) => {
+  const generic = {
+    ok: true,
+    message: 'If this account needs verification, we sent a new email.',
+  };
+  const email = normalizeEmail(req.body?.email || '');
+  if (!isValidEmail(email)) {
+    res.status(400).json({ error: 'Enter a valid email address.' });
+    return;
+  }
+  try {
+    const escaped = escapeRegexLiteral(email, 254);
+    const user = escaped
+      ? await UserModel.findOne({ email: { $regex: `^${escaped}$`, $options: 'i' } })
+      : null;
+    if (!user || !accountNeedsEmailVerification(user)) {
+      res.status(200).json(generic);
+      return;
+    }
+    const result = await sendStudentEmailVerification(user);
+    if (!result.sent) {
+      const retryAfterSeconds = Number(result.retryAfterSeconds || 60);
+      res.setHeader('Retry-After', String(retryAfterSeconds));
+      res.status(429).json({
+        error: result.reason === 'cooldown'
+          ? 'Please wait a moment before requesting another verification email.'
+          : 'Too many verification emails. Please try again later.',
+        code: 'VERIFICATION_EMAIL_RATE_LIMITED',
+        retryAfterSeconds,
+      });
+      return;
+    }
+    res.status(200).json(generic);
+  } catch (error) {
+    console.error('[auth/resend-verification]', error?.message || error);
+    res.status(200).json(generic);
   }
 });
 
@@ -8275,7 +9673,10 @@ app.post('/api/auth/register-fallback', async (req, res) => {
       ? await UserModel.findOne({ email: { $regex: `^${escaped}$`, $options: 'i' } })
       : null;
     if (existing) {
-      res.status(409).json({ error: 'An account with this email already exists.' });
+      res.status(409).json({
+        error: 'This email is already registered. Please sign in.',
+        code: 'EMAIL_ALREADY_REGISTERED',
+      });
       return;
     }
     const passwordHash = await hashPassword(password);
@@ -8285,11 +9686,18 @@ app.post('/api/auth/register-fallback', async (req, res) => {
       firstName: sanitizeHumanName(req.body?.firstName || ''),
       lastName: sanitizeHumanName(req.body?.lastName || ''),
       role: 'student',
+      authProvider: 'local',
+      authProviderDetail: 'password',
+      requiresEmailVerification: true,
+      emailVerifiedAt: null,
       preferences: defaultPreferences(),
       progress: defaultProgress(),
     });
+    await sendStudentEmailVerification(user);
     res.status(201).json({
       ok: true,
+      verificationRequired: true,
+      email: user.email,
       user: {
         id: String(user._id),
         email: user.email,
@@ -8298,7 +9706,10 @@ app.post('/api/auth/register-fallback', async (req, res) => {
     });
   } catch (error) {
     if (error && error.code === 11000) {
-      res.status(409).json({ error: 'An account with this email already exists.' });
+      res.status(409).json({
+        error: 'This email is already registered. Please sign in.',
+        code: 'EMAIL_ALREADY_REGISTERED',
+      });
       return;
     }
     console.error('[auth/register-fallback]', error?.message || error);
@@ -8395,12 +9806,26 @@ app.post('/api/auth/login', async (req, res) => {
       console.log('[auth/login] user:', { id: String(user._id), email: user.email });
     }
 
+    if (!envAdminAttempt && accountNeedsEmailVerification(user)) {
+      await logSecurityEvent(req, {
+        eventType: 'auth.email_not_verified',
+        severity: 'info',
+        actorUserId: user._id,
+        actorEmail: user.email,
+      });
+      res.status(403).json(emailNotVerifiedBody(user));
+      return;
+    }
+
     if (!envAdminAttempt) {
       if (String(user.authProvider || 'local') !== 'firebase') {
         user.authProvider = 'firebase';
       }
       if (String(user.firebaseUid || '') !== String(verifiedFirebase.uid)) {
         user.firebaseUid = String(verifiedFirebase.uid);
+      }
+      if (verifiedFirebase.signInProvider) {
+        user.authProviderDetail = normalizeAuthProviderDetail(verifiedFirebase.signInProvider);
       }
 
       const storedHash = String(user.passwordHash || user.password || '').trim();
@@ -8518,7 +9943,7 @@ app.post('/api/auth/login', async (req, res) => {
       }
 
       const payload = await issueAuthPayload(user, req);
-      setAuthCookies(res, payload.token, payload.refreshToken);
+      setAuthCookies(res, payload.token, payload.refreshToken, req);
       setAuthTransportDiagnosticsHeaders(req, res, payload);
       await logSecurityEvent(req, {
         eventType: 'auth.login_success',
@@ -8550,7 +9975,7 @@ app.post('/api/auth/login', async (req, res) => {
     }
 
     const payload = await issueAuthPayload(user, req);
-    setAuthCookies(res, payload.token, payload.refreshToken);
+    setAuthCookies(res, payload.token, payload.refreshToken, req);
     setAuthTransportDiagnosticsHeaders(req, res, payload);
     await logSecurityEvent(req, {
       eventType: 'auth.login_success',
@@ -8591,7 +10016,7 @@ app.post('/api/auth/refresh', async (req, res) => {
         eventType: 'auth.refresh_invalid_type',
         severity: 'warning',
       });
-      clearAuthCookies(res);
+      clearAuthCookies(res, req);
       res.status(401).json({ error: 'Invalid refresh token.' });
       return;
     }
@@ -8602,8 +10027,14 @@ app.post('/api/auth/refresh', async (req, res) => {
         eventType: 'auth.refresh_user_not_found',
         severity: 'warning',
       });
-      clearAuthCookies(res);
+      clearAuthCookies(res, req);
       res.status(401).json({ error: 'User not found.' });
+      return;
+    }
+
+    if (accountNeedsEmailVerification(user)) {
+      clearAuthCookies(res, req);
+      res.status(403).json(emailNotVerifiedBody(user));
       return;
     }
 
@@ -8617,7 +10048,7 @@ app.post('/api/auth/refresh', async (req, res) => {
         actorUserId: user._id,
         actorEmail: user.email,
       });
-      clearAuthCookies(res);
+      clearAuthCookies(res, req);
       res.status(401).json({ error: 'Refresh token revoked or expired.' });
       return;
     }
@@ -8634,7 +10065,7 @@ app.post('/api/auth/refresh', async (req, res) => {
           actorUserId: user._id,
           actorEmail: user.email,
         });
-        clearAuthCookies(res);
+        clearAuthCookies(res, req);
         res.status(401).json({ error: 'Session ended. Please log in again.', code: 'SESSION_NO_LONGER_ACTIVE' });
         return;
       }
@@ -8644,7 +10075,7 @@ app.post('/api/auth/refresh', async (req, res) => {
     await user.save();
 
     const newPayload = await issueAuthPayload(user, req);
-    setAuthCookies(res, newPayload.token, newPayload.refreshToken);
+    setAuthCookies(res, newPayload.token, newPayload.refreshToken, req);
     setAuthTransportDiagnosticsHeaders(req, res, newPayload);
     if ((user.role || 'student') === 'student' && user.activeSession?.sessionId) {
       mirrorStudentSessionRedis(user._id, user.activeSession.sessionId, user.activeSession.deviceId || '');
@@ -8661,35 +10092,57 @@ app.post('/api/auth/refresh', async (req, res) => {
       eventType: 'auth.refresh_invalid_token',
       severity: 'warning',
     });
-    clearAuthCookies(res);
+    clearAuthCookies(res, req);
     res.status(401).json({ error: 'Invalid or expired refresh token.' });
   }
 });
 
 app.post('/api/auth/logout', async (req, res) => {
   const refreshToken = String(req.body?.refreshToken || readCookie(req, REFRESH_TOKEN_COOKIE_NAME) || '').trim();
-  clearAuthCookies(res);
+  clearAuthCookies(res, req);
 
-  if (!refreshToken) {
+  let logoutUserId = '';
+  const accessToken = extractAccessToken(req);
+  if (accessToken) {
+    try {
+      const accessPayload = jwt.verify(accessToken, JWT_SECRET);
+      logoutUserId = String(accessPayload?.userId || '');
+    } catch {
+      // continue with refresh token
+    }
+  }
+
+  if (!refreshToken && !logoutUserId) {
     res.json({ message: 'Logged out.' });
     return;
   }
 
   try {
-    const payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
-    const user = await UserModel.findById(payload.userId);
+    let user = null;
+    let payload = null;
+    if (refreshToken) {
+      payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
+      user = await UserModel.findById(payload.userId);
+    } else if (logoutUserId) {
+      user = await UserModel.findById(logoutUserId);
+    }
       if (user) {
-      const tokenHash = hashToken(refreshToken);
-      user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
+      logoutUserId = String(user._id);
+      if (refreshToken) {
+        const tokenHash = hashToken(refreshToken);
+        user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
+      }
 
+      let clearedActiveSession = false;
       if ((user.role || 'student') === 'student') {
-        const tokenSessionId = String(payload.sessionId || '');
+        const tokenSessionId = String(payload?.sessionId || '');
         const activeId = String(user.activeSession?.sessionId || '');
-        if (tokenSessionId && activeId === tokenSessionId) {
+        if (!refreshToken || (tokenSessionId && activeId === tokenSessionId)) {
           user.activeSession = null;
+          clearedActiveSession = true;
           console.log('[auth/logout] cleared_active_session', {
             userId: String(user._id),
-            sessionId: tokenSessionId,
+            sessionId: tokenSessionId || '(access-token)',
             email: redactEmailForLog(user.email || ''),
           });
         } else if (tokenSessionId) {
@@ -8706,6 +10159,10 @@ app.post('/api/auth/logout', async (req, res) => {
       if (isRedisConfigured() && (user.role || 'student') === 'student') {
         void cacheDel(cacheKey(`studentSession:${user._id}`));
       }
+      if (clearedActiveSession) {
+        await endStudentPresence(String(user._id));
+        void disconnectAllStudentSockets(String(user._id));
+      }
       await logSecurityEvent(req, {
         eventType: 'auth.logout_success',
         severity: 'info',
@@ -8714,6 +10171,10 @@ app.post('/api/auth/logout', async (req, res) => {
       });
     }
   } catch {
+    if (logoutUserId) {
+      await endStudentPresence(logoutUserId);
+      void disconnectAllStudentSockets(logoutUserId);
+    }
     await logSecurityEvent(req, {
       eventType: 'auth.logout_invalid_token',
       severity: 'warning',
@@ -8734,7 +10195,7 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const user = await UserModel.findById(req.user._id).select('_id passwordHash role email phone firebaseUid authProvider activeSession firstName');
+    const user = await UserModel.findById(req.user._id).select('_id passwordHash role email phone firebaseUid authProvider authProviderDetail activeSession firstName');
     if (!user) {
       res.status(404).json({ error: 'Account not found.' });
       return;
@@ -8745,17 +10206,11 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const authProvider = String(user.authProvider || 'local').trim().toLowerCase();
-    const firebaseUid = String(user.firebaseUid || '').trim();
-    if (isGoogleManagedAuthProvider(authProvider, firebaseUid)) {
+    const deletionChannel = await resolveStudentDeletionChannel(user, firebaseAdminAuth);
+    if (deletionChannel === 'email-link') {
       res.status(400).json({
         error: 'Use email verification link for Google accounts.',
       });
-      return;
-    }
-
-    if (!isPasswordManagedAuthProvider(authProvider)) {
-      res.status(400).json({ error: 'This account cannot be deleted with a password on this endpoint.' });
       return;
     }
 
@@ -8764,7 +10219,22 @@ app.post('/api/auth/delete-account', authMiddleware, async (req, res) => {
       return;
     }
 
-    const passwordMatches = await bcrypt.compare(password, String(user.passwordHash || ''));
+    const firebaseIdToken = String(req.body?.firebaseIdToken || '').trim();
+    let passwordMatches = false;
+    if (firebaseIdToken) {
+      try {
+        const verified = await verifyFirebaseUserToken(firebaseIdToken);
+        const sameUid = Boolean(user.firebaseUid) && verified.uid === String(user.firebaseUid);
+        const sameEmail = verified.email && verified.email === normalizeEmail(user.email || '');
+        const recentAuth = verified.authTimeMs > 0 && (Date.now() - verified.authTimeMs) <= ACCOUNT_DELETION_LINK_TTL_MS;
+        passwordMatches = (sameUid || sameEmail) && recentAuth;
+      } catch {
+        passwordMatches = false;
+      }
+    }
+    if (!passwordMatches) {
+      passwordMatches = await bcrypt.compare(password, String(user.passwordHash || ''));
+    }
     if (!passwordMatches) {
       await logSecurityEvent(req, {
         eventType: 'auth.delete_account_wrong_password',
@@ -8792,7 +10262,7 @@ app.post('/api/auth/request-delete-link', authMiddleware, async (req, res) => {
       return;
     }
 
-    const user = await UserModel.findById(req.user._id).select('_id role email firebaseUid authProvider activeSession firstName');
+    const user = await UserModel.findById(req.user._id).select('_id role email firebaseUid authProvider authProviderDetail activeSession firstName');
     if (!user) {
       res.status(404).json({ error: 'Account not found.' });
       return;
@@ -8803,8 +10273,8 @@ app.post('/api/auth/request-delete-link', authMiddleware, async (req, res) => {
     }
 
     const authProvider = String(user.authProvider || 'local').trim().toLowerCase();
-    const firebaseUid = String(user.firebaseUid || '').trim();
-    if (!isGoogleManagedAuthProvider(authProvider, firebaseUid)) {
+    const deletionChannel = await resolveStudentDeletionChannel(user, firebaseAdminAuth);
+    if (deletionChannel !== 'email-link') {
       res.status(400).json({ error: 'Email deletion links are only for Google Sign-In accounts.' });
       return;
     }
@@ -8860,6 +10330,7 @@ app.post('/api/auth/request-delete-link', authMiddleware, async (req, res) => {
 
     if (sendResult.status !== 'sent') {
       await AccountDeletionTokenModel.deleteOne({ tokenHash });
+      console.error('[auth/request-delete-link] email dispatch failed', sendResult.detail);
       res.status(503).json({ error: 'Email delivery is temporarily unavailable.' });
       return;
     }
@@ -8893,7 +10364,7 @@ app.get('/api/auth/verify-delete-token', async (req, res) => {
       return;
     }
 
-    const u = await UserModel.findById(doc.userId).select('email firstName authProvider firebaseUid role').lean();
+    const u = await UserModel.findById(doc.userId).select('email firstName authProvider authProviderDetail firebaseUid role').lean();
     if (!u || (u.role || 'student') !== 'student') {
       res.json({ valid: false, error: 'This deletion link is no longer valid.' });
       return;
@@ -8902,9 +10373,7 @@ app.get('/api/auth/verify-delete-token', async (req, res) => {
       res.json({ valid: false, error: 'This deletion link is no longer valid.' });
       return;
     }
-    const ap = String(u.authProvider || 'local').toLowerCase();
-    const uid = String(u.firebaseUid || '').trim();
-    if (!isGoogleManagedAuthProvider(ap, uid)) {
+    if ((await resolveStudentDeletionChannel(u, firebaseAdminAuth)) !== 'email-link') {
       res.json({ valid: false, error: 'This deletion link is no longer valid.' });
       return;
     }
@@ -8946,7 +10415,7 @@ app.post('/api/auth/confirm-delete', async (req, res) => {
       return;
     }
 
-    const user = await UserModel.findById(claimed.userId).select('_id passwordHash role email phone firebaseUid authProvider activeSession firstName');
+    const user = await UserModel.findById(claimed.userId).select('_id passwordHash role email phone firebaseUid authProvider authProviderDetail activeSession firstName');
     if (!user) {
       res.status(400).json({ error: 'This account no longer exists.' });
       return;
@@ -8961,8 +10430,7 @@ app.post('/api/auth/confirm-delete', async (req, res) => {
       return;
     }
     const ap = String(user.authProvider || 'local').toLowerCase();
-    const uid = String(user.firebaseUid || '').trim();
-    if (!isGoogleManagedAuthProvider(ap, uid)) {
+    if ((await resolveStudentDeletionChannel(user, firebaseAdminAuth)) !== 'email-link') {
       res.status(400).json({ error: 'This deletion link is no longer valid for this account.' });
       return;
     }
@@ -9177,6 +10645,7 @@ app.post('/api/auth/reset-password', async (req, res) => {
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   const u = userPublic(req.user);
+  u.deletionChannel = await resolveStudentDeletionChannel(req.user, firebaseAdminAuth);
   if ((req.user.role || 'student') === 'student' && req.user.activeSession?.sessionId) {
     u.activeSessionId = String(req.user.activeSession.sessionId);
   }
@@ -9269,9 +10738,12 @@ app.put('/api/auth/preferences', authMiddleware, async (req, res) => {
 
 async function communityGuard(req, res) {
   const blocked = await ensureCommunityAccess(req.user._id);
-  if (!blocked) return false;
-  res.status(403).json({ error: blocked.reason, code: blocked.code || 'COMMUNITY_BLOCKED' });
-  return true;
+  if (blocked) {
+    res.status(403).json({ error: blocked.reason, code: blocked.code || 'COMMUNITY_BLOCKED' });
+    return true;
+  }
+  scheduleCommunityNotificationBackfillForUser(req.user._id);
+  return false;
 }
 
 async function communityWriteGuard(req, res) {
@@ -9361,10 +10833,12 @@ app.put('/api/community/profile', ...studentPremiumSurface, async (req, res) => 
 app.get('/api/community/presence', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const viewerId = String(req.user._id);
-  const now = Date.now();
-  const STALE_PING_MS = 120_000;
 
-  const onlineUserIds = Array.from(studentPresenceClientIdsByUser.keys());
+  // Live heartbeat records only (Redis, all instances). "Online students" lists OTHER
+  // students: the viewer is never part of their own roster.
+  const records = (await listPresence()).filter((record) => String(record.userId) !== viewerId);
+  const recordById = new Map(records.map((record) => [String(record.userId), record]));
+  const onlineUserIds = records.map((record) => String(record.userId)).filter((id) => isValidObjectId(id));
   if (!onlineUserIds.length) {
     res.json({ online: [], serverTime: new Date().toISOString() });
     return;
@@ -9376,35 +10850,52 @@ app.get('/api/community/presence', ...studentPremiumSurface, async (req, res) =>
   const privacyById = new Map(privacyRows.map((row) => [String(row.userId), row]));
 
   const visibleIds = onlineUserIds.filter((id) => {
-    if (id === viewerId) return true;
     const row = privacyById.get(id);
     return !row?.hideOnlineStatus;
   });
 
-  const [users, profiles] = await Promise.all([
+  const participantKeys = visibleIds.map((id) => connectionKey(viewerId, id));
+  const [users, profiles, connectionRows, pendingSentRows, pendingReceivedRows] = await Promise.all([
     UserModel.find({ _id: { $in: visibleIds }, role: 'student' }).select(COMMUNITY_USER_SELECT).lean(),
     CommunityProfileModel.find({ userId: { $in: visibleIds } }).select(COMMUNITY_PROFILE_SELECT).lean(),
+    CommunityConnectionModel.find({ participantKey: { $in: participantKeys } }).select('participantKey blockedByUserIds').lean(),
+    CommunityConnectionRequestModel.find({ fromUserId: req.user._id, toUserId: { $in: visibleIds }, status: 'pending' }).select('toUserId').lean(),
+    CommunityConnectionRequestModel.find({ fromUserId: { $in: visibleIds }, toUserId: req.user._id, status: 'pending' }).select('fromUserId').lean(),
   ]);
 
   const profileByUser = new Map(profiles.map((item) => [String(item.userId), item]));
   const userById = new Map(users.map((item) => [String(item._id), item]));
+  const connectionByKey = new Map(connectionRows.map((item) => [String(item.participantKey), item]));
+  const pendingSent = new Set(pendingSentRows.map((item) => String(item.toUserId)));
+  const pendingReceived = new Set(pendingReceivedRows.map((item) => String(item.fromUserId)));
+
+  // Server-authoritative relationship state for each tile (drives Connect / Chat buttons).
+  const connectionStatusFor = (id) => {
+    const connection = connectionByKey.get(connectionKey(viewerId, id));
+    if (connection) {
+      return Array.isArray(connection.blockedByUserIds) && connection.blockedByUserIds.length ? 'blocked' : 'connected';
+    }
+    if (pendingSent.has(id)) return 'pending-sent';
+    if (pendingReceived.has(id)) return 'pending-received';
+    return 'none';
+  };
 
   const online = visibleIds
     .filter((id) => userById.has(id))
     .map((id) => {
       const u = userById.get(id);
       const p = profileByUser.get(id) || {};
-      const meta = studentPresenceMetaByUser.get(id) || { studyingSubject: '', away: false, lastPing: now };
-      const pingStale = now - Number(meta.lastPing || 0) > STALE_PING_MS;
-      const presenceStatus = meta.away || pingStale ? 'away' : 'online';
+      const record = recordById.get(id);
       const base = serializeCommunityUser({ user: u, profile: p });
       return {
         ...base,
-        presenceStatus,
-        studyingSubject: String(meta.studyingSubject || ''),
-        lastSeenAt: p.lastSeenAt ? new Date(p.lastSeenAt).toISOString() : null,
+        presenceStatus: record?.status === 'away' ? 'away' : 'online',
+        activity: String(record?.activity || ''),
+        studyingSubject: String(record?.studyingSubject || ''),
+        lastSeenAt: record?.lastSeen ? new Date(record.lastSeen).toISOString() : null,
         doNotDisturb: Boolean(p.doNotDisturb),
         hideOnlineStatus: Boolean(p.hideOnlineStatus),
+        connectionStatus: connectionStatusFor(id),
       };
     });
 
@@ -9413,18 +10904,11 @@ app.get('/api/community/presence', ...studentPremiumSurface, async (req, res) =>
 
 app.post('/api/community/presence/ping', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
-  const uid = String(req.user._id);
-  touchStudentPresenceMeta(uid, {
-    studyingSubject: req.body?.studyingSubject,
-    away: req.body?.away,
-  });
-  if (studentPresenceClientIdsByUser.has(uid)) {
-    broadcastSyncEvent({
-      role: 'student',
-      event: 'sync',
-      data: { type: 'community.presence', action: 'update', userId: uid },
-    });
-  }
+  const patch = {};
+  if (req.body?.away !== undefined) patch.away = Boolean(req.body.away);
+  if (typeof req.body?.studyingSubject === 'string') patch.studyingSubject = req.body.studyingSubject;
+  if (typeof req.body?.activity === 'string') patch.activity = req.body.activity;
+  await touchStudentPresence(String(req.user._id), patch);
   res.json({ ok: true });
 });
 
@@ -9595,11 +11079,13 @@ app.post('/api/community/connections/request', ...studentPremiumSurface, async (
     status: 'pending',
   });
 
-  broadcastSyncEvent({
-    role: 'all',
-    event: 'sync',
-    data: { type: 'community.connection.requested', fromUserId: String(req.user._id), toUserId },
+  broadcastCommunityEventsToUserIds([String(req.user._id), toUserId], {
+    type: 'community.connection.requested',
+    fromUserId: String(req.user._id),
+    toUserId,
+    requestId: String(created._id),
   });
+  void notifyCommunityConnectionRequested(req.user._id, toUserId, created._id);
 
   res.status(201).json({ requestId: String(created._id) });
 });
@@ -9700,17 +11186,14 @@ app.post('/api/community/connections/requests/:requestId/respond', ...studentPre
   }
 
   await request.save();
-  broadcastSyncEvent({
-    role: 'all',
-    event: 'sync',
-    data: {
-      type: 'community.connection.responded',
-      requestId: String(request._id),
-      status: String(request.status || ''),
-      fromUserId: String(request.fromUserId),
-      toUserId: String(request.toUserId),
-    },
+  broadcastCommunityEventsToUserIds([String(request.fromUserId), String(request.toUserId)], {
+    type: 'community.connection.responded',
+    requestId: String(request._id),
+    status: String(request.status || ''),
+    fromUserId: String(request.fromUserId),
+    toUserId: String(request.toUserId),
   });
+  void notifyCommunityConnectionResponded(request.fromUserId, request.toUserId, request.status, request._id);
   res.json({ ok: true, status: request.status });
 });
 
@@ -9800,16 +11283,12 @@ app.post('/api/community/connections/:connectionId/unfriend', ...studentPremiumS
   await CommunityMessageModel.deleteMany({ connectionId: connection._id });
   await CommunityConnectionModel.deleteOne({ _id: connection._id });
 
-  broadcastSyncEvent({
-    role: 'all',
-    event: 'sync',
-    data: {
-      type: 'community.connection.unfriended',
-      connectionId,
-      actorUserId: myId,
-      participantA: participants[0],
-      participantB: participants[1],
-    },
+  broadcastCommunityEventsToUserIds(participants, {
+    type: 'community.connection.unfriended',
+    connectionId,
+    actorUserId: myId,
+    participantA: participants[0],
+    participantB: participants[1],
   });
 
   res.json({ ok: true });
@@ -9844,16 +11323,12 @@ app.post('/api/community/connections/:connectionId/block', ...studentPremiumSurf
     : { $pull: { blockedByUserIds: req.user._id } };
   await CommunityConnectionModel.updateOne({ _id: connection._id }, update);
 
-  broadcastSyncEvent({
-    role: 'all',
-    event: 'sync',
-    data: {
-      type: blocked ? 'community.connection.blocked' : 'community.connection.unblocked',
-      connectionId,
-      actorUserId: myId,
-      participantA: participants[0],
-      participantB: participants[1],
-    },
+  broadcastCommunityEventsToUserIds(participants, {
+    type: blocked ? 'community.connection.blocked' : 'community.connection.unblocked',
+    connectionId,
+    actorUserId: myId,
+    participantA: participants[0],
+    participantB: participants[1],
   });
 
   res.json({ ok: true, blocked });
@@ -9911,6 +11386,56 @@ app.get('/api/community/messages/:connectionId', ...studentPremiumSurface, async
   });
 });
 
+app.get('/api/community/messages/:messageId/attachment', ...studentPremiumSurface, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+  const messageId = String(req.params.messageId || '').trim();
+  if (!isValidObjectId(messageId)) {
+    res.status(400).json({ error: 'Valid message id is required.' });
+    return;
+  }
+
+  const message = await CommunityMessageModel.findById(messageId).lean();
+  if (!message?.connectionId) {
+    res.status(404).json({ error: 'Message not found.' });
+    return;
+  }
+
+  const connection = await CommunityConnectionModel.findById(message.connectionId).lean();
+  if (!connection) {
+    res.status(404).json({ error: 'Connection not found.' });
+    return;
+  }
+  const myId = String(req.user._id);
+  if (![String(connection.participantA), String(connection.participantB)].includes(myId)) {
+    res.status(403).json({ error: 'Access denied for this chat.' });
+    return;
+  }
+
+  const parsed = parseDataUrl(message.attachment?.dataUrl || '');
+  if (!parsed?.buffer?.length) {
+    res.status(404).json({ error: 'This file is no longer available.' });
+    return;
+  }
+
+  const kind = sniffCommunityFileKind(parsed.buffer);
+  if (kind === 'unsafe') {
+    res.status(400).json({ error: 'This file cannot be opened safely.' });
+    return;
+  }
+
+  const forceDownload = String(req.query?.download || '') === '1';
+  const contentType = safeCommunityAttachmentContentType(message.attachment?.mimeType || parsed.mimeType, kind);
+  const fileName = buildSafeDownloadName(message.attachment?.name, 'community-file');
+  const canInline = (kind === 'pdf' || kind === 'jpeg' || kind === 'png' || kind === 'webp') && !forceDownload;
+  res.setHeader('Cache-Control', 'private, no-store');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; sandbox");
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Content-Length', String(parsed.buffer.length));
+  res.setHeader('Content-Disposition', `${canInline ? 'inline' : 'attachment'}; filename="${fileName}"`);
+  res.send(parsed.buffer);
+});
+
 app.post('/api/community/messages/:connectionId', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   if (await communityWriteGuard(req, res)) return;
@@ -9958,7 +11483,12 @@ app.post('/api/community/messages/:connectionId', ...studentPremiumSurface, asyn
 
   try {
     if (messageType === 'file') {
-      attachment = normalizeChatAttachment(req.body?.attachment, { allowAudio: false });
+      attachment = normalizeChatAttachment(req.body?.attachment, {
+        allowAudio: false,
+        allowedMimeTypes: COMMUNITY_FILE_ALLOWED_MIME_TYPES,
+        maxBytes: COMMUNITY_FILE_MAX_BYTES,
+        requireSafeCommunityFile: true,
+      });
       if (!attachment) {
         res.status(400).json({ error: 'Attachment is required for file message.' });
         return;
@@ -10007,16 +11537,21 @@ app.post('/api/community/messages/:connectionId', ...studentPremiumSurface, asyn
     readByUserIds: [req.user._id],
   });
 
-  broadcastSyncEvent({
-    role: 'all',
-    event: 'sync',
-    data: {
-      type: 'community.message.sent',
-      connectionId,
-      senderUserId: String(req.user._id),
-      recipientUserId: otherUserId,
-    },
+  const serializedMessage = serializeCommunityMessage(created);
+  if (serializedMessage.attachment) {
+    serializedMessage.attachment = { ...serializedMessage.attachment, dataUrl: '' };
+  }
+  broadcastCommunityEventsToUserIds([String(req.user._id), otherUserId], {
+    type: 'community.message.sent',
+    connectionId,
+    senderUserId: String(req.user._id),
+    recipientUserId: otherUserId,
+    messageId: serializedMessage.id,
+    createdAt: serializedMessage.createdAt,
+    status: 'sent',
+    message: serializedMessage,
   });
+  void notifyCommunityDirectMessage(req.user._id, otherUserId, connectionId, serializedMessage.id);
 
   res.status(201).json({
     message: serializeCommunityMessage(created),
@@ -10406,6 +11941,7 @@ app.post('/api/community/quiz-challenges', ...studentPremiumSurface, async (req,
         challengeType: normalizedChallengeType,
       },
     });
+    void notifyQuizChallengeCreated(currentUser._id, opponentUser._id, challenge._id);
 
     const loaded = await CommunityQuizChallengeModel.findById(challenge._id).lean();
     res.status(201).json({ challenge: serializeQuizChallenge(loaded, req.user._id) });
@@ -10461,6 +11997,7 @@ app.post('/api/community/quiz-challenges/:id/respond', ...studentPremiumSurface,
           status: String(challenge.status || ''),
         },
       });
+      void notifyQuizChallengeResponded(challenge.challengerUserId, challenge.opponentUserId, action, challenge._id);
       res.json({ challenge: serializeQuizChallenge(challenge.toObject(), req.user._id) });
       return;
     }
@@ -10491,6 +12028,7 @@ app.post('/api/community/quiz-challenges/:id/respond', ...studentPremiumSurface,
         status: String(challenge.status || ''),
       },
     });
+    void notifyQuizChallengeResponded(challenge.challengerUserId, challenge.opponentUserId, action, challenge._id);
 
     res.json({ challenge: serializeQuizChallenge(challenge.toObject(), req.user._id) });
   } catch (error) {
@@ -10668,6 +12206,7 @@ app.post('/api/community/quiz-challenges/:id/submit', ...studentPremiumSurface, 
     await challenge.save();
     if (String(challenge.status) === 'completed') {
       await applyQuizStatsToProfiles(challenge);
+      void notifyQuizChallengeCompleted(challenge);
     }
 
     broadcastSyncEvent({
@@ -11200,66 +12739,58 @@ app.post('/api/community/discussion-posts/:postId/upvote', ...studentPremiumSurf
 app.get('/api/community/achievements', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
 
-  const me = await UserModel.findById(req.user._id).lean();
-  if (!me) {
+  const snapshot = await loadCommunityAchievementContext(req.user._id);
+  if (!snapshot) {
     res.status(404).json({ error: 'User not found.' });
     return;
   }
 
-  const attempts = await AttemptModel.find({ userId: req.user._id }).sort({ attemptedAt: -1 }).limit(300).lean();
-  const physicsAttempts = attempts.filter((item) => String(item.subject || '').toLowerCase() === 'physics');
-  const physicsAverage = physicsAttempts.length
-    ? physicsAttempts.reduce((sum, item) => sum + Number(item.score || 0), 0) / physicsAttempts.length
-    : 0;
-
-  const weeklyBoard = await (async () => {
-    const { start } = getPeriodBounds('weekly');
-    const rows = await AttemptModel.find({ attemptedAt: { $gte: start } }).lean();
-    const scoreMap = new Map();
-    for (const row of rows) {
-      const key = String(row.userId);
-      const bucket = scoreMap.get(key) || { scoreSum: 0, tests: 0 };
-      bucket.scoreSum += Number(row.score || 0);
-      bucket.tests += 1;
-      scoreMap.set(key, bucket);
-    }
-    return Array.from(scoreMap.entries())
-      .map(([userId, bucket]) => ({ userId, score: bucket.tests ? bucket.scoreSum / bucket.tests : 0 }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 10);
-  })();
-  const top10Ids = new Set(weeklyBoard.map((item) => String(item.userId)));
-
-  const streak = longestRecentStreak(attempts.map((item) => item.attemptedAt));
-  const solved = Number(me.progress?.questionsSolved || 0);
-  const avg = Number(me.progress?.averageScore || 0);
-
-  const myAnswers = await CommunityRoomPostModel.aggregate([
-    { $unwind: '$answers' },
-    { $match: { 'answers.authorUserId': req.user._id } },
-    { $group: { _id: null, totalUpvotes: { $sum: '$answers.upvotes' }, answersCount: { $sum: 1 } } },
-  ]);
-  const answerStats = myAnswers[0] || { totalUpvotes: 0, answersCount: 0 };
-
-  const badges = [
-    { id: 'practice-master', label: 'Practice Master', icon: 'ðŸ“˜', earned: solved >= 1000, progress: solved, target: 1000 },
-    { id: 'accuracy-king', label: 'Accuracy King', icon: 'ðŸŽ¯', earned: avg >= 90, progress: Number(avg.toFixed(1)), target: 90 },
-    { id: 'physics-expert', label: 'Physics Expert', icon: 'ðŸ§ ', earned: physicsAttempts.length >= 5 && physicsAverage >= 85, progress: Number(physicsAverage.toFixed(1)), target: 85 },
-    { id: 'study-streak-7', label: '7-Day Study Streak', icon: 'ðŸ”¥', earned: streak >= 7, progress: streak, target: 7 },
-    { id: 'leaderboard-top10', label: 'Top 10 Leaderboard', icon: 'ðŸ†', earned: top10Ids.has(String(req.user._id)), progress: top10Ids.has(String(req.user._id)) ? 10 : 0, target: 10 },
-    { id: 'doubt-contributor', label: 'Contributor Badge', icon: 'ðŸ…', earned: Number(answerStats.totalUpvotes || 0) >= 10, progress: Number(answerStats.totalUpvotes || 0), target: 10 },
-  ];
-
+  const notices = await syncAchievementNoticesAndNotify(req.user, snapshot.badges);
   res.json({
-    badges,
-    stats: {
-      solved,
-      averageScore: Number(avg.toFixed(1)),
-      streak,
-      contributorUpvotes: Number(answerStats.totalUpvotes || 0),
-      contributorAnswers: Number(answerStats.answersCount || 0),
-    },
+    badges: serializeAchievementBadges(snapshot.badges, notices),
+    stats: snapshot.stats,
   });
+});
+
+app.get('/api/community/achievements/:badgeId/certificate', ...studentPremiumSurface, async (req, res) => {
+  if (await communityGuard(req, res)) return;
+
+  const badgeId = String(req.params.badgeId || '').trim();
+  if (!catalogEntry(badgeId)) {
+    res.status(404).json({ error: 'Achievement not found.' });
+    return;
+  }
+
+  const snapshot = await loadCommunityAchievementContext(req.user._id);
+  if (!snapshot) {
+    res.status(404).json({ error: 'User not found.' });
+    return;
+  }
+
+  const badge = snapshot.badges.find((item) => item.id === badgeId);
+  if (!badge?.earned) {
+    res.status(403).json({ error: 'Unlock this badge on NET360 before downloading a certificate.' });
+    return;
+  }
+
+  const profile = await getOrCreateCommunityProfile(req.user);
+  const notices = await syncAchievementNoticesAndNotify(req.user, snapshot.badges);
+  const unlockedAt = unlockedAtForBadge(notices, badgeId) || profile.updatedAt || new Date();
+  const studentName = [snapshot.me.firstName, snapshot.me.lastName].filter(Boolean).join(' ').trim()
+    || snapshot.me.email
+    || 'NET360 Student';
+  const logoBuffer = await loadBrandLogoBuffer();
+  const pdf = await buildAchievementCertificatePdf({
+    studentName,
+    badgeLabel: badge.label,
+    description: badge.description,
+    unlockedAt,
+    logoBuffer,
+  });
+  const slug = badge.label.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || badge.id;
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `attachment; filename="NET360-${slug}-certificate.pdf"`);
+  res.send(pdf);
 });
 
 app.get('/api/community/study-partners', ...studentPremiumSurface, async (req, res) => {
@@ -11390,6 +12921,10 @@ app.get('/api/support-chat/messages', authMiddleware, async (req, res) => {
       },
       { $set: { readByUser: true } },
     );
+    for (const item of messages) {
+      if (item.senderRole === 'admin') item.readByUser = true;
+    }
+    emitSupportReadReceipt(userId, 'user');
   }
 
   res.json({
@@ -11429,6 +12964,10 @@ app.post('/api/support-chat/messages', authMiddleware, async (req, res) => {
     return;
   }
 
+  // Optional, web-client supplied: echoed back (never persisted) so the sender can reconcile its
+  // optimistic "pending" bubble with the persisted message whichever path arrives first.
+  const clientMessageId = sanitizeSupportClientMessageId(req.body?.clientMessageId);
+
   const created = await SupportChatMessageModel.create({
     userId: req.user._id,
     senderRole: 'user',
@@ -11440,8 +12979,13 @@ app.post('/api/support-chat/messages', authMiddleware, async (req, res) => {
     readByAdmin: false,
   });
 
+  const serialized = serializeSupportMessage(created);
+  emitSupportChatEvent('support.message', serializeSupportMessageForEvent(created), { clientMessageId });
+  void notifyAdminsOfSupportMessage(req.user, serialized);
+
   res.status(201).json({
-    message: serializeSupportMessage(created),
+    message: serialized,
+    ...(clientMessageId ? { clientMessageId } : {}),
   });
 });
 
@@ -11487,6 +13031,8 @@ app.post('/api/support-chat/messages/:messageId/reactions', authMiddleware, asyn
   message.reactions = existingReactions;
   await message.save();
 
+  emitSupportChatEvent('support.message.updated', serializeSupportMessageForEvent(message));
+
   res.json({ message: serializeSupportMessage(message) });
 });
 
@@ -11516,47 +13062,63 @@ app.get('/api/admin/community/reports', authMiddleware, requireAdmin, async (_re
 });
 
 app.get('/api/admin/support-chat/conversations', authMiddleware, requireAdmin, async (_req, res) => {
-  const recentMessages = await SupportChatMessageModel.find({})
-    .sort({ createdAt: -1 })
-    .limit(2000)
-    .lean();
+  const grouped = await SupportChatMessageModel.aggregate([
+    { $sort: { createdAt: -1 } },
+    {
+      $group: {
+        _id: '$userId',
+        lastMessageText: { $first: '$text' },
+        lastMessageType: { $first: '$messageType' },
+        lastAttachmentName: { $first: '$attachment.name' },
+        lastMessageAt: { $first: '$createdAt' },
+        unreadForAdmin: {
+          $sum: {
+            $cond: [
+              { $and: [{ $eq: ['$senderRole', 'user'] }, { $eq: ['$readByAdmin', false] }] },
+              1,
+              0,
+            ],
+          },
+        },
+      },
+    },
+    { $sort: { lastMessageAt: -1 } },
+    { $limit: 500 },
+  ]);
 
-  const byUserId = new Map();
-  for (const item of recentMessages) {
-    const userId = String(item.userId);
-    if (!byUserId.has(userId)) {
-      byUserId.set(userId, {
-        userId,
-        lastMessageText: String(item.text || ''),
-        lastMessageAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
-        unreadForAdmin: 0,
-      });
-    }
-    if (item.senderRole === 'user' && !item.readByAdmin) {
-      byUserId.get(userId).unreadForAdmin += 1;
-    }
-  }
-
-  const userIds = Array.from(byUserId.keys());
-  const users = userIds.length
-    ? await UserModel.find({ _id: { $in: userIds } }).select('firstName lastName email phone').lean()
-    : [];
+  const userIds = grouped.map((row) => row._id).filter(Boolean);
+  const [users, profiles, livePresence] = await Promise.all([
+    userIds.length
+      ? UserModel.find({ _id: { $in: userIds } }).select('firstName lastName email phone').lean()
+      : [],
+    userIds.length
+      ? CommunityProfileModel.find({ userId: { $in: userIds } }).select('userId username').lean()
+      : [],
+    listPresence().catch(() => []),
+  ]);
   const userMap = new Map(users.map((item) => [String(item._id), item]));
+  const usernameById = new Map(profiles.map((item) => [String(item.userId), String(item.username || '')]));
+  const presenceById = new Map((livePresence || []).map((record) => [String(record.userId), record.status === 'away' ? 'away' : 'online']));
 
-  const conversations = Array.from(byUserId.values())
-    .map((entry) => {
-      const user = userMap.get(entry.userId);
-      return {
-        userId: entry.userId,
-        userName: user ? `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim() : 'Unknown User',
-        email: user?.email || '',
-        mobileNumber: user?.phone || '',
-        lastMessageText: entry.lastMessageText,
-        lastMessageAt: entry.lastMessageAt,
-        unreadForAdmin: entry.unreadForAdmin,
-      };
-    })
-    .sort((a, b) => new Date(String(b.lastMessageAt || 0)).getTime() - new Date(String(a.lastMessageAt || 0)).getTime());
+  const conversations = grouped.map((entry) => {
+    const userId = String(entry._id);
+    const user = userMap.get(userId);
+    const lastText = String(entry.lastMessageText || '').trim();
+    const lastPreview = lastText
+      || (entry.lastMessageType === 'file' ? String(entry.lastAttachmentName || 'Shared a file') : '');
+    return {
+      userId,
+      conversationId: userId,
+      userName: user ? `${String(user.firstName || '').trim()} ${String(user.lastName || '').trim()}`.trim() : 'Unknown User',
+      username: usernameById.get(userId) || '',
+      email: user?.email || '',
+      mobileNumber: user?.phone || '',
+      lastMessageText: lastPreview,
+      lastMessageAt: entry.lastMessageAt ? new Date(entry.lastMessageAt).toISOString() : null,
+      unreadForAdmin: Number(entry.unreadForAdmin || 0),
+      presenceStatus: presenceById.get(userId) || 'offline',
+    };
+  });
 
   res.json({ conversations });
 });
@@ -11579,7 +13141,7 @@ app.get('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmin
     return;
   }
 
-  await SupportChatMessageModel.updateMany(
+  const markedRead = await SupportChatMessageModel.updateMany(
     {
       userId,
       senderRole: 'user',
@@ -11587,6 +13149,12 @@ app.get('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmin
     },
     { $set: { readByAdmin: true } },
   );
+  if (Number(markedRead?.modifiedCount || 0) > 0) {
+    for (const item of messages) {
+      if (item.senderRole === 'user') item.readByAdmin = true;
+    }
+    emitSupportReadReceipt(userId, 'admin');
+  }
 
   res.json({
     user: {
@@ -11645,6 +13213,8 @@ app.post('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmi
     return;
   }
 
+  const clientMessageId = sanitizeSupportClientMessageId(req.body?.clientMessageId);
+
   const created = await SupportChatMessageModel.create({
     userId,
     senderRole: 'admin',
@@ -11656,8 +13226,13 @@ app.post('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmi
     readByAdmin: true,
   });
 
+  const serialized = serializeSupportMessage(created);
+  emitSupportChatEvent('support.message', serializeSupportMessageForEvent(created), { clientMessageId });
+  void notifyUserOfSupportAdminReply(userId, serialized.id);
+
   res.status(201).json({
-    message: serializeSupportMessage(created),
+    message: serialized,
+    ...(clientMessageId ? { clientMessageId } : {}),
   });
 });
 
@@ -11703,6 +13278,8 @@ app.post('/api/admin/support-chat/messages/:userId/:messageId/reactions', authMi
 
   message.reactions = existingReactions;
   await message.save();
+
+  emitSupportChatEvent('support.message.updated', serializeSupportMessageForEvent(message));
 
   res.json({ message: serializeSupportMessage(message) });
 });
@@ -11984,7 +13561,7 @@ app.get('/api/practice-board/questions', async (req, res) => {
     }
 
     const questions = await PracticeBoardQuestionModel.find(filter)
-      .select(PRACTICE_BOARD_SELECT)
+      .select(PRACTICE_BOARD_CLIENT_SELECT)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
@@ -11999,31 +13576,56 @@ app.get('/api/practice-board/questions/random', async (req, res) => {
   try {
     const subject = String(req.query.subject || '').trim().toLowerCase();
     const difficulty = String(req.query.difficulty || '').trim();
-    const excludeId = String(req.query.excludeId || '').trim();
+    const excludeIds = parsePracticeBoardExcludeIds(req.query);
 
-    const filter = {};
+    const filter = { ...practiceBoardUsableQuestionMatch() };
     if (subject) filter.subject = subject;
     if (difficulty) filter.difficulty = difficulty;
-    if (excludeId && isValidObjectId(excludeId)) {
-      filter._id = { $ne: excludeId };
-    }
+    if (excludeIds.length) filter._id = { $nin: excludeIds };
 
-    const count = await PracticeBoardQuestionModel.countDocuments(filter);
-    if (!count) {
-      res.status(404).json({ error: 'No practice board questions found for this selection.' });
-      return;
+    let item = await pickRandomPracticeBoardQuestion(filter);
+    if (!item && excludeIds.length) {
+      const retryFilter = { ...practiceBoardUsableQuestionMatch() };
+      if (subject) retryFilter.subject = subject;
+      if (difficulty) retryFilter.difficulty = difficulty;
+      item = await pickRandomPracticeBoardQuestion(retryFilter);
     }
-
-    const randomIndex = Math.floor(Math.random() * count);
-    const item = await PracticeBoardQuestionModel.findOne(filter).skip(randomIndex).lean();
     if (!item) {
-      res.status(404).json({ error: 'No practice board question available.' });
+      res.status(404).json({ error: 'No practice board questions found for this selection.' });
       return;
     }
 
     res.json({ question: serializePracticeBoardQuestion(item) });
   } catch {
     res.status(500).json({ error: 'Failed to load random practice board question.' });
+  }
+});
+
+app.get('/api/practice-board/questions/:questionId/files/:kind', async (req, res) => {
+  try {
+    const questionId = String(req.params.questionId || '').trim();
+    const kind = String(req.params.kind || '').trim().toLowerCase() === 'solution' ? 'solution' : 'question';
+    if (!questionId || !isValidObjectId(questionId)) {
+      res.status(400).json({ error: 'Invalid practice board question id.' });
+      return;
+    }
+
+    const select = kind === 'solution'
+      ? 'solutionFile solutionImageUrl'
+      : 'questionFile questionImageUrl';
+    const item = await PracticeBoardQuestionModel.findById(questionId).select(select).lean();
+    if (!item) {
+      res.status(404).json({ error: 'Practice board question not found.' });
+      return;
+    }
+
+    if (kind === 'solution') {
+      sendPracticeBoardStoredFile(res, item.solutionFile, item.solutionImageUrl, 'solution');
+      return;
+    }
+    sendPracticeBoardStoredFile(res, item.questionFile, item.questionImageUrl, 'question');
+  } catch {
+    res.status(500).json({ error: 'Failed to load practice board file.' });
   }
 });
 
@@ -13626,8 +15228,13 @@ app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
 });
 
 app.get('/api/tests/attempts', ...studentPremiumSurface, async (req, res) => {
-  const attempts = await AttemptModel.find({ userId: req.user._id }).sort({ attemptedAt: -1 }).lean();
-  res.json({ attempts: attempts.map((item) => serializeAttempt(item)) });
+  try {
+    const attempts = await AttemptModel.find({ userId: req.user._id }).sort({ attemptedAt: -1 }).lean();
+    res.json({ attempts: attempts.map((item) => serializeAttempt(item)) });
+  } catch (error) {
+    console.error('[tests/attempts] failed', error?.message || error);
+    res.status(500).json({ error: 'Could not load test attempts.' });
+  }
 });
 
 app.get('/api/tests/:sessionId', ...studentPremiumSurface, async (req, res) => {
@@ -17442,7 +19049,7 @@ app.get('/api/admin/practice-board/questions', authMiddleware, requireAdmin, asy
     .skip(skip)
     .limit(limit)
     .lean();
-  res.json({ page, limit, questions: questions.map((item) => serializePracticeBoardQuestion(item)) });
+  res.json({ page, limit, questions: questions.map((item) => serializePracticeBoardQuestion(item, { embedFiles: true })) });
 });
 
 app.post('/api/admin/practice-board/questions', authMiddleware, requireAdmin, async (req, res) => {
@@ -17491,7 +19098,7 @@ app.post('/api/admin/practice-board/questions', authMiddleware, requireAdmin, as
     source: 'Admin',
   });
 
-  res.status(201).json({ question: serializePracticeBoardQuestion(created) });
+  res.status(201).json({ question: serializePracticeBoardQuestion(created, { embedFiles: true }) });
 });
 
 app.put('/api/admin/practice-board/questions/:questionId', authMiddleware, requireAdmin, async (req, res) => {
@@ -17551,7 +19158,7 @@ app.put('/api/admin/practice-board/questions/:questionId', authMiddleware, requi
   Object.assign(existing, next);
   const updated = await existing.save();
 
-  res.json({ question: serializePracticeBoardQuestion(updated) });
+  res.json({ question: serializePracticeBoardQuestion(updated, { embedFiles: true }) });
 });
 
 app.delete('/api/admin/practice-board/questions/:questionId', authMiddleware, requireAdmin, async (req, res) => {
@@ -17623,6 +19230,12 @@ function validateCriticalConfiguration() {
   }
   if (IS_PRODUCTION && isEnvAdminLoginConfigured()) {
     warnings.push('ADMIN_LOGIN_EMAIL/ADMIN_LOGIN_PASSWORD are configured; env admin login is enabled.');
+  }
+  if (IS_PRODUCTION && !RESEND_API_KEY && !smtpRuntime.enabled) {
+    warnings.push(`SMTP is not configured (${smtpMissingEnv.join(', ') || 'unknown'}); Google account deletion emails will return 503.`);
+  }
+  if (AUTH_COOKIE_DOMAIN && /railway/i.test(String(process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL || ''))) {
+    warnings.push('AUTH_COOKIE_DOMAIN does not match the Railway API host; cookies will be set host-only. Body JWTs remain the auth transport.');
   }
 
   if (IS_PRODUCTION && JWT_SECRET && (JWT_SECRET === 'dev-secret-change-me' || JWT_SECRET.length < 32)) {
@@ -17723,6 +19336,7 @@ async function bootstrap() {
     },
     onStudentPresenceRegister: registerStudentPresence,
     onStudentPresenceUnregister: unregisterStudentPresence,
+    onStudentPresenceHeartbeat: heartbeatStudentPresence,
   }).catch((error) => {
     console.error('[socket.io] Initialization failed (HTTP still runs):', error?.message || error);
   });
@@ -17809,17 +19423,21 @@ async function bootstrap() {
         } catch (error) {
           console.error('[openai] Startup probe failed unexpectedly:', error?.message || error);
         }
+        void backfillCommunityNotificationsGlobal().catch((error) => {
+          console.warn('[community-notify] startup backfill failed:', error?.message || error);
+        });
       } else {
         const rs = mongoConnection?.readyState ?? '(no connection)';
         console.warn(`[startup] MongoDB not ready (readyState=${rs}). Background reconnect may be active; see [mongo] logs.`);
         console.warn('[openai] Skipping startup probe (MongoDB not connected).');
       }
 
-      try {
-        await refreshNustAdmissionsCache({ force: true });
-      } catch (error) {
-        console.error('[startup] NUST admissions cache refresh failed (non-fatal):', error?.message || error);
-      }
+        try {
+          await hydrateNustAdmissionsCacheFromMongo();
+          await refreshNustAdmissionsCache({ force: true });
+        } catch (error) {
+          console.error('[startup] NUST admissions cache refresh failed (non-fatal):', error?.message || error);
+        }
 
       setInterval(() => {
         void refreshNustAdmissionsCache({ force: true }).catch((err) => {

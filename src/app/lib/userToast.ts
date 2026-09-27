@@ -79,7 +79,7 @@ const FIREBASE_AUTH_USER_MESSAGES: Record<string, string> = {
   'auth/user-not-found': "We couldn't find an account with this email. Create a new account to continue.",
   'auth/wrong-password': 'Incorrect password. Please try again or reset your password.',
   'auth/invalid-credential': 'Incorrect email or password. Please try again.',
-  'auth/email-already-in-use': 'An account with this email already exists. Please sign in instead.',
+  'auth/email-already-in-use': 'This email is already registered. Please sign in.',
   'auth/weak-password': 'Your password must contain at least 8 characters.',
   'auth/too-many-requests': 'Too many attempts. Please wait a moment and try again.',
   'auth/network-request-failed': 'Unable to connect. Please check your internet connection and try again.',
@@ -144,6 +144,9 @@ export function audienceFriendlyError(error: unknown, fallback = 'We could not c
   const firebaseMsg = mapFirebaseCode(code);
   if (firebaseMsg) return firebaseMsg;
 
+  if (code === 'EMAIL_ALREADY_REGISTERED') {
+    return 'This email is already registered. Please sign in.';
+  }
   if (code === 'PREMIUM_CONTENT_LOCKED' || code === 'TRIAL_ALREADY_USED' || code === 'SUBSCRIPTION_REQUIRED') {
     return 'This feature is available for Premium members.';
   }

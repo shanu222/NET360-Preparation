@@ -8,7 +8,9 @@ import {
   resolveSnapshotStudentAuthToken,
 } from '../lib/authSession';
 import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTiming';
+import { cacheLaunchedExamSession } from '../lib/examWindowLaunch';
 import { logNativeEvent } from '../lib/nativeDiagnostics';
+import { consumeBriefNativeHide, markNativeDocumentHidden } from '../lib/nativeForeground';
 import { useAuth } from './AuthContext';
 
 interface TestAttempt {
@@ -335,7 +337,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const authToken = resolveClientAuthToken();
     if (!authToken) return;
     void loadUserData(authToken).catch(() => undefined);
-  }, [token, user, loadUserData, resolveClientAuthToken]);
+  }, [token, user?.id, loadUserData, resolveClientAuthToken]);
 
   useEffect(() => {
     const authToken = resolveClientAuthToken();
@@ -345,6 +347,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     let reconnectTimer: number | null = null;
     let source: EventSource | null = null;
     let reconnectDelay = 1500;
+    // `/api/stream` answers 401 (no `open` event) when the request carries no usable credential —
+    // e.g. the browser blocks the cross-site auth cookie (EventSource cannot send a bearer
+    // header and the API ignores `?token=` in production). Retrying that forever only produced a
+    // stream of 401s, so give up after a few consecutive pre-open failures and try again on the
+    // next token change / tab focus / network resume. Socket.IO carries realtime events anyway.
+    let opened = false;
+    let consecutivePreOpenFailures = 0;
+    let pausedLogged = false;
 
     const closeCurrent = () => {
       if (source) {
@@ -356,11 +366,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const connect = () => {
       if (closed) return;
       closeCurrent();
+      opened = false;
 
       source = new EventSource(buildSseStreamUrl(authToken), { withCredentials: true });
 
       source.onopen = () => {
         logNativeEvent('socket', 'appdata-stream-open');
+        opened = true;
+        consecutivePreOpenFailures = 0;
+        pausedLogged = false;
         reconnectDelay = 1500;
       };
 
@@ -389,19 +403,41 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
       source.onerror = () => {
         logNativeEvent('socket', 'appdata-stream-error', { reconnectDelay }, 'warn');
+        if (!opened) consecutivePreOpenFailures += 1;
         closeCurrent();
         if (closed) return;
+        if (consecutivePreOpenFailures >= 3) {
+          if (!pausedLogged) {
+            pausedLogged = true;
+            console.warn('[stream] /api/stream rejected 3 times in a row; pausing until the session token changes or the tab regains focus.');
+          }
+          return;
+        }
         reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null;
           connect();
         }, reconnectDelay);
         reconnectDelay = Math.min(Math.round(reconnectDelay * 1.65), 15000);
       };
     };
 
+    // Resume a paused stream (see above) when the tab becomes visible or the network returns.
+    const resumeIfPaused = () => {
+      if (closed || source || reconnectTimer != null || document.hidden) return;
+      if (consecutivePreOpenFailures < 3) return;
+      consecutivePreOpenFailures = 0;
+      reconnectDelay = 1500;
+      connect();
+    };
+    document.addEventListener('visibilitychange', resumeIfPaused);
+    window.addEventListener('online', resumeIfPaused);
+
     connect();
 
     return () => {
       closed = true;
+      document.removeEventListener('visibilitychange', resumeIfPaused);
+      window.removeEventListener('online', resumeIfPaused);
       if (reconnectTimer) {
         window.clearTimeout(reconnectTimer);
       }
@@ -419,7 +455,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     if (!authToken) return;
 
     const onVisibility = () => {
-      if (document.hidden) return;
+      if (document.hidden) {
+        markNativeDocumentHidden();
+        return;
+      }
+      if (consumeBriefNativeHide()) return;
       scheduleDebouncedForegroundSync(authToken);
     };
 
@@ -430,6 +470,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
     const onFocus = () => {
       if (document.hidden) return;
+      if (consumeBriefNativeHide()) return;
       scheduleDebouncedForegroundSync(authToken);
     };
 
@@ -499,40 +540,34 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     selectedSubject,
     authTokenHint,
   }) => {
-    await waitUntilAuthHydrated(() => authLoadingRef.current);
-    if (!readPersistedStudentAccessToken() && !token && !user) {
-      throw new Error('Please login first to start a server-backed test session.');
-    }
-    await waitUntilClientAuthToken(resolveClientAuthToken);
-
     const trimmedHint =
       typeof authTokenHint === 'string' && authTokenHint.trim() ? authTokenHint.trim() : null;
-    let authToken: string | null =
-      trimmedHint && !isCookieSessionApiMarker(trimmedHint) ? trimmedHint : null;
-
     const storedAccess = readPersistedStudentAccessToken();
-    if (!authToken && storedAccess && !isCookieSessionApiMarker(storedAccess)) {
-      authToken = storedAccess;
-    }
-    if (!authToken) {
-      authToken = resolveClientAuthToken();
-    }
+    let authToken: string | null =
+      trimmedHint && !isCookieSessionApiMarker(trimmedHint)
+        ? trimmedHint
+        : storedAccess && !isCookieSessionApiMarker(storedAccess)
+          ? storedAccess
+          : resolveClientAuthToken();
+
     if (!authToken || isCookieSessionApiMarker(authToken)) {
-      authToken = await resolveLaunchAuthToken(token);
-    }
-    if (!authToken) {
-      throw new Error('Please login first to start a server-backed test session.');
-    }
-
-    const persistedJwt = readPersistedStudentAccessToken();
-    if (persistedJwt && !isCookieSessionApiMarker(persistedJwt)) {
-      authToken = persistedJwt;
-    }
-
-    await ensureStudentBearerTokenFromRefresh(token);
-    const bearerAfterPrime = readPersistedStudentAccessToken();
-    if (bearerAfterPrime && !isCookieSessionApiMarker(bearerAfterPrime)) {
-      authToken = bearerAfterPrime;
+      await waitUntilAuthHydrated(() => authLoadingRef.current);
+      if (!readPersistedStudentAccessToken() && !token && !user) {
+        throw new Error('Please login first to start a server-backed test session.');
+      }
+      await waitUntilClientAuthToken(resolveClientAuthToken);
+      authToken = resolveClientAuthToken();
+      if (!authToken || isCookieSessionApiMarker(authToken)) {
+        authToken = await resolveLaunchAuthToken(token);
+      }
+      if (!authToken) {
+        throw new Error('Please login first to start a server-backed test session.');
+      }
+      await ensureStudentBearerTokenFromRefresh(token);
+      const bearerAfterPrime = readPersistedStudentAccessToken();
+      if (bearerAfterPrime && !isCookieSessionApiMarker(bearerAfterPrime)) {
+        authToken = bearerAfterPrime;
+      }
     }
 
     if (import.meta.env.DEV) {
@@ -566,7 +601,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           {
             method: 'POST',
             retryCount: 1,
-            timeoutMs: 50_000,
+            timeoutMs: 18_000,
             body: JSON.stringify(normalizedPayload),
           },
           authToken,
@@ -589,6 +624,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           questionCount: normalizedPayload.questionCount,
           returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
         });
+        cacheLaunchedExamSession(startPayload.session);
         return startPayload.session;
       } catch (error) {
         logNativeEvent('practice-board', 'test-session-start-failed', {

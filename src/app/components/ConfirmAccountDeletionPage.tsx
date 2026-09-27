@@ -2,10 +2,6 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { AlertTriangle, CheckCircle2, Loader2 } from 'lucide-react';
-import { Button } from './ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
-import { Input } from './ui/input';
-import { Label } from './ui/label';
 import { apiRequest } from '../lib/api';
 import { useAuth } from '../context/AuthContext';
 import { showErrorToast, showSuccessToast } from '../lib/userToast';
@@ -129,109 +125,117 @@ export const ConfirmAccountDeletionPage = memo(function ConfirmAccountDeletionPa
     && !done;
 
   return (
-    <div className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-4 py-10">
+    <div className="mx-auto flex min-h-dvh w-full max-w-lg flex-col justify-center px-4 py-10 text-[#0f172a]">
       <Helmet>
         <title>Confirm account deletion | NET360 Preparation</title>
         <meta name="robots" content="noindex, nofollow" />
+        <meta name="color-scheme" content="light" />
       </Helmet>
 
-      <Card className="border-rose-200/80 bg-white/95 shadow-lg dark:border-rose-900/40 dark:bg-slate-900/90">
-        <CardHeader className="space-y-2">
-          <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300">
+      <section
+        className="rounded-2xl border border-[#fecdd3] bg-white p-6 shadow-xl"
+        style={{ colorScheme: 'light' }}
+      >
+        <header className="space-y-2">
+          <div className="flex items-center gap-2 text-[#be123c]">
             <AlertTriangle className="h-6 w-6 shrink-0" aria-hidden />
-            <CardTitle className="text-xl">Account deletion</CardTitle>
+            <h1 className="text-xl font-bold leading-tight text-[#9f1239]">Account deletion</h1>
           </div>
-          <CardDescription className="text-base text-slate-600 dark:text-slate-300">
+          <p className="text-base leading-relaxed text-[#334155]">
             This page is only shown when you open a secure deletion link from your email.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-5">
+          </p>
+        </header>
+
+        <div className="mt-6 space-y-5">
           {verify.status === 'loading' || verify.status === 'idle' ? (
-            <div className="flex items-center gap-3 text-slate-600 dark:text-slate-300">
-              <Loader2 className="h-6 w-6 animate-spin" aria-hidden />
-              <p>Verifying your deletion link…</p>
+            <div className="flex items-center gap-3 text-[#334155]">
+              <Loader2 className="h-6 w-6 animate-spin text-[#be123c]" aria-hidden />
+              <p className="text-base font-medium">Verifying your deletion link…</p>
             </div>
           ) : null}
 
           {verify.status === 'invalid' ? (
-            <p className="text-sm font-medium text-rose-700 dark:text-rose-300">{verify.message}</p>
+            <p className="text-sm font-semibold text-[#9f1239]">{verify.message}</p>
           ) : null}
 
           {verify.status === 'ready' ? (
             <>
-              <div className="rounded-xl border border-amber-300 bg-amber-50/95 p-4 text-sm text-amber-950 dark:border-amber-800/60 dark:bg-amber-950/60 dark:text-amber-50">
-                <p className="font-semibold">This action is permanent</p>
-                <p className="mt-2 leading-relaxed">
+              <div className="rounded-xl border border-[#f59e0b] bg-[#fffbeb] p-4 text-[#78350f]">
+                <p className="text-sm font-bold text-[#92400e]">This action is permanent</p>
+                <p className="mt-2 text-sm leading-relaxed text-[#78350f]">
                   Deleting your NET360 account removes your access, subscriptions, preparation progress, community
                   presence, and support chat history associated with this account. Billing records may be retained in
                   redacted form where the law requires.
                 </p>
               </div>
-              <div className="space-y-1 text-sm text-slate-700 dark:text-slate-200">
+              <div className="space-y-2 text-sm leading-relaxed text-[#1e293b]">
                 <p>
-                  <span className="font-medium text-slate-900 dark:text-slate-50">Account email:</span>{' '}
-                  {verify.email}
+                  <span className="font-semibold text-[#0f172a]">Account email:</span>{' '}
+                  <span className="break-all">{verify.email}</span>
                 </p>
                 {verify.firstName ? (
                   <p>
-                    <span className="font-medium text-slate-900 dark:text-slate-50">Name on file:</span>{' '}
+                    <span className="font-semibold text-[#0f172a]">Name on file:</span>{' '}
                     {verify.firstName}
                   </p>
                 ) : null}
                 {expiryLabel ? (
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Link valid until {expiryLabel}.</p>
+                  <p className="text-sm font-medium text-[#475569]">Link valid until {expiryLabel}.</p>
                 ) : null}
-                <p className="text-xs font-medium text-rose-700 dark:text-rose-300">
+                <p className="text-sm font-semibold text-[#9f1239]">
                   This deletion link is single-use and cannot be reused after confirmation.
                 </p>
                 {user?.email && verify.email && user.email.toLowerCase() !== verify.email.toLowerCase() ? (
-                  <p className="text-xs font-medium text-amber-800 dark:text-amber-200">
+                  <p className="text-sm font-semibold text-[#92400e]">
                     You are signed in as a different NET360 account. After deletion, this browser session will be
                     cleared.
                   </p>
                 ) : null}
               </div>
               <div className="space-y-2">
-                <Label htmlFor="confirm-delete-text" className="text-sm font-semibold text-rose-800 dark:text-rose-200">
+                <label htmlFor="confirm-delete-text" className="block text-sm font-bold text-[#9f1239]">
                   Type DELETE to permanently remove your account
-                </Label>
-                <Input
+                </label>
+                <input
                   id="confirm-delete-text"
                   name="confirm-delete-text"
                   autoComplete="off"
                   placeholder="DELETE"
                   value={confirmationText}
                   onChange={(e) => setConfirmationText(e.target.value)}
-                  className="border-rose-300 bg-white text-slate-900 placeholder:text-slate-500 dark:border-rose-700 dark:bg-slate-950 dark:text-slate-100"
+                  className="h-12 w-full rounded-xl border-2 border-[#e11d48] bg-white px-3 text-base font-semibold text-[#0f172a] outline-none placeholder:font-medium placeholder:text-[#64748b] focus:border-[#be123c] focus:ring-2 focus:ring-[#fb7185]"
                 />
               </div>
-              <Button
+              <button
                 type="button"
-                variant="destructive"
-                className={`w-full min-h-11 touch-manipulation ${canConfirmDelete ? 'opacity-100' : 'opacity-60'}`}
                 disabled={!canConfirmDelete}
                 onClick={() => void handleConfirm()}
+                className="flex min-h-12 w-full items-center justify-center rounded-xl bg-[#be123c] px-4 text-base font-bold text-white shadow-sm touch-manipulation disabled:cursor-not-allowed disabled:bg-[#fda4af] disabled:text-white"
               >
                 {submitting ? 'Deleting account…' : done ? 'Account deleted' : 'Confirm Permanent Account Deletion'}
-              </Button>
+              </button>
               {submitError ? (
-                <p className="text-xs font-medium text-rose-700 dark:text-rose-300">{submitError}</p>
+                <p className="text-sm font-semibold text-[#9f1239]">{submitError}</p>
               ) : null}
             </>
           ) : null}
 
           {done ? (
-            <div className="flex items-start gap-2 rounded-lg border border-emerald-200 bg-emerald-50/90 p-3 text-sm text-emerald-900 dark:border-emerald-900/40 dark:bg-emerald-950/30 dark:text-emerald-100">
-              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" aria-hidden />
+            <div className="flex items-start gap-2 rounded-xl border border-[#059669] bg-[#ecfdf5] p-3 text-sm font-medium text-[#064e3b]">
+              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[#047857]" aria-hidden />
               <p>Your account has been deleted. Redirecting to the home page…</p>
             </div>
           ) : null}
 
-          <Button type="button" variant="outline" className="w-full" onClick={() => navigate('/', { replace: true })}>
+          <button
+            type="button"
+            onClick={() => navigate('/', { replace: true })}
+            className="flex min-h-12 w-full items-center justify-center rounded-xl border-2 border-[#cbd5e1] bg-white px-4 text-base font-semibold text-[#0f172a] touch-manipulation"
+          >
             Cancel and return home
-          </Button>
-        </CardContent>
-      </Card>
+          </button>
+        </div>
+      </section>
     </div>
   );
 });

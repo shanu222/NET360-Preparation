@@ -1,5 +1,5 @@
 import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { apiRequest } from '../lib/api';
+import { apiRequest, isCrossSiteApiBase } from '../lib/api';
 import {
   createUserWithEmailAndPassword,
   getRedirectResult,
@@ -31,7 +31,9 @@ import { ensureFirebaseAuthReady, firebaseAuth, isFirebaseConfigured } from '../
 import { showNeutralToast, showSuccessToast, showWarningToast } from '../lib/userToast';
 import { updateAuthDebug } from '../lib/authDebugState';
 import { isNativeRuntime as isNativeRuntimePlatform, logNativeEvent } from '../lib/nativeDiagnostics';
+import { consumeBriefNativeHide, markNativeDocumentHidden } from '../lib/nativeForeground';
 import { signInWithGoogleAndroidNative } from '../lib/nativeGoogleAuth';
+import { closeRealtimeScope } from '../lib/realtimeSocket';
 
 interface AuthUser {
   id: string;
@@ -40,6 +42,8 @@ interface AuthUser {
   lastName: string;
   role?: 'student' | 'admin';
   authProvider?: string;
+  authProviderDetail?: string;
+  deletionChannel?: 'password' | 'email-link';
   /** Present on `/api/auth/me` for students; used for session diagnostics only. */
   activeSessionId?: string;
 }
@@ -55,7 +59,7 @@ interface AuthContextValue {
     password: string;
     firstName?: string;
     lastName?: string;
-  }) => Promise<void>;
+  }) => Promise<{ verificationRequired?: boolean; email?: string } | void>;
   sendRecoveryEmail: (email: string) => Promise<void>;
   deleteAccount: (params: { password: string; confirmationText: string }) => Promise<{ message: string }>;
   requestAccountDeletionLink: (params: { confirmationText: string }) => Promise<{ message: string; expiresAt?: string }>;
@@ -139,11 +143,28 @@ function clearLocalStorageAuthStateSafe() {
 }
 
 let authSessionLoadGeneration = 0;
+const FOREGROUND_SESSION_RESTORE_DEBOUNCE_MS = 320;
 
 function delay(ms: number) {
   return new Promise<void>((resolve) => {
     window.setTimeout(resolve, Math.max(0, Math.floor(ms)));
   });
+}
+
+function isSameAuthUser(a: AuthUser | null | undefined, b: AuthUser | null | undefined): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.id === b.id
+    && a.email === b.email
+    && a.firstName === b.firstName
+    && a.lastName === b.lastName
+    && a.role === b.role
+    && a.authProvider === b.authProvider
+    && a.authProviderDetail === b.authProviderDetail
+    && a.deletionChannel === b.deletionChannel
+    && a.activeSessionId === b.activeSessionId
+  );
 }
 
 function isLikelyTransientAuthFailure(error: unknown): boolean {
@@ -253,6 +274,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isAndroidNative = isNativeRuntime && Capacitor.getPlatform() === 'android';
   const runSessionRestoreRef = useRef<(reason?: string) => Promise<void>>(async () => undefined);
   const authBootstrapInFlightRef = useRef<Promise<boolean> | null>(null);
+  const userRef = useRef(user);
+  const tokenRef = useRef(token);
+  userRef.current = user;
+  tokenRef.current = token;
 
   useEffect(() => {
     if (!isNativeRuntime) return;
@@ -379,17 +404,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [detectNativeWebViewCapabilities, isNativeRuntime, waitForCapacitorReady, waitForNetworkReady, waitForStorageReady]);
 
   const applyAuthPayload = useCallback((payload: { token?: string; refreshToken?: string; user: AuthUser }) => {
-    setUser(payload.user);
     persistStudentUserSnapshot(payload.user);
+    setUser((current) => (isSameAuthUser(current, payload.user) ? current : payload.user));
     if (payload.token && shouldPersistAuthTokens()) {
       setToken(payload.token);
       setRefreshToken(payload.refreshToken ?? null);
       persistStudentTokens(payload.token, payload.refreshToken ?? null);
-    } else {
-      setToken(COOKIE_SESSION_API_MARKER);
-      setRefreshToken(null);
-      persistCookieSessionMode();
+      return;
     }
+    const existingAccess = shouldPersistAuthTokens() ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+    const existingRefresh = shouldPersistAuthTokens() ? localStorage.getItem(REFRESH_TOKEN_STORAGE_KEY) : null;
+    if (existingAccess && !isCookieSessionApiMarker(existingAccess)) {
+      setToken(existingAccess);
+      setRefreshToken(existingRefresh);
+      return;
+    }
+    if (isCrossSiteApiBase()) {
+      setToken(existingAccess);
+      setRefreshToken(existingRefresh);
+      return;
+    }
+    setToken(COOKIE_SESSION_API_MARKER);
+    persistCookieSessionMode();
   }, []);
 
   const finalizeNativeAuthTransport = useCallback(async (
@@ -436,7 +472,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (typeof window === 'undefined') return;
 
       const loadId = ++authSessionLoadGeneration;
-      setLoading(true);
+      // Cold start only. Focus / visibility / app-resume must not flip `loading`
+      // or SessionReady will unmount the student UI (Profile looks like a reload).
+      const isColdStart = reason === 'mount';
+      if (isColdStart) {
+        setLoading(true);
+      }
 
       if (!shouldPersistAuthTokens()) {
         if (!cancelled && loadId === authSessionLoadGeneration) setLoading(false);
@@ -463,8 +504,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
         if (storedToken) setToken(storedToken);
         if (storedRefresh) setRefreshToken(storedRefresh);
-        if (snapshotUser?.id && !cancelled) {
+        if (snapshotUser?.id && !cancelled && !isSameAuthUser(userRef.current, snapshotUser)) {
           setUser(snapshotUser);
+        }
+      };
+
+      const commitRestoredUser = (nextUser: AuthUser) => {
+        persistStudentUserSnapshot(nextUser);
+        if (!isSameAuthUser(userRef.current, nextUser)) {
+          setUser(nextUser);
+        }
+      };
+
+      const commitRestoredAccessToken = (nextToken: string | null) => {
+        if (tokenRef.current !== nextToken) {
+          setToken(nextToken);
         }
       };
 
@@ -482,13 +536,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             activeSessionStatus: 'active',
             refreshStatus: 'ok',
           });
-          setUser(me.user);
-          persistStudentUserSnapshot(me.user);
+          commitRestoredUser(me.user);
           if (!bearer) {
-            setToken(COOKIE_SESSION_API_MARKER);
+            commitRestoredAccessToken(COOKIE_SESSION_API_MARKER);
             persistCookieSessionMode();
           } else {
-            setToken(storedToken);
+            commitRestoredAccessToken(storedToken);
           }
           return;
         } catch (error) {
@@ -595,7 +648,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     void ensureNativeAuthBootstrap('mount');
     const listenerPromise = CapacitorApp
       .addListener('appStateChange', ({ isActive }) => {
-        if (isActive) void ensureNativeAuthBootstrap('app-resume');
+        if (!isActive) {
+          markNativeDocumentHidden();
+          return;
+        }
+        if (consumeBriefNativeHide()) return;
+        if (isAndroidNative && userRef.current) return;
+        void ensureNativeAuthBootstrap('app-resume');
       })
       .catch(() => null);
     const onOnline = () => {
@@ -622,11 +681,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    const onVisibility = () => {
-      if (!document.hidden) {
-        syncFromStorage();
-        void runSessionRestoreRef.current('visibility');
+    let restoreDebounceTimer: number | null = null;
+    const scheduleForegroundRestore = (reason: string) => {
+      if (restoreDebounceTimer) {
+        window.clearTimeout(restoreDebounceTimer);
       }
+      restoreDebounceTimer = window.setTimeout(() => {
+        restoreDebounceTimer = null;
+        void runSessionRestoreRef.current(reason);
+      }, FOREGROUND_SESSION_RESTORE_DEBOUNCE_MS);
+    };
+
+    const onVisibility = () => {
+      if (document.hidden) {
+        markNativeDocumentHidden();
+        return;
+      }
+      syncFromStorage();
+      if (consumeBriefNativeHide()) return;
+      if (isAndroidNative && userRef.current) return;
+      scheduleForegroundRestore('visibility');
     };
 
     const onStorage = (event: StorageEvent) => {
@@ -636,8 +710,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const onFocus = () => {
+      if (document.hidden) return;
       syncFromStorage();
-      void runSessionRestoreRef.current('focus');
+      if (consumeBriefNativeHide()) return;
+      if (isAndroidNative && userRef.current) return;
+      scheduleForegroundRestore('focus');
     };
 
     window.addEventListener('focus', onFocus);
@@ -647,16 +724,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .addListener('appStateChange', ({ isActive }) => {
         if (isActive) {
           syncFromStorage();
-          void runSessionRestoreRef.current('app-resume');
+          if (consumeBriefNativeHide()) return;
+          if (isAndroidNative && userRef.current) return;
+          scheduleForegroundRestore('app-resume');
+        } else {
+          markNativeDocumentHidden();
         }
       })
       .catch(() => null);
     const onOnline = () => {
       syncFromStorage();
-      void runSessionRestoreRef.current('online');
+      scheduleForegroundRestore('online');
     };
     window.addEventListener('online', onOnline);
     return () => {
+      if (restoreDebounceTimer) {
+        window.clearTimeout(restoreDebounceTimer);
+      }
       window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibility);
       window.removeEventListener('storage', onStorage);
@@ -797,6 +881,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           backendLoginCode: extractAuthErrorCode(error),
           activeSessionStatus: extractAuthErrorCode(error) === 'ACTIVE_SESSION_ELSEWHERE' ? 'conflict' : 'unknown',
         });
+        if (extractAuthErrorCode(error).toUpperCase() === 'EMAIL_NOT_VERIFIED' && firebaseAuth) {
+          void signOut(firebaseAuth).catch(() => undefined);
+        }
         if (!isNativeRuntime || attempt >= attempts - 1 || !isLikelyTransientAuthFailure(error)) {
           break;
         }
@@ -1056,11 +1143,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!activeAuth) {
       throw new Error('Account setup could not start on this device. Please retry.');
     }
-    const credential = await createUserWithEmailAndPassword(activeAuth, email, password);
-    const firebaseIdToken = await credential.user.getIdToken();
-    let payload: { token?: string; refreshToken?: string; user: AuthUser };
+    let credential;
     try {
-      payload = await apiRequest<{ token?: string; refreshToken?: string; user: AuthUser }>(
+      credential = await createUserWithEmailAndPassword(activeAuth, email, password);
+    } catch (error) {
+      const code = String((error as { code?: string })?.code || '').toLowerCase();
+      const message = String((error as Error)?.message || '').toLowerCase();
+      if (code.includes('email-already-in-use') || message.includes('email-already-in-use')) {
+        const alreadyRegistered = new Error('This email is already registered. Please sign in.') as Error & { code?: string; status?: number };
+        alreadyRegistered.code = 'EMAIL_ALREADY_REGISTERED';
+        alreadyRegistered.status = 409;
+        throw alreadyRegistered;
+      }
+      throw error;
+    }
+    const firebaseIdToken = await credential.user.getIdToken();
+    let payload: {
+      token?: string;
+      refreshToken?: string;
+      user?: AuthUser;
+      verificationRequired?: boolean;
+      email?: string;
+    };
+    try {
+      payload = await apiRequest<{
+        token?: string;
+        refreshToken?: string;
+        user?: AuthUser;
+        verificationRequired?: boolean;
+        email?: string;
+      }>(
         '/api/auth/register',
         {
           method: 'POST',
@@ -1080,7 +1192,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       throw error;
     }
 
-    const stabilizedPayload = await finalizeNativeAuthTransport(payload, 'register');
+    if (payload?.verificationRequired) {
+      await signOut(activeAuth).catch(() => undefined);
+      return {
+        verificationRequired: true,
+        email: String(payload.email || email),
+      };
+    }
+
+    const stabilizedPayload = await finalizeNativeAuthTransport(payload as { token?: string; refreshToken?: string; user: AuthUser }, 'register');
     applyAuthPayload(stabilizedPayload);
   }, [applyAuthPayload, deviceId, ensureNativeAuthBootstrap, finalizeNativeAuthTransport]);
 
@@ -1124,6 +1244,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       body: JSON.stringify(rt ? { refreshToken: rt } : {}),
     }).catch(() => undefined);
+    closeRealtimeScope('student');
     clearClientAuthState();
     if (firebaseAuth) {
       void signOut(firebaseAuth).catch(() => undefined);
@@ -1139,17 +1260,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return payload;
     };
 
+    let firebaseIdToken = '';
+    const email = String(user?.email || '').trim();
+    if (email && password) {
+      try {
+        if (isNativeRuntime) {
+          const rest = await signInWithEmailPasswordRest(email, password);
+          firebaseIdToken = rest.idToken;
+        } else if (firebaseAuth) {
+          const credential = await signInWithEmailAndPassword(firebaseAuth, email, password);
+          firebaseIdToken = await credential.user.getIdToken(true);
+        }
+      } catch {
+        firebaseIdToken = '';
+      }
+    }
+
     const payload = await apiRequest<{ message: string }>('/api/auth/delete-account', {
       method: 'POST',
       body: JSON.stringify({
         password,
         confirmationText,
+        firebaseIdToken,
       }),
       timeoutMs: 60_000,
       retryCount: 0,
     });
     return finalizeSuccess(payload);
-  }, [clearClientAuthState]);
+  }, [clearClientAuthState, isNativeRuntime, user?.email]);
 
   useEffect(() => {
     const onRevoked = (ev: Event) => {

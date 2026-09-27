@@ -42,6 +42,15 @@ import {
   readPersistedAdminRefreshToken,
 } from '../app/lib/authSession';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../app/lib/hierarchyDedup';
+import {
+  acquireRealtimeSocket,
+  getRealtimeStatus,
+  reconnectRealtimeIfNeeded,
+  releaseRealtimeSocket,
+  setRealtimeAuthToken,
+  subscribeRealtimeStatus,
+  type RealtimeStatus,
+} from '../app/lib/realtimeSocket';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../app/components/ui/card';
 import { Button } from '../app/components/ui/button';
 import { Input } from '../app/components/ui/input';
@@ -1298,17 +1307,23 @@ interface AdminCommunityReport {
 
 interface AdminSupportConversation {
   userId: string;
+  conversationId?: string;
   userName: string;
+  username?: string;
   email: string;
   mobileNumber: string;
   lastMessageText: string;
   lastMessageAt: string | null;
   unreadForAdmin: number;
+  presenceStatus?: 'online' | 'away' | 'offline' | string;
 }
 
 interface AdminSupportMessage {
   id: string;
+  messageId?: string;
+  conversationId?: string;
   userId: string;
+  senderId?: string;
   senderRole: 'user' | 'admin';
   messageType?: 'text' | 'file' | string;
   text: string;
@@ -1320,6 +1335,8 @@ interface AdminSupportMessage {
   } | null;
   reactions?: Array<{ emoji: string }>;
   createdAt: string | null;
+  readByUser?: boolean;
+  readByAdmin?: boolean;
 }
 
 interface AdminSupportThreadPayload {
@@ -1331,6 +1348,97 @@ interface AdminSupportThreadPayload {
     isDeleted?: boolean;
   };
   messages: AdminSupportMessage[];
+}
+
+/** Realtime `sync` payload for support chat (emitted by the API over Socket.IO). */
+interface AdminSupportRealtimeEvent {
+  type?: string;
+  userId?: string;
+  messageId?: string;
+  senderRole?: string;
+  message?: AdminSupportMessage;
+  clientMessageId?: string;
+  /** support.typing */
+  from?: 'user' | 'admin' | string;
+  typing?: boolean;
+  /** support.read */
+  by?: 'user' | 'admin' | string;
+}
+
+const ADMIN_SUPPORT_TYPING_TTL_MS = 4_000;
+const ADMIN_SUPPORT_TYPING_EMIT_MIN_INTERVAL_MS = 1_500;
+const ADMIN_SUPPORT_TYPING_IDLE_STOP_MS = 2_500;
+
+function supportMessageSortKey(item: AdminSupportMessage) {
+  return `${item.createdAt || ''}:${item.id || ''}`;
+}
+
+function sortAdminSupportMessages(list: AdminSupportMessage[]): AdminSupportMessage[] {
+  return list.slice().sort((a, b) => {
+    const ta = new Date(a.createdAt || 0).getTime();
+    const tb = new Date(b.createdAt || 0).getTime();
+    if (ta !== tb) return ta - tb;
+    return String(a.id || '').localeCompare(String(b.id || ''));
+  });
+}
+
+/** Insert or replace by stable message id; keeps a known file payload when the event omits it. */
+function upsertAdminSupportMessage(list: AdminSupportMessage[], incoming: AdminSupportMessage): AdminSupportMessage[] {
+  const id = String(incoming.id || incoming.messageId || '');
+  if (!id) return list;
+  const normalized = { ...incoming, id };
+  const index = list.findIndex((row) => String(row.id) === id || String(row.messageId || '') === id);
+  if (index < 0) return sortAdminSupportMessages([...list, normalized]);
+  const existing = list[index];
+  const next = list.slice();
+  next[index] = {
+    ...existing,
+    ...normalized,
+    attachment: normalized.attachment && !normalized.attachment.dataUrl && existing.attachment?.dataUrl
+      ? { ...normalized.attachment, dataUrl: existing.attachment.dataUrl }
+      : normalized.attachment ?? existing.attachment ?? null,
+  };
+  return supportMessageSortKey(existing) === supportMessageSortKey(next[index]) ? next : sortAdminSupportMessages(next);
+}
+
+/**
+ * Move a conversation to the top with the latest preview; `unreadDelta` bumps the admin unread
+ * counter. Returns the same array when the conversation is unknown (caller refetches the list).
+ */
+function touchSupportConversation(
+  list: AdminSupportConversation[],
+  userId: string,
+  message: AdminSupportMessage,
+  unreadDelta: number,
+  identity: Partial<AdminSupportConversation> = {},
+): AdminSupportConversation[] {
+  const preview = String(message.text || (message.messageType === 'file' ? message.attachment?.name || 'Shared a file' : ''));
+  const index = list.findIndex((row) => row.userId === userId);
+  const current = index >= 0
+    ? list[index]
+    : {
+      userId,
+      conversationId: userId,
+      userName: identity.userName || 'Student',
+      username: identity.username || '',
+      email: identity.email || '',
+      mobileNumber: identity.mobileNumber || '',
+      lastMessageText: '',
+      lastMessageAt: null,
+      unreadForAdmin: 0,
+      presenceStatus: identity.presenceStatus || 'online',
+    };
+  const updated: AdminSupportConversation = {
+    ...current,
+    ...identity,
+    userId,
+    conversationId: current.conversationId || userId,
+    lastMessageText: preview || current.lastMessageText,
+    lastMessageAt: message.createdAt || current.lastMessageAt || new Date().toISOString(),
+    unreadForAdmin: Math.max(0, Number(current.unreadForAdmin || 0) + unreadDelta),
+  };
+  const without = index >= 0 ? [...list.slice(0, index), ...list.slice(index + 1)] : list;
+  return [updated, ...without];
 }
 
 interface LoginUser {
@@ -2618,6 +2726,18 @@ export default function AdminApp() {
   });
   const [isSupportThreadLoading, setIsSupportThreadLoading] = useState(false);
   const [isSendingSupportReply, setIsSendingSupportReply] = useState(false);
+  const [supportRealtimeStatus, setSupportRealtimeStatus] = useState<RealtimeStatus>(() => getRealtimeStatus('admin'));
+  const selectedSupportUserIdRef = useRef('');
+  selectedSupportUserIdRef.current = selectedSupportUserId;
+  const supportConversationsRef = useRef<AdminSupportConversation[]>([]);
+  supportConversationsRef.current = supportConversations;
+  const supportThreadLoadedForRef = useRef('');
+  const supportResyncTimerRef = useRef<number | null>(null);
+  /** userId of the student currently typing in the selected thread (ephemeral). */
+  const [supportTypingUserId, setSupportTypingUserId] = useState('');
+  const supportTypingTimerRef = useRef<number | null>(null);
+  const supportSocketRef = useRef<ReturnType<typeof acquireRealtimeSocket> | null>(null);
+  const supportTypingStateRef = useRef({ lastEmitAt: 0, idleTimer: null as number | null, active: false, userId: '' });
   const supportReplyFileInputRef = useRef<HTMLInputElement | null>(null);
   const bulkDocumentInputRef = useRef<HTMLInputElement | null>(null);
   const explanationImageInputRef = useRef<HTMLInputElement | null>(null);
@@ -2846,7 +2966,7 @@ export default function AdminApp() {
     const needle = supportConversationQuery.trim().toLowerCase();
     if (!needle) return supportConversations;
     return supportConversations.filter((item) => {
-      const blob = [item.userName, item.email, item.mobileNumber, item.lastMessageText].join(' ').toLowerCase();
+      const blob = [item.userName, item.username, item.email, item.mobileNumber, item.lastMessageText].join(' ').toLowerCase();
       return blob.includes(needle);
     });
   }, [supportConversations, supportConversationQuery]);
@@ -3516,7 +3636,6 @@ export default function AdminApp() {
         hasMore: false,
       } as AdminSubscriptionManagementUsersPayload, { timeoutMs: ADMIN_SUBSCRIPTION_USERS_TIMEOUT_MS, retryCount: 1 }),
       fetchAdminBootstrapStep('community-reports', '/api/admin/community/reports', activeToken, { reports: [] as AdminCommunityReport[] }),
-      fetchAdminBootstrapStep('support-chat', '/api/admin/support-chat/conversations', activeToken, { conversations: [] as AdminSupportConversation[] }, { timeoutMs: 12_000 }),
       fetchAdminBootstrapStep('mcq-bank-structure', '/api/admin/mcq-bank/structure', activeToken, { structure: [] as AdminMcqBankStructureItem[] }),
       fetchAdminBootstrapStep('configurations', '/api/admin/configurations', activeToken, {
         variables: [],
@@ -3536,7 +3655,6 @@ export default function AdminApp() {
         paidServicesUsersPayload,
         subscriptionManagementUsersPayload,
         communityReportsPayload,
-        supportConversationsPayload,
         structurePayload,
         configVariablesPayload,
       ] = await deferredSteps;
@@ -3551,7 +3669,6 @@ export default function AdminApp() {
       setPaidServicesUsers(paidServicesUsersPayload.users || []);
       applySubscriptionManagementPayload(subscriptionManagementUsersPayload);
       setCommunityReports(communityReportsPayload.reports || []);
-      setSupportConversations(supportConversationsPayload.conversations || []);
       setMcqStructure(structurePayload.structure || []);
       setConfigVariables(configVariablesPayload.variables || []);
       setConfigInfraSnapshot(configVariablesPayload.infraSnapshot?.items || []);
@@ -3590,7 +3707,6 @@ export default function AdminApp() {
       paidServicesUsersPayload,
       subscriptionManagementUsersPayload,
       communityReportsPayload,
-      supportConversationsPayload,
       structurePayload,
       configVariablesPayload,
     ] = await deferredSteps;
@@ -3607,7 +3723,6 @@ export default function AdminApp() {
     setPaidServicesUsers(paidServicesUsersPayload.users || []);
     applySubscriptionManagementPayload(subscriptionManagementUsersPayload);
     setCommunityReports(communityReportsPayload.reports || []);
-    setSupportConversations(supportConversationsPayload.conversations || []);
     setMcqStructure(structurePayload.structure || []);
     setConfigVariables(configVariablesPayload.variables || []);
     setConfigInfraSnapshot(configVariablesPayload.infraSnapshot?.items || []);
@@ -3992,6 +4107,12 @@ export default function AdminApp() {
     let closed = false;
     let reconnectTimer: number | null = null;
     let source: EventSource | null = null;
+    // Bounded: `/api/stream` answers 401 (no `open`) when the browser withholds the cross-site
+    // auth cookie (EventSource cannot send a bearer header; `?token=` is ignored in production).
+    // Stop after 3 consecutive pre-open failures and retry on tab focus / token change instead
+    // of looping every 3s. Support chat realtime runs over Socket.IO regardless.
+    let opened = false;
+    let consecutivePreOpenFailures = 0;
 
     const closeCurrent = () => {
       if (source) {
@@ -4003,7 +4124,13 @@ export default function AdminApp() {
     const connect = () => {
       if (closed) return;
       closeCurrent();
+      opened = false;
       source = new EventSource(buildSseStreamUrl(authToken), { withCredentials: true });
+
+      source.onopen = () => {
+        opened = true;
+        consecutivePreOpenFailures = 0;
+      };
 
       source.addEventListener('sync', () => {
         if (document.hidden) return;
@@ -4020,18 +4147,35 @@ export default function AdminApp() {
       });
 
       source.onerror = () => {
+        if (!opened) consecutivePreOpenFailures += 1;
         closeCurrent();
         if (closed) return;
+        if (consecutivePreOpenFailures >= 3) {
+          if (consecutivePreOpenFailures === 3) {
+            console.warn('[stream] admin /api/stream rejected 3 times in a row; pausing until the tab regains focus or the token changes.');
+          }
+          return;
+        }
         reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null;
           connect();
         }, 3000);
       };
     };
 
+    const resumeIfPaused = () => {
+      if (closed || source || reconnectTimer != null || document.hidden) return;
+      if (consecutivePreOpenFailures < 3) return;
+      consecutivePreOpenFailures = 0;
+      connect();
+    };
+    document.addEventListener('visibilitychange', resumeIfPaused);
+
     connect();
 
     return () => {
       closed = true;
+      document.removeEventListener('visibilitychange', resumeIfPaused);
       if (reconnectTimer) {
         window.clearTimeout(reconnectTimer);
       }
@@ -4424,22 +4568,109 @@ export default function AdminApp() {
     }
   };
 
-  const loadSupportThread = async (userId: string, activeToken = authToken) => {
+  /**
+   * Load a thread from the server (source of truth; also marks the student's messages read).
+   * `silent` = realtime reconcile of the thread already on screen: never flashes "Loading thread...".
+   */
+  const loadSupportThread = async (userId: string, activeToken = authToken, options: { silent?: boolean } = {}) => {
     if (!activeToken || !userId) return;
+    const silent = Boolean(options.silent) && supportThreadLoadedForRef.current === userId;
     try {
-      setIsSupportThreadLoading(true);
+      if (!silent) setIsSupportThreadLoading(true);
       const payload = await apiRequest<AdminSupportThreadPayload>(`/api/admin/support-chat/messages/${userId}`, {}, activeToken);
+      // The admin may have switched threads while this request was in flight.
+      if (selectedSupportUserIdRef.current !== userId) return;
       setActiveSupportUser(payload.user || null);
-      setSupportMessages(payload.messages || []);
+      setSupportMessages(sortAdminSupportMessages(payload.messages || []));
+      supportThreadLoadedForRef.current = userId;
+      setSupportConversations((prev) => prev.map((row) => (
+        row.userId === userId
+          ? { ...row, unreadForAdmin: 0, userName: payload.user?.name || row.userName, email: payload.user?.email || row.email, mobileNumber: payload.user?.mobileNumber || row.mobileNumber }
+          : row
+      )));
     } catch (error) {
-      handleApiError(error, 'Could not load support thread.');
+      if (!silent) handleApiError(error, 'Could not load support thread.');
     } finally {
-      setIsSupportThreadLoading(false);
+      if (!silent) setIsSupportThreadLoading(false);
+    }
+  };
+
+  const refreshSupportConversations = async (activeToken = authToken) => {
+    if (!activeToken) return;
+    try {
+      const payload = await apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations', {}, activeToken);
+      if (Array.isArray(payload.conversations)) {
+        setSupportConversations(payload.conversations);
+      }
+    } catch (error) {
+      const status = Number((error as { status?: number } | null)?.status || 0);
+      if (status === 401 || status === 403) {
+        void restoreAdminSession(activeToken).catch(() => clearAdminSession());
+      }
+    }
+  };
+
+  // Long-lived socket/timer callbacks must call the latest closures (current token/selection).
+  const loadSupportThreadRef = useRef(loadSupportThread);
+  loadSupportThreadRef.current = loadSupportThread;
+  const refreshSupportConversationsRef = useRef(refreshSupportConversations);
+  refreshSupportConversationsRef.current = refreshSupportConversations;
+
+  /** Coalesce bursts of realtime events / reconnects into one conversations + thread fetch. */
+  const scheduleSupportResync = (delayMs = 300) => {
+    if (supportResyncTimerRef.current != null) return;
+    supportResyncTimerRef.current = window.setTimeout(() => {
+      supportResyncTimerRef.current = null;
+      void refreshSupportConversationsRef.current();
+      const selected = selectedSupportUserIdRef.current;
+      if (selected) void loadSupportThreadRef.current(selected, undefined, { silent: true });
+    }, delayMs);
+  };
+
+  /** Ephemeral "admin is typing" signal to the selected student (throttled; auto-stops when idle). */
+  const emitSupportTyping = (userId: string, typing: boolean) => {
+    const socket = supportSocketRef.current;
+    if (!socket || !socket.connected || !userId) return;
+    socket.emit('support:typing', { userId, typing });
+  };
+
+  const notifySupportTyping = () => {
+    const userId = selectedSupportUserIdRef.current;
+    if (!userId) return;
+    const state = supportTypingStateRef.current;
+    const now = Date.now();
+    if (state.active && state.userId && state.userId !== userId) {
+      emitSupportTyping(state.userId, false);
+      state.active = false;
+    }
+    if (!state.active || now - state.lastEmitAt >= ADMIN_SUPPORT_TYPING_EMIT_MIN_INTERVAL_MS) {
+      state.active = true;
+      state.userId = userId;
+      state.lastEmitAt = now;
+      emitSupportTyping(userId, true);
+    }
+    if (state.idleTimer != null) window.clearTimeout(state.idleTimer);
+    state.idleTimer = window.setTimeout(() => {
+      state.idleTimer = null;
+      state.active = false;
+      emitSupportTyping(state.userId, false);
+    }, ADMIN_SUPPORT_TYPING_IDLE_STOP_MS);
+  };
+
+  const stopSupportTyping = () => {
+    const state = supportTypingStateRef.current;
+    if (state.idleTimer != null) {
+      window.clearTimeout(state.idleTimer);
+      state.idleTimer = null;
+    }
+    if (state.active) {
+      state.active = false;
+      emitSupportTyping(state.userId, false);
     }
   };
 
   const sendSupportReply = async () => {
-    if (!authToken || !selectedSupportUserId) return;
+    if (!authToken || !selectedSupportUserId || isSendingSupportReply) return;
     if (activeSupportUser?.isDeleted) {
       showErrorToast('This user account was deleted. Thread is read-only.');
       return;
@@ -4447,24 +4678,30 @@ export default function AdminApp() {
     const text = supportReplyText.trim();
     const messageType = supportReplyAttachment ? 'file' : 'text';
     if (messageType === 'text' && !text) return;
+    stopSupportTyping();
+    const targetUserId = selectedSupportUserId;
+    const clientMessageId = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
     try {
       setIsSendingSupportReply(true);
-      await apiRequest(`/api/admin/support-chat/messages/${selectedSupportUserId}`, {
+      const payload = await apiRequest<{ message?: AdminSupportMessage }>(`/api/admin/support-chat/messages/${targetUserId}`, {
         method: 'POST',
         body: JSON.stringify({
           messageType,
           text,
           attachment: supportReplyAttachment,
+          clientMessageId,
         }),
       }, authToken);
+      // Server acknowledged: only now clear the composer.
       setSupportReplyText('');
       setSupportReplyAttachment(null);
-      await Promise.all([
-        loadSupportThread(selectedSupportUserId),
-        apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations', {}, authToken)
-          .then((payload) => setSupportConversations(payload.conversations || []))
-          .catch(() => undefined),
-      ]);
+      const persisted = payload?.message;
+      if (persisted?.id && selectedSupportUserIdRef.current === targetUserId) {
+        setSupportMessages((prev) => upsertAdminSupportMessage(prev, persisted));
+      }
+      if (persisted) {
+        setSupportConversations((prev) => touchSupportConversation(prev, targetUserId, persisted, 0));
+      }
     } catch (error) {
       handleApiError(error, 'Could not send support reply.');
     } finally {
@@ -4500,12 +4737,17 @@ export default function AdminApp() {
 
   const reactToSupportMessage = async (messageId: string, emoji: string) => {
     if (!authToken || !selectedSupportUserId) return;
+    const targetUserId = selectedSupportUserId;
     try {
-      await apiRequest(`/api/admin/support-chat/messages/${selectedSupportUserId}/${messageId}/reactions`, {
+      const payload = await apiRequest<{ message?: AdminSupportMessage }>(`/api/admin/support-chat/messages/${targetUserId}/${messageId}/reactions`, {
         method: 'POST',
         body: JSON.stringify({ emoji }),
       }, authToken);
-      await loadSupportThread(selectedSupportUserId, authToken);
+      if (payload?.message?.id && selectedSupportUserIdRef.current === targetUserId) {
+        setSupportMessages((prev) => upsertAdminSupportMessage(prev, payload.message as AdminSupportMessage));
+      } else {
+        scheduleSupportResync(0);
+      }
     } catch (error) {
       handleApiError(error, 'Could not update reaction.');
     }
@@ -4578,7 +4820,9 @@ export default function AdminApp() {
       return;
     }
 
-    void loadSupportThread(selectedSupportUserId, authToken);
+    // `silent` only applies when this same thread is already on screen (e.g. token rotation):
+    // switching threads still shows the loading hint.
+    void loadSupportThread(selectedSupportUserId, authToken, { silent: true });
   }, [selectedSupportUserId, authToken]);
 
   useEffect(() => {
@@ -4637,35 +4881,148 @@ export default function AdminApp() {
 
     if (latestUserMessageId !== lastUserMessageInThreadRef.current) {
       lastUserMessageInThreadRef.current = latestUserMessageId;
-      playNotificationTone();
-      showNeutralToast('New message in active support thread');
-      notifyAdminDesktop(
-        'NET360 Active Thread',
-        latestUserMessage?.text || 'You have a new message in the active support thread.',
-      );
     }
   }, [supportMessages]);
 
+  // Keep the shared admin socket's credentials current (never recreates the connection).
+  useEffect(() => {
+    setRealtimeAuthToken('admin', authToken);
+  }, [authToken]);
+
+  // Realtime support chat: ONE shared Socket.IO connection for the admin panel
+  // (lib/realtimeSocket.ts). The API emits `support.message` / `support.message.updated`
+  // `sync` events to every connected admin; the list and the open thread update in place.
   useEffect(() => {
     if (!authToken || !ready) return;
 
-    const timer = window.setInterval(() => {
-      void apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations')
-        .then((payload) => setSupportConversations(payload.conversations || []))
-        .catch((error) => {
-          const status = Number((error as { status?: number } | null)?.status || 0);
-          if (status === 401 || status === 403) {
-            void restoreAdminSession(authToken).catch(() => clearAdminSession());
-          }
-        });
+    let closed = false;
+    const socket = acquireRealtimeSocket('admin');
+    supportSocketRef.current = socket;
 
-      if (selectedSupportUserId) {
-        void loadSupportThread(selectedSupportUserId);
+    const onSync = (data: unknown) => {
+      if (closed || !data || typeof data !== 'object') return;
+      const event = data as AdminSupportRealtimeEvent;
+      const type = String(event.type || '');
+      if (type === 'support.typing') {
+        const typingUserId = String(event.userId || '');
+        if (event.from !== 'user' || !typingUserId) return;
+        if (supportTypingTimerRef.current != null) window.clearTimeout(supportTypingTimerRef.current);
+        supportTypingTimerRef.current = null;
+        if (event.typing) {
+          setSupportTypingUserId(typingUserId);
+          supportTypingTimerRef.current = window.setTimeout(() => setSupportTypingUserId(''), ADMIN_SUPPORT_TYPING_TTL_MS);
+        } else {
+          setSupportTypingUserId((prev) => (prev === typingUserId ? '' : prev));
+        }
+        return;
       }
-    }, 5000);
+      if (type === 'support.read') {
+        const readUserId = String(event.userId || '');
+        if (event.by !== 'user' || !readUserId || selectedSupportUserIdRef.current !== readUserId) return;
+        setSupportMessages((prev) => (prev.some((row) => row.senderRole === 'admin' && !row.readByUser)
+          ? prev.map((row) => (row.senderRole === 'admin' ? { ...row, readByUser: true } : row))
+          : prev));
+        return;
+      }
+      if (type !== 'support.message' && type !== 'support.message.updated') return;
+      const message = event.message;
+      const userId = String(event.userId || message?.userId || '');
+      if (!message?.id || !userId) return;
 
+      const isSelectedThread = selectedSupportUserIdRef.current === userId;
+
+      if (type === 'support.message' && String(message.senderRole || '') === 'user') {
+        setSupportTypingUserId((prev) => (prev === userId ? '' : prev));
+      }
+
+      if (type === 'support.message') {
+        const fromStudent = String(message.senderRole || event.senderRole || '') === 'user';
+        const known = supportConversationsRef.current.some((row) => row.userId === userId);
+        setSupportConversations((prev) => touchSupportConversation(
+          prev,
+          userId,
+          message,
+          fromStudent && !isSelectedThread ? 1 : 0,
+        ));
+        if (!known) scheduleSupportResync(0);
+      }
+
+      if (isSelectedThread) {
+        setSupportMessages((prev) => upsertAdminSupportMessage(prev, { ...message, userId }));
+        // Student message in the open thread: mark it read server-side + reconcile (also fetches
+        // file bytes, which realtime events omit).
+        if (type === 'support.message' && String(message.senderRole || '') === 'user') {
+          scheduleSupportResync(250);
+        } else if (message.messageType === 'file' && !message.attachment?.dataUrl) {
+          scheduleSupportResync(250);
+        }
+      }
+    };
+
+    const onConnect = () => {
+      // Events may have been missed while disconnected: reconcile from the server.
+      scheduleSupportResync(0);
+    };
+
+    socket.on('sync', onSync);
+    socket.on('connect', onConnect);
+    const unsubscribeStatus = subscribeRealtimeStatus('admin', (status) => {
+      if (!closed) setSupportRealtimeStatus(status);
+    });
+    setSupportRealtimeStatus(getRealtimeStatus('admin'));
+
+    const onVisibility = () => {
+      if (document.hidden) return;
+      reconnectRealtimeIfNeeded('admin');
+      scheduleSupportResync(0);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    return () => {
+      closed = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+      unsubscribeStatus();
+      socket.off('sync', onSync);
+      socket.off('connect', onConnect);
+      if (supportSocketRef.current === socket) supportSocketRef.current = null;
+      releaseRealtimeSocket('admin', socket);
+      if (supportResyncTimerRef.current != null) {
+        window.clearTimeout(supportResyncTimerRef.current);
+        supportResyncTimerRef.current = null;
+      }
+      if (supportTypingTimerRef.current != null) {
+        window.clearTimeout(supportTypingTimerRef.current);
+        supportTypingTimerRef.current = null;
+      }
+      if (supportTypingStateRef.current.idleTimer != null) {
+        window.clearTimeout(supportTypingStateRef.current.idleTimer);
+        supportTypingStateRef.current.idleTimer = null;
+      }
+      supportTypingStateRef.current.active = false;
+      setSupportTypingUserId('');
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authToken, ready]);
+
+  // Bounded fallback reconcile: 20s while the realtime channel is down, otherwise a quiet
+  // once-a-minute list refresh (replaces the previous unconditional 5s list + thread polling).
+  useEffect(() => {
+    if (!authToken || !ready) return;
+    const intervalMs = supportRealtimeStatus === 'connected' ? 60_000 : 20_000;
+    const timer = window.setInterval(() => {
+      if (document.hidden) return;
+      void refreshSupportConversationsRef.current();
+      if (supportRealtimeStatus !== 'connected' && selectedSupportUserIdRef.current) {
+        void loadSupportThreadRef.current(selectedSupportUserIdRef.current, undefined, { silent: true });
+      }
+    }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [authToken, ready, selectedSupportUserId]);
+  }, [authToken, ready, supportRealtimeStatus]);
+
+  useEffect(() => {
+    if (!authToken || !ready) return;
+    void refreshSupportConversationsRef.current();
+  }, [authToken, ready, activeSection]);
 
   useEffect(() => {
     setBulkAnalysisReady(false);
@@ -8152,7 +8509,16 @@ export default function AdminApp() {
         <TabsContent value="support-chat" className="space-y-3">
           <Card>
             <CardHeader>
-              <CardTitle>Live Support Conversations</CardTitle>
+              <CardTitle className="flex flex-wrap items-center gap-2">
+                Live Support Conversations
+                {supportRealtimeStatus === 'connected' ? (
+                  <Badge className="bg-emerald-600 text-white" aria-live="polite">Live</Badge>
+                ) : (
+                  <Badge variant="outline" className="border-amber-300 text-amber-800" aria-live="polite">
+                    {supportRealtimeStatus === 'disconnected' ? 'Reconnecting…' : 'Connecting…'}
+                  </Badge>
+                )}
+              </CardTitle>
               <CardDescription>View student messages in real time and reply directly from admin panel.</CardDescription>
               <div className="flex justify-end gap-2">
                 {adminDesktopAlertsEnabled ? (
@@ -8177,13 +8543,22 @@ export default function AdminApp() {
 
                   <div className="max-h-[500px] space-y-2 overflow-auto">
                   {!filteredSupportConversations.length ? (
-                    <p className="p-2 text-sm text-muted-foreground">No support conversations yet.</p>
+                    <p className="p-2 text-sm text-muted-foreground">
+                      {supportConversationQuery.trim()
+                        ? 'No conversations match that search.'
+                        : 'No support conversations yet.'}
+                    </p>
                   ) : null}
                   {filteredSupportConversations.map((conversation) => (
                     <button
                       key={conversation.userId}
                       type="button"
-                      onClick={() => setSelectedSupportUserId(conversation.userId)}
+                      onClick={() => {
+                        setSelectedSupportUserId(conversation.userId);
+                        setSupportConversations((prev) => prev.map((row) => (
+                          row.userId === conversation.userId ? { ...row, unreadForAdmin: 0 } : row
+                        )));
+                      }}
                       className={`admin-support-conversation w-full rounded-md border px-2.5 py-2 text-left transition ${
                         selectedSupportUserId === conversation.userId
                           ? 'admin-support-conversation-active border-indigo-300 bg-indigo-50'
@@ -8191,13 +8566,30 @@ export default function AdminApp() {
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2">
-                        <p className="line-clamp-1 text-sm font-medium">{conversation.userName || conversation.email}</p>
+                        <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium">
+                          <span
+                            className={`inline-flex h-2 w-2 shrink-0 rounded-full ${
+                              conversation.presenceStatus === 'online'
+                                ? 'bg-emerald-500'
+                                : conversation.presenceStatus === 'away'
+                                  ? 'bg-amber-400'
+                                  : 'bg-slate-300'
+                            }`}
+                            title={conversation.presenceStatus === 'online' ? 'Online' : conversation.presenceStatus === 'away' ? 'Away' : 'Offline'}
+                          />
+                          <span className="line-clamp-1">{conversation.userName || conversation.email || 'Student'}</span>
+                        </p>
                         {conversation.unreadForAdmin > 0 ? (
-                          <Badge className="admin-support-unread-badge bg-rose-600 text-white">{conversation.unreadForAdmin}</Badge>
+                          <Badge className="admin-support-unread-badge bg-rose-600 text-white">{conversation.unreadForAdmin} unread</Badge>
                         ) : null}
                       </div>
-                      <p className="line-clamp-1 text-xs text-muted-foreground">{conversation.email || 'No email'}</p>
+                      <p className="line-clamp-1 text-xs text-muted-foreground">
+                        {[conversation.username ? `@${conversation.username}` : '', conversation.email, conversation.mobileNumber].filter(Boolean).join(' · ') || 'No contact details'}
+                      </p>
                       <p className="admin-support-conversation-preview mt-1 line-clamp-2 text-xs text-slate-600">{conversation.lastMessageText || 'No message text'}</p>
+                      <p className="mt-0.5 text-[10px] text-muted-foreground">
+                        {conversation.lastMessageAt ? new Date(conversation.lastMessageAt).toLocaleString() : ''}
+                      </p>
                     </button>
                   ))}
                   </div>
@@ -8222,12 +8614,12 @@ export default function AdminApp() {
                   <div className="admin-support-thread max-h-[420px] space-y-2 overflow-auto rounded-lg border bg-slate-50 p-3">
                     {isSupportThreadLoading ? <p className="text-xs text-muted-foreground">Loading thread...</p> : null}
                     {!supportMessages.length ? <p className="text-xs text-muted-foreground">No messages in this thread.</p> : null}
-                    {supportMessages.map((item) => (
+                    {supportMessages.map((item, index) => (
                       <div
                         key={item.id}
                         className={`admin-support-bubble max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                           item.senderRole === 'admin'
-                            ? 'admin-support-bubble-admin ml-auto bg-indigo-600 text-white'
+                            ? 'admin-support-bubble-admin chat-bubble-own ml-auto bg-indigo-600 text-white'
                             : 'admin-support-bubble-user mr-auto border bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100'
                         }`}
                       >
@@ -8260,15 +8652,27 @@ export default function AdminApp() {
                         ) : null}
                         <p className={`admin-support-bubble-meta mt-1 text-[10px] ${item.senderRole === 'admin' ? 'text-indigo-100' : 'text-slate-400'}`}>
                           {item.createdAt ? new Date(item.createdAt).toLocaleString() : ''}
+                          {item.senderRole === 'admin' && !supportMessages.slice(index + 1).some((row) => row.senderRole === 'admin')
+                            ? ` · ${item.readByUser ? 'Seen' : 'Sent'}`
+                            : ''}
                         </p>
                       </div>
                     ))}
+                    {supportTypingUserId && supportTypingUserId === selectedSupportUserId ? (
+                      <p className="text-[11px] italic text-slate-500" aria-live="polite">
+                        {activeSupportUser?.name || 'Student'} is typing…
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="flex items-end gap-2">
                     <Textarea
                       value={supportReplyText}
-                      onChange={(e) => setSupportReplyText(e.target.value)}
+                      onChange={(e) => {
+                        setSupportReplyText(e.target.value);
+                        if (e.target.value.trim()) notifySupportTyping(); else stopSupportTyping();
+                      }}
+                      onBlur={stopSupportTyping}
                       placeholder="Type support reply"
                       className="min-h-[82px]"
                       disabled={!selectedSupportUserId || Boolean(activeSupportUser?.isDeleted)}

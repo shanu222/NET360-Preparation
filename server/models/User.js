@@ -136,6 +136,14 @@ const userSchema = new mongoose.Schema(
     },
     /** Last successful login timestamp (any provider). */
     lastLoginAt: { type: Date, default: null },
+    /** Set true only for new email/password signups. Existing and Google accounts stay false. */
+    requiresEmailVerification: { type: Boolean, default: false, index: true },
+    emailVerifiedAt: { type: Date, default: null },
+    emailVerifyTokenHash: { type: String, default: null, index: true },
+    emailVerifyExpiresAt: { type: Date, default: null },
+    emailVerifyLastSentAt: { type: Date, default: null },
+    emailVerifySendWindowStartedAt: { type: Date, default: null },
+    emailVerifySendCount: { type: Number, default: 0 },
     preferences: { type: preferencesSchema, default: () => ({}) },
     progress: { type: progressSchema, default: () => ({}) },
     subscription: { type: subscriptionSchema, default: () => ({}) },

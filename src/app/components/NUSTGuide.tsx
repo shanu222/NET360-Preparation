@@ -6,6 +6,8 @@ import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { apiRequest } from '../lib/api';
+import { useAuth } from '../context/AuthContext';
+import { acquireRealtimeSocket, releaseRealtimeSocket } from '../lib/realtimeSocket';
 import {
   AlertCircle,
   ArrowRight,
@@ -86,6 +88,41 @@ const NOTICE_BLOCKLIST_PATTERNS = [
   /8\s*weeks?\s*(duration\s*)?course/i,
 ];
 
+function timelineMonthFromSchedule(testDate: string) {
+  const match = String(testDate || '').match(/\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\b/i);
+  if (!match) return '';
+  const key = match[1].slice(0, 3).toLowerCase();
+  const months: Record<string, string> = {
+    jan: 'January',
+    feb: 'February',
+    mar: 'March',
+    apr: 'April',
+    may: 'May',
+    jun: 'June',
+    jul: 'July',
+    aug: 'August',
+    sep: 'September',
+    oct: 'October',
+    nov: 'November',
+    dec: 'December',
+  };
+  return months[key] || '';
+}
+
+function formatNustUpdatedAt(value?: string | null) {
+  if (!value) return '';
+  const at = new Date(value);
+  if (Number.isNaN(at.getTime())) return '';
+  return new Intl.DateTimeFormat('en-GB', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).format(at);
+}
+
 function filterBlockedImportantNotices(items: NustImportantNoticeRow[]): NustImportantNoticeRow[] {
   return items.filter((item) => {
     const haystack = `${String(item?.title || '')} ${String(item?.subtitle || '')}`;
@@ -144,31 +181,50 @@ function statusToBadge(status: NustImportantDateRow['status']) {
 }
 
 export function NUSTGuide() {
+  const { token } = useAuth();
   const [activeTab, setActiveTab] = useState<GuideTab>('overview');
   const [sscMarks, setSscMarks] = useState('');
   const [hsscMarks, setHsscMarks] = useState('');
   const [eligibilityResult, setEligibilityResult] = useState<string[]>([]);
   const [importantDates, setImportantDates] = useState<NustImportantDateRow[]>(DEFAULT_IMPORTANT_DATES);
   const [importantNotices, setImportantNotices] = useState<NustImportantNoticeRow[]>(DEFAULT_IMPORTANT_NOTICES);
+  const [lastUpdatedFromNust, setLastUpdatedFromNust] = useState('');
+  const [sessionLabel, setSessionLabel] = useState('');
 
   useEffect(() => {
     let cancelled = false;
+
+    const applyFeed = (payload: {
+      dates?: NustImportantDateRow[];
+      notices?: NustImportantNoticeRow[];
+      lastUpdatedFromNust?: string | null;
+      fetchedAt?: string | null;
+      sessionLabel?: string;
+    }) => {
+      if (Array.isArray(payload.dates) && payload.dates.length) {
+        setImportantDates(payload.dates);
+      }
+      if (Array.isArray(payload.notices) && payload.notices.length) {
+        const safeNotices = filterBlockedImportantNotices(payload.notices);
+        setImportantNotices(safeNotices.length ? safeNotices : DEFAULT_IMPORTANT_NOTICES);
+      }
+      const updated = formatNustUpdatedAt(payload.lastUpdatedFromNust || payload.fetchedAt);
+      if (updated) setLastUpdatedFromNust(updated);
+      if (payload.sessionLabel) setSessionLabel(String(payload.sessionLabel));
+    };
 
     const loadFeed = async () => {
       try {
         const payload = await apiRequest<{
           dates?: NustImportantDateRow[];
           notices?: NustImportantNoticeRow[];
+          lastUpdatedFromNust?: string | null;
+          fetchedAt?: string | null;
+          sessionLabel?: string;
         }>('/api/public/nust-admissions-feed');
 
         if (cancelled) return;
-        if (Array.isArray(payload.dates) && payload.dates.length) {
-          setImportantDates(payload.dates);
-        }
-        if (Array.isArray(payload.notices) && payload.notices.length) {
-          const safeNotices = filterBlockedImportantNotices(payload.notices);
-          setImportantNotices(safeNotices.length ? safeNotices : DEFAULT_IMPORTANT_NOTICES);
-        }
+        applyFeed(payload);
       } catch {
         // Keep fallback data when live updates are unavailable.
       }
@@ -184,6 +240,34 @@ export function NUSTGuide() {
       window.clearInterval(timer);
     };
   }, []);
+
+  useEffect(() => {
+    if (!token) return;
+    const socket = acquireRealtimeSocket('student');
+    const onSync = (data: unknown) => {
+      const parsed = data && typeof data === 'object' ? data as {
+        type?: string;
+        dates?: NustImportantDateRow[];
+        notices?: NustImportantNoticeRow[];
+        fetchedAt?: string | null;
+        sessionLabel?: string;
+      } : {};
+      if (parsed.type !== 'nust.admissions.updated') return;
+      if (Array.isArray(parsed.dates) && parsed.dates.length) setImportantDates(parsed.dates);
+      if (Array.isArray(parsed.notices) && parsed.notices.length) {
+        const safeNotices = filterBlockedImportantNotices(parsed.notices);
+        if (safeNotices.length) setImportantNotices(safeNotices);
+      }
+      const updated = formatNustUpdatedAt(parsed.fetchedAt);
+      if (updated) setLastUpdatedFromNust(updated);
+      if (parsed.sessionLabel) setSessionLabel(String(parsed.sessionLabel));
+    };
+    socket.on('sync', onSync);
+    return () => {
+      socket.off('sync', onSync);
+      releaseRealtimeSocket('student', socket);
+    };
+  }, [token]);
 
   const navigateTo = (tab: GuideTab, sectionId?: string) => {
     setActiveTab(tab);
@@ -246,12 +330,10 @@ export function NUSTGuide() {
     },
   ];
 
-  const timeline = [
-    { label: 'NET Series 1', month: 'December' },
-    { label: 'NET Series 2', month: 'February' },
-    { label: 'NET Series 3', month: 'April' },
-    { label: 'NET Series 4', month: 'June / July' },
-  ];
+  const timeline = importantDates.slice(0, 4).map((item) => ({
+    label: item.title,
+    month: timelineMonthFromSchedule(item.testDate) || 'See official schedule',
+  }));
 
   return (
     <div className="space-y-5">
@@ -517,8 +599,13 @@ export function NUSTGuide() {
         <TabsContent value="dates" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle>Important Dates - NET 2026</CardTitle>
-              <CardDescription>Mark your calendar for these dates</CardDescription>
+              <CardTitle>Important Dates{sessionLabel ? ` - ${sessionLabel}` : ' - NET'}</CardTitle>
+              <CardDescription>
+                Mark your calendar for these dates
+                {lastUpdatedFromNust ? (
+                  <span className="mt-1 block text-xs">Last updated from NUST: {lastUpdatedFromNust}</span>
+                ) : null}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-4">

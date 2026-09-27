@@ -1102,8 +1102,8 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                           });
                                         }}
                                       >
-                                        <span className="flex items-center justify-between gap-2">
-                                          <span>{section}</span>
+                                        <span className="flex min-w-0 items-center justify-between gap-2">
+                                          <span className="min-w-0 whitespace-normal break-words">{section}</span>
                                           {isSectionCompleted(subject, section) ? (
                                             <span
                                               className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full text-[11px] ${selectedSection === `${chapter.id}::${section}` ? 'bg-white/20 text-white' : 'bg-emerald-500 text-white'}`}
@@ -1277,8 +1277,8 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                                           onSelectSection?.(selection);
                                         }}
                                       >
-                                        <span className="flex items-center justify-between gap-2">
-                                          <span>{section}</span>
+                                        <span className="flex min-w-0 items-center justify-between gap-2">
+                                          <span className="min-w-0 whitespace-normal break-words">{section}</span>
                                           {isSectionCompleted(subject, section) ? (
                                             <span
                                               className={`inline-flex h-5 min-w-5 items-center justify-center rounded-full text-[11px] ${selectedSectionBySubject[subject] === `${chapter.id}::${section}` ? 'bg-white/20 text-white' : 'bg-emerald-500 text-white'}`}

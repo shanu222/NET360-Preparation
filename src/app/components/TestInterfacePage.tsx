@@ -10,7 +10,7 @@ import { getMediaUrl } from '../lib/publicMedia';
 import { fetchAndApplyPublicMediaConfig } from '../lib/publicMediaRuntime';
 import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
 import { CancelExamDialog, TabSwitchWarningDialog } from './ExamLifecycleDialogs';
-import { leaveExamToApp, normalizeStudentAppPath } from '../lib/examWindowLaunch';
+import { leaveExamToApp, normalizeStudentAppPath, readCachedLaunchedExamSession } from '../lib/examWindowLaunch';
 import { prefetchStudentSection } from '../lib/routePrefetch';
 import { useNavigate } from 'react-router-dom';
 
@@ -811,11 +811,14 @@ export function TestInterfacePage() {
           return;
         }
 
-        const response = await apiRequest<{ session: TestSession }>(
-          `/api/tests/${resolvedSessionId}`,
-          { signal: controller.signal },
-          resolvedToken,
-        );
+        const cachedSession = readCachedLaunchedExamSession<TestSession>(resolvedSessionId);
+        const response = cachedSession
+          ? { session: cachedSession }
+          : await apiRequest<{ session: TestSession }>(
+            `/api/tests/${resolvedSessionId}`,
+            { signal: controller.signal, timeoutMs: 18_000 },
+            resolvedToken,
+          );
         const payload = response.session;
         if (!payload || !payload.questions) {
           throw new Error('Invalid test data');

@@ -36,6 +36,7 @@ const supportChatMessageSchema = new mongoose.Schema(
 );
 
 supportChatMessageSchema.index({ userId: 1, createdAt: 1 });
+supportChatMessageSchema.index({ createdAt: -1 });
 supportChatMessageSchema.index({ userId: 1, readByAdmin: 1, senderRole: 1 });
 supportChatMessageSchema.index({ userId: 1, readByUser: 1, senderRole: 1 });
 

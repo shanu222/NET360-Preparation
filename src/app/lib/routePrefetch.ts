@@ -7,7 +7,10 @@ const loaders: Record<string, () => Promise<unknown>> = {
   programs: () => import('../components/ProgramExplorer'),
   'schools-campuses': () => import('../components/NUSTSchoolsCampuses'),
   'net-types': () => import('../components/NETTypes'),
-  'practice-board': () => import('../components/PracticeBoard'),
+  'practice-board': () => import('../components/PracticeBoard').then((module) => {
+    void module.warmPracticeBoardQuestion?.();
+    return module;
+  }),
   'question-contribution': () => import('../components/QuestionContribution'),
   preparation: () => import('../components/Preparation'),
   tests: () => import('../components/Tests'),
@@ -33,7 +36,7 @@ function isNativeRuntime() {
 
 /** @param section Route section id (matches sidebar `SectionId`). */
 export function prefetchStudentSection(section: string): void {
-  if (isNativeRuntime()) return;
+  if (isNativeRuntime() && section !== 'practice-board') return;
   const load = loaders[section];
   if (load) {
     void load().catch(() => undefined);
@@ -71,7 +74,10 @@ export function prefetchNeighborStudentSections(activeSection: string): void {
 
 /** Warm dashboard + neighbors on idle — improves perceived “home” speed without blocking paint. */
 export function scheduleIdleStudentPrefetch(activeSection: string): void {
-  if (isNativeRuntime()) return;
+  if (isNativeRuntime()) {
+    prefetchStudentSection('practice-board');
+    return;
+  }
   const run = () => {
     prefetchStudentSection('home');
     prefetchNeighborStudentSections(activeSection);

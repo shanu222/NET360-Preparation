@@ -15,6 +15,7 @@ import {
 import { createPortal } from 'react-dom';
 import { PageRouteFallback } from './components/PageRouteFallback';
 import { GlobalFreeAccessAnnouncement } from './components/GlobalFreeAccessAnnouncement';
+import { StudentPresenceHeartbeat } from './components/StudentPresenceHeartbeat';
 import { SubscriptionProvider } from './context/SubscriptionContext';
 import { isChunkLoadFailure, lazyWithRetry, scheduleStaleChunkReload } from './lib/chunkLoadRecovery';
 
@@ -55,6 +56,7 @@ import { brandLogoUrl } from './lib/publicMedia';
 import { fetchAndApplyPublicMediaConfig } from './lib/publicMediaRuntime';
 import { PremiumCountdownBadge } from './components/subscription/PremiumCountdownBadge';
 import { logNativeEvent } from './lib/nativeDiagnostics';
+import { isNativeAndroidRuntime } from './lib/nativeForeground';
 
 const SubscriptionPageLazy = lazyWithRetry(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
 const Dashboard = lazyWithRetry(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
@@ -79,13 +81,22 @@ const DeleteAccountHelpPage = lazyWithRetry(() =>
 const ConfirmAccountDeletionPageLazy = lazyWithRetry(() =>
   import('./components/ConfirmAccountDeletionPage').then((m) => ({ default: m.ConfirmAccountDeletionPage })),
 );
+const VerifyEmailPageLazy = lazyWithRetry(() =>
+  import('./components/VerifyEmailPage').then((m) => ({ default: m.VerifyEmailPage })),
+);
 const SupportChatWidgetLazy = lazyWithRetry(() =>
   import('./components/SupportChatWidget').then((m) => ({ default: m.SupportChatWidget })),
 );
 
 function SessionReady({ children }: { children: ReactNode }) {
   const { loading } = useAuth();
-  if (loading) {
+  const hasBeenReadyRef = useRef(false);
+  if (!loading) {
+    hasBeenReadyRef.current = true;
+  }
+  // After the first successful session, never replace the student tree with a
+  // skeleton. Resume/focus restores must stay silent so Profile is not remounted.
+  if (loading && !hasBeenReadyRef.current) {
     return <PageRouteFallback />;
   }
   return <>{children}</>;
@@ -183,6 +194,24 @@ const PATH_BY_SECTION: Record<SectionId, string> = {
   'net-preparation-pakistan': '/net-preparation-pakistan',
   'nust-entry-test-preparation': '/nust-entry-test-preparation',
 };
+
+const ANDROID_LAST_ROUTE_KEY = 'net360-android-last-route';
+
+function isStandaloneAuthPath(pathname: string) {
+  const normalized = pathname === '/' ? '/' : pathname.replace(/\/+$/, '');
+  return normalized === '/confirm-account-deletion' || normalized === '/verify-email';
+}
+
+function isRestorableAndroidRoute(route: string) {
+  try {
+    const parsed = new URL(route, 'https://net360preparation.com');
+    if (isStandaloneAuthPath(parsed.pathname)) return false;
+    if (resolveSectionFromPath(parsed.pathname)) return true;
+    return /^\/(test|exam|community|guide|analytics|practice-board)/.test(parsed.pathname);
+  } catch {
+    return false;
+  }
+}
 
 const STUDENT_NAVIGATION_ITEMS: Array<{ id: SectionId; label: string; icon: typeof Home }> = [
   { id: 'home', label: 'Dashboard', icon: Home },
@@ -478,14 +507,26 @@ export default function App() {
   const [, startRouteTransition] = useTransition();
   const { user, loading: authLoading } = useAuth();
   const activeTab = useMemo(() => resolveSectionFromLocation(location.pathname, location.hash), [location.hash, location.pathname]);
+  const [profileVisited, setProfileVisited] = useState(
+    () => resolveSectionFromLocation(
+      typeof window !== 'undefined' ? window.location.pathname : '/',
+      typeof window !== 'undefined' ? window.location.hash : '',
+    ) === 'profile',
+  );
   const isConfirmAccountDeletionRoute = useMemo(() => {
     const normalized = location.pathname === '/' ? '/' : location.pathname.replace(/\/+$/, '');
     return normalized === '/confirm-account-deletion';
   }, [location.pathname]);
+  const isVerifyEmailRoute = useMemo(() => {
+    const normalized = location.pathname === '/' ? '/' : location.pathname.replace(/\/+$/, '');
+    return normalized === '/verify-email';
+  }, [location.pathname]);
+  const isStandaloneAuthRoute = isConfirmAccountDeletionRoute || isVerifyEmailRoute;
+  const androidRouteRestoredRef = useRef(false);
 
   /** Native: unauthenticated users always land on Login (Profile), never Dashboard first. */
   useEffect(() => {
-    if (authLoading || isConfirmAccountDeletionRoute) return;
+    if (authLoading || isStandaloneAuthRoute) return;
     const isNativeRuntime = Boolean(
       (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.(),
     );
@@ -493,7 +534,39 @@ export default function App() {
     if (!user && activeTab === 'home') {
       navigate(PATH_BY_SECTION.profile, { replace: true });
     }
-  }, [authLoading, user, activeTab, navigate, isConfirmAccountDeletionRoute]);
+  }, [authLoading, user, activeTab, navigate, isStandaloneAuthRoute]);
+
+  useEffect(() => {
+    if (!isNativeAndroidRuntime() || isStandaloneAuthRoute || !user) return;
+    const route = `${location.pathname}${location.search || ''}${location.hash || ''}`;
+    if (!isRestorableAndroidRoute(route)) return;
+    try {
+      window.localStorage.setItem(ANDROID_LAST_ROUTE_KEY, route);
+    } catch {
+      /* ignore quota / private mode */
+    }
+  }, [isStandaloneAuthRoute, location.hash, location.pathname, location.search, user]);
+
+  useEffect(() => {
+    if (authLoading || isStandaloneAuthRoute || !user) return;
+    if (!isNativeAndroidRuntime() || androidRouteRestoredRef.current) return;
+    androidRouteRestoredRef.current = true;
+    if (location.pathname !== '/' && location.pathname !== '') return;
+    let last = '';
+    try {
+      last = String(window.localStorage.getItem(ANDROID_LAST_ROUTE_KEY) || '').trim();
+    } catch {
+      return;
+    }
+    if (!last || last === '/' || !isRestorableAndroidRoute(last)) return;
+    navigate(last, { replace: true });
+  }, [authLoading, isStandaloneAuthRoute, location.pathname, navigate, user]);
+
+  useEffect(() => {
+    if (activeTab === 'profile') {
+      setProfileVisited(true);
+    }
+  }, [activeTab]);
 
   const navigateWithTransition = useCallback(
     (to: string) => {
@@ -853,11 +926,7 @@ export default function App() {
           </div>
         );
       case 'profile':
-        return (
-          <div className="mt-0 net360-page net360-page-enter">
-            <Profile onNavigate={onNavigateSection} />
-          </div>
-        );
+        return null;
       case 'subscription':
         return (
           <div className="mt-0 net360-page net360-page-enter">
@@ -912,16 +981,20 @@ export default function App() {
   // keep the session warm (no SessionReady flash / remount delay).
   return (
       <SessionReady>
-      {isConfirmAccountDeletionRoute ? (
+      {isConfirmAccountDeletionRoute || isVerifyEmailRoute ? (
         <>
           <Helmet>
             <link rel="canonical" href={canonicalUrl} />
-            <title>Confirm account deletion | NET360 Preparation</title>
+            <title>
+              {isVerifyEmailRoute
+                ? 'Verify email | NET360 Preparation'
+                : 'Confirm account deletion | NET360 Preparation'}
+            </title>
             <meta name="robots" content="noindex, nofollow" />
           </Helmet>
-          <div className="net360-viewport flex min-h-dvh min-h-screen flex-col bg-gradient-to-b from-slate-50 to-indigo-50/30 p-3 dark:from-slate-950 dark:to-slate-900">
+          <div className="net360-viewport flex min-h-dvh min-h-screen flex-col bg-[#f1f5f9] p-3 text-[#0f172a]" style={{ colorScheme: 'light' }}>
             <Suspense fallback={<PageRouteFallback />}>
-              <ConfirmAccountDeletionPageLazy />
+              {isVerifyEmailRoute ? <VerifyEmailPageLazy /> : <ConfirmAccountDeletionPageLazy />}
             </Suspense>
           </div>
         </>
@@ -1026,7 +1099,7 @@ export default function App() {
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="touch-manipulation hidden min-h-10 min-w-10 rounded-xl text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 sm:inline-flex sm:min-h-9 sm:min-w-9 sm:w-auto sm:px-2.5"
+                  className="inline-flex min-h-10 min-w-10 touch-manipulation items-center justify-center rounded-xl text-slate-600 hover:bg-indigo-50 hover:text-indigo-700 dark:text-slate-200 dark:hover:bg-slate-800 dark:hover:text-white sm:min-h-9 sm:min-w-9 sm:w-auto sm:px-2.5"
                   onClick={() => setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'))}
                   aria-label={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
                   title={themeMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -1061,9 +1134,23 @@ export default function App() {
               </div>
             </header>
 
-            {/* Main Content — lazy routes + Suspense avoid blank flash while chunks load */}
+            {/* Main Content — lazy routes + Suspense avoid blank flash while chunks load.
+                Profile stays mounted after first visit so returning to it is not a remount. */}
             <main id="main-content" className="net360-main min-h-0 min-w-0 flex-1 overflow-y-auto px-0 py-2.5 sm:py-5">
-              <Suspense fallback={<PageRouteFallback />}>{mainSection}</Suspense>
+              {profileVisited ? (
+                <div
+                  hidden={activeTab !== 'profile'}
+                  className={activeTab === 'profile' ? 'mt-0 net360-page' : 'hidden'}
+                  aria-hidden={activeTab !== 'profile'}
+                >
+                  <Suspense fallback={activeTab === 'profile' ? <PageRouteFallback /> : null}>
+                    <Profile onNavigate={onNavigateSection} />
+                  </Suspense>
+                </div>
+              ) : null}
+              {activeTab !== 'profile' ? (
+                <Suspense fallback={<PageRouteFallback />}>{mainSection}</Suspense>
+              ) : null}
             </main>
           </section>
         </div>
@@ -1071,6 +1158,7 @@ export default function App() {
 
       <GlobalFreeAccessAnnouncement onStartLearning={() => navigate(PATH_BY_SECTION.tests)} />
       <DeferredSupportChat />
+      <StudentPresenceHeartbeat />
     </AppDataProvider>
       </SubscriptionProvider>
       )}

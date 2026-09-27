@@ -973,7 +973,6 @@
   .dark .net360-shell main select,
   .dark .net360-shell main [data-slot='select-trigger'],
   .dark .net360-shell main [data-slot='popover-content'],
-  .dark .net360-shell main [data-slot='select-content'],
   .dark .net360-shell main [data-slot='command'] {
     border-color: rgba(133, 152, 255, 0.42);
     background: rgba(23, 32, 68, 0.9);
@@ -1266,6 +1265,115 @@ html {
   isolation: isolate;
 }
 
+/* Own/sent chat bubbles: global `p` color must not override white text. */
+.chat-bubble-own,
+.chat-bubble-own p,
+.chat-bubble-own span,
+.chat-bubble-own a,
+.dark .chat-bubble-own,
+.dark .chat-bubble-own p,
+.dark .chat-bubble-own span,
+.dark .chat-bubble-own a {
+  color: #ffffff !important;
+}
+
+.chat-bubble-own .text-indigo-100,
+.chat-bubble-own .text-indigo-100\/90,
+.chat-bubble-own .text-indigo-100\/85,
+.chat-bubble-own .text-emerald-100,
+.dark .chat-bubble-own .text-emerald-100 {
+  color: #e0e7ff !important;
+}
+
+@keyframes net360-badge-pop {
+  0% { transform: scale(0.72); opacity: 0; }
+  65% { transform: scale(1.06); opacity: 1; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes net360-confetti-fall {
+  0% { transform: translateY(-8px) rotate(0deg); opacity: 0; }
+  15% { opacity: 1; }
+  100% { transform: translateY(92px) rotate(220deg); opacity: 0; }
+}
+
+.net360-badge-pop {
+  animation: net360-badge-pop 520ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.net360-badge-confetti {
+  pointer-events: none;
+  position: absolute;
+  inset: 0.4rem 0.8rem auto;
+  height: 4.5rem;
+}
+
+.net360-badge-confetti span {
+  position: absolute;
+  top: 0;
+  width: 0.45rem;
+  height: 0.45rem;
+  border-radius: 1px;
+  animation: net360-confetti-fall 1.15s ease-out forwards;
+}
+
+.net360-badge-confetti span:nth-child(1) { left: 8%; background: #6366f1; animation-delay: 0ms; }
+.net360-badge-confetti span:nth-child(2) { left: 24%; background: #22c55e; animation-delay: 70ms; }
+.net360-badge-confetti span:nth-child(3) { left: 40%; background: #f59e0b; animation-delay: 40ms; }
+.net360-badge-confetti span:nth-child(4) { left: 56%; background: #ec4899; animation-delay: 110ms; }
+.net360-badge-confetti span:nth-child(5) { left: 72%; background: #06b6d4; animation-delay: 20ms; }
+.net360-badge-confetti span:nth-child(6) { left: 88%; background: #8b5cf6; animation-delay: 90ms; }
+
+/* Select panels portal to document.body. Keep the option list fully opaque
+   and above page content so labels/fields never show through. */
+[data-radix-popper-content-wrapper]:has([data-slot='select-content']),
+[data-radix-popper-content-wrapper]:has([data-slot='dropdown-menu-content']),
+[data-radix-popper-content-wrapper]:has([data-slot='dropdown-menu-sub-content']) {
+  z-index: 300 !important;
+}
+
+[data-slot='select-content'],
+[data-slot='dropdown-menu-content'],
+[data-slot='dropdown-menu-sub-content'] {
+  z-index: 300;
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+[data-slot='select-content'] [data-radix-select-viewport],
+[data-slot='select-item'] {
+  background-color: #ffffff;
+  color: #0f172a;
+}
+
+[data-slot='select-item'][data-highlighted],
+[data-slot='select-item']:focus,
+[data-slot='dropdown-menu-item']:focus,
+[data-slot='dropdown-menu-item'][data-highlighted] {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+.dark [data-slot='select-content'],
+.dark [data-slot='dropdown-menu-content'],
+.dark [data-slot='dropdown-menu-sub-content'],
+.dark [data-slot='select-content'] [data-radix-select-viewport],
+.dark [data-slot='select-item'] {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
+.dark [data-slot='select-item'][data-highlighted],
+.dark [data-slot='select-item']:focus,
+.dark [data-slot='dropdown-menu-item']:focus,
+.dark [data-slot='dropdown-menu-item'][data-highlighted] {
+  background-color: #1e293b !important;
+  color: #f8fafc !important;
+}
+
 /* Do not set unlayered `img { height: auto }` here — it overrides Tailwind `h-full` / fill layouts.
    Fluid defaults live in @layer base; components use utilities for object-cover / fixed heroes. */
 
@@ -1515,6 +1623,135 @@ html.dark.native-android .net360-header {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+html.native-android [data-slot='select-content'].net360-opaque-select,
+html.native-android [data-slot='select-content'].net360-opaque-select [data-radix-select-viewport],
+html.native-android [data-slot='select-item'].net360-opaque-select,
+html.native-android .net360-opaque-select [data-slot='select-item'] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  opacity: 1 !important;
+}
+
+html.dark.native-android [data-slot='select-content'].net360-opaque-select,
+html.dark.native-android [data-slot='select-content'].net360-opaque-select [data-radix-select-viewport],
+html.dark.native-android .net360-opaque-select [data-slot='select-item'] {
+  background-color: #020617 !important;
+  color: #f8fafc !important;
+}
+
+/* Android WebView: variable Google fonts can collapse word spaces to zero width. */
+html.native-android,
+html.native-android body,
+html.native-android .net360-page {
+  letter-spacing: 0;
+  word-spacing: 0.16em;
+}
+
+html.native-android .net360-main {
+  touch-action: pan-y;
+}
+
+html.native-android .net360-page {
+  overflow-x: visible;
+  touch-action: pan-y;
+  max-width: 100%;
+}
+
+html.native-android .net360-swipe-row,
+html.native-android .net360-horizontal-scroll {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto !important;
+  overflow-y: hidden !important;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+  mask-image: none !important;
+  -webkit-mask-image: none !important;
+}
+
+html.native-android .net360-swipe-row > [data-slot='tabs-list'],
+html.native-android .net360-horizontal-scroll > [data-slot='tabs-list'] {
+  max-width: none !important;
+  width: max-content !important;
+  min-width: max-content !important;
+  touch-action: pan-x;
+}
+
+html.native-android .net360-swipe-row [data-slot='tabs-trigger'] {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  touch-action: pan-x;
+}
+
+html.native-android .net360-page [data-slot='card'],
+html.native-android .net360-page [data-slot='badge'] {
+  max-width: 100%;
+  min-width: 0;
+}
+
+html.native-android .net360-page [data-slot='button'],
+html.native-android .net360-page button {
+  max-width: 100%;
+}
+
+html.native-android .net360-page h1,
+html.native-android .net360-page h2,
+html.native-android .net360-page h3,
+html.native-android .net360-page h4,
+html.native-android .net360-page p,
+html.native-android .net360-page label,
+html.native-android .net360-page [data-slot='card-title'],
+html.native-android .net360-page [data-slot='card-description'] {
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+
+html.dark.native-android .net360-page .text-slate-800,
+html.dark.native-android .net360-page .text-slate-700,
+html.dark.native-android .net360-page .text-slate-900,
+html.dark.native-android .net360-page .text-slate-950,
+html.dark.native-android .net360-page .text-indigo-950,
+html.dark.native-android .net360-page .text-indigo-900,
+html.dark.native-android .net360-page .text-indigo-800 {
+  color: #f1f5f9;
+}
+
+html.dark.native-android .net360-page .text-slate-600,
+html.dark.native-android .net360-page .text-slate-500 {
+  color: #cbd5e1;
+}
+
+html.dark.native-android .net360-page .bg-white,
+html.dark.native-android .net360-page .bg-white\/95,
+html.dark.native-android .net360-page .bg-white\/90,
+html.dark.native-android .net360-page .bg-slate-50\/60 {
+  background-color: #0f172a;
+}
+
+html.native-android .net360-header button {
+  color: inherit;
+}
+
+html.dark.native-android .net360-header button {
+  color: #e2e8f0;
+}
+
+html.native-android [data-slot='select-content'],
+html.native-android [data-slot='select-content'] [data-radix-select-viewport],
+html.native-android [data-slot='select-item'] {
+  background-color: #ffffff;
+  color: #0f172a;
+}
+
+html.dark.native-android [data-slot='select-content'],
+html.dark.native-android [data-slot='select-content'] [data-radix-select-viewport],
+html.dark.native-android [data-slot='select-item'] {
+  background-color: #020617;
+  color: #f8fafc;
 }
 
 /* Large touch targets on coarse pointers */

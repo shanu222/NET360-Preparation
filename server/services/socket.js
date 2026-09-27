@@ -41,6 +41,8 @@ function resolveHandshakeToken(handshake, accessCookieName) {
 /** @type {import('socket.io').Server | null} */
 let ioRef = null;
 
+const SESSION_RECHECK_MS = 5 * 60_000;
+
 function studentRoom(userId) {
   return `user:${String(userId || '')}`;
 }
@@ -59,6 +61,7 @@ function adminRoom(userId) {
  * @param {boolean | string[]} [opts.corsOrigins] Same as Express CORS: true = any, or allowlist of origins
  * @param {(userId: string, clientId: string) => void} [opts.onStudentPresenceRegister]
  * @param {(userId: string, clientId: string) => void} [opts.onStudentPresenceUnregister]
+ * @param {(userId: string, meta: { away: boolean, activity?: string }) => void} [opts.onStudentPresenceHeartbeat]
  */
 export async function initSocketIo(httpServer, opts) {
   const {
@@ -69,7 +72,19 @@ export async function initSocketIo(httpServer, opts) {
     corsOrigins = true,
     onStudentPresenceRegister,
     onStudentPresenceUnregister,
+    onStudentPresenceHeartbeat,
   } = opts;
+
+  // Resolve the adapter BEFORE attaching Socket.IO to the HTTP server. `new Server(httpServer)`
+  // starts accepting handshakes immediately, so awaiting Redis afterwards let connections in
+  // before the auth middleware / connection handler existed (and swapping adapters later would
+  // drop their room membership).
+  let redisAdapterPair = null;
+  try {
+    redisAdapterPair = await getSocketIoAdapterRedisClients();
+  } catch (e) {
+    console.error('[redis] connection failed', e?.message || e);
+  }
 
   const io = new Server(httpServer, {
     path: '/socket.io',
@@ -85,16 +100,10 @@ export async function initSocketIo(httpServer, opts) {
     },
   });
 
-  try {
-    const pair = await getSocketIoAdapterRedisClients();
-    if (pair?.pub && pair?.sub) {
-      io.adapter(createAdapter(pair.pub, pair.sub));
-      console.log('[socket.io] Redis adapter enabled');
-    } else {
-      console.warn('[socket.io] Running without Redis adapter');
-    }
-  } catch (e) {
-    console.error('[redis] connection failed', e?.message || e);
+  if (redisAdapterPair?.pub && redisAdapterPair?.sub) {
+    io.adapter(createAdapter(redisAdapterPair.pub, redisAdapterPair.sub));
+    console.log('[socket.io] Redis adapter enabled');
+  } else {
     console.warn('[socket.io] Running without Redis adapter');
   }
 
@@ -144,6 +153,62 @@ export async function initSocketIo(httpServer, opts) {
 
     socket.emit('ready', { ok: true, ts: Date.now() });
 
+    // Support-chat typing indicator (ephemeral; never persisted). Students notify every admin,
+    // admins notify the one student whose thread they are typing in. Throttled per socket.
+    let lastTypingEmitAt = 0;
+    socket.on('support:typing', (payload) => {
+      const now = Date.now();
+      if (now - lastTypingEmitAt < 250) return;
+      lastTypingEmitAt = now;
+      const typing = Boolean(payload && typeof payload === 'object' && payload.typing);
+      if (role === 'admin') {
+        const target = String((payload && typeof payload === 'object' && payload.userId) || '').trim();
+        if (!/^[a-f\d]{24}$/i.test(target)) return;
+        io.to(studentRoom(target)).emit('sync', { type: 'support.typing', userId: target, from: 'admin', typing, ts: now });
+      } else {
+        io.to('community-admins').emit('sync', { type: 'support.typing', userId, from: 'user', typing, ts: now });
+      }
+    });
+
+    // App-wide presence heartbeat from the web client (any page, not just Community).
+    // Offline is still driven by socket disconnect / Socket.IO ping timeout.
+    // The user id is always the authenticated socket's, never taken from the payload.
+    let lastHeartbeatAt = 0;
+    let lastHeartbeatKey = '';
+    let lastSessionCheckAt = Date.now();
+    socket.on('presence:heartbeat', async (payload) => {
+      if (role === 'admin') return;
+      const now = Date.now();
+      const body = payload && typeof payload === 'object' ? payload : {};
+      const away = Boolean(body.away);
+      const activity = typeof body.activity === 'string' ? body.activity.slice(0, 40) : undefined;
+      const key = `${away}|${activity ?? ''}`;
+      if (key === lastHeartbeatKey && now - lastHeartbeatAt < 5_000) return;
+      lastHeartbeatAt = now;
+      lastHeartbeatKey = key;
+
+      // Sockets are authenticated at handshake; re-check the session every few minutes so a
+      // logged-out / replaced session cannot keep heartbeating on an old connection.
+      if (now - lastSessionCheckAt > SESSION_RECHECK_MS) {
+        lastSessionCheckAt = now;
+        try {
+          const user = await UserModel.findById(userId).select('role activeSession').lean();
+          if (!user || !isSocketSessionValid(user, { sessionId: socket.data.sessionId })) {
+            socket.disconnect(true);
+            return;
+          }
+        } catch {
+          // transient DB error: keep the socket, check again next time
+        }
+      }
+
+      try {
+        onStudentPresenceHeartbeat?.(userId, { away, activity });
+      } catch {
+        // non-fatal
+      }
+    });
+
     socket.on('disconnect', () => {
       if (role !== 'admin') {
         const clientId = `socket:${socket.id}`;
@@ -186,7 +251,35 @@ export async function disconnectStudentSocketsWithStaleSession(userId, staleSess
   }
 }
 
+/**
+ * Number of sockets a student holds across ALL instances (via the Redis adapter).
+ * @returns {Promise<number>} -1 when it could not be determined
+ */
+export async function countStudentSockets(userId) {
+  if (!ioRef) return 0;
+  try {
+    const sockets = await ioRef.in(studentRoom(userId)).fetchSockets();
+    return sockets.length;
+  } catch {
+    return -1;
+  }
+}
+
 /** @param {string} userId */
+/** Drop every socket for this student (logout). Works across instances via the Redis adapter. */
+export async function disconnectAllStudentSockets(userId) {
+  const uid = String(userId || '').trim();
+  if (!ioRef || !uid) return;
+  try {
+    const sockets = await ioRef.in(studentRoom(uid)).fetchSockets();
+    for (const s of sockets) {
+      s.disconnect(true);
+    }
+  } catch {
+    // non-fatal
+  }
+}
+
 export function emitSocketSyncToStudentUser(userId, data) {
   if (!ioRef) return;
   try {
