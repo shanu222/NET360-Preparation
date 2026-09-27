@@ -840,6 +840,19 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
         attempt,
         message: mappedError.message,
       }, 'error');
+      if (!path.startsWith('/api/analytics/')) {
+        void import('./adminAnalyticsClient').then(({ reportAnalyticsError }) => {
+          reportAnalyticsError({
+            eventType: 'api_failed',
+            category: 'API',
+            screen: path,
+            errorCode: (mappedError as Error & { code?: string }).code || 'API_NETWORK_FAILURE',
+            message: mappedError.message,
+            resource: path,
+            statusCode: 0,
+          });
+        }).catch(() => undefined);
+      }
       throw mappedError;
     }
 

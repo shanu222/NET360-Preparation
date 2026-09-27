@@ -33,6 +33,7 @@ import { updateAuthDebug } from '../lib/authDebugState';
 import { isNativeRuntime as isNativeRuntimePlatform, logNativeEvent } from '../lib/nativeDiagnostics';
 import { consumeBriefNativeHide, markNativeDocumentHidden } from '../lib/nativeForeground';
 import { signInWithGoogleAndroidNative } from '../lib/nativeGoogleAuth';
+import { reportAnalyticsError } from '../lib/adminAnalyticsClient';
 import { closeRealtimeScope } from '../lib/realtimeSocket';
 
 interface AuthUser {
@@ -891,6 +892,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await delay(650 * (2 ** attempt));
       }
     }
+    reportAnalyticsError({
+      eventType: 'login_failed',
+      category: 'AUTHENTICATION',
+      screen: 'profile',
+      errorCode: extractAuthErrorCode(lastError) || 'LOGIN_FAILED',
+      message: lastError instanceof Error ? lastError.message : 'Unable to sign in.',
+    });
     throw lastError instanceof Error ? lastError : new Error(String(lastError || 'Unable to sign in.'));
   }, [applyAuthPayload, deviceId, ensureNativeAuthBootstrap, finalizeNativeAuthTransport, isNativeRuntime]);
 
@@ -968,11 +976,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!auth) {
       const bootstrapped = await ensureNativeAuthBootstrap('google-login');
       if (!bootstrapped) {
+        reportAnalyticsError({
+          eventType: 'google_auth_failed',
+          category: 'AUTHENTICATION',
+          screen: 'profile',
+          errorCode: 'GOOGLE_AUTH_FAILED',
+          message: 'Google Sign-In could not be completed.',
+        });
         throw new Error('Google Sign-In could not be completed. Please try again.');
       }
     }
     const activeAuth = auth || firebaseAuth;
     if (!activeAuth) {
+      reportAnalyticsError({
+        eventType: 'google_auth_failed',
+        category: 'AUTHENTICATION',
+        screen: 'profile',
+        errorCode: 'GOOGLE_AUTH_FAILED',
+        message: 'Google Sign-In could not be completed.',
+      });
       throw new Error('Google Sign-In could not be completed. Please try again.');
     }
     const provider = new GoogleAuthProvider();
@@ -1189,6 +1211,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       );
     } catch (error) {
       await deleteUser(credential.user).catch(() => undefined);
+      reportAnalyticsError({
+        eventType: 'registration_failed',
+        category: 'REGISTRATION',
+        screen: 'profile',
+        errorCode: 'REGISTRATION_FAILED',
+        message: error instanceof Error ? error.message : 'Registration failed',
+      });
       throw error;
     }
 

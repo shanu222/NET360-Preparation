@@ -57,6 +57,7 @@ import { fetchAndApplyPublicMediaConfig } from './lib/publicMediaRuntime';
 import { PremiumCountdownBadge } from './components/subscription/PremiumCountdownBadge';
 import { logNativeEvent } from './lib/nativeDiagnostics';
 import { isNativeAndroidRuntime } from './lib/nativeForeground';
+import { featureFromPath, reportAnalyticsEvent, startAnalyticsRuntime } from './lib/adminAnalyticsClient';
 
 const SubscriptionPageLazy = lazyWithRetry(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
 const Dashboard = lazyWithRetry(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
@@ -494,6 +495,24 @@ function HeaderAuthControl({ onOpenProfile }: { onOpenProfile: () => void }) {
         : null}
     </div>
   );
+}
+
+function StudentAnalyticsHeartbeat() {
+  const location = useLocation();
+
+  useEffect(() => startAnalyticsRuntime(), []);
+
+  useEffect(() => {
+    const feature = featureFromPath(location.pathname);
+    if (!feature) return;
+    reportAnalyticsEvent({
+      eventType: 'screen_open',
+      feature,
+      screen: location.pathname,
+    });
+  }, [location.pathname]);
+
+  return null;
 }
 
 export default function App() {
@@ -1159,6 +1178,7 @@ export default function App() {
       <GlobalFreeAccessAnnouncement onStartLearning={() => navigate(PATH_BY_SECTION.tests)} />
       <DeferredSupportChat />
       <StudentPresenceHeartbeat />
+      <StudentAnalyticsHeartbeat />
     </AppDataProvider>
       </SubscriptionProvider>
       )}

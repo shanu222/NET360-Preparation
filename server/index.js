@@ -51,6 +51,20 @@ import {
   clearEmailVerificationToken,
 } from './lib/emailVerification.js';
 import { getBuildInfo } from './lib/buildInfo.js';
+import {
+  upsertAnalyticsSession,
+  recordAnalyticsEvent,
+  recordAnalyticsError,
+  claimAnalyticsAlert,
+  aggregateAnalyticsOverview,
+  aggregateDailyReport,
+  buildDailyAnalyticsPdf,
+  claimDailyReport,
+  markDailyReportSent,
+  markDailyReportFailed,
+  buildSystemAlertEmail,
+  pakistanDateKey,
+} from './lib/adminAnalytics.js';
 import { logAuthDebug, normalizeAuthDebugRoute, shouldAuthDebugRoute } from './lib/authDebug.js';
 import { getRedisMain, isRedisConfigured, isRedisReady, isSocketIoRedisAdapterReady } from './services/redis.js';
 import { cacheGetJson, cacheSetJson, cacheKey, cacheDel, invalidateCommunityLeaderboardCache, invalidateQuizLeaderboardCache, invalidateUserSubscriptionCache } from './utils/cache.js';
@@ -4362,7 +4376,7 @@ async function ensureDeletionEmailDeliveryReady() {
   return { ok: true, detail: '' };
 }
 
-async function postResendEmail({ from, to, subject, text, html }) {
+async function postResendEmail({ from, to, subject, text, html, attachments }) {
   const payload = {
     from,
     to: [to],
@@ -4370,6 +4384,12 @@ async function postResendEmail({ from, to, subject, text, html }) {
     text,
     html,
   };
+  if (Array.isArray(attachments) && attachments.length) {
+    payload.attachments = attachments.map((item) => ({
+      filename: String(item?.filename || 'attachment.bin'),
+      content: Buffer.isBuffer(item?.content) ? item.content.toString('base64') : String(item?.content || ''),
+    }));
+  }
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -4419,7 +4439,7 @@ async function sendDeletionEmailViaResend({ to, subject, text, html }) {
   throw lastError;
 }
 
-async function sendNotificationEmailViaResend({ to, subject, text, html }) {
+async function sendNotificationEmailViaResend({ to, subject, text, html, attachments }) {
   const froms = await listResendFromCandidates();
   let lastError = new Error('Resend from-address is not configured.');
   for (let i = 0; i < froms.length; i += 1) {
@@ -4430,6 +4450,7 @@ async function sendNotificationEmailViaResend({ to, subject, text, html }) {
         subject,
         text,
         html,
+        attachments,
       });
       return;
     } catch (error) {
@@ -4915,6 +4936,89 @@ async function listAdminNotificationEmails() {
     // still notify env-configured addresses
   }
   return Array.from(emails);
+}
+
+async function maybeSendAnalyticsAlert(alert) {
+  if (!alert?.key || !alert.payload) return;
+  try {
+    const claimed = await claimAnalyticsAlert(alert.key);
+    if (!claimed) return;
+    let userEmail = '';
+    if (alert.payload.userId) {
+      const user = await UserModel.findById(alert.payload.userId).select('email').lean();
+      userEmail = user?.email || '';
+    }
+    const mail = buildSystemAlertEmail(alert.payload, userEmail);
+    const recipients = await listAdminNotificationEmails();
+    for (const to of recipients) {
+      await sendNotificationEmailViaResend({
+        to,
+        subject: mail.subject,
+        text: mail.text,
+        html: mail.html,
+      });
+    }
+    emitSocketSyncToAdmins({
+      type: 'analytics.error',
+      eventType: alert.payload.eventType,
+      category: alert.payload.category,
+      platform: alert.payload.platform,
+      screen: alert.payload.screen,
+      errorCode: alert.payload.errorCode,
+      timestamp: alert.payload.timestamp,
+    });
+  } catch (error) {
+    console.warn('[analytics] alert send failed:', error?.message || error);
+  }
+}
+
+async function runDailyAnalyticsReportJob(now = new Date()) {
+  const pktHour = Number(new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Karachi',
+    hour: '2-digit',
+    hour12: false,
+  }).format(now));
+  if (pktHour !== 1) return { skipped: true, reason: 'outside-window' };
+
+  const yesterdayKey = pakistanDateKey(new Date(now.getTime() - 24 * 60 * 60 * 1000));
+  const reportId = await claimDailyReport(yesterdayKey);
+  if (!reportId) return { skipped: true, reason: 'already-claimed' };
+
+  try {
+    const summary = await aggregateDailyReport(yesterdayKey);
+    const pdf = await buildDailyAnalyticsPdf(summary);
+    const recipients = await listAdminNotificationEmails();
+    const filename = `NET360_Daily_Analytics_${yesterdayKey}.pdf`;
+    for (const to of recipients) {
+      await sendNotificationEmailViaResend({
+        to,
+        subject: `NET360 Daily Analytics & Health Report — ${yesterdayKey}`,
+        text: `Attached is the NET360 daily analytics and system health report for ${yesterdayKey}.`,
+        html: `<p>Attached is the NET360 daily analytics and system health report for <strong>${yesterdayKey}</strong>.</p>`,
+        attachments: [{ filename, content: pdf }],
+      });
+    }
+    await markDailyReportSent(reportId, summary, recipients);
+    return { sent: true, reportId, recipients: recipients.length };
+  } catch (error) {
+    await markDailyReportFailed(reportId, error?.message || error);
+    console.warn('[analytics] daily report failed:', error?.message || error);
+    return { sent: false, reportId };
+  }
+}
+
+async function attachOptionalAnalyticsUser(req, _res, next) {
+  try {
+    const token = extractAccessToken(req);
+    if (!token) return next();
+    const { user } = await resolveAuthenticatedUserFromToken(token);
+    if (user && !accountNeedsEmailVerification(user)) {
+      req.analyticsUser = user;
+    }
+  } catch {
+    // Analytics must never block the request.
+  }
+  next();
 }
 
 async function notifyAdminsOfSupportMessage(user, message) {
@@ -8312,6 +8416,15 @@ async function refreshNustAdmissionsCache({ force = false } = {}) {
   } catch (error) {
     nustUpdatesCache.lastError = error instanceof Error ? error.message : 'Unknown refresh error';
     console.warn('[nust-cache] refresh failed; keeping last valid data:', nustUpdatesCache.lastError);
+    void recordAnalyticsError({
+      eventType: 'nust_feed_failed',
+      category: 'NUST_ADMISSIONS',
+      platform: 'web',
+      screen: 'guide',
+      errorCode: 'NUST_FEED_REFRESH_FAILED',
+      message: nustUpdatesCache.lastError,
+      resource: 'nust-admissions-feed',
+    }).then((result) => (result?.alert ? maybeSendAnalyticsAlert(result.alert) : undefined)).catch(() => undefined);
     try {
       await persistNustAdmissionSnapshot({
         lastAttemptAt: new Date(),
@@ -9362,6 +9475,70 @@ app.get('/api/public/nust-admissions-feed', async (_req, res) => {
       ? safeNotices
       : DEFAULT_NUST_IMPORTANT_NOTICES,
   });
+});
+
+app.post('/api/analytics/session', attachOptionalAnalyticsUser, async (req, res) => {
+  try {
+    const session = await upsertAnalyticsSession({
+      sessionId: req.body?.sessionId,
+      userId: req.analyticsUser?._id ? String(req.analyticsUser._id) : req.body?.userId,
+      anonymousId: req.body?.anonymousId,
+      platform: req.body?.platform,
+      headerPlatform: req.get('x-net360-client-platform'),
+      appVersion: req.body?.appVersion,
+      osVersion: req.body?.osVersion,
+      action: req.body?.action,
+    });
+    res.json({ sessionId: session.sessionId });
+  } catch (error) {
+    res.status(200).json({ ignored: true });
+  }
+});
+
+app.post('/api/analytics/event', attachOptionalAnalyticsUser, async (req, res) => {
+  try {
+    await recordAnalyticsEvent({
+      eventId: req.body?.eventId,
+      eventType: req.body?.eventType,
+      sessionId: req.body?.sessionId,
+      userId: req.analyticsUser?._id ? String(req.analyticsUser._id) : req.body?.userId,
+      anonymousId: req.body?.anonymousId,
+      platform: req.body?.platform,
+      headerPlatform: req.get('x-net360-client-platform'),
+      appVersion: req.body?.appVersion,
+      screen: req.body?.screen,
+      feature: req.body?.feature,
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    res.status(200).json({ ignored: true });
+  }
+});
+
+app.post('/api/analytics/error', attachOptionalAnalyticsUser, async (req, res) => {
+  try {
+    const result = await recordAnalyticsError({
+      eventId: req.body?.eventId,
+      eventType: req.body?.eventType,
+      category: req.body?.category,
+      sessionId: req.body?.sessionId,
+      userId: req.analyticsUser?._id ? String(req.analyticsUser._id) : req.body?.userId,
+      anonymousId: req.body?.anonymousId,
+      platform: req.body?.platform,
+      headerPlatform: req.get('x-net360-client-platform'),
+      appVersion: req.body?.appVersion,
+      osVersion: req.body?.osVersion,
+      screen: req.body?.screen,
+      errorCode: req.body?.errorCode,
+      message: req.body?.message,
+      resource: req.body?.resource,
+      statusCode: req.body?.statusCode,
+    });
+    if (result?.alert) void maybeSendAnalyticsAlert(result.alert);
+    res.json({ ok: true, eventId: result?.eventId });
+  } catch (error) {
+    res.status(200).json({ ignored: true });
+  }
 });
 
 app.get('/api/public/nust-updates', async (_req, res) => {
@@ -15459,6 +15636,15 @@ app.get('/api/reports/export', authMiddleware, async (req, res) => {
   res.send(bytes);
 });
 
+app.get('/api/admin/analytics/overview', authMiddleware, requireAdmin, async (_req, res) => {
+  try {
+    const overview = await aggregateAnalyticsOverview();
+    res.json(overview);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to load system analytics.' });
+  }
+});
+
 app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) => {
   const managedUserFilter = { role: { $ne: 'admin' } };
   const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingQuestionSubmissions] = await Promise.all([
@@ -19444,6 +19630,15 @@ async function bootstrap() {
           console.error('[nust-cache] Scheduled refresh failed:', err?.message || err);
         });
       }, NUST_ADMISSIONS_REFRESH_MS);
+
+      setInterval(() => {
+        void runDailyAnalyticsReportJob().catch((err) => {
+          console.warn('[analytics] scheduled daily report failed:', err?.message || err);
+        });
+      }, 15 * 60 * 1000);
+      setTimeout(() => {
+        void runDailyAnalyticsReportJob().catch(() => undefined);
+      }, 25_000);
     } catch (error) {
       console.error('[startup] Deferred initialization error (server keeps running):', error?.message || error);
     }

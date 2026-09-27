@@ -225,8 +225,17 @@ export function NUSTGuide() {
 
         if (cancelled) return;
         applyFeed(payload);
-      } catch {
+      } catch (error) {
         // Keep fallback data when live updates are unavailable.
+        void import('../lib/adminAnalyticsClient').then(({ reportAnalyticsError }) => {
+          reportAnalyticsError({
+            eventType: 'nust_feed_failed',
+            category: 'NUST_ADMISSIONS',
+            screen: 'guide',
+            errorCode: 'NUST_FEED_CLIENT_FAILED',
+            message: error instanceof Error ? error.message : 'NUST live feed failed',
+          });
+        }).catch(() => undefined);
       }
     };
 

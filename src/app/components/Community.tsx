@@ -1492,6 +1492,15 @@ function CommunityInner() {
       if (!disconnectToastShown) {
         disconnectToastShown = true;
         showNeutralToast('Connection lost. Reconnecting…');
+        void import('../lib/adminAnalyticsClient').then(({ reportAnalyticsError }) => {
+          reportAnalyticsError({
+            eventType: 'community_connection_failed',
+            category: 'COMMUNITY',
+            screen: 'community',
+            errorCode: 'COMMUNITY_REALTIME_DISCONNECT',
+            message: String(reason || 'Community realtime disconnected'),
+          });
+        }).catch(() => undefined);
       }
     };
 

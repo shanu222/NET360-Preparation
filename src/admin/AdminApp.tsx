@@ -72,6 +72,7 @@ import {
   AlertDialogTrigger,
 } from '../app/components/ui/alert-dialog';
 import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../app/lib/userToast';
+import { AdminSystemAnalytics } from './AdminSystemAnalytics';
 import { COMPUTER_SCIENCE_SYLLABUS, FLAT_TOPIC_TABS, INTELLIGENCE_SYLLABUS, SYLLABUS } from '../app/components/Preparation';
 import type { SubjectKey } from '../app/lib/mcq';
 import {
@@ -744,6 +745,7 @@ type AdminSection =
   | 'submissions'
   | 'community-moderation'
   | 'subscriptions'
+  | 'system-analytics'
   | 'system-config';
 
 const ADMIN_SECTION_ROUTES: Record<AdminSection, string> = {
@@ -759,6 +761,7 @@ const ADMIN_SECTION_ROUTES: Record<AdminSection, string> = {
   submissions: '/admin/submissions',
   'community-moderation': '/admin/community-moderation',
   subscriptions: '/admin/subscriptions',
+  'system-analytics': '/admin/system-analytics',
   'system-config': '/admin/system-config',
 };
 
@@ -770,6 +773,7 @@ const ADMIN_SECTION_META: Array<{ section: AdminSection; label: string; icon: Lu
   { section: 'submissions', label: 'Submissions', icon: FileCheck2 },
   { section: 'community-moderation', label: 'Community', icon: ShieldAlert },
   { section: 'subscriptions', label: 'Subscriptions', icon: CreditCard },
+  { section: 'system-analytics', label: 'System Analytics', icon: BarChart3 },
   { section: 'support-chat', label: 'Support Chat', icon: MessageSquare },
   { section: 'system-config', label: 'Settings', icon: Settings },
 ];
@@ -791,6 +795,7 @@ function getSectionFromPath(pathname: string): AdminSection {
   if (normalized.startsWith('/admin/submissions')) return 'submissions';
   if (normalized.startsWith('/admin/community-moderation')) return 'community-moderation';
   if (normalized.startsWith('/admin/subscriptions')) return 'subscriptions';
+  if (normalized.startsWith('/admin/system-analytics')) return 'system-analytics';
   if (normalized.startsWith('/admin/system-config')) return 'system-config';
 
   return 'dashboard';
@@ -8335,6 +8340,10 @@ export default function AdminApp() {
             <div className="hidden" />
 
         <TabsContent value="dashboard" className="hidden" />
+
+        <TabsContent value="system-analytics" className="space-y-4">
+          <AdminSystemAnalytics authToken={authToken} />
+        </TabsContent>
 
         <TabsContent value="system-config" className="space-y-4">
           <Card>

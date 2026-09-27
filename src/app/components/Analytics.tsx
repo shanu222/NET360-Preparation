@@ -9,6 +9,7 @@ import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { Button } from './ui/button';
 import { downloadReport } from '../lib/api';
 import { openOrSaveBlobOnDevice } from '../lib/nativeFileAccess';
+import { reportAnalyticsError } from '../lib/adminAnalyticsClient';
 import { showSuccessToast, showErrorToast, handleApiError } from '../lib/userToast';
 
 const AnalyticsLineChart = lazy(() =>
@@ -44,6 +45,13 @@ export function Analytics() {
       showSuccessToast(`PDF exported: ${filename}`);
     } catch (error) {
       handleApiError(error, 'Export failed.');
+      reportAnalyticsError({
+        eventType: 'pdf_failed',
+        category: 'PDF',
+        screen: 'analytics',
+        errorCode: 'PDF_EXPORT_FAILED',
+        message: error instanceof Error ? error.message : 'PDF export failed',
+      });
     } finally {
       setExportingPdf(false);
     }

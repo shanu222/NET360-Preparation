@@ -13,6 +13,7 @@ import { Input } from './ui/input';
 import { apiRequest, downloadBinary, API_BASE } from '../lib/api';
 import { Capacitor } from '@capacitor/core';
 import { logNativeEvent } from '../lib/nativeDiagnostics';
+import { reportAnalyticsError } from '../lib/adminAnalyticsClient';
 import {
   downloadDataUrlFile as downloadDataUrlFileSafe,
   openDataUrlPreview,
@@ -554,6 +555,13 @@ export function PracticeBoard() {
       message: (error as Error)?.message || String(error),
       fallbackToCache: Boolean(fallbackQuestion),
     }, 'error');
+    reportAnalyticsError({
+      eventType: 'practice_board_failed',
+      category: 'PRACTICE_BOARD',
+      screen: 'practice-board',
+      errorCode: isSlowNetwork ? 'PRACTICE_BOARD_TIMEOUT' : 'PRACTICE_BOARD_LOAD_FAILED',
+      message: (error as Error)?.message || 'Practice Board question failed to load',
+    });
     return { isEmptyBank, isSlowNetwork };
   }, []);
 

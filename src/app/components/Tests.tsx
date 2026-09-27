@@ -34,6 +34,7 @@ import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTimi
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { navigateToExamSameTab } from '../lib/examWindowLaunch';
 import { formatTestStartFailureToast } from '../lib/testStartToast';
+import { reportAnalyticsError } from '../lib/adminAnalyticsClient';
 
 interface TestsProps {
   onNavigate?: (section: string) => void;
@@ -395,6 +396,14 @@ export function Tests({ onNavigate }: TestsProps) {
       } else {
         showErrorToast(formatTestStartFailureToast(error));
       }
+      reportAnalyticsError({
+        eventType: 'test_launch_failed',
+        category: 'TEST',
+        screen: 'tests',
+        errorCode: /timeout/i.test(msg) ? 'TEST_INIT_TIMEOUT' : 'TEST_LAUNCH_FAILED',
+        message: msg || 'Test failed to launch',
+        resource: kind,
+      });
     } finally {
       setLaunchingKind(null);
       launchingRef.current = false;
