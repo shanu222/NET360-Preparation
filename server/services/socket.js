@@ -149,6 +149,23 @@ export async function initSocketIo(httpServer, opts) {
 
     socket.emit('ready', { ok: true, ts: Date.now() });
 
+    // Support-chat typing indicator (ephemeral; never persisted). Students notify every admin,
+    // admins notify the one student whose thread they are typing in. Throttled per socket.
+    let lastTypingEmitAt = 0;
+    socket.on('support:typing', (payload) => {
+      const now = Date.now();
+      if (now - lastTypingEmitAt < 250) return;
+      lastTypingEmitAt = now;
+      const typing = Boolean(payload && typeof payload === 'object' && payload.typing);
+      if (role === 'admin') {
+        const target = String((payload && typeof payload === 'object' && payload.userId) || '').trim();
+        if (!/^[a-f\d]{24}$/i.test(target)) return;
+        io.to(studentRoom(target)).emit('sync', { type: 'support.typing', userId: target, from: 'admin', typing, ts: now });
+      } else {
+        io.to('community-admins').emit('sync', { type: 'support.typing', userId, from: 'user', typing, ts: now });
+      }
+    });
+
     socket.on('disconnect', () => {
       if (role !== 'admin') {
         const clientId = `socket:${socket.id}`;

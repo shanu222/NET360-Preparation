@@ -11,13 +11,20 @@ import { Skeleton } from './ui/skeleton';
 import { Switch } from './ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
-import { apiRequest, buildSseStreamUrl, API_BASE } from '../lib/api';
+import { apiRequest } from '../lib/api';
 import { navigateToExamSameTab } from '../lib/examWindowLaunch';
 import { getMediaUrl } from '../lib/publicMedia';
-import { bearerForLaunchUrl, shouldPersistAuthTokens } from '../lib/authSession';
-import { io, type Socket } from 'socket.io-client';
+import { bearerForLaunchUrl } from '../lib/authSession';
 import { App as CapacitorApp } from '@capacitor/app';
 import { logNativeEvent } from '../lib/nativeDiagnostics';
+import {
+  acquireRealtimeSocket,
+  isRealtimeConnected,
+  reconnectRealtimeIfNeeded,
+  releaseRealtimeSocket,
+  setRealtimeAuthToken,
+  subscribeRealtimeStatus,
+} from '../lib/realtimeSocket';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import { PremiumLockScreen } from './subscription/PremiumLockScreen';
@@ -348,6 +355,62 @@ function canSendConnectionRequest(status?: string) {
   return !status || status === 'none';
 }
 
+type RosterActionKind = 'chat' | 'quiz' | 'room';
+
+/** Tab each roster action lands on; the pressed state clears once that tab is actually active. */
+const ROSTER_ACTION_TARGET_TAB: Record<RosterActionKind, string> = {
+  chat: 'messages',
+  quiz: 'quiz-battles',
+  room: 'discussion-rooms',
+};
+
+const PRESENCE_ROW_COMPARE_KEYS: Array<keyof OnlineStudentRow> = [
+  'presenceStatus',
+  'studyingSubject',
+  'lastSeenAt',
+  'doNotDisturb',
+  'hideOnlineStatus',
+  'firstName',
+  'lastName',
+  'username',
+  'profilePictureUrl',
+  'targetNetType',
+];
+
+function presenceRowEquals(a: OnlineStudentRow, b: OnlineStudentRow) {
+  return PRESENCE_ROW_COMPARE_KEYS.every((key) => a[key] === b[key]);
+}
+
+/**
+ * Merge an authoritative server snapshot into the current roster: dedupe by stable user id,
+ * keep the server's order, and reuse row objects whose visible fields did not change so React
+ * only re-renders the affected tiles. Returns `prev` untouched when nothing changed.
+ */
+function mergePresenceRoster(prev: OnlineStudentRow[], next: OnlineStudentRow[]): OnlineStudentRow[] {
+  const prevById = new Map(prev.map((row) => [String(row.id), row]));
+  const seen = new Set<string>();
+  const merged: OnlineStudentRow[] = [];
+  let changed = false;
+
+  for (const incoming of next) {
+    const id = String(incoming?.id || '').trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    const existing = prevById.get(id);
+    if (existing && presenceRowEquals(existing, incoming)) {
+      merged.push(existing);
+    } else {
+      merged.push({ ...incoming, id });
+      changed = true;
+    }
+  }
+
+  if (!changed && merged.length === prev.length && merged.every((row, index) => row === prev[index])) {
+    return prev;
+  }
+  return merged;
+}
+
 function CommunityInner() {
   const { token, user } = useAuth();
   const { surface, me, loading: subLoading } = useSubscription();
@@ -378,16 +441,21 @@ function CommunityInner() {
   const [presenceLoading, setPresenceLoading] = useState(false);
   const [remoteTyping, setRemoteTyping] = useState(false);
   const [studyingSubjectPing, setStudyingSubjectPing] = useState('');
-  const [sseDropped, setSseDropped] = useState(false);
+  /** True while the shared realtime socket is not connected (drives the "Reconnecting…" badge + faster fallback polling). */
+  const [realtimeDown, setRealtimeDown] = useState(() => !isRealtimeConnected('student'));
 
-  const communitySocketRef = useRef<Socket | null>(null);
   const messageThreadEndRef = useRef<HTMLDivElement | null>(null);
   const activeConnectionIdRef = useRef('');
   const typingEmitTimerRef = useRef<number | null>(null);
   const typingStopTimerRef = useRef<number | null>(null);
   const typingIdleTimerRef = useRef<number | null>(null);
   const lastSendFingerprintRef = useRef('');
-  const loadPresenceRef = useRef<() => Promise<void>>(async () => {});
+  const loadPresenceRef = useRef<(options?: { silent?: boolean }) => Promise<void>>(async () => {});
+  const presenceRequestSeqRef = useRef(0);
+  const presenceReconcileTimerRef = useRef<number | null>(null);
+  const pingPresenceRef = useRef<() => void>(() => {});
+  const [connectingUserIds, setConnectingUserIds] = useState<ReadonlySet<string>>(() => new Set());
+  const [pendingRosterAction, setPendingRosterAction] = useState<{ userId: string; kind: RosterActionKind } | null>(null);
   const [searchResults, setSearchResults] = useState<Array<CommunityUser & { connectionStatus?: string }>>([]);
   const [profilePreview, setProfilePreview] = useState<CommunityUser | null>(null);
   const [studyPartnersProfilePreview, setStudyPartnersProfilePreview] = useState<CommunityUser | null>(null);
@@ -639,22 +707,49 @@ function CommunityInner() {
     setRoomPosts(payload.posts || []);
   }, [token, requestCached]);
 
-  const loadPresence = useCallback(async () => {
+  /**
+   * Presence roster: the server snapshot is authoritative. Event-driven reconciliations are
+   * silent (no "Refreshing…" state) and merge by stable user id so unchanged tiles keep their
+   * object identity. Only the manual "Refresh roster" button shows a loading state.
+   */
+  const loadPresence = useCallback(async (options?: { silent?: boolean }) => {
     if (!token) return;
-    setPresenceLoading(true);
+    const silent = options?.silent !== false;
+    const seq = ++presenceRequestSeqRef.current;
+    if (!silent) setPresenceLoading(true);
     try {
       const payload = await apiRequest<{ online: OnlineStudentRow[] }>('/api/community/presence', {}, token);
-      setOnlineStudents(payload.online || []);
+      // A newer request already started; let it win to avoid applying a stale snapshot.
+      if (seq !== presenceRequestSeqRef.current) return;
+      setOnlineStudents((prev) => mergePresenceRoster(prev, payload.online || []));
     } catch {
-      setOnlineStudents([]);
+      // Keep the last known roster; a transient failure must not blank the list.
     } finally {
-      setPresenceLoading(false);
+      if (!silent && seq === presenceRequestSeqRef.current) setPresenceLoading(false);
     }
   }, [token]);
 
   useEffect(() => {
     loadPresenceRef.current = loadPresence;
   }, [loadPresence]);
+
+  /** Coalesce bursts of presence events (many users pinging) into one quiet reconciliation. */
+  const schedulePresenceReconcile = useCallback((delayMs = 250) => {
+    if (presenceReconcileTimerRef.current != null) return;
+    presenceReconcileTimerRef.current = window.setTimeout(() => {
+      presenceReconcileTimerRef.current = null;
+      void loadPresenceRef.current({ silent: true });
+    }, delayMs);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (presenceReconcileTimerRef.current != null) {
+        window.clearTimeout(presenceReconcileTimerRef.current);
+        presenceReconcileTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     activeConnectionIdRef.current = activeConnectionId;
@@ -761,7 +856,7 @@ function CommunityInner() {
       } else {
         setMessages([]);
       }
-      void loadPresence();
+      void loadPresence({ silent: true });
     })().finally(() => {
       refreshInFlightRef.current = null;
     });
@@ -845,13 +940,19 @@ function CommunityInner() {
     }
   }, [token]);
 
+  // Initial load, once per signed-in user. Deliberately NOT keyed on `refreshCommunity`/`token`:
+  // `refreshCommunity` changes identity whenever the active room/connection changes and `token`
+  // rotates on every silent refresh — both used to re-run this effect and reload everything,
+  // which is where the repeated "Could not load community data." toasts came from when any of
+  // the parallel requests failed mid-session. Socket events + the reconcile poll keep data fresh.
+  const initialLoadUserId = String(user?.id || '');
   useEffect(() => {
-    if (!token) return;
+    if (!token || !initialLoadUserId) return;
 
     let cancelled = false;
     void (async () => {
       try {
-        await refreshCommunity(false);
+        await refreshCommunityRef.current(false);
       } catch (error) {
         if (!cancelled) {
           handleApiError(error, 'Could not load community data.');
@@ -861,7 +962,8 @@ function CommunityInner() {
     return () => {
       cancelled = true;
     };
-  }, [token, refreshCommunity]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialLoadUserId, Boolean(token)]);
 
   useEffect(() => {
     if (!token) return;
@@ -979,16 +1081,21 @@ function CommunityInner() {
       }
     };
 
+    // Socket.IO `sync` events are the primary update path (the server emits
+    // community.message.*, community.connection.*, community.discussion.*, community.quiz.*).
+    // Poll only as a bounded fallback while the realtime channel is down; otherwise reconcile
+    // quietly once a minute.
+    const intervalMs = realtimeDown ? 15_000 : 60_000;
     const intervalId = window.setInterval(() => {
       if (document.hidden) return;
       void poll();
-    }, 5000);
+    }, intervalMs);
 
     return () => {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [token, activeConnectionId, activeRoomId, activeTab, leaderboardPeriod, requestCached, loadLeaderboardAndBadges, loadQuizData]);
+  }, [token, activeConnectionId, activeRoomId, activeTab, leaderboardPeriod, requestCached, loadLeaderboardAndBadges, loadQuizData, realtimeDown]);
 
   useEffect(() => {
     return () => {
@@ -1001,6 +1108,14 @@ function CommunityInner() {
     };
   }, []);
 
+  const studyingSubjectPingRef = useRef('');
+  useEffect(() => {
+    studyingSubjectPingRef.current = studyingSubjectPing;
+  }, [studyingSubjectPing]);
+
+  // Presence heartbeat (away flag + "currently studying"). The server broadcasts an update to
+  // every student on each ping, so this must not fire per keystroke: the interval reads the
+  // latest subject from a ref and subject edits are debounced separately below.
   useEffect(() => {
     if (!token) return;
 
@@ -1011,12 +1126,13 @@ function CommunityInner() {
           method: 'POST',
           body: JSON.stringify({
             away: document.hidden,
-            studyingSubject: studyingSubjectPing.trim() || undefined,
+            studyingSubject: studyingSubjectPingRef.current.trim() || undefined,
           }),
         },
         token,
       ).catch(() => {});
     };
+    pingPresenceRef.current = ping;
 
     ping();
     const id = window.setInterval(() => {
@@ -1028,28 +1144,41 @@ function CommunityInner() {
     return () => {
       window.clearInterval(id);
       document.removeEventListener('visibilitychange', onVis);
+      pingPresenceRef.current = () => {};
     };
-  }, [token, studyingSubjectPing]);
+  }, [token]);
 
+  // Debounced publish of "currently studying" edits (one ping after typing pauses).
+  const studyingSubjectDirtyRef = useRef(false);
   useEffect(() => {
     if (!token) return;
+    if (!studyingSubjectDirtyRef.current) {
+      studyingSubjectDirtyRef.current = true;
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      pingPresenceRef.current();
+    }, 700);
+    return () => window.clearTimeout(timer);
+  }, [token, studyingSubjectPing]);
+
+  // Keep the shared socket's credentials current without recreating it (a token rotation must
+  // never tear the socket down — that showed as offline→online flicker for everyone else).
+  useEffect(() => {
+    setRealtimeAuthToken('student', token);
+  }, [token]);
+
+  const hasAuth = Boolean(token);
+  const authUserId = String(user?.id || '');
+
+  // Subscribe to the ONE shared Socket.IO connection (see lib/realtimeSocket.ts). This effect
+  // only attaches/detaches listeners; the connection itself outlives the Community page.
+  useEffect(() => {
+    if (!hasAuth || !authUserId) return;
 
     let closed = false;
-    let reconnectTimer: number | null = null;
-    let source: EventSource | null = null;
     let disconnectToastShown = false;
     let fullRefreshTimer: number | null = null;
-
-    const closeSse = () => {
-      if (reconnectTimer) {
-        window.clearTimeout(reconnectTimer);
-        reconnectTimer = null;
-      }
-      if (source) {
-        source.close();
-        source = null;
-      }
-    };
 
     const scheduleFullCommunityRefresh = () => {
       if (document.hidden) return;
@@ -1062,6 +1191,9 @@ function CommunityInner() {
 
     const applyCommunityPayload = (parsed: { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string }) => {
       const t = String(parsed.type || '');
+      // The shared socket also carries non-community events (support chat, subscription,
+      // profile...). Only community.* events may trigger a Community reload.
+      if (!t.startsWith('community.')) return;
       if (t === 'community.typing' && parsed.connectionId === activeConnectionIdRef.current) {
         if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
         startTransition(() => {
@@ -1075,7 +1207,15 @@ function CommunityInner() {
         return;
       }
       if (t === 'community.presence') {
-        startTransition(() => void loadPresenceRef.current());
+        const uid = String(parsed.userId || '').trim();
+        if (parsed.action === 'offline' && uid) {
+          // Server only emits offline once the user's last connection is gone: drop the tile now.
+          setOnlineStudents((prev) => (
+            prev.some((row) => String(row.id) === uid) ? prev.filter((row) => String(row.id) !== uid) : prev
+          ));
+        }
+        // online / update (away, "currently studying") need profile fields: quiet reconcile.
+        schedulePresenceReconcile();
         return;
       }
       if (t === 'community.message.read') {
@@ -1085,92 +1225,65 @@ function CommunityInner() {
         return;
       }
       if (t === 'community.message.sent') {
-        startTransition(() => void loadPresenceRef.current());
+        schedulePresenceReconcile();
       }
       if (document.hidden) return;
       scheduleFullCommunityRefresh();
     };
 
-    const openSse = () => {
-      if (closed || communitySocketRef.current?.connected) return;
-      closeSse();
-      setSseDropped(false);
-      disconnectToastShown = false;
+    const socket = acquireRealtimeSocket('student');
 
-      source = new EventSource(buildSseStreamUrl(token), { withCredentials: true });
-      source.addEventListener('sync', (event: Event) => {
-        const me = event as MessageEvent;
-        let parsed: { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string } = {};
-        try {
-          parsed = JSON.parse(String(me.data || '{}'));
-        } catch {
-          parsed = {};
-        }
-        applyCommunityPayload(parsed);
-      });
-      source.addEventListener('heartbeat', () => {});
-      source.onerror = () => {
-        setSseDropped(true);
-        if (!disconnectToastShown) {
-          disconnectToastShown = true;
-          showNeutralToast('Connection lost. Reconnecting…');
-        }
-        closeSse();
-        if (closed) return;
-        reconnectTimer = window.setTimeout(() => openSse(), 3000);
-      };
+    const onConnect = () => {
+      logNativeEvent('socket', 'community-connect', { recovered: Boolean(socket.recovered) });
+      setRealtimeDown(false);
+      disconnectToastShown = false;
+      // The server registered our presence on this handshake; restore our away/"studying" meta
+      // and reconcile the roster in case events were missed while disconnected.
+      pingPresenceRef.current();
+      schedulePresenceReconcile(0);
     };
 
-    const socket = io(API_BASE, {
-      path: '/socket.io',
-      ...(shouldPersistAuthTokens() ? { auth: { token } } : {}),
-      withCredentials: true,
-      transports: ['websocket', 'polling'],
-      reconnectionAttempts: 50,
-      reconnectionDelay: 1000,
-      reconnectionDelayMax: 15000,
-      randomizationFactor: 0.5,
-      timeout: 25000,
-    });
-    communitySocketRef.current = socket;
-
-    socket.on('connect', () => {
-      logNativeEvent('socket', 'community-connect', { transport: socket.io.engine?.transport?.name || 'unknown' });
-      closeSse();
-      setSseDropped(false);
-    });
-
-    socket.on('disconnect', () => {
-      logNativeEvent('socket', 'community-disconnect', { reason: 'socket-disconnect' }, 'warn');
-      setSseDropped(true);
+    const onDisconnect = (reason: string) => {
+      logNativeEvent('socket', 'community-disconnect', { reason: String(reason || 'socket-disconnect') }, 'warn');
+      if (closed || reason === 'io client disconnect') return;
+      setRealtimeDown(true);
       if (!disconnectToastShown) {
         disconnectToastShown = true;
         showNeutralToast('Connection lost. Reconnecting…');
       }
-      openSse();
+    };
+
+    // auth.session_revoked / subscription.refresh are forwarded app-wide by lib/realtimeSocket.ts.
+    const onSync = (data: unknown) => {
+      const parsed = (data && typeof data === 'object')
+        ? (data as { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string })
+        : {};
+      applyCommunityPayload(parsed);
+    };
+
+    socket.on('connect', onConnect);
+    socket.on('disconnect', onDisconnect);
+    socket.on('sync', onSync);
+    const unsubscribeStatus = subscribeRealtimeStatus('student', (status) => {
+      if (closed) return;
+      setRealtimeDown(status !== 'connected');
     });
 
-    socket.on('sync', (data: unknown) => {
-      const parsed = (data && typeof data === 'object')
-        ? (data as { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string; previousSessionId?: string })
-        : {};
-      if (parsed.type === 'auth.session_revoked' && parsed.previousSessionId) {
-        window.dispatchEvent(
-          new CustomEvent('net360:session-revoked', { detail: { previousSessionId: parsed.previousSessionId, userId: parsed.userId } }),
-        );
-        return;
-      }
-      applyCommunityPayload(parsed);
-    });
+    // The shared socket may already be connected (e.g. Support Chat acquired it first, or we
+    // are returning to this page): run the same resync as a fresh connect would.
+    if (socket.connected) {
+      setRealtimeDown(false);
+      pingPresenceRef.current();
+      schedulePresenceReconcile(0);
+    } else {
+      setRealtimeDown(true);
+    }
 
     const handleConnectivityResume = () => {
       if (closed) return;
       logNativeEvent('socket', 'community-resume-reconnect');
-      if (socket.disconnected) {
-        socket.connect();
-      }
-      openSse();
-      startTransition(() => void loadPresenceRef.current());
+      reconnectRealtimeIfNeeded('student');
+      schedulePresenceReconcile(0);
     };
     const onOnline = () => {
       handleConnectivityResume();
@@ -1190,21 +1303,20 @@ function CommunityInner() {
       })
       .catch(() => null);
 
-    openSse();
-
     return () => {
       closed = true;
       window.removeEventListener('online', onOnline);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       void appStateListenerPromise.then((listener) => listener?.remove());
-      closeSse();
-      socket.removeAllListeners();
-      socket.close();
-      communitySocketRef.current = null;
+      unsubscribeStatus();
+      socket.off('connect', onConnect);
+      socket.off('disconnect', onDisconnect);
+      socket.off('sync', onSync);
+      releaseRealtimeSocket('student', socket);
       if (typingStopTimerRef.current) window.clearTimeout(typingStopTimerRef.current);
       if (fullRefreshTimer != null) window.clearTimeout(fullRefreshTimer);
     };
-  }, [token]);
+  }, [hasAuth, authUserId, schedulePresenceReconcile]);
 
   useEffect(() => {
     return () => {
@@ -1375,8 +1487,11 @@ function CommunityInner() {
     };
   }, [token, searchQuery, searchUsers]);
 
+  const connectingUserIdsRef = useRef<Set<string>>(new Set());
   const sendConnectionRequest = async (toUserId: string) => {
     if (!token) return;
+    // One request per user at a time: a double click must not send two invitations.
+    if (connectingUserIdsRef.current.has(toUserId)) return;
     const status = [
       ...searchResults,
       ...studyPartners.map((item) => item.user),
@@ -1388,6 +1503,8 @@ function CommunityInner() {
       return;
     }
 
+    connectingUserIdsRef.current.add(toUserId);
+    setConnectingUserIds(new Set(connectingUserIdsRef.current));
     try {
       await apiRequest('/api/community/connections/request', {
         method: 'POST',
@@ -1395,11 +1512,22 @@ function CommunityInner() {
       }, token);
       showSuccessToast('Connection request sent.');
       invalidateCommunityCache('/api/community');
-      await refreshCommunity(true);
-      await searchUsers(searchQuery, true, true);
+      // Resulting state ("Request sent") comes from the server via the refreshed lists below.
+      await Promise.all([refreshCommunity(true), searchUsers(searchQuery, true, true)]);
     } catch (error) {
       handleApiError(error, 'Could not send request.');
+    } finally {
+      connectingUserIdsRef.current.delete(toUserId);
+      setConnectingUserIds(new Set(connectingUserIdsRef.current));
     }
+  };
+
+  const connectButtonLabel = (status: string | undefined, userId: string) => {
+    if (connectingUserIds.has(userId)) return 'Connecting…';
+    if (status === 'connected') return 'Connected';
+    if (status === 'pending-sent') return 'Request sent';
+    if (status === 'pending-received') return 'Respond to request';
+    return 'Connect';
   };
 
   const respondToRequest = async (requestId: string, action: 'accept' | 'reject') => {
@@ -1832,7 +1960,24 @@ function CommunityInner() {
 
   const trendingRooms = useMemo(() => [...rooms].sort((a, b) => (Number(b.posts) || 0) - (Number(a.posts) || 0)), [rooms]);
 
+  // Roster tile actions navigate within the page. The pressed state is set synchronously on
+  // click (so the tap is acknowledged) and cleared by the effect below once the target tab has
+  // actually rendered — not by a timer.
+  const beginRosterAction = (userId: string, kind: RosterActionKind) => {
+    if (pendingRosterAction) return false;
+    setPendingRosterAction({ userId, kind });
+    return true;
+  };
+
+  useEffect(() => {
+    if (!pendingRosterAction) return;
+    if (activeTab === ROSTER_ACTION_TARGET_TAB[pendingRosterAction.kind]) {
+      setPendingRosterAction(null);
+    }
+  }, [activeTab, pendingRosterAction]);
+
   const openChatWithUser = (userId: string) => {
+    if (!beginRosterAction(userId, 'chat')) return;
     const row = connections.find((c) => c.user.id === userId);
     if (row) {
       setActiveConnectionId(row.connectionId);
@@ -1840,13 +1985,22 @@ function CommunityInner() {
       showInfoToast('Opening messages.');
       return;
     }
+    // Nothing to open: release the pressed state immediately and explain.
+    setPendingRosterAction(null);
     showInfoToast('Send a connection request first to unlock chat.');
   };
 
   const inviteToQuizBattleFromPresence = (userId: string) => {
+    if (!beginRosterAction(userId, 'quiz')) return;
     setQuizOpponentUserId(userId);
     setActiveTab('quiz-battles');
     showInfoToast('Configure the battle, then tap Send Challenge.');
+  };
+
+  const openStudyRoomFromPresence = (userId: string) => {
+    if (!beginRosterAction(userId, 'room')) return;
+    if (rooms[0]?.id) setActiveRoomId(rooms[0].id);
+    setActiveTab('discussion-rooms');
   };
 
   if (!token || !user) {
@@ -1911,8 +2065,8 @@ function CommunityInner() {
             <CardHeader>
               <CardTitle className="flex flex-wrap items-center gap-2 text-balance">
                 Online students
-                {sseDropped ? (
-                  <Badge variant="outline" className="border-amber-300 text-amber-800 dark:text-amber-200">Reconnecting…</Badge>
+                {realtimeDown ? (
+                  <Badge variant="outline" className="border-amber-300 text-amber-800 dark:text-amber-200" aria-live="polite">Connecting…</Badge>
                 ) : (
                   <Badge className="bg-emerald-600 text-white shadow-sm">Live</Badge>
                 )}
@@ -1931,7 +2085,14 @@ function CommunityInner() {
                     placeholder="e.g. Integration techniques"
                   />
                 </div>
-                <Button type="button" variant="outline" className="shrink-0" onClick={() => void loadPresence()} disabled={presenceLoading}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="shrink-0"
+                  onClick={() => void loadPresence({ silent: false })}
+                  disabled={presenceLoading}
+                  aria-busy={presenceLoading}
+                >
                   {presenceLoading ? 'Refreshing…' : 'Refresh roster'}
                 </Button>
               </div>
@@ -1939,6 +2100,10 @@ function CommunityInner() {
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {onlineStudents.map((s) => {
                   const netStatus = [...allCommunityUsers, ...searchResults].find((x) => x.id === s.id)?.connectionStatus;
+                  const isSelf = String(s.id) === String(user.id);
+                  const pendingKind = pendingRosterAction?.userId === s.id ? pendingRosterAction.kind : null;
+                  const isConnecting = connectingUserIds.has(s.id);
+                  const tileName = displayName(s);
                   return (
                     <div
                       key={s.id}
@@ -1955,7 +2120,12 @@ function CommunityInner() {
                       <div className="flex items-center gap-3 pr-12">
                         <CommunityAvatar userLike={s} sizeClass="h-12 w-12 ring-2 ring-white shadow-md dark:ring-slate-800" />
                         <div className="min-w-0">
-                          <p className="truncate font-semibold">{displayName(s)}</p>
+                          <p className="flex min-w-0 items-center gap-1.5 font-semibold">
+                            <span className="truncate">{tileName}</span>
+                            {isSelf ? (
+                              <Badge variant="outline" className="shrink-0 px-1.5 py-0 text-[10px] font-semibold uppercase tracking-wide">You</Badge>
+                            ) : null}
+                          </p>
                           <p className="truncate text-xs text-muted-foreground">{s.username ? `@${s.username}` : 'Student'}</p>
                           <p className="truncate text-xs font-medium text-indigo-700 dark:text-indigo-300">
                             {(s.targetNetType || 'net-engineering').replace(/-/g, ' ')}
@@ -1972,32 +2142,55 @@ function CommunityInner() {
                         <p className="mt-1 text-[10px] text-muted-foreground">Last seen {new Date(s.lastSeenAt).toLocaleString()}</p>
                       ) : null}
                       <div className="mt-4 flex flex-wrap gap-2">
-                        <Button type="button" size="sm" variant="secondary" className="shadow-sm" onClick={() => openChatWithUser(s.id)}>
-                          Chat
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          onClick={() => void sendConnectionRequest(s.id)}
-                          disabled={!canSendConnectionRequest(netStatus)}
-                        >
-                          Connect
-                        </Button>
-                        <Button type="button" size="sm" variant="outline" onClick={() => inviteToQuizBattleFromPresence(s.id)}>
-                          Quiz battle
-                        </Button>
+                        {!isSelf ? (
+                          <>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              className="shadow-sm"
+                              onClick={() => openChatWithUser(s.id)}
+                              disabled={Boolean(pendingRosterAction)}
+                              aria-busy={pendingKind === 'chat'}
+                              aria-label={pendingKind === 'chat' ? `Opening chat with ${tileName}` : `Chat with ${tileName}`}
+                            >
+                              {pendingKind === 'chat' ? 'Opening…' : 'Chat'}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => void sendConnectionRequest(s.id)}
+                              disabled={isConnecting || !canSendConnectionRequest(netStatus)}
+                              aria-busy={isConnecting}
+                              aria-label={`${connectButtonLabel(netStatus, s.id)} — ${tileName}`}
+                            >
+                              {connectButtonLabel(netStatus, s.id)}
+                            </Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => inviteToQuizBattleFromPresence(s.id)}
+                              disabled={Boolean(pendingRosterAction)}
+                              aria-busy={pendingKind === 'quiz'}
+                              aria-label={pendingKind === 'quiz' ? `Starting quiz battle with ${tileName}` : `Quiz battle with ${tileName}`}
+                            >
+                              {pendingKind === 'quiz' ? 'Starting…' : 'Quiz battle'}
+                            </Button>
+                          </>
+                        ) : null}
                         <Button
                           type="button"
                           size="sm"
                           variant="ghost"
                           className="text-indigo-700 dark:text-indigo-300"
-                          onClick={() => {
-                            if (rooms[0]?.id) setActiveRoomId(rooms[0].id);
-                            setActiveTab('discussion-rooms');
-                          }}
+                          onClick={() => openStudyRoomFromPresence(s.id)}
+                          disabled={Boolean(pendingRosterAction)}
+                          aria-busy={pendingKind === 'room'}
+                          aria-label={pendingKind === 'room' ? 'Opening study room' : 'Open study room'}
                         >
-                          Study room
+                          {pendingKind === 'room' ? 'Opening…' : 'Study room'}
                         </Button>
                       </div>
                     </div>
@@ -2239,7 +2432,15 @@ function CommunityInner() {
                         <Badge variant="outline">{result.connectionStatus || 'none'}</Badge>
                         <div className="flex w-full flex-wrap gap-1 sm:w-auto">
                           {canSendConnectionRequest(result.connectionStatus) ? (
-                            <Button size="sm" className="w-full sm:w-auto" onClick={() => void sendConnectionRequest(result.id)}>Connect</Button>
+                            <Button
+                              size="sm"
+                              className="w-full sm:w-auto"
+                              onClick={() => void sendConnectionRequest(result.id)}
+                              disabled={connectingUserIds.has(result.id)}
+                              aria-busy={connectingUserIds.has(result.id)}
+                            >
+                              {connectingUserIds.has(result.id) ? 'Connecting…' : 'Connect'}
+                            </Button>
                           ) : (
                             <Button size="sm" variant="secondary" className="w-full sm:w-auto" disabled>
                               {result.connectionStatus === 'connected'
@@ -2360,7 +2561,15 @@ function CommunityInner() {
                   </div>
                   <div className="mt-2 flex flex-wrap gap-2">
                     {canSendConnectionRequest(item.user.connectionStatus) ? (
-                      <Button size="sm" className="w-full sm:w-auto" onClick={() => void sendConnectionRequest(item.user.id)}>Connect</Button>
+                      <Button
+                        size="sm"
+                        className="w-full sm:w-auto"
+                        onClick={() => void sendConnectionRequest(item.user.id)}
+                        disabled={connectingUserIds.has(item.user.id)}
+                        aria-busy={connectingUserIds.has(item.user.id)}
+                      >
+                        {connectingUserIds.has(item.user.id) ? 'Connecting…' : 'Connect'}
+                      </Button>
                     ) : (
                       <Button size="sm" variant="secondary" className="w-full sm:w-auto" disabled>
                         {item.user.connectionStatus === 'connected'

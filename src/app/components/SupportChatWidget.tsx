@@ -7,7 +7,16 @@ import { ScrollArea } from './ui/scroll-area';
 import { Badge } from './ui/badge';
 import { useAuth } from '../context/AuthContext';
 import { apiRequest } from '../lib/api';
-import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
+import { showSuccessToast, showErrorToast, showNeutralToast, handleApiError } from '../lib/userToast';
+import {
+  acquireRealtimeSocket,
+  getRealtimeStatus,
+  reconnectRealtimeIfNeeded,
+  releaseRealtimeSocket,
+  setRealtimeAuthToken,
+  subscribeRealtimeStatus,
+  type RealtimeStatus,
+} from '../lib/realtimeSocket';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { Capacitor } from '@capacitor/core';
 
@@ -25,6 +34,12 @@ interface SupportMessage {
   } | null;
   reactions?: Array<{ emoji: string }>;
   createdAt: string | null;
+  readByUser?: boolean;
+  readByAdmin?: boolean;
+  /** Local only: set on optimistic rows until the server acknowledges them. */
+  clientMessageId?: string;
+  /** Local only: 'pending' while the POST is in flight, 'failed' when it must be retried. */
+  deliveryState?: 'pending' | 'failed';
 }
 
 interface SupportInboxPayload {
@@ -32,7 +47,74 @@ interface SupportInboxPayload {
   messages?: SupportMessage[];
 }
 
+interface SupportMessageEvent {
+  type?: string;
+  userId?: string;
+  messageId?: string;
+  senderRole?: string;
+  message?: SupportMessage;
+  clientMessageId?: string;
+  /** support.typing */
+  from?: 'user' | 'admin' | string;
+  typing?: boolean;
+  /** support.read */
+  by?: 'user' | 'admin' | string;
+}
+
+const TYPING_INDICATOR_TTL_MS = 4_000;
+const TYPING_EMIT_MIN_INTERVAL_MS = 1_500;
+const TYPING_IDLE_STOP_MS = 2_500;
+
 const USER_SUPPORT_NOTIFICATIONS_KEY = 'net360-support-notifications-user';
+/** Fallback reconcile interval while the realtime socket is down (events are the primary path). */
+const SUPPORT_FALLBACK_POLL_MS = 20_000;
+
+function newClientMessageId(): string {
+  try {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+      return crypto.randomUUID().replace(/-/g, '');
+    }
+  } catch {
+    // fall through
+  }
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 12)}`;
+}
+
+/**
+ * Insert or replace a message by stable server id (or by clientMessageId for optimistic rows).
+ * Keeps a locally known attachment payload when the incoming copy (a realtime event) omits it.
+ */
+function upsertSupportMessage(list: SupportMessage[], incoming: SupportMessage, clientMessageId = ''): SupportMessage[] {
+  const incomingId = String(incoming.id || '');
+  const matchIndex = list.findIndex((row) => (
+    (incomingId && String(row.id) === incomingId)
+    || (clientMessageId && row.clientMessageId === clientMessageId)
+  ));
+  if (matchIndex < 0) {
+    return [...list, incoming];
+  }
+  const existing = list[matchIndex];
+  const merged: SupportMessage = {
+    ...existing,
+    ...incoming,
+    attachment: incoming.attachment && !incoming.attachment.dataUrl && existing.attachment?.dataUrl
+      ? { ...incoming.attachment, dataUrl: existing.attachment.dataUrl }
+      : incoming.attachment ?? existing.attachment ?? null,
+    clientMessageId: undefined,
+    deliveryState: undefined,
+  };
+  const next = list.slice();
+  next[matchIndex] = merged;
+  // The same message may exist twice if both the ack and the event arrived: drop later copies.
+  return next.filter((row, index) => index === matchIndex || !incomingId || String(row.id) !== incomingId);
+}
+
+/** Server snapshot + any local rows still pending/failed (they are not on the server yet). */
+function mergeServerSnapshot(serverMessages: SupportMessage[], local: SupportMessage[]): SupportMessage[] {
+  const serverIds = new Set(serverMessages.map((row) => String(row.id)));
+  const unsent = local.filter((row) => row.deliveryState && !serverIds.has(String(row.id)));
+  return unsent.length ? [...serverMessages, ...unsent] : serverMessages;
+}
 const SUPPORT_ATTACHMENT_MAX_BYTES = 8 * 1024 * 1024;
 const SUPPORT_ATTACHMENT_ACCEPT = '.pdf,.doc,.docx,.txt,.jpg,.jpeg,.png,.gif,.webp,.svg';
 const SUPPORT_REACTION_SET = ['😀', '🙏', '👍', '❤️', '✅'];
@@ -150,11 +232,23 @@ export function SupportChatWidget() {
     };
   });
 
+  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeStatus>(() => getRealtimeStatus('student'));
+  const [adminTyping, setAdminTyping] = useState(false);
+  const adminTypingTimerRef = useRef<number | null>(null);
+  const socketRef = useRef<ReturnType<typeof acquireRealtimeSocket> | null>(null);
+  const typingStateRef = useRef({ lastEmitAt: 0, idleTimer: null as number | null, active: false });
+
   const dragStateRef = useRef({ dragging: false, target: 'button' as 'button' | 'panel', offsetX: 0, offsetY: 0 });
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const didHydrateRef = useRef(false);
   const lastAdminMessageIdRef = useRef('');
+  const openRef = useRef(open);
+  openRef.current = open;
+  const loadInFlightRef = useRef<Promise<void> | null>(null);
+  const resyncTimerRef = useRef<number | null>(null);
+  /** Realtime-delivered admin messages already announced (tone/toast) — never announce twice. */
+  const announcedAdminIdsRef = useRef<Set<string>>(new Set());
 
   const playNotificationTone = () => {
     try {
@@ -267,54 +361,212 @@ export function SupportChatWidget() {
     };
   }, [panelMetrics.maxHeight, panelMetrics.width, panelPosition.x, panelPosition.y, viewport.height, viewport.width]);
 
-  const loadMessages = async () => {
-    if (!canUseChat || !token) return;
-    try {
-      setLoading(true);
-      const payload = await apiRequest<SupportInboxPayload>(
-        '/api/support-chat/messages',
-        { retryCount: 2, retryDelayMs: 1_500 },
-        token,
-      );
-      const nextMessages = payload.messages || [];
-      setMessages(nextMessages);
-      setUnreadCount(Number(payload.unreadFromAdmin || 0));
-
-      const latestAdmin = [...nextMessages].reverse().find((item) => item.senderRole === 'admin');
-      const latestAdminId = latestAdmin?.id || '';
-      if (!didHydrateRef.current) {
-        didHydrateRef.current = true;
-        lastAdminMessageIdRef.current = latestAdminId;
-      } else if (latestAdminId && latestAdminId !== lastAdminMessageIdRef.current) {
-        lastAdminMessageIdRef.current = latestAdminId;
-        playNotificationTone();
-        showNeutralToast('New reply from admin support');
-        notifyDesktop('NET360 Support', latestAdmin?.text || 'You have a new reply from admin support.');
-      }
-    } catch {
-      // Keep silent for background refresh.
-    } finally {
-      setLoading(false);
-    }
+  const announceAdminMessage = (item: SupportMessage | undefined) => {
+    const id = String(item?.id || '');
+    if (!id || announcedAdminIdsRef.current.has(id)) return;
+    announcedAdminIdsRef.current.add(id);
+    lastAdminMessageIdRef.current = id;
+    playNotificationTone();
+    showNeutralToast('New reply from admin support');
+    notifyDesktop('NET360 Support', item?.text || 'You have a new reply from admin support.');
   };
 
+  /**
+   * Fetch the thread from the server (source of truth) and reconcile it with local optimistic rows.
+   * Also marks admin replies as read server-side, so it runs when the panel is open/opened.
+   * `loading` is only shown for the very first hydrate — background resyncs never flicker the UI.
+   */
+  const loadMessages = (): Promise<void> => {
+    if (!canUseChat || !token) return Promise.resolve();
+    if (loadInFlightRef.current) return loadInFlightRef.current;
+
+    const showLoading = !didHydrateRef.current;
+    const run = (async () => {
+      try {
+        if (showLoading) setLoading(true);
+        const payload = await apiRequest<SupportInboxPayload>(
+          '/api/support-chat/messages',
+          { retryCount: 2, retryDelayMs: 1_500 },
+          token,
+        );
+        const nextMessages = payload.messages || [];
+        setMessages((prev) => mergeServerSnapshot(nextMessages, prev));
+
+        // `unreadFromAdmin` = admin replies this GET just marked read (i.e. new since the last
+        // fetch). Accumulate while the panel is closed; the badge clears when it is opened.
+        const newlyRead = Number(payload.unreadFromAdmin || 0);
+        setUnreadCount((prev) => (openRef.current ? 0 : prev + newlyRead));
+
+        const latestAdmin = [...nextMessages].reverse().find((item) => item.senderRole === 'admin');
+        const latestAdminId = latestAdmin?.id || '';
+        if (!didHydrateRef.current) {
+          didHydrateRef.current = true;
+          lastAdminMessageIdRef.current = latestAdminId;
+          if (latestAdminId) announcedAdminIdsRef.current.add(latestAdminId);
+        } else if (latestAdminId && latestAdminId !== lastAdminMessageIdRef.current) {
+          announceAdminMessage(latestAdmin);
+        }
+      } catch {
+        // Silent for background resync; explicit actions surface their own errors.
+      } finally {
+        if (showLoading) setLoading(false);
+      }
+    })();
+    loadInFlightRef.current = run;
+    void run.finally(() => {
+      if (loadInFlightRef.current === run) loadInFlightRef.current = null;
+    });
+    return run;
+  };
+
+  // Long-lived socket/timer callbacks must always call the latest closure (current token).
+  const loadMessagesRef = useRef(loadMessages);
+  loadMessagesRef.current = loadMessages;
+
+  /** Coalesce bursts (reconnect + visibility + several events) into one thread fetch. */
+  const scheduleResync = (delayMs = 300) => {
+    if (resyncTimerRef.current != null) return;
+    resyncTimerRef.current = window.setTimeout(() => {
+      resyncTimerRef.current = null;
+      void loadMessagesRef.current();
+    }, delayMs);
+  };
+
+  const userId = String(user?.id || '');
+
+  // Keep the shared socket's credentials current (never recreates the connection).
   useEffect(() => {
-    if (!canUseChat) {
+    if (canUseChat) setRealtimeAuthToken('student', token);
+  }, [canUseChat, token]);
+
+  // Realtime: ONE shared Socket.IO connection (lib/realtimeSocket.ts). Server pushes
+  // `support.message` / `support.message.updated` `sync` events to this user's room.
+  useEffect(() => {
+    if (!canUseChat || !userId) {
       setMessages([]);
       setUnreadCount(0);
       didHydrateRef.current = false;
       lastAdminMessageIdRef.current = '';
+      announcedAdminIdsRef.current = new Set();
       return;
     }
 
-    void loadMessages();
+    let closed = false;
+    const socket = acquireRealtimeSocket('student');
+    socketRef.current = socket;
+
+    const onSync = (data: unknown) => {
+      if (closed || !data || typeof data !== 'object') return;
+      const event = data as SupportMessageEvent;
+      const type = String(event.type || '');
+      if (type === 'support.typing') {
+        if (String(event.userId || '') !== userId || event.from !== 'admin') return;
+        if (adminTypingTimerRef.current != null) window.clearTimeout(adminTypingTimerRef.current);
+        adminTypingTimerRef.current = null;
+        setAdminTyping(Boolean(event.typing));
+        if (event.typing) {
+          adminTypingTimerRef.current = window.setTimeout(() => setAdminTyping(false), TYPING_INDICATOR_TTL_MS);
+        }
+        return;
+      }
+      if (type === 'support.read') {
+        if (String(event.userId || '') !== userId || event.by !== 'admin') return;
+        setMessages((prev) => (prev.some((row) => row.senderRole === 'user' && !row.readByAdmin && !row.deliveryState)
+          ? prev.map((row) => (row.senderRole === 'user' && !row.deliveryState ? { ...row, readByAdmin: true } : row))
+          : prev));
+        return;
+      }
+      if (type !== 'support.message' && type !== 'support.message.updated') return;
+      const incoming = event.message;
+      if (!incoming || !incoming.id) return;
+      if (String(event.userId || incoming.userId || '') !== userId) return;
+
+      const clientMessageId = String(event.clientMessageId || '');
+      setMessages((prev) => upsertSupportMessage(prev, { ...incoming, userId }, clientMessageId));
+
+      if (type === 'support.message' && incoming.senderRole === 'admin') {
+        if (adminTypingTimerRef.current != null) window.clearTimeout(adminTypingTimerRef.current);
+        adminTypingTimerRef.current = null;
+        setAdminTyping(false);
+        if (openRef.current) {
+          // Visible: mark read on the server and reconcile (also fetches file bytes if any).
+          scheduleResync(250);
+        } else {
+          setUnreadCount((prev) => prev + 1);
+          if (incoming.messageType === 'file') scheduleResync(250);
+        }
+        announceAdminMessage(incoming);
+        return;
+      }
+      // Own message (other tab / ack raced by the event) or a reaction update: bytes for file
+      // messages are not carried in events, fetch them quietly.
+      if (incoming.messageType === 'file' && !incoming.attachment?.dataUrl) scheduleResync(250);
+    };
+
+    const onConnect = () => {
+      // Events may have been missed while offline: the server thread is the source of truth.
+      scheduleResync(0);
+    };
+
+    socket.on('sync', onSync);
+    socket.on('connect', onConnect);
+    const unsubscribeStatus = subscribeRealtimeStatus('student', (status) => {
+      if (!closed) setRealtimeStatus(status);
+    });
+    setRealtimeStatus(getRealtimeStatus('student'));
+
+    const onVisibility = () => {
+      if (document.hidden) return;
+      reconnectRealtimeIfNeeded('student');
+      scheduleResync(0);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+
+    void loadMessagesRef.current();
+
+    return () => {
+      closed = true;
+      document.removeEventListener('visibilitychange', onVisibility);
+      unsubscribeStatus();
+      socket.off('sync', onSync);
+      socket.off('connect', onConnect);
+      if (socketRef.current === socket) socketRef.current = null;
+      releaseRealtimeSocket('student', socket);
+      if (resyncTimerRef.current != null) {
+        window.clearTimeout(resyncTimerRef.current);
+        resyncTimerRef.current = null;
+      }
+      if (adminTypingTimerRef.current != null) {
+        window.clearTimeout(adminTypingTimerRef.current);
+        adminTypingTimerRef.current = null;
+      }
+      if (typingStateRef.current.idleTimer != null) {
+        window.clearTimeout(typingStateRef.current.idleTimer);
+        typingStateRef.current.idleTimer = null;
+      }
+      typingStateRef.current.active = false;
+      setAdminTyping(false);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canUseChat, userId]);
+
+  // Bounded fallback only while the realtime channel is down (no 5s polling when connected).
+  useEffect(() => {
+    if (!canUseChat || realtimeStatus === 'connected') return;
     const timer = window.setInterval(() => {
       if (document.hidden) return;
-      void loadMessages();
-    }, 5000);
-
+      void loadMessagesRef.current();
+    }, SUPPORT_FALLBACK_POLL_MS);
     return () => window.clearInterval(timer);
-  }, [canUseChat, token]);
+  }, [canUseChat, realtimeStatus]);
+
+  // Opening the panel marks admin replies read (server) and clears the badge.
+  useEffect(() => {
+    if (!open || !canUseChat) return;
+    setUnreadCount(0);
+    scheduleResync(0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, canUseChat]);
 
   useEffect(() => {
     if (!open) return;
@@ -405,29 +657,117 @@ export function SupportChatWidget() {
     dragStateRef.current.offsetY = event.clientY - panelPosition.y;
   };
 
-  const sendMessage = async () => {
-    if (!token) return;
-    const text = messageText.trim();
-    const messageType = messageAttachment ? 'file' : 'text';
-    if (messageType === 'text' && !text) return;
+  /**
+   * Deliver one optimistic row: POST it, then replace the pending bubble with the persisted
+   * message (the REST 201 is the acknowledgement; the realtime event may reconcile it first —
+   * both paths key on `clientMessageId`, so the row is never duplicated).
+   */
+  const deliverPendingMessage = async (row: SupportMessage) => {
+    if (!token || !row.clientMessageId) return;
+    const clientMessageId = row.clientMessageId;
+    setMessages((prev) => prev.map((item) => (
+      item.clientMessageId === clientMessageId ? { ...item, deliveryState: 'pending' } : item
+    )));
     try {
       setSending(true);
-      await apiRequest('/api/support-chat/messages', {
+      const payload = await apiRequest<{ message?: SupportMessage; clientMessageId?: string }>('/api/support-chat/messages', {
         method: 'POST',
         body: JSON.stringify({
-          messageType,
-          text,
-          attachment: messageAttachment,
+          messageType: row.messageType || 'text',
+          text: row.text,
+          attachment: row.attachment ?? null,
+          clientMessageId,
         }),
       }, token);
-      setMessageText('');
-      setMessageAttachment(null);
-      await loadMessages();
+      const persisted = payload?.message;
+      if (persisted?.id) {
+        setMessages((prev) => upsertSupportMessage(
+          prev,
+          { ...persisted, attachment: persisted.attachment?.dataUrl ? persisted.attachment : (row.attachment ?? persisted.attachment ?? null) },
+          clientMessageId,
+        ));
+      } else {
+        scheduleResync(0);
+      }
     } catch (error) {
-      handleApiError(error, 'Could not send message.');
+      setMessages((prev) => prev.map((item) => (
+        item.clientMessageId === clientMessageId ? { ...item, deliveryState: 'failed' } : item
+      )));
+      handleApiError(error, 'Could not send message. Tap Retry to try again.');
     } finally {
       setSending(false);
     }
+  };
+
+  /** Ephemeral typing signal over the shared socket (throttled; auto-stops after idle). */
+  const emitTyping = (typing: boolean) => {
+    const socket = socketRef.current;
+    if (!socket || !socket.connected) return;
+    socket.emit('support:typing', { typing });
+  };
+
+  const notifyTyping = () => {
+    const state = typingStateRef.current;
+    const now = Date.now();
+    if (!state.active || now - state.lastEmitAt >= TYPING_EMIT_MIN_INTERVAL_MS) {
+      state.active = true;
+      state.lastEmitAt = now;
+      emitTyping(true);
+    }
+    if (state.idleTimer != null) window.clearTimeout(state.idleTimer);
+    state.idleTimer = window.setTimeout(() => {
+      state.idleTimer = null;
+      state.active = false;
+      emitTyping(false);
+    }, TYPING_IDLE_STOP_MS);
+  };
+
+  const stopTyping = () => {
+    const state = typingStateRef.current;
+    if (state.idleTimer != null) {
+      window.clearTimeout(state.idleTimer);
+      state.idleTimer = null;
+    }
+    if (state.active) {
+      state.active = false;
+      emitTyping(false);
+    }
+  };
+
+  const sendMessage = async () => {
+    if (!token || !user || sending) return;
+    const text = messageText.trim();
+    const messageType = messageAttachment ? 'file' : 'text';
+    if (messageType === 'text' && !text) return;
+    stopTyping();
+
+    const clientMessageId = newClientMessageId();
+    const optimistic: SupportMessage = {
+      id: `pending:${clientMessageId}`,
+      clientMessageId,
+      userId: String(user.id || ''),
+      senderRole: 'user',
+      messageType,
+      text,
+      attachment: messageAttachment ?? null,
+      reactions: [],
+      createdAt: new Date().toISOString(),
+      deliveryState: 'pending',
+    };
+    // Show the bubble immediately; the text lives on in the bubble (with Retry) if delivery fails.
+    setMessages((prev) => [...prev, optimistic]);
+    setMessageText('');
+    setMessageAttachment(null);
+    await deliverPendingMessage(optimistic);
+  };
+
+  const retryMessage = (row: SupportMessage) => {
+    if (row.deliveryState !== 'failed' || sending) return;
+    void deliverPendingMessage(row);
+  };
+
+  const discardFailedMessage = (row: SupportMessage) => {
+    setMessages((prev) => prev.filter((item) => item !== row));
   };
 
   const onFileSelected = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -457,13 +797,17 @@ export function SupportChatWidget() {
   };
 
   const reactToMessage = async (messageId: string, emoji: string) => {
-    if (!token) return;
+    if (!token || messageId.startsWith('pending:')) return;
     try {
-      await apiRequest(`/api/support-chat/messages/${messageId}/reactions`, {
+      const payload = await apiRequest<{ message?: SupportMessage }>(`/api/support-chat/messages/${messageId}/reactions`, {
         method: 'POST',
         body: JSON.stringify({ emoji }),
       }, token);
-      await loadMessages();
+      if (payload?.message?.id) {
+        setMessages((prev) => upsertSupportMessage(prev, payload.message as SupportMessage));
+      } else {
+        scheduleResync(0);
+      }
     } catch (error) {
       handleApiError(error, 'Could not update reaction.');
     }
@@ -485,6 +829,15 @@ export function SupportChatWidget() {
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-300">Reach NET360 admin directly. Replies appear here in real time.</p>
             <div className="mt-1 flex items-center justify-end gap-2">
+              {canUseChat ? (
+                realtimeStatus === 'connected' ? (
+                  <Badge className="h-6 bg-emerald-600 text-[10px] text-white" aria-live="polite">Live</Badge>
+                ) : (
+                  <Badge variant="outline" className="h-6 border-amber-300 text-[10px] text-amber-800 dark:text-amber-200" aria-live="polite">
+                    {realtimeStatus === 'disconnected' ? 'Reconnecting…' : 'Connecting…'}
+                  </Badge>
+                )
+              ) : null}
               {notificationsEnabled ? (
                 <Button type="button" size="sm" variant="outline" className="h-7 text-[11px] dark:border-emerald-500/45 dark:bg-emerald-900/30 dark:text-emerald-100 dark:hover:bg-emerald-800/40" onClick={() => setNotificationPreference(false)}>
                   Notifications: On
@@ -516,16 +869,18 @@ export function SupportChatWidget() {
                 </div>
                 <ScrollArea className="h-[min(42vh,16rem)] rounded-lg border bg-slate-50 p-2 sm:h-64 dark:border-slate-600 dark:bg-slate-800/65">
                   <div className="space-y-2">
-                    {loading ? <p className="text-xs text-slate-500 dark:text-slate-300">Loading messages...</p> : null}
-                    {!messages.length ? <p className="text-xs text-slate-500 dark:text-slate-300">Start a conversation with admin support.</p> : null}
-                    {messages.map((item) => (
+                    {loading && !messages.length ? <p className="text-xs text-slate-500 dark:text-slate-300" aria-live="polite">Loading messages...</p> : null}
+                    {!loading && !messages.length ? <p className="text-xs text-slate-500 dark:text-slate-300">Start a conversation with admin support.</p> : null}
+                    {messages.map((item, index) => (
                       <div
                         key={item.id}
+                        data-last-own={item.senderRole === 'user' && !messages.slice(index + 1).some((row) => row.senderRole === 'user') ? 'true' : undefined}
                         className={`max-w-[85%] rounded-lg px-3 py-2 text-sm ${
                           item.senderRole === 'user'
                             ? 'ml-auto bg-emerald-600 text-white dark:bg-emerald-500 dark:text-emerald-950'
                             : 'mr-auto border bg-white text-slate-700 dark:border-slate-500 dark:bg-slate-700 dark:text-slate-100'
-                        }`}
+                        } ${item.deliveryState === 'pending' ? 'opacity-70' : ''} ${item.deliveryState === 'failed' ? 'ring-2 ring-rose-400' : ''}`}
+                        aria-busy={item.deliveryState === 'pending' || undefined}
                       >
                         {item.messageType === 'file' && item.attachment ? (
                           <div className="space-y-1">
@@ -537,18 +892,43 @@ export function SupportChatWidget() {
                         ) : (
                           <p>{item.text}</p>
                         )}
-                        <div className="mt-1 flex flex-wrap gap-1">
-                          {SUPPORT_REACTION_SET.map((emoji) => (
+                        {item.deliveryState ? null : (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {SUPPORT_REACTION_SET.map((emoji) => (
+                              <button
+                                key={`${item.id}-${emoji}`}
+                                type="button"
+                                className="rounded border bg-white/80 px-1.5 py-0.5 text-[11px] text-slate-800 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100"
+                                onClick={() => void reactToMessage(item.id, emoji)}
+                              >
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {item.deliveryState === 'pending' ? (
+                          <p className="mt-1 text-[10px] text-emerald-100 dark:text-emerald-900/80" aria-live="polite">Sending…</p>
+                        ) : null}
+                        {item.deliveryState === 'failed' ? (
+                          <div className="mt-1 flex items-center gap-2 text-[10px]" role="alert">
+                            <span className="text-rose-100 dark:text-rose-900">Not sent.</span>
                             <button
-                              key={`${item.id}-${emoji}`}
                               type="button"
-                              className="rounded border bg-white/80 px-1.5 py-0.5 text-[11px] text-slate-800 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100"
-                              onClick={() => void reactToMessage(item.id, emoji)}
+                              className="rounded border border-white/70 px-1.5 py-0.5 font-medium underline-offset-2 hover:underline disabled:opacity-60"
+                              onClick={() => retryMessage(item)}
+                              disabled={sending}
                             >
-                              {emoji}
+                              Retry
                             </button>
-                          ))}
-                        </div>
+                            <button
+                              type="button"
+                              className="rounded border border-white/40 px-1.5 py-0.5 hover:underline"
+                              onClick={() => discardFailedMessage(item)}
+                            >
+                              Discard
+                            </button>
+                          </div>
+                        ) : null}
                         {Array.isArray(item.reactions) && item.reactions.length ? (
                           <p className={`mt-1 text-[10px] ${item.senderRole === 'user' ? 'text-emerald-100' : 'text-slate-500'}`}>
                             {item.reactions.map((reaction) => reaction.emoji).join(' ')}
@@ -556,9 +936,15 @@ export function SupportChatWidget() {
                         ) : null}
                         <p className={`mt-1 text-[10px] ${item.senderRole === 'user' ? 'text-emerald-100 dark:text-emerald-900/80' : 'text-slate-400 dark:text-slate-300'}`}>
                           {item.createdAt ? new Date(item.createdAt).toLocaleTimeString() : ''}
+                          {item.senderRole === 'user' && !item.deliveryState && !messages.slice(index + 1).some((row) => row.senderRole === 'user')
+                            ? ` · ${item.readByAdmin ? 'Seen' : 'Sent'}`
+                            : ''}
                         </p>
                       </div>
                     ))}
+                    {adminTyping ? (
+                      <p className="text-[11px] italic text-slate-500 dark:text-slate-300" aria-live="polite">Admin is typing…</p>
+                    ) : null}
                     <div ref={scrollAnchorRef} />
                   </div>
                 </ScrollArea>
@@ -566,7 +952,11 @@ export function SupportChatWidget() {
                 <div className="flex min-w-0 items-end gap-2">
                   <Textarea
                     value={messageText}
-                    onChange={(event) => setMessageText(event.target.value)}
+                    onChange={(event) => {
+                      setMessageText(event.target.value);
+                      if (event.target.value.trim()) notifyTyping(); else stopTyping();
+                    }}
+                    onBlur={stopTyping}
                     placeholder="Type your message"
                     className="min-h-[70px] min-w-0 flex-1 dark:border-slate-500 dark:bg-slate-800 dark:text-slate-100 dark:placeholder:text-slate-400"
                     onKeyDown={(event) => {
@@ -587,7 +977,13 @@ export function SupportChatWidget() {
                       className="hidden"
                       onChange={(e) => void onFileSelected(e)}
                     />
-                    <Button className="h-10 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400" onClick={() => void sendMessage()} disabled={sending || (!messageText.trim() && !messageAttachment)}>
+                    <Button
+                      className="h-10 bg-emerald-600 hover:bg-emerald-700 dark:bg-emerald-500 dark:text-emerald-950 dark:hover:bg-emerald-400"
+                      onClick={() => void sendMessage()}
+                      disabled={sending || (!messageText.trim() && !messageAttachment)}
+                      aria-busy={sending || undefined}
+                      aria-label={sending ? 'Sending message' : 'Send message'}
+                    >
                       <Send className="h-4 w-4" />
                     </Button>
                   </div>

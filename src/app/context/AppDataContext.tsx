@@ -345,6 +345,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     let reconnectTimer: number | null = null;
     let source: EventSource | null = null;
     let reconnectDelay = 1500;
+    // `/api/stream` answers 401 (no `open` event) when the request carries no usable credential —
+    // e.g. the browser blocks the cross-site auth cookie (EventSource cannot send a bearer
+    // header and the API ignores `?token=` in production). Retrying that forever only produced a
+    // stream of 401s, so give up after a few consecutive pre-open failures and try again on the
+    // next token change / tab focus / network resume. Socket.IO carries realtime events anyway.
+    let opened = false;
+    let consecutivePreOpenFailures = 0;
+    let pausedLogged = false;
 
     const closeCurrent = () => {
       if (source) {
@@ -356,11 +364,15 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const connect = () => {
       if (closed) return;
       closeCurrent();
+      opened = false;
 
       source = new EventSource(buildSseStreamUrl(authToken), { withCredentials: true });
 
       source.onopen = () => {
         logNativeEvent('socket', 'appdata-stream-open');
+        opened = true;
+        consecutivePreOpenFailures = 0;
+        pausedLogged = false;
         reconnectDelay = 1500;
       };
 
@@ -389,19 +401,41 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
       source.onerror = () => {
         logNativeEvent('socket', 'appdata-stream-error', { reconnectDelay }, 'warn');
+        if (!opened) consecutivePreOpenFailures += 1;
         closeCurrent();
         if (closed) return;
+        if (consecutivePreOpenFailures >= 3) {
+          if (!pausedLogged) {
+            pausedLogged = true;
+            console.warn('[stream] /api/stream rejected 3 times in a row; pausing until the session token changes or the tab regains focus.');
+          }
+          return;
+        }
         reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null;
           connect();
         }, reconnectDelay);
         reconnectDelay = Math.min(Math.round(reconnectDelay * 1.65), 15000);
       };
     };
 
+    // Resume a paused stream (see above) when the tab becomes visible or the network returns.
+    const resumeIfPaused = () => {
+      if (closed || source || reconnectTimer != null || document.hidden) return;
+      if (consecutivePreOpenFailures < 3) return;
+      consecutivePreOpenFailures = 0;
+      reconnectDelay = 1500;
+      connect();
+    };
+    document.addEventListener('visibilitychange', resumeIfPaused);
+    window.addEventListener('online', resumeIfPaused);
+
     connect();
 
     return () => {
       closed = true;
+      document.removeEventListener('visibilitychange', resumeIfPaused);
+      window.removeEventListener('online', resumeIfPaused);
       if (reconnectTimer) {
         window.clearTimeout(reconnectTimer);
       }

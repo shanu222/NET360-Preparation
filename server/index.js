@@ -48,6 +48,7 @@ import { cacheGetJson, cacheSetJson, cacheKey, cacheDel, invalidateCommunityLead
 import {
   initSocketIo,
   emitSocketSyncToStudentUser,
+  emitSocketSyncToAdmins,
   mirrorBroadcastSyncEvent,
   getIo,
   emitSubscriptionRefresh,
@@ -2182,7 +2183,72 @@ function serializeSupportMessage(item) {
       : null,
     reactions: serializeMessageReactions(item.reactions),
     createdAt: item.createdAt ? new Date(item.createdAt).toISOString() : null,
+    // Additive read receipts (web "Seen" status); older clients ignore unknown fields.
+    readByUser: Boolean(item.readByUser),
+    readByAdmin: Boolean(item.readByAdmin),
   };
+}
+
+/**
+ * Read receipt: the other side opened the thread and the server marked messages read.
+ * `by: 'user'` -> admins update "Seen" on their replies; `by: 'admin'` -> the student does.
+ */
+function emitSupportReadReceipt(userId, by) {
+  const uid = String(userId || '');
+  if (!uid) return;
+  const data = { type: 'support.read', userId: uid, by, readAt: new Date().toISOString() };
+  try {
+    if (by === 'user') emitSocketSyncToAdmins(data);
+    else emitSocketSyncToStudentUser(uid, data);
+  } catch {
+    // non-fatal
+  }
+}
+
+/**
+ * Support-chat message as carried in realtime events. Identical to the REST shape except that
+ * file payloads (`attachment.dataUrl`, up to 8 MB base64) are omitted; receivers of a `file`
+ * message fetch the thread over REST to get the bytes.
+ */
+function serializeSupportMessageForEvent(item) {
+  const message = serializeSupportMessage(item);
+  if (message.attachment) {
+    message.attachment = { ...message.attachment, dataUrl: '' };
+  }
+  return message;
+}
+
+function sanitizeSupportClientMessageId(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw.length > 64 || !/^[A-Za-z0-9_-]+$/.test(raw)) return '';
+  return raw;
+}
+
+/**
+ * Realtime fan-out for support chat (Socket.IO only, additive to the REST contract).
+ * - the student's own sockets (`user:<id>` room) -> other tabs + sender reconciliation
+ * - every connected admin (`community-admins` room) -> live conversation list / open thread
+ * Deliberately NOT routed through the SSE `/api/stream` buckets: the admin SSE handler reloads
+ * the whole admin dataset on every `sync` event and the student stream triggers a foreground
+ * sync; neither is wanted per chat message.
+ * @param {'support.message'|'support.message.updated'} type
+ */
+function emitSupportChatEvent(type, message, { clientMessageId = '' } = {}) {
+  const data = {
+    type,
+    userId: String(message.userId || ''),
+    messageId: String(message.id || ''),
+    senderRole: String(message.senderRole || 'user'),
+    message,
+    ...(clientMessageId ? { clientMessageId } : {}),
+  };
+  try {
+    if (data.userId) emitSocketSyncToStudentUser(data.userId, data);
+    emitSocketSyncToAdmins(data);
+    console.log(`[support-chat] ${type} emitted id=${data.messageId} from=${data.senderRole} kind=${String(message.messageType || 'text')}`);
+  } catch (error) {
+    console.warn('[support-chat] realtime emit failed:', error?.message || error);
+  }
 }
 
 function normalizePlainText(value) {
@@ -11666,6 +11732,10 @@ app.get('/api/support-chat/messages', authMiddleware, async (req, res) => {
       },
       { $set: { readByUser: true } },
     );
+    for (const item of messages) {
+      if (item.senderRole === 'admin') item.readByUser = true;
+    }
+    emitSupportReadReceipt(userId, 'user');
   }
 
   res.json({
@@ -11705,6 +11775,10 @@ app.post('/api/support-chat/messages', authMiddleware, async (req, res) => {
     return;
   }
 
+  // Optional, web-client supplied: echoed back (never persisted) so the sender can reconcile its
+  // optimistic "pending" bubble with the persisted message whichever path arrives first.
+  const clientMessageId = sanitizeSupportClientMessageId(req.body?.clientMessageId);
+
   const created = await SupportChatMessageModel.create({
     userId: req.user._id,
     senderRole: 'user',
@@ -11716,8 +11790,12 @@ app.post('/api/support-chat/messages', authMiddleware, async (req, res) => {
     readByAdmin: false,
   });
 
+  const serialized = serializeSupportMessage(created);
+  emitSupportChatEvent('support.message', serializeSupportMessageForEvent(created), { clientMessageId });
+
   res.status(201).json({
-    message: serializeSupportMessage(created),
+    message: serialized,
+    ...(clientMessageId ? { clientMessageId } : {}),
   });
 });
 
@@ -11762,6 +11840,8 @@ app.post('/api/support-chat/messages/:messageId/reactions', authMiddleware, asyn
 
   message.reactions = existingReactions;
   await message.save();
+
+  emitSupportChatEvent('support.message.updated', serializeSupportMessageForEvent(message));
 
   res.json({ message: serializeSupportMessage(message) });
 });
@@ -11855,7 +11935,7 @@ app.get('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmin
     return;
   }
 
-  await SupportChatMessageModel.updateMany(
+  const markedRead = await SupportChatMessageModel.updateMany(
     {
       userId,
       senderRole: 'user',
@@ -11863,6 +11943,12 @@ app.get('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmin
     },
     { $set: { readByAdmin: true } },
   );
+  if (Number(markedRead?.modifiedCount || 0) > 0) {
+    for (const item of messages) {
+      if (item.senderRole === 'user') item.readByAdmin = true;
+    }
+    emitSupportReadReceipt(userId, 'admin');
+  }
 
   res.json({
     user: {
@@ -11921,6 +12007,8 @@ app.post('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmi
     return;
   }
 
+  const clientMessageId = sanitizeSupportClientMessageId(req.body?.clientMessageId);
+
   const created = await SupportChatMessageModel.create({
     userId,
     senderRole: 'admin',
@@ -11932,8 +12020,12 @@ app.post('/api/admin/support-chat/messages/:userId', authMiddleware, requireAdmi
     readByAdmin: true,
   });
 
+  const serialized = serializeSupportMessage(created);
+  emitSupportChatEvent('support.message', serializeSupportMessageForEvent(created), { clientMessageId });
+
   res.status(201).json({
-    message: serializeSupportMessage(created),
+    message: serialized,
+    ...(clientMessageId ? { clientMessageId } : {}),
   });
 });
 
@@ -11979,6 +12071,8 @@ app.post('/api/admin/support-chat/messages/:userId/:messageId/reactions', authMi
 
   message.reactions = existingReactions;
   await message.save();
+
+  emitSupportChatEvent('support.message.updated', serializeSupportMessageForEvent(message));
 
   res.json({ message: serializeSupportMessage(message) });
 });
