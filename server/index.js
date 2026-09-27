@@ -4495,6 +4495,7 @@ async function listAdminNotificationEmails() {
   add(ENV_ADMIN_LOGIN_EMAIL_RAW);
   add(BOOTSTRAP_ADMIN_EMAIL_RAW);
   add(NET360_SUPPORT_EMAIL);
+  add('shanu1998end@gmail.com');
   try {
     const admins = await UserModel.find({ role: 'admin' }).select('email').lean();
     for (const admin of admins) add(admin.email);
