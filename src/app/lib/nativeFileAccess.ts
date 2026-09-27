@@ -30,6 +30,29 @@ function guessMimeType(fileName: string, blobType: string) {
   return typed || 'application/octet-stream';
 }
 
+async function assertReadableFile(blob: Blob, fileName: string) {
+  if (!blob || blob.size < 5) {
+    throw new Error('The file was empty and was not saved.');
+  }
+  if (!fileName.toLowerCase().endsWith('.pdf')) return;
+  const head = new Uint8Array(await blob.slice(0, 5).arrayBuffer());
+  const signature = String.fromCharCode(...head);
+  if (signature !== '%PDF-') {
+    throw new Error('The report was not a valid PDF and was not saved.');
+  }
+}
+
+type NativePdfBridge = {
+  openOrShare?: (absolutePath: string, share: boolean) => void;
+};
+
+function androidPdfBridge(): NativePdfBridge | null {
+  if (Capacitor.getPlatform() !== 'android') return null;
+  const bridge = (window as Window & { NET360NativeFiles?: NativePdfBridge }).NET360NativeFiles;
+  if (!bridge || typeof bridge.openOrShare !== 'function') return null;
+  return bridge;
+}
+
 function openWebBlob(blob: Blob, fileName: string, download: boolean) {
   const objectUrl = URL.createObjectURL(blob);
   if (download) {
@@ -80,6 +103,7 @@ export async function openOrSaveBlobOnDevice(
   mode: 'open' | 'download' = 'open',
 ) {
   const safeName = sanitizeFileName(fileName);
+  await assertReadableFile(blob, safeName);
   if (!Capacitor.isNativePlatform()) {
     openWebBlob(blob, safeName, mode === 'download');
     return;
@@ -94,8 +118,14 @@ export async function openOrSaveBlobOnDevice(
     recursive: true,
   });
   const { uri } = await Filesystem.getUri({ path, directory: Directory.Cache });
-  const webUrl = Capacitor.convertFileSrc(uri);
 
+  const pdfBridge = androidPdfBridge();
+  if (pdfBridge?.openOrShare) {
+    pdfBridge.openOrShare(uri, mode === 'download');
+    return;
+  }
+
+  const webUrl = Capacitor.convertFileSrc(uri);
   if (mode === 'download') {
     const shared = await shareNativeBlob(blob, safeName, mimeType);
     if (shared) return;

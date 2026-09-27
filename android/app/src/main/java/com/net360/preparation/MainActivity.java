@@ -1,12 +1,18 @@
 package com.net360.preparation;
 
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
 import android.webkit.CookieManager;
+import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+
+import androidx.core.content.FileProvider;
+
+import java.io.File;
 
 import com.getcapacitor.BridgeActivity;
 import com.getcapacitor.Plugin;
@@ -48,7 +54,52 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     webView.setHorizontalScrollBarEnabled(false);
     webView.setScrollbarFadingEnabled(true);
     webView.setOverScrollMode(View.OVER_SCROLL_NEVER);
+    webView.setNestedScrollingEnabled(true);
     webView.setSaveEnabled(true);
+    webView.addJavascriptInterface(new PdfBridge(), "NET360NativeFiles");
+  }
+
+  /**
+   * Opens or shares a PDF already written into the app cache via the system viewer/share sheet.
+   * WebView cannot reliably open application/pdf from a capacitor file URL.
+   */
+  private void presentPdf(String rawPath, boolean share) {
+    try {
+      String path = String.valueOf(rawPath == null ? "" : rawPath).trim();
+      if (path.startsWith("file://")) {
+        String parsed = Uri.parse(path).getPath();
+        if (parsed != null) path = parsed;
+      }
+      File file = new File(path);
+      if (!file.isFile() || file.length() < 5 || !file.getName().toLowerCase().endsWith(".pdf")) {
+        Log.e(TAG, "PDF intent skipped: missing or invalid file");
+        return;
+      }
+      Uri uri = FileProvider.getUriForFile(this, getPackageName() + ".fileprovider", file);
+      Intent view = new Intent(Intent.ACTION_VIEW);
+      view.setDataAndType(uri, "application/pdf");
+      view.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+      Intent send = new Intent(Intent.ACTION_SEND);
+      send.setType("application/pdf");
+      send.putExtra(Intent.EXTRA_STREAM, uri);
+      send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+      Intent chooser = Intent.createChooser(share ? send : view, share ? "Share PDF" : "Open PDF");
+      if (share) {
+        chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[] { view });
+      } else {
+        chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[] { send });
+      }
+      startActivity(chooser);
+    } catch (Exception error) {
+      Log.e(TAG, "PDF intent failed", error);
+    }
+  }
+
+  private final class PdfBridge {
+    @JavascriptInterface
+    public void openOrShare(String absolutePath, boolean share) {
+      runOnUiThread(() -> presentPdf(absolutePath, share));
+    }
   }
 
   @Override
