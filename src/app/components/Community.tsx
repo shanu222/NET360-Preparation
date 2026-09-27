@@ -1911,7 +1911,7 @@ function CommunityInner() {
       voiceStartAtRef.current = Date.now();
       recorder.start();
       setIsRecordingVoice(true);
-      showNeutralToast('Recording voice note... tap Stop to send.');
+      showNeutralToast('Recording voice note…');
     } catch {
       showErrorToast('Microphone permission denied or unavailable.');
     }
@@ -2073,19 +2073,19 @@ function CommunityInner() {
     if (row) {
       setActiveConnectionId(row.connectionId);
       setActiveTab('messages');
-      showInfoToast('Opening messages.');
+      showInfoToast('Messages');
       return;
     }
     // Nothing to open: release the pressed state immediately and explain.
     setPendingRosterAction(null);
-    showInfoToast('Send a connection request first to unlock chat.');
+    showInfoToast('Connect to start chatting.');
   };
 
   const inviteToQuizBattleFromPresence = (userId: string) => {
     if (!beginRosterAction(userId, 'quiz')) return;
     setQuizOpponentUserId(userId);
     setActiveTab('quiz-battles');
-    showInfoToast('Configure the battle, then tap Send Challenge.');
+    showInfoToast('Quiz Battles');
   };
 
   const openStudyRoomFromPresence = (userId: string) => {
@@ -2162,13 +2162,11 @@ function CommunityInner() {
                   <Badge className="bg-emerald-600 text-white shadow-sm">Live</Badge>
                 )}
               </CardTitle>
-              <CardDescription>
-                Students who are signed in on the web app right now. You never appear in your own list.
-              </CardDescription>
+              <CardDescription>Students currently online.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="min-w-0 space-y-1.5">
-                <Label>Currently studying (optional, shown to others)</Label>
+                <Label>Currently studying</Label>
                 <Input
                   value={studyingSubjectPing}
                   onChange={(e) => setStudyingSubjectPing(e.target.value)}
@@ -2284,7 +2282,6 @@ function CommunityInner() {
               {!onlineStudents.some((s) => !isOwnCommunityRow(s, String(user.id))) && !presenceLoading ? (
                 <div className="rounded-xl border border-dashed p-8 text-center">
                   <p className="text-sm font-medium text-slate-800 dark:text-slate-100">No other students are currently online.</p>
-                  <p className="mt-1 text-xs text-muted-foreground">Study sessions spike after school hours — invite friends or jump into Discussion Rooms meanwhile.</p>
                 </div>
               ) : null}
             </CardContent>
@@ -2297,11 +2294,7 @@ function CommunityInner() {
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
                   <CardTitle>Community Profile</CardTitle>
-                  <CardDescription>
-                    {isCommunityProfileExpanded
-                      ? 'Set your NET goals and preferences so matching is productive.'
-                      : 'Saved profile summary. Use Edit Profile to update details.'}
-                  </CardDescription>
+                  <CardDescription>Your community profile.</CardDescription>
                   <div className="mt-3 space-y-1">
                     <div className="flex items-center justify-between text-xs text-muted-foreground">
                       <span>Profile strength</span>
@@ -2437,13 +2430,12 @@ function CommunityInner() {
               </div>
 
               <div className="space-y-1.5">
-                <Label>Interests &amp; focus tags (comma separated)</Label>
+                <Label>Interests</Label>
                 <Input
                   value={interestsInput}
                   onChange={(e) => setInterestsInput(e.target.value)}
                   placeholder="calculus, group study, late-night sessions"
                 />
-                <p className="text-xs text-muted-foreground">Shown on your card for better matches (max 12 tags).</p>
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
@@ -2451,14 +2443,12 @@ function CommunityInner() {
                   <Switch checked={hideOnlineStatus} onCheckedChange={setHideOnlineStatus} id="hide-online" />
                   <Label htmlFor="hide-online" className="cursor-pointer text-sm leading-snug">
                     Hide my online status
-                    <span className="mt-0.5 block text-xs font-normal text-muted-foreground">Others won&apos;t see you in Online; you still see everyone.</span>
                   </Label>
                 </div>
                 <div className="flex items-center gap-3 rounded-lg border border-slate-200/80 bg-white/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
                   <Switch checked={doNotDisturb} onCheckedChange={setDoNotDisturb} id="dnd-mode" />
                   <Label htmlFor="dnd-mode" className="cursor-pointer text-sm leading-snug">
                     Do not disturb
-                    <span className="mt-0.5 block text-xs font-normal text-muted-foreground">Quiet live typing signals to you from peers.</span>
                   </Label>
                 </div>
               </div>
@@ -2487,7 +2477,7 @@ function CommunityInner() {
             <Card className="min-h-[120px] min-w-0 xl:col-span-1">
               <CardHeader>
                 <CardTitle>Find Students</CardTitle>
-                <CardDescription>Search users, send connection requests, and build your study network.</CardDescription>
+                <CardDescription>Search for students.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex flex-col gap-2 sm:flex-row">
@@ -2547,11 +2537,7 @@ function CommunityInner() {
                     </div>
                   ))}
                   {!searchLoading && !searchResults.length ? (
-                    <p className="text-xs text-muted-foreground">
-                      {searchQuery.trim()
-                        ? 'No students match that search. Try a different spelling or another name.'
-                        : 'Type a name or username to find study peers.'}
-                    </p>
+                    <p className="text-xs text-muted-foreground">No students found.</p>
                   ) : null}
                 </div>
               </CardContent>
@@ -2560,7 +2546,7 @@ function CommunityInner() {
             <Card className="min-w-0 xl:col-span-2">
               <CardHeader>
                 <CardTitle>Connection Requests</CardTitle>
-                <CardDescription>Accept genuine requests and reject unknown users.</CardDescription>
+                <CardDescription>Incoming and outgoing requests.</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-3 md:grid-cols-2">
                 <div className="space-y-2">
@@ -2625,7 +2611,7 @@ function CommunityInner() {
           <Card className="min-w-0">
             <CardHeader>
               <CardTitle>Smart Study Partner Matching</CardTitle>
-              <CardDescription>Find best-fit partners based on NET goals, level, timing, and score range.</CardDescription>
+              <CardDescription>Suggested study partners.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2 max-h-[560px] overflow-auto">
               {studyPartners.map((item) => (
@@ -2704,14 +2690,10 @@ function CommunityInner() {
             <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>Topic Discussion Rooms</CardTitle>
-                <CardDescription>Join subject rooms and solve doubts together.</CardDescription>
+                <CardDescription>Subject discussion rooms.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-2 max-h-[560px] overflow-auto">
-                <div className="mb-2 rounded-lg border border-amber-200/70 bg-amber-50/70 p-2 text-xs text-amber-950 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-50">
-                  <p className="font-semibold">Pinned study tip</p>
-                  <p className="mt-1 text-[11px] opacity-90">Use clear doubt titles, show your working, and upvote helpful explanations so the room stays high-signal for everyone.</p>
-                </div>
-                <p className="text-xs font-medium text-muted-foreground">Trending by activity</p>
+                <p className="text-xs font-medium text-muted-foreground">Trending</p>
                 <div className="flex flex-wrap gap-1 pb-2">
                   {trendingRooms.slice(0, 4).map((room) => (
                     <button
@@ -2741,7 +2723,7 @@ function CommunityInner() {
             <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>Room Feed</CardTitle>
-                <CardDescription>Ask concepts, discuss MCQs, and use doubt exchange with upvotes.</CardDescription>
+                <CardDescription>Room discussions.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="rounded-lg border p-3 space-y-2">
@@ -2811,7 +2793,7 @@ function CommunityInner() {
             <Card className="min-w-0">
               <CardHeader>
                 <CardTitle>Create Quiz Challenge</CardTitle>
-                <CardDescription>Challenge any student in async or live timed MCQ battle mode.</CardDescription>
+                <CardDescription>Create a quiz challenge.</CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="space-y-1.5">
@@ -2917,7 +2899,7 @@ function CommunityInner() {
               <Card>
                 <CardHeader>
                   <CardTitle>Challenge Inbox & History</CardTitle>
-                  <CardDescription>Accept invites, start attempts, and review outcomes.</CardDescription>
+                  <CardDescription>Your quiz challenges.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-2 max-h-[280px] overflow-auto">
                   {quizChallenges.map((challenge) => {
@@ -2978,7 +2960,7 @@ function CommunityInner() {
                     <>
                       {(selectedQuizChallenge.status === 'in_progress' || selectedQuizChallenge.status === 'accepted') && !selectedQuizChallenge.myResult.submitted ? (
                         <>
-                          <p className="text-xs text-muted-foreground">Challenge is active. Launching opens the secured exam interface.</p>
+                          <p className="text-xs text-muted-foreground">Challenge is active.</p>
                           {selectedQuizChallenge.challengeType === 'live' ? (
                             <div className="rounded-md border bg-slate-50 p-2 text-xs text-muted-foreground">
                               <p>Your progress: {selectedQuizChallenge.myLiveProgress?.answeredCount || 0}/{selectedQuizChallenge.questionCount}</p>
@@ -3003,7 +2985,7 @@ function CommunityInner() {
                       )}
                     </>
                   ) : (
-                    <p className="text-sm text-muted-foreground">Select a challenge from inbox/history.</p>
+                    <p className="text-sm text-muted-foreground">Select a challenge.</p>
                   )}
                 </CardContent>
               </Card>
@@ -3012,7 +2994,7 @@ function CommunityInner() {
                 <Card>
                   <CardHeader>
                     <CardTitle>Your Quiz Profile</CardTitle>
-                    <CardDescription>Wins, matches, and performance trend.</CardDescription>
+                    <CardDescription>Your quiz results.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-1 text-sm">
                     <p>Total wins: {quizLeaderboard.find((row) => row.userId === user.id)?.totalWins || 0}</p>
@@ -3026,7 +3008,7 @@ function CommunityInner() {
                 <Card>
                   <CardHeader>
                     <CardTitle>Quiz Battles Leaderboard</CardTitle>
-                    <CardDescription>Top performers by wins, win rate, and volume.</CardDescription>
+                    <CardDescription>Top performers.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-2 max-h-[220px] overflow-auto" ref={quizLeaderboardScrollRef}>
                     <div className="relative w-full" style={{ height: quizLeaderboardVirtual.getTotalSize() }}>
@@ -3058,7 +3040,7 @@ function CommunityInner() {
           <Card>
             <CardHeader>
               <CardTitle>Competitive Leaderboard</CardTitle>
-              <CardDescription>Weekly and monthly ranks from tests, accuracy, and improvement.</CardDescription>
+              <CardDescription>Weekly and monthly rankings.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex items-center gap-2">
@@ -3094,7 +3076,7 @@ function CommunityInner() {
           <Card>
             <CardHeader>
               <CardTitle>Achievement Badges</CardTitle>
-              <CardDescription>Gamified milestones for consistency and contribution.</CardDescription>
+              <CardDescription>Your badges.</CardDescription>
             </CardHeader>
             <CardContent className="grid min-h-[120px] gap-2 md:grid-cols-2 xl:grid-cols-3">
               {badges.map((badge) => (
@@ -3113,7 +3095,7 @@ function CommunityInner() {
             <Card className="min-w-0 xl:col-span-1">
               <CardHeader>
                 <CardTitle>Connected Students</CardTitle>
-                <CardDescription>Choose a connection to open private chat.</CardDescription>
+                <CardDescription>Your connections.</CardDescription>
               </CardHeader>
               <CardContent>
                 <ScrollArea className="h-[420px] pr-2 sm:h-[500px]">
@@ -3158,7 +3140,7 @@ function CommunityInner() {
                         <span className="text-xs text-muted-foreground">Status hidden or offline</span>
                       )}
                     </span>
-                  ) : 'Select a connection to start chatting.'}
+                  ) : 'Select a conversation.'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-3">
@@ -3341,7 +3323,7 @@ function CommunityInner() {
                         bumpTypingFromInput();
                       }
                     }}
-                    placeholder={activeConnection ? 'Type a respectful message...' : 'Select connection first'}
+                    placeholder={activeConnection ? 'Type a message...' : 'Select a conversation'}
                     disabled={!activeConnection || isSendingMessage || activeConnection.canMessage === false}
                   />
                   <Button type="submit" className="w-full sm:w-auto" disabled={!activeConnection || isSendingMessage || !messageInput.trim() || activeConnection.canMessage === false}>
@@ -3350,12 +3332,12 @@ function CommunityInner() {
                 </form>
                 {activeConnection ? (
                   <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
-                    <Label>Report this conversation (safety)</Label>
+                    <Label>Report this conversation</Label>
                     <Textarea
                       value={reportReason}
                       onChange={(e) => setReportReason(e.target.value)}
                       className="min-h-[80px]"
-                      placeholder="Share what happened. Harmful users are auto-restricted and reviewed by admin."
+                      placeholder="Describe what happened."
                     />
                     <Button variant="outline" onClick={() => void reportConversation()} disabled={!reportReason.trim()}>
                       Submit report

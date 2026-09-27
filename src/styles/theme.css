@@ -973,7 +973,6 @@
   .dark .net360-shell main select,
   .dark .net360-shell main [data-slot='select-trigger'],
   .dark .net360-shell main [data-slot='popover-content'],
-  .dark .net360-shell main [data-slot='select-content'],
   .dark .net360-shell main [data-slot='command'] {
     border-color: rgba(133, 152, 255, 0.42);
     background: rgba(23, 32, 68, 0.9);
@@ -1264,6 +1263,56 @@ html {
 
 #root {
   isolation: isolate;
+}
+
+/* Select panels portal to document.body. Keep the option list fully opaque
+   and above page content so labels/fields never show through. */
+[data-radix-popper-content-wrapper]:has([data-slot='select-content']),
+[data-radix-popper-content-wrapper]:has([data-slot='dropdown-menu-content']),
+[data-radix-popper-content-wrapper]:has([data-slot='dropdown-menu-sub-content']) {
+  z-index: 300 !important;
+}
+
+[data-slot='select-content'],
+[data-slot='dropdown-menu-content'],
+[data-slot='dropdown-menu-sub-content'] {
+  z-index: 300;
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border: 1px solid rgba(15, 23, 42, 0.14);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.16);
+}
+
+[data-slot='select-content'] [data-radix-select-viewport],
+[data-slot='select-item'] {
+  background-color: #ffffff;
+  color: #0f172a;
+}
+
+[data-slot='select-item'][data-highlighted],
+[data-slot='select-item']:focus,
+[data-slot='dropdown-menu-item']:focus,
+[data-slot='dropdown-menu-item'][data-highlighted] {
+  background-color: #f1f5f9;
+  color: #0f172a;
+}
+
+.dark [data-slot='select-content'],
+.dark [data-slot='dropdown-menu-content'],
+.dark [data-slot='dropdown-menu-sub-content'],
+.dark [data-slot='select-content'] [data-radix-select-viewport],
+.dark [data-slot='select-item'] {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: rgba(148, 163, 184, 0.35);
+}
+
+.dark [data-slot='select-item'][data-highlighted],
+.dark [data-slot='select-item']:focus,
+.dark [data-slot='dropdown-menu-item']:focus,
+.dark [data-slot='dropdown-menu-item'][data-highlighted] {
+  background-color: #1e293b !important;
+  color: #f8fafc !important;
 }
 
 /* Do not set unlayered `img { height: auto }` here — it overrides Tailwind `h-full` / fill layouts.

@@ -236,7 +236,7 @@
 
 .dark .admin-shell [data-slot='select-content'] {
   border-color: rgba(148, 163, 184, 0.28);
-  background: rgba(15, 23, 42, 0.98);
+  background: #0f172a;
   color: var(--admin-dark-text-body);
 }
 
