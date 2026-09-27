@@ -1126,7 +1126,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!activeAuth) {
       throw new Error('Account setup could not start on this device. Please retry.');
     }
-    const credential = await createUserWithEmailAndPassword(activeAuth, email, password);
+    let credential;
+    try {
+      credential = await createUserWithEmailAndPassword(activeAuth, email, password);
+    } catch (error) {
+      const code = String((error as { code?: string })?.code || '').toLowerCase();
+      const message = String((error as Error)?.message || '').toLowerCase();
+      if (code.includes('email-already-in-use') || message.includes('email-already-in-use')) {
+        const alreadyRegistered = new Error('This email is already registered. Please sign in.') as Error & { code?: string; status?: number };
+        alreadyRegistered.code = 'EMAIL_ALREADY_REGISTERED';
+        alreadyRegistered.status = 409;
+        throw alreadyRegistered;
+      }
+      throw error;
+    }
     const firebaseIdToken = await credential.user.getIdToken();
     let payload: {
       token?: string;

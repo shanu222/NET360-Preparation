@@ -9201,7 +9201,8 @@ async function createDirectStudentAccount(req, res) {
 
   if (existingByFirebaseUid) {
     res.status(409).json({
-      error: duplicateAccountErrorMessage('email', hasActiveSubscription(existingByFirebaseUid)),
+      error: 'This email is already registered. Please sign in.',
+      code: 'EMAIL_ALREADY_REGISTERED',
     });
     return;
   }
@@ -9209,7 +9210,8 @@ async function createDirectStudentAccount(req, res) {
   if (existingByEmail) {
     if (!isLegacyStudentForFirebaseMigration(existingByEmail)) {
       res.status(409).json({
-        error: duplicateAccountErrorMessage('email', hasActiveSubscription(existingByEmail)),
+        error: 'This email is already registered. Please sign in.',
+        code: 'EMAIL_ALREADY_REGISTERED',
       });
       return;
     }
@@ -9435,7 +9437,10 @@ app.post('/api/auth/register-fallback', async (req, res) => {
       ? await UserModel.findOne({ email: { $regex: `^${escaped}$`, $options: 'i' } })
       : null;
     if (existing) {
-      res.status(409).json({ error: 'An account with this email already exists.' });
+      res.status(409).json({
+        error: 'This email is already registered. Please sign in.',
+        code: 'EMAIL_ALREADY_REGISTERED',
+      });
       return;
     }
     const passwordHash = await hashPassword(password);
@@ -9465,7 +9470,10 @@ app.post('/api/auth/register-fallback', async (req, res) => {
     });
   } catch (error) {
     if (error && error.code === 11000) {
-      res.status(409).json({ error: 'An account with this email already exists.' });
+      res.status(409).json({
+        error: 'This email is already registered. Please sign in.',
+        code: 'EMAIL_ALREADY_REGISTERED',
+      });
       return;
     }
     console.error('[auth/register-fallback]', error?.message || error);

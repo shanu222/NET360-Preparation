@@ -127,8 +127,13 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
   if (code === 'EMAIL_NOT_VERIFIED') {
     return 'Verify your email before signing in. Check your inbox for the NET360 verification link.';
   }
-  if (rawCode.includes('email-already-in-use') || message.includes('email-already-in-use')) {
-    return 'This email is already registered. Sign in, or resend the verification email if you have not verified yet.';
+  if (
+    code === 'EMAIL_ALREADY_REGISTERED'
+    || rawCode.includes('email-already-in-use')
+    || message.includes('email-already-in-use')
+    || message.includes('already registered')
+  ) {
+    return 'This email is already registered. Please sign in.';
   }
   if (code === 'ACTIVE_SESSION_ELSEWHERE' || code === 'SESSION_DISABLED_TEMP' || code === 'ACTIVE_SESSION_EXISTS') {
     return 'Your account is already signed in on another device.';
@@ -349,7 +354,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       const code = String(typed?.code || typed?.payload?.code || '').toUpperCase();
       const rawCode = String(typed?.code || '').toLowerCase();
       const message = String(typed?.message || '').toLowerCase();
-      if (code === 'EMAIL_NOT_VERIFIED' || rawCode.includes('email-already-in-use') || message.includes('email-already-in-use')) {
+      if (code === 'EMAIL_NOT_VERIFIED') {
         setPendingVerificationEmail(String(typed?.payload?.email || authForm.email));
       }
       const friendly = loginFriendlyAuthError(
