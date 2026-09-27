@@ -591,55 +591,35 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       console.log('[MCQ Test Request] Sending:', normalizedPayload);
     }
 
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        if (attempt > 0) {
-          await new Promise((resolve) => setTimeout(resolve, 500));
-        }
-        const startPayload = await apiRequest<{ session: TestSession }>(
-          '/api/tests/start',
-          {
-            method: 'POST',
-            retryCount: 1,
-            timeoutMs: 18_000,
-            body: JSON.stringify(normalizedPayload),
-          },
-          authToken,
-        );
-        if (import.meta.env.DEV) {
-          console.log('[MCQ Test Response]', {
-            subject: normalizedPayload.subject,
-            chapter: normalizedPayload.chapter,
-            topic: normalizedPayload.topic,
-            section: normalizedPayload.section,
-            returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
-          });
-        }
-        logNativeEvent('practice-board', 'test-session-start-success', {
-          attempt,
-          subject: normalizedPayload.subject,
-          chapter: normalizedPayload.chapter,
-          topic: normalizedPayload.topic,
-          mode: normalizedPayload.mode,
-          questionCount: normalizedPayload.questionCount,
-          returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
-        });
-        cacheLaunchedExamSession(startPayload.session);
-        return startPayload.session;
-      } catch (error) {
-        logNativeEvent('practice-board', 'test-session-start-failed', {
-          attempt,
-          subject: normalizedPayload.subject,
-          chapter: normalizedPayload.chapter,
-          topic: normalizedPayload.topic,
-          mode: normalizedPayload.mode,
-          message: (error as Error)?.message || String(error),
-        }, attempt === 1 ? 'error' : 'warn');
-        if (attempt === 1) {
-          throw error;
-        }
-      }
+    const startPayload = await apiRequest<{ session: TestSession }>(
+      '/api/tests/start',
+      {
+        method: 'POST',
+        retryCount: 0,
+        timeoutMs: 20_000,
+        body: JSON.stringify(normalizedPayload),
+      },
+      authToken,
+    );
+    if (import.meta.env.DEV) {
+      console.log('[MCQ Test Response]', {
+        subject: normalizedPayload.subject,
+        chapter: normalizedPayload.chapter,
+        topic: normalizedPayload.topic,
+        section: normalizedPayload.section,
+        returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
+      });
     }
+    logNativeEvent('practice-board', 'test-session-start-success', {
+      subject: normalizedPayload.subject,
+      chapter: normalizedPayload.chapter,
+      topic: normalizedPayload.topic,
+      mode: normalizedPayload.mode,
+      questionCount: normalizedPayload.questionCount,
+      returnedMcqs: Array.isArray(startPayload?.session?.questions) ? startPayload.session.questions.length : 0,
+    });
+    cacheLaunchedExamSession(startPayload.session);
+    return startPayload.session;
   };
 
   const getTestSession: AppDataContextValue['getTestSession'] = async (sessionId) => {

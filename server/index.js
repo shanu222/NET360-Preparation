@@ -10653,7 +10653,14 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
 });
 
 app.get('/api/stream', async (req, res) => {
-  const token = extractAccessToken(req);
+  let token = extractAccessToken(req);
+  // EventSource cannot set Authorization. Production web/native clients pass the same
+  // short-lived access JWT as ?token= when third-party cookies are blocked. This route
+  // only — other APIs still require the Authorization header or auth cookie.
+  if (!token) {
+    const queryToken = String(req.query?.token || '').trim();
+    if (queryToken.split('.').length === 3) token = queryToken;
+  }
   if (!token) {
     res.status(401).json({ error: 'Missing authentication token.' });
     return;
@@ -14861,6 +14868,51 @@ app.get('/api/study-plans/latest', ...studentPremiumSurface, async (req, res) =>
   res.json({ studyPlan });
 });
 
+function subjectVariantFilter(subjects) {
+  const values = new Set();
+  const list = Array.isArray(subjects) ? subjects : [subjects];
+  for (const subject of list) {
+    const canonical = canonicalizeSubject(subject);
+    const variants = SUBJECT_QUERY_VARIANTS[canonical] || (canonical ? [canonical] : []);
+    variants.forEach((item) => {
+      const text = String(item || '').trim().toLowerCase();
+      if (text) values.add(text);
+    });
+  }
+  const rows = Array.from(values);
+  if (!rows.length) return null;
+  return { subject: { $in: rows } };
+}
+
+async function sampleQuestionMeta(match, size) {
+  if (!match || !Object.keys(match).length) return [];
+  const requested = clamp(Number(size) || 1, 1, 400);
+  const count = await MCQModel.countDocuments(match);
+  if (!count) return [];
+  const sampleSize = Math.min(requested, count);
+  return MCQModel.aggregate([
+    { $match: match },
+    { $sample: { size: sampleSize } },
+    { $project: { _id: 1, subject: 1, part: 1, chapter: 1, section: 1, topic: 1, difficulty: 1 } },
+  ]);
+}
+
+async function loadMcqsByIds(ids) {
+  const unique = [];
+  const seen = new Set();
+  for (const id of ids) {
+    const key = String(id || '');
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    unique.push(id);
+  }
+  if (!unique.length) return [];
+  const docs = await MCQModel.find({ _id: { $in: unique } }).lean();
+  const order = new Map(unique.map((id, index) => [String(id), index]));
+  docs.sort((a, b) => (order.get(String(a._id)) ?? 0) - (order.get(String(b._id)) ?? 0));
+  return docs;
+}
+
 app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
   const {
     subject,
@@ -14927,54 +14979,76 @@ app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
     });
   }
 
-  let selected = [];
-  const needsFullProfilePool = normalizedTestType === 'full-mock'
-    || normalizedMode === 'mock'
-    || normalizedTestType === 'adaptive'
-    || normalizedMode === 'adaptive';
-  const profileSubjectMatchers = buildSubjectInMatchers(Array.from(new Set(profile.distribution.flatMap((item) => item.sourceSubjects))));
-  // Only load the wide subject pool for mock/adaptive. Topic/section tests use scoped filters below.
-  // Loading ~8k+ lean docs on every /api/tests/start previously timed out exam popups (blank page).
-  let allInProfile = [];
-  if (needsFullProfilePool) {
-    allInProfile = await MCQModel.find(
-      profileSubjectMatchers.length
-        ? { subject: { $in: profileSubjectMatchers } }
-        : {},
-    )
-      .select('_id subject part chapter section topic difficulty')
-      .lean();
-  }
+  // Answer with JSON (and the existing CORS headers) instead of letting the socket
+  // time out into a proxy 502 that browsers report as a CORS failure.
+  res.setTimeout(45_000, () => {
+    if (!res.headersSent) {
+      res.status(503).json({ error: 'Test launch timed out before a session could be created. Please try again.' });
+    }
+  });
 
+  let selected = [];
+  try {
+  // Sample only the questions this session needs. Loading the full bank (including
+  // image payloads) on every start exceeded the proxy timeout and returned 502.
   if (normalizedTestType === 'full-mock' || normalizedMode === 'mock') {
+    const counts = allocateDistributionCounts(profile.distribution, profile.totalQuestions);
+    const metaPool = [];
+    const seenMeta = new Set();
+    for (const entry of counts) {
+      const filter = subjectVariantFilter(entry.sourceSubjects);
+      const rows = filter ? await sampleQuestionMeta(filter, Math.max(entry.count, 1)) : [];
+      for (const row of rows) {
+        const id = String(row?._id || '');
+        if (!id || seenMeta.has(id)) continue;
+        seenMeta.add(id);
+        metaPool.push(row);
+      }
+    }
+    if (metaPool.length < profile.totalQuestions) {
+      const refill = subjectVariantFilter(profile.distribution.flatMap((item) => item.sourceSubjects));
+      const extra = refill ? await sampleQuestionMeta(refill, profile.totalQuestions) : [];
+      for (const row of extra) {
+        const id = String(row?._id || '');
+        if (!id || seenMeta.has(id)) continue;
+        seenMeta.add(id);
+        metaPool.push(row);
+      }
+    }
     const pickedMeta = pickFromPoolsByDistribution({
       distribution: profile.distribution,
-      pool: allInProfile,
+      pool: metaPool,
       totalQuestions: profile.totalQuestions,
     });
-    const pickedIds = pickedMeta.map((item) => item._id).filter(Boolean);
-    selected = pickedIds.length
-      ? await MCQModel.find({ _id: { $in: pickedIds } }).lean()
-      : [];
+    selected = await loadMcqsByIds(pickedMeta.map((item) => item._id));
   } else if (normalizedTestType === 'subject-wise') {
     const pickedSubject = canonicalizeSubject(selectedSubject || normalizedSubject || '');
     const subjectCount = profile.subjectWiseQuestions[pickedSubject] || desiredQuestions;
-    const pickedSubjectMatcher = buildSubjectMatcher(pickedSubject);
-    const subjectPool = await MCQModel.find(pickedSubjectMatcher ? { subject: pickedSubjectMatcher } : { subject: pickedSubject }).lean();
-    selected = shuffle(subjectPool).slice(0, Math.min(subjectCount, subjectPool.length));
+    const filter = subjectVariantFilter([pickedSubject]);
+    const meta = filter ? await sampleQuestionMeta(filter, subjectCount) : [];
+    selected = await loadMcqsByIds(meta.map((item) => item._id));
   } else if (normalizedTestType === 'adaptive' || normalizedMode === 'adaptive') {
     const weakTopics = req.user.progress?.weakTopics || [];
+    const adaptivePool = [];
+    const seenAdaptive = new Set();
+    for (const entry of profile.distribution) {
+      const filter = subjectVariantFilter(entry.sourceSubjects);
+      const rows = filter ? await sampleQuestionMeta(filter, Math.max(desiredQuestions, 200)) : [];
+      for (const row of rows) {
+        const id = String(row?._id || '');
+        if (!id || seenAdaptive.has(id)) continue;
+        seenAdaptive.add(id);
+        adaptivePool.push(row);
+      }
+    }
     const pickedMeta = generateAdaptiveSet({
       profile,
-      allQuestions: allInProfile,
+      allQuestions: adaptivePool,
       weakTopics,
       questionCount: desiredQuestions,
       userProgress: req.user.progress || defaultProgress(),
     });
-    const pickedIds = pickedMeta.map((item) => item._id).filter(Boolean);
-    selected = pickedIds.length
-      ? await MCQModel.find({ _id: { $in: pickedIds } }).lean()
-      : [];
+    selected = await loadMcqsByIds(pickedMeta.map((item) => item._id));
   } else {
     const baseFilter = {};
     const andClauses = [];
@@ -15026,11 +15100,11 @@ app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
       difficultyFilter.difficulty = difficultyExpr;
     }
 
-    let pool = await MCQModel.find(difficultyFilter).lean();
+    let pool = await MCQModel.find(difficultyFilter).select('_id').lean();
 
     // If selected difficulty has no rows, fallback to any difficulty for same subject/chapter/topic scope.
     if (!pool.length) {
-      pool = await MCQModel.find(baseFilter).lean();
+      pool = await MCQModel.find(baseFilter).select('_id').lean();
     }
 
     if (!IS_PRODUCTION) {
@@ -15124,6 +15198,7 @@ app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
     } else {
       selected = shuffledPool.slice(0, Math.min(desiredQuestions, shuffledPool.length));
     }
+    selected = await loadMcqsByIds(selected.map((item) => item?._id));
   }
 
   console.log('TEST FILTER', {
@@ -15225,6 +15300,12 @@ app.post('/api/tests/start', ...studentPremiumSurface, async (req, res) => {
   };
 
   res.status(201).json({ session: serialized });
+  } catch (error) {
+    console.error('[tests/start] failed', error?.message || error);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Could not start the test. Please try again.' });
+    }
+  }
 });
 
 app.get('/api/tests/attempts', ...studentPremiumSurface, async (req, res) => {

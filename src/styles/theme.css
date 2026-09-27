@@ -1650,12 +1650,14 @@ html.native-android .net360-page {
 }
 
 html.native-android .net360-main {
-  touch-action: pan-y;
+  overflow-x: clip;
+  scrollbar-gutter: auto;
+  touch-action: pan-x pan-y;
 }
 
 html.native-android .net360-page {
-  overflow-x: visible;
-  touch-action: pan-y;
+  overflow-x: clip;
+  touch-action: pan-x pan-y;
   max-width: 100%;
 }
 
@@ -1666,7 +1668,7 @@ html.native-android .net360-horizontal-scroll {
   max-width: 100%;
   overflow-x: auto !important;
   overflow-y: hidden !important;
-  touch-action: pan-x;
+  touch-action: pan-x pan-y;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior-x: contain;
   mask-image: none !important;
@@ -1678,13 +1680,24 @@ html.native-android .net360-horizontal-scroll > [data-slot='tabs-list'] {
   max-width: none !important;
   width: max-content !important;
   min-width: max-content !important;
-  touch-action: pan-x;
+  touch-action: pan-x pan-y;
 }
 
 html.native-android .net360-swipe-row [data-slot='tabs-trigger'] {
   flex: 0 0 auto;
   white-space: nowrap;
-  touch-action: pan-x;
+  touch-action: pan-x pan-y;
+}
+
+html.native-android .net360-swipe-row [class*='w-['],
+html.native-android .net360-swipe-row [class*='min-w-['],
+html.native-android .net360-swipe-row [class*='max-w-['],
+html.native-android .net360-horizontal-scroll [class*='w-['],
+html.native-android .net360-horizontal-scroll [class*='min-w-['],
+html.native-android .net360-horizontal-scroll [class*='max-w-['],
+html.native-android .net360-swipe-row button,
+html.native-android .net360-horizontal-scroll button {
+  max-width: none;
 }
 
 html.native-android .net360-page [data-slot='card'],
@@ -1696,6 +1709,14 @@ html.native-android .net360-page [data-slot='badge'] {
 html.native-android .net360-page [data-slot='button'],
 html.native-android .net360-page button {
   max-width: 100%;
+}
+
+html.native-android .net360-page .net360-swipe-row button,
+html.native-android .net360-page .net360-horizontal-scroll button,
+html.native-android .net360-page .net360-swipe-row [data-slot='tabs-trigger'],
+html.native-android .net360-page .net360-horizontal-scroll [data-slot='tabs-trigger'] {
+  max-width: none;
+  width: auto;
 }
 
 html.native-android .net360-page h1,

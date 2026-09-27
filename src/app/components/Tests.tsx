@@ -16,7 +16,7 @@ import {
   Target,
   TrendingUp,
 } from 'lucide-react';
-import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
+import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
@@ -218,8 +218,6 @@ export function Tests({ onNavigate }: TestsProps) {
   const [adaptiveLoading, setAdaptiveLoading] = useState(false);
 
   const launchingRef = useRef(false);
-  /** One automatic retry on native after failed /api/tests/start (storage / timing). */
-  const mobileTestStartRetryRef = useRef(0);
 
   const resolveLaunchToken = async () => resolveLaunchAuthToken(token);
 
@@ -323,10 +321,6 @@ export function Tests({ onNavigate }: TestsProps) {
       return;
     }
 
-    const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
-    const isMobileLikeRuntime =
-      isNativeRuntime || /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '');
-
     if (import.meta.env.DEV) {
       console.log('[Tests] Token before startTestSession:', formatStudentTokenDebugPreview());
     }
@@ -366,7 +360,6 @@ export function Tests({ onNavigate }: TestsProps) {
         authTokenHint: authToken,
       });
 
-      mobileTestStartRetryRef.current = 0;
       openExamWindow({ sessionId: session.id, testType: kind, token: authToken });
       showSuccessToast('Test launched.');
     } catch (error) {
@@ -374,21 +367,6 @@ export function Tests({ onNavigate }: TestsProps) {
         console.error('Test start error:', error);
       }
       const msg = error instanceof Error ? error.message : '';
-      if (
-        isMobileLikeRuntime
-        && mobileTestStartRetryRef.current === 0
-        && !/login|authentication|Missing authentication|sign in/i.test(msg)
-      ) {
-        mobileTestStartRetryRef.current = 1;
-        setLaunchingKind(null);
-        launchingRef.current = false;
-        showNeutralToast('Retrying test start…');
-        window.setTimeout(() => {
-          void beginTest(kind, subjectOverride, questionCountOverride, topicOverride);
-        }, 500);
-        return;
-      }
-      mobileTestStartRetryRef.current = 0;
       if (/login|authentication|Missing authentication|sign in/i.test(msg)) {
         showErrorToast('Please sign in to start a test.');
         onNavigate?.('profile');
