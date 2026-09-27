@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
+import { App as CapacitorApp } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { useAuth } from '../context/AuthContext';
 import {
@@ -37,9 +38,8 @@ function activityFromPath(pathname: string): string {
 }
 
 /**
- * Web-app presence: while a student is signed in on ANY page, hold the shared Socket.IO
- * connection and send a heartbeat (interval, visibility, activity, route change).
- * Native builds are untouched.
+ * App-wide presence: while a student is signed in on ANY page (web or Android),
+ * hold the shared Socket.IO connection and send a heartbeat.
  */
 export function StudentPresenceHeartbeat() {
   const { token, user } = useAuth();
@@ -64,7 +64,7 @@ export function StudentPresenceHeartbeat() {
   }, []);
 
   useEffect(() => {
-    if (!isStudent || !userId || Capacitor.isNativePlatform()) return;
+    if (!isStudent || !userId) return;
 
     const socket = acquireRealtimeSocket('student');
     let lastSentAt = 0;
@@ -100,6 +100,12 @@ export function StudentPresenceHeartbeat() {
     window.addEventListener('online', onOnline);
     window.addEventListener('net360:presence-route', onRoute);
     ACTIVITY_EVENTS.forEach((name) => window.addEventListener(name, onActivity, { passive: true, capture: true }));
+    const appStateListenerPromise = Capacitor.isNativePlatform()
+      ? CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+        if (isActive) reconnectRealtimeIfNeeded('student');
+        send(true);
+      }).catch(() => null)
+      : Promise.resolve(null);
 
     return () => {
       window.clearInterval(interval);
@@ -107,13 +113,14 @@ export function StudentPresenceHeartbeat() {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('net360:presence-route', onRoute);
       ACTIVITY_EVENTS.forEach((name) => window.removeEventListener(name, onActivity, { capture: true }));
+      void appStateListenerPromise.then((listener) => listener?.remove());
       socket.off('connect', onConnect);
       releaseRealtimeSocket('student', socket);
     };
   }, [isStudent, userId]);
 
   useEffect(() => {
-    if (!isStudent || Capacitor.isNativePlatform()) return;
+    if (!isStudent) return;
     window.dispatchEvent(new Event('net360:presence-route'));
   }, [isStudent, location.pathname]);
 

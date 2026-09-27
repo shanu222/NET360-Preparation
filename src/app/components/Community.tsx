@@ -13,6 +13,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from './ui/dialog';
 import { apiRequest, downloadBinary } from '../lib/api';
+import { openOrSaveBlobOnDevice } from '../lib/nativeFileAccess';
 import { navigateToExamSameTab } from '../lib/examWindowLaunch';
 import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl } from '../lib/authSession';
@@ -460,19 +461,11 @@ const SafeChatAttachment = memo(function SafeChatAttachment({
         {},
         token,
       );
-      const objectUrl = URL.createObjectURL(blob);
-      if (download) {
-        const link = document.createElement('a');
-        link.href = objectUrl;
-        link.download = filename || attachment.name || 'community-file';
-        link.rel = 'noopener';
-        document.body.appendChild(link);
-        link.click();
-        link.remove();
-      } else {
-        window.open(objectUrl, '_blank', 'noopener,noreferrer');
-      }
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+      await openOrSaveBlobOnDevice(
+        blob,
+        filename || attachment.name || 'community-file',
+        download ? 'download' : 'open',
+      );
     } catch {
       showErrorToast('Could not open this file securely.');
     }
@@ -2264,14 +2257,7 @@ function CommunityInner() {
     setIsDownloadingCertificate(true);
     try {
       const { blob, filename } = await downloadBinary(`/api/community/achievements/${encodeURIComponent(badge.id)}/certificate`, {}, token);
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename || `NET360-${badge.id}-certificate.pdf`;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      await openOrSaveBlobOnDevice(blob, filename || `NET360-${badge.id}-certificate.pdf`, 'download');
       showSuccessToast('Certificate downloaded.');
     } catch (error) {
       handleApiError(error, 'Could not download the certificate.');
@@ -2986,7 +2972,7 @@ function CommunityInner() {
                   <Label>Challenge Opponent</Label>
                   <Select value={quizOpponentUserId} onValueChange={setQuizOpponentUserId}>
                     <SelectTrigger><SelectValue placeholder="Select student" /></SelectTrigger>
-                    <SelectContent>
+                    <SelectContent className="net360-opaque-select">
                       {allCommunityUsers.map((item) => (
                         <SelectItem key={item.id} value={item.id}>
                           {displayName(item)}

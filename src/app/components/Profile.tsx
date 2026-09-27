@@ -1312,7 +1312,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 <SelectTrigger id="target-program" className="h-10">
                   <SelectValue placeholder="Select program" />
                 </SelectTrigger>
-                <SelectContent className="max-h-80">
+                <SelectContent className="net360-opaque-select max-h-80">
                   {targetProgramOptions.map((option) => (
                     <SelectItem key={`${option.category}-${option.value}`} value={option.value}>
                       {option.label} ({option.category})

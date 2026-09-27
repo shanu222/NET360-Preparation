@@ -36,7 +36,7 @@ function isNativeRuntime() {
 
 /** @param section Route section id (matches sidebar `SectionId`). */
 export function prefetchStudentSection(section: string): void {
-  if (isNativeRuntime()) return;
+  if (isNativeRuntime() && section !== 'practice-board') return;
   const load = loaders[section];
   if (load) {
     void load().catch(() => undefined);
@@ -74,7 +74,10 @@ export function prefetchNeighborStudentSections(activeSection: string): void {
 
 /** Warm dashboard + neighbors on idle — improves perceived “home” speed without blocking paint. */
 export function scheduleIdleStudentPrefetch(activeSection: string): void {
-  if (isNativeRuntime()) return;
+  if (isNativeRuntime()) {
+    prefetchStudentSection('practice-board');
+    return;
+  }
   const run = () => {
     prefetchStudentSection('home');
     prefetchNeighborStudentSections(activeSection);

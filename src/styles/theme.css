@@ -1625,6 +1625,22 @@ html.dark.native-android .net360-header {
   }
 }
 
+html.native-android [data-slot='select-content'].net360-opaque-select,
+html.native-android [data-slot='select-content'].net360-opaque-select [data-radix-select-viewport],
+html.native-android [data-slot='select-item'].net360-opaque-select,
+html.native-android .net360-opaque-select [data-slot='select-item'] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  opacity: 1 !important;
+}
+
+html.dark.native-android [data-slot='select-content'].net360-opaque-select,
+html.dark.native-android [data-slot='select-content'].net360-opaque-select [data-radix-select-viewport],
+html.dark.native-android .net360-opaque-select [data-slot='select-item'] {
+  background-color: #020617 !important;
+  color: #f8fafc !important;
+}
+
 /* Large touch targets on coarse pointers */
 @media (hover: none) and (pointer: coarse) {
   .net360-page button:not([data-slot='checkbox']):not([data-slot='switch']),
