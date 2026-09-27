@@ -11,6 +11,7 @@ import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTimi
 import { cacheLaunchedExamSession } from '../lib/examWindowLaunch';
 import { logNativeEvent } from '../lib/nativeDiagnostics';
 import { consumeBriefNativeHide, markNativeDocumentHidden } from '../lib/nativeForeground';
+import { resolveNotificationPreferences } from '../lib/notificationPreferences';
 import { useAuth } from './AuthContext';
 
 interface TestAttempt {
@@ -102,6 +103,7 @@ interface PreferencesState {
   emailNotifications: boolean;
   dailyReminders: boolean;
   performanceReports: boolean;
+  notificationPreferences: import('../lib/notificationPreferences').NotificationPreferenceMap;
 }
 
 interface AppDataContextValue {
@@ -164,6 +166,17 @@ const defaultPreferences: PreferencesState = {
   emailNotifications: true,
   dailyReminders: true,
   performanceReports: true,
+  notificationPreferences: {
+    communityMessages: true,
+    connectionRequests: true,
+    connectionResponses: true,
+    quizChallenges: true,
+    quizResponses: true,
+    quizResults: true,
+    achievementUnlocks: true,
+    supportReplies: true,
+    nustUpdates: true,
+  },
 };
 
 const AppDataContext = createContext<AppDataContextValue | undefined>(undefined);
@@ -204,7 +217,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       hsscPercentage: userData.hsscPercentage || '',
       testDate: userData.testDate || '',
     });
-    setPreferences(userData.preferences || defaultPreferences);
+    setPreferences({
+      ...defaultPreferences,
+      ...(userData.preferences || {}),
+      notificationPreferences: resolveNotificationPreferences(userData.preferences?.notificationPreferences),
+    });
   }, []);
 
   const loadMcqData = useCallback(async () => {
@@ -711,7 +728,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const savePreferences = async (partial: Partial<PreferencesState>) => {
+  const savePreferences = async (partial: Partial<Omit<PreferencesState, 'notificationPreferences'>> & {
+    notificationPreferences?: Partial<PreferencesState['notificationPreferences']>;
+  }) => {
     const authToken = resolveClientAuthToken();
     if (!authToken || !user) {
       throw new Error('Please login first to save preferences.');
@@ -726,7 +745,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       authToken,
     );
 
-    setPreferences(payload.user.preferences || defaultPreferences);
+    setPreferences({
+      ...defaultPreferences,
+      ...(payload.user.preferences || {}),
+      notificationPreferences: resolveNotificationPreferences(payload.user.preferences?.notificationPreferences),
+    });
   };
 
   return (

@@ -146,6 +146,11 @@ import {
   safeCommunityAttachmentContentType,
   sniffCommunityFileKind,
 } from './lib/communityNotifications.js';
+import {
+  isOptionalNotificationEnabled,
+  mergeNotificationPreferencePatch,
+  resolveNotificationPreferences,
+} from './lib/notificationPreferences.js';
 import { SignupRequestModel } from './models/SignupRequest.js';
 import { SignupTokenModel } from './models/SignupToken.js';
 import { PremiumSubscriptionRequestModel } from './models/PremiumSubscriptionRequest.js';
@@ -1263,7 +1268,15 @@ if (!expressCorsDisabled) {
   );
 }
 
-app.use(compression({ level: 6, threshold: 512 }));
+app.use(compression({
+  level: 6,
+  threshold: 512,
+  filter: (req, res) => {
+    const type = String(res.getHeader('Content-Type') || '');
+    if (type.startsWith('image/')) return false;
+    return compression.filter(req, res);
+  },
+}));
 const hstsHttpsOnly = helmet.hsts({
   maxAge: 86400,
   includeSubDomains: false,
@@ -4519,13 +4532,14 @@ async function sendStudentEmailVerification(user) {
 
 async function loadUserForNotify(userId) {
   if (!isValidObjectId(String(userId || ''))) return null;
-  return UserModel.findById(userId).select('firstName lastName email role requiresEmailVerification emailVerifiedAt authProvider authProviderDetail').lean();
+  return UserModel.findById(userId).select('firstName lastName email role requiresEmailVerification emailVerifiedAt authProvider authProviderDetail preferences').lean();
 }
 
-async function queueCommunityNotice({ eventKey, toUser, subject, title, paragraphs, openUrl }) {
+async function queueCommunityNotice({ eventKey, toUser, subject, title, paragraphs, openUrl, preferenceKey }) {
   const dest = normalizeEmail(toUser?.email);
   if (!dest || (toUser?.role || 'student') === 'admin') return;
   if (accountNeedsEmailVerification(toUser)) return;
+  if (preferenceKey && !isOptionalNotificationEnabled(toUser?.preferences, preferenceKey)) return;
   const claimed = await claimCommunityNotificationDelivery(eventKey, toUser._id, dest);
   if (!claimed) return;
   const greeting = String(toUser.firstName || '').trim() || 'there';
@@ -4557,13 +4571,14 @@ async function notifyCommunityDirectMessage(fromUserId, toUserId, connectionId, 
   if (String(fromUserId || '') === String(toUserId || '')) return;
   if (!String(connectionId || '').trim()) return;
   await markChatNotificationSpeaker(communityChatWindowKey(connectionId, fromUserId));
+  const [fromUser, toUser] = await Promise.all([loadUserForNotify(fromUserId), loadUserForNotify(toUserId)]);
+  if (!toUser || !isOptionalNotificationEnabled(toUser.preferences, 'communityMessages')) return;
   const windowClaim = await claimChatNotificationWindow(communityChatWindowKey(connectionId, toUserId));
   if (!windowClaim.allowed) return;
-  const [fromUser, toUser] = await Promise.all([loadUserForNotify(fromUserId), loadUserForNotify(toUserId)]);
-  if (!toUser) return;
   const who = studentNotifyName(fromUser);
   await queueCommunityNotice({
     eventKey: communityNotifyEvent.communityChatWindow(connectionId, toUserId, windowClaim.notifiedAtMs),
+    preferenceKey: 'communityMessages',
     toUser,
     subject: 'NET360: new Community message',
     title: 'New Community message',
@@ -4580,6 +4595,7 @@ async function notifyCommunityConnectionRequested(fromUserId, toUserId, requestI
   const who = studentNotifyName(fromUser);
   await queueCommunityNotice({
     eventKey: communityNotifyEvent.connectionRequest(requestId),
+    preferenceKey: 'connectionRequests',
     toUser,
     subject: 'NET360: new Community connection request',
     title: 'Community connection request',
@@ -4597,6 +4613,7 @@ async function notifyCommunityConnectionResponded(fromUserId, toUserId, status, 
   const accepted = String(status) === 'accepted';
   await queueCommunityNotice({
     eventKey: communityNotifyEvent.connectionResponse(requestId, accepted ? 'accepted' : 'rejected'),
+    preferenceKey: 'connectionResponses',
     toUser: fromUser,
     subject: accepted ? 'NET360: your Community request was accepted' : 'NET360: your Community request was declined',
     title: accepted ? 'Connection request accepted' : 'Connection request declined',
@@ -4615,6 +4632,7 @@ async function notifyQuizChallengeCreated(challengerUserId, opponentUserId, chal
   const who = studentNotifyName(challenger);
   await queueCommunityNotice({
     eventKey: communityNotifyEvent.quizInvite(challengeId),
+    preferenceKey: 'quizChallenges',
     toUser: opponent,
     subject: 'NET360: new Quiz Battle request',
     title: 'Quiz Battle request',
@@ -4629,6 +4647,7 @@ function notifyBadgeUnlocked(toUser, badge) {
   if (!toUser || !badge) return;
   void queueCommunityNotice({
     eventKey: communityNotifyEvent.badgeUnlock(badge.id),
+    preferenceKey: 'achievementUnlocks',
     toUser,
     subject: `NET360: you unlocked ${badge.label}`,
     title: 'Achievement unlocked',
@@ -4751,6 +4770,7 @@ async function notifyQuizChallengeResponded(challengerUserId, opponentUserId, ac
   const accepted = String(action) === 'accept';
   await queueCommunityNotice({
     eventKey: communityNotifyEvent.quizResponse(challengeId, accepted ? 'accept' : 'decline'),
+    preferenceKey: 'quizResponses',
     toUser: challenger,
     subject: accepted ? 'NET360: your Quiz Battle was accepted' : 'NET360: your Quiz Battle was declined',
     title: accepted ? 'Quiz Battle accepted' : 'Quiz Battle declined',
@@ -4783,6 +4803,7 @@ async function notifyQuizChallengeCompleted(challenge) {
     if (!toUser) continue;
     await queueCommunityNotice({
       eventKey,
+      preferenceKey: 'quizResults',
       toUser,
       subject: 'NET360: Quiz Battle result',
       title: 'Quiz Battle result',
@@ -4964,12 +4985,13 @@ async function notifyUserOfSupportAdminReply(userId, messageId) {
   const studentId = String(userId || '').trim();
   if (!studentId) return;
   await markChatNotificationSpeaker(supportChatWindowKey(studentId, 'admin'));
+  const toUser = await loadUserForNotify(userId);
+  if (!toUser || !isOptionalNotificationEnabled(toUser.preferences, 'supportReplies')) return;
   const windowClaim = await claimChatNotificationWindow(supportChatWindowKey(studentId, 'user'));
   if (!windowClaim.allowed) return;
-  const toUser = await loadUserForNotify(userId);
-  if (!toUser) return;
   await queueCommunityNotice({
     eventKey: communityNotifyEvent.supportAdminWindow(studentId, windowClaim.notifiedAtMs),
+    preferenceKey: 'supportReplies',
     toUser,
     subject: 'NET360: Admin replied to your Support Chat',
     title: 'Admin replied to your Support Chat',
@@ -6725,7 +6747,11 @@ function userPublic(user) {
     authProvider: String(user.authProvider || 'local'),
     authProviderDetail: normalizeAuthProviderDetail(user.authProviderDetail),
     deletionChannel: classifyStudentDeletionChannelSync(user),
-    preferences: { ...defaultPreferences(), ...(user.preferences || {}) },
+    preferences: {
+      ...defaultPreferences(),
+      ...(user.preferences || {}),
+      notificationPreferences: resolveNotificationPreferences(user.preferences?.notificationPreferences).preferences,
+    },
     progress,
     subscription: {
       ...subscription,
@@ -7201,29 +7227,36 @@ function serializePracticeBoardQuestion(item, options = {}) {
   };
 }
 
-function sendPracticeBoardStoredFile(res, file, legacyUrl, downloadName) {
+function buildPracticeBoardFilePayload(file, legacyUrl, downloadName) {
   const nestedDataUrl = String(file?.dataUrl || '').trim();
   const fallbackUrl = String(legacyUrl || '').trim();
   const raw = nestedDataUrl || fallbackUrl;
-  if (!raw) {
-    res.status(404).json({ error: 'Practice board file not found.' });
-    return;
-  }
-  if (/^https?:\/\//i.test(raw)) {
-    res.redirect(302, raw);
-    return;
-  }
+  if (!raw) return null;
+  if (/^https?:\/\//i.test(raw)) return { redirect: raw };
   const parsed = parseDataUrl(raw);
-  if (!parsed?.buffer) {
+  if (!parsed?.buffer?.length) return null;
+  const mimeType = String(file?.mimeType || parsed.mimeType || 'application/octet-stream').trim() || 'application/octet-stream';
+  const fileName = String(file?.name || downloadName || 'practice-file').replace(/[\r\n"]/g, '');
+  return { buffer: parsed.buffer, mimeType, fileName };
+}
+
+function sendPracticeBoardFilePayload(res, payload) {
+  if (!payload) {
     res.status(404).json({ error: 'Practice board file not found.' });
     return;
   }
-  const mimeType = String(file?.mimeType || parsed.mimeType || 'application/octet-stream').trim() || 'application/octet-stream';
-  const safeName = String(file?.name || downloadName || 'practice-file').replace(/[\r\n"]/g, '');
-  res.setHeader('Content-Type', mimeType);
-  res.setHeader('Cache-Control', 'private, max-age=3600');
-  res.setHeader('Content-Disposition', `inline; filename="${safeName}"`);
-  res.send(parsed.buffer);
+  if (payload.redirect) {
+    res.redirect(302, payload.redirect);
+    return;
+  }
+  res.setHeader('Content-Type', payload.mimeType);
+  res.setHeader('Cache-Control', 'public, max-age=86400');
+  res.setHeader('Content-Disposition', `inline; filename="${payload.fileName}"`);
+  res.send(payload.buffer);
+}
+
+function sendPracticeBoardStoredFile(res, file, legacyUrl, downloadName) {
+  sendPracticeBoardFilePayload(res, buildPracticeBoardFilePayload(file, legacyUrl, downloadName));
 }
 
 function makeCommunityUsername(user) {
@@ -8227,6 +8260,7 @@ async function notifyVerifiedStudentsOfNustAdmission({ contentHash, notices }) {
   for await (const user of users) {
     await queueCommunityNotice({
       eventKey,
+      preferenceKey: 'nustUpdates',
       toUser: user,
       subject,
       title,
@@ -10647,6 +10681,16 @@ app.post('/api/auth/reset-password', async (req, res) => {
 });
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
+  const resolvedNotes = resolveNotificationPreferences(req.user.preferences?.notificationPreferences);
+  if (resolvedNotes.changed) {
+    req.user.preferences = {
+      ...defaultPreferences(),
+      ...(req.user.preferences?.toObject?.() || req.user.preferences || {}),
+      notificationPreferences: resolvedNotes.preferences,
+    };
+    req.user.markModified('preferences');
+    await req.user.save();
+  }
   const u = userPublic(req.user);
   u.deletionChannel = await resolveStudentDeletionChannel(req.user, firebaseAdminAuth);
   if ((req.user.role || 'student') === 'student' && req.user.activeSession?.sessionId) {
@@ -10735,7 +10779,12 @@ app.put('/api/auth/preferences', authMiddleware, async (req, res) => {
     emailNotifications: typeof req.body?.emailNotifications === 'boolean' ? req.body.emailNotifications : current.emailNotifications,
     dailyReminders: typeof req.body?.dailyReminders === 'boolean' ? req.body.dailyReminders : current.dailyReminders,
     performanceReports: typeof req.body?.performanceReports === 'boolean' ? req.body.performanceReports : current.performanceReports,
+    notificationPreferences: mergeNotificationPreferencePatch(
+      current.notificationPreferences,
+      req.body?.notificationPreferences,
+    ),
   };
+  req.user.markModified('preferences');
 
   await req.user.save();
   broadcastSyncEvent({
@@ -13620,20 +13669,28 @@ app.get('/api/practice-board/questions/:questionId/files/:kind', async (req, res
       return;
     }
 
-    const select = kind === 'solution'
-      ? 'solutionFile solutionImageUrl'
-      : 'questionFile questionImageUrl';
-    const item = await PracticeBoardQuestionModel.findById(questionId).select(select).lean();
+    const fileField = kind === 'solution' ? 'solutionFile' : 'questionFile';
+    const legacyField = kind === 'solution' ? 'solutionImageUrl' : 'questionImageUrl';
+    const item = await PracticeBoardQuestionModel.findById(questionId)
+      .select(`${fileField}.name ${fileField}.mimeType ${fileField}.size ${fileField}.dataUrl`)
+      .lean();
     if (!item) {
       res.status(404).json({ error: 'Practice board question not found.' });
       return;
     }
 
-    if (kind === 'solution') {
-      sendPracticeBoardStoredFile(res, item.solutionFile, item.solutionImageUrl, 'solution');
+    let legacyUrl = '';
+    if (!String(item?.[fileField]?.dataUrl || '').trim()) {
+      const legacy = await PracticeBoardQuestionModel.findById(questionId).select(legacyField).lean();
+      legacyUrl = String(legacy?.[legacyField] || '').trim();
+    }
+
+    const payload = buildPracticeBoardFilePayload(item?.[fileField], legacyUrl, kind);
+    if (!payload) {
+      res.status(404).json({ error: 'Practice board file not found.' });
       return;
     }
-    sendPracticeBoardStoredFile(res, item.questionFile, item.questionImageUrl, 'question');
+    sendPracticeBoardFilePayload(res, payload);
   } catch {
     res.status(500).json({ error: 'Failed to load practice board file.' });
   }
@@ -19257,7 +19314,6 @@ app.delete('/api/admin/practice-board/questions/:questionId', authMiddleware, re
     res.status(404).json({ error: 'Practice board question not found.' });
     return;
   }
-
   res.json({ ok: true, removedQuestionId: questionId });
 });
 

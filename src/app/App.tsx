@@ -41,6 +41,7 @@ import {
   Sun,
   Crown,
   LogOut,
+  ChevronLeft,
 } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from './components/ui/sheet';
@@ -215,9 +216,8 @@ function isRestorableAndroidRoute(route: string) {
 
 const ANDROID_PRIMARY_NAV: Array<{ id: SectionId; label: string; icon: typeof Home }> = [
   { id: 'home', label: 'Home', icon: Home },
-  { id: 'practice-board', label: 'Practice', icon: Pencil },
-  { id: 'preparation', label: 'Material', icon: BookOpen },
   { id: 'tests', label: 'Tests', icon: FileText },
+  { id: 'preparation', label: 'Preparation', icon: BookOpen },
   { id: 'community', label: 'Community', icon: Users },
   { id: 'profile', label: 'Profile', icon: User },
 ];
@@ -250,6 +250,7 @@ const SidebarNavigation = memo(function SidebarNavigation({
   navigate,
   setSidebarMenuOpen,
   onSmartMentorClick,
+  androidApp = false,
 }: {
   navigationItems: Array<{ id: SectionId; label: string; icon: typeof Home }>;
   activeTab: SectionId;
@@ -257,6 +258,7 @@ const SidebarNavigation = memo(function SidebarNavigation({
   navigate: (to: string) => void;
   setSidebarMenuOpen: (open: boolean) => void;
   onSmartMentorClick: () => void;
+  androidApp?: boolean;
 }) {
   const { token } = useAuth();
 
@@ -288,14 +290,18 @@ const SidebarNavigation = memo(function SidebarNavigation({
               setSidebarMenuOpen(false);
             }}
             aria-disabled={item.id === smartMentorTabId}
-            className={`w-full grid grid-cols-[18px_minmax(0,1fr)] items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 ${
-              item.id === smartMentorTabId
-                ? 'cursor-not-allowed opacity-70 text-indigo-100/85 hover:bg-white/8 dark:text-slate-400 dark:hover:bg-slate-100/5'
-                : ''
-            } ${
-              activeTab === item.id
-                ? 'bg-white/22 text-white shadow-[0_8px_20px_rgba(26,24,89,0.38)] dark:bg-slate-100/12 dark:text-slate-50 dark:shadow-[0_10px_22px_rgba(2,6,23,0.55)]'
-                : 'text-indigo-100 hover:bg-white/12 dark:text-slate-200 dark:hover:bg-slate-100/8'
+            className={`net360-drawer-item w-full grid grid-cols-[18px_minmax(0,1fr)] items-center gap-3 px-3 py-2.5 rounded-xl text-left transition-all duration-200 ${
+              androidApp
+                ? item.id === smartMentorTabId
+                  ? 'cursor-not-allowed opacity-60 text-slate-400'
+                  : activeTab === item.id
+                    ? 'is-current bg-[#e7e9ff] text-[#312e81] dark:bg-[#312e81] dark:text-white'
+                    : 'text-slate-800 active:bg-slate-100 dark:text-slate-100 dark:active:bg-white/10'
+                : item.id === smartMentorTabId
+                  ? 'cursor-not-allowed opacity-70 text-indigo-100/85 hover:bg-white/8 dark:text-slate-400 dark:hover:bg-slate-100/5'
+                  : activeTab === item.id
+                    ? 'bg-white/22 text-white shadow-[0_8px_20px_rgba(26,24,89,0.38)] dark:bg-slate-100/12 dark:text-slate-50 dark:shadow-[0_10px_22px_rgba(2,6,23,0.55)]'
+                    : 'text-indigo-100 hover:bg-white/12 dark:text-slate-200 dark:hover:bg-slate-100/8'
             }`}
           >
             <Icon className="w-4 h-4 shrink-0" />
@@ -518,7 +524,21 @@ export default function App() {
   const [, startRouteTransition] = useTransition();
   const { user, token, loading: authLoading } = useAuth();
   const [androidApp, setAndroidApp] = useState(() => isNativeAndroidRuntime());
+  const [androidNestedSources, setAndroidNestedSources] = useState<Record<string, boolean>>({});
   const activeTab = useMemo(() => resolveSectionFromLocation(location.pathname, location.hash), [location.hash, location.pathname]);
+  const androidNested = Boolean(androidNestedSources[activeTab]);
+
+  useEffect(() => {
+    const onNested = (event: Event) => {
+      const detail = (event as CustomEvent<{ source?: string; active?: boolean }>).detail;
+      if (!detail?.source) return;
+      const source = detail.source;
+      const active = Boolean(detail.active);
+      setAndroidNestedSources((prev) => (Boolean(prev[source]) === active ? prev : { ...prev, [source]: active }));
+    };
+    window.addEventListener('net360:android-nested', onNested);
+    return () => window.removeEventListener('net360:android-nested', onNested);
+  }, []);
   const [profileVisited, setProfileVisited] = useState(
     () => resolveSectionFromLocation(
       typeof window !== 'undefined' ? window.location.pathname : '/',
@@ -535,6 +555,7 @@ export default function App() {
   }, [location.pathname]);
   const isStandaloneAuthRoute = isConfirmAccountDeletionRoute || isVerifyEmailRoute;
   const androidRouteRestoredRef = useRef(false);
+  const lastAndroidBackAtRef = useRef(0);
 
   /** Native: unauthenticated users always land on Login (Profile), never Dashboard first. */
   useEffect(() => {
@@ -627,19 +648,36 @@ export default function App() {
     if (!isNativeRuntime) return;
 
     const listenerPromise = CapacitorApp.addListener('backButton', () => {
-      if (activeTab !== 'home') {
-        navigate(-1);
+      if (sidebarMenuOpen) {
+        setSidebarMenuOpen(false);
         return;
       }
-
-      // Stay in app on root instead of closing process abruptly.
-      showNeutralToast('You are already on the home page.');
+      const runtime = window as Window & { __net360SupportChatOpen?: boolean };
+      if (runtime.__net360SupportChatOpen) {
+        window.dispatchEvent(new CustomEvent('net360:close-support-chat'));
+        return;
+      }
+      if (androidNestedSources[activeTab]) {
+        window.dispatchEvent(new CustomEvent('net360:android-back', { detail: { source: activeTab } }));
+        return;
+      }
+      if (activeTab !== 'home') {
+        navigate(PATH_BY_SECTION.home);
+        return;
+      }
+      const now = Date.now();
+      if (now - lastAndroidBackAtRef.current < 2000) {
+        void CapacitorApp.exitApp();
+        return;
+      }
+      lastAndroidBackAtRef.current = now;
+      showNeutralToast('Press back again to leave NET360.');
     });
 
     return () => {
       void listenerPromise.then((listener) => listener.remove());
     };
-  }, [activeTab, navigate]);
+  }, [activeTab, androidNestedSources, navigate, sidebarMenuOpen]);
 
   useEffect(() => {
     const isNativeRuntime = Boolean((window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.());
@@ -1216,25 +1254,38 @@ export default function App() {
             {/* Header */}
             <header className="net360-header sticky top-0 z-40 flex min-h-[4.5rem] items-center gap-2 border-b border-indigo-100/80 bg-[#f7f8ff] px-3 py-2 dark:border-slate-700/80 dark:bg-[#12182e] sm:min-h-[4.75rem] sm:gap-3 sm:px-5">
               <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:gap-3">
+                {androidApp && androidNested ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="touch-manipulation shrink-0 rounded-xl min-h-11 min-w-11"
+                    aria-label="Go back"
+                    onClick={() => window.dispatchEvent(new CustomEvent('net360:android-back', { detail: { source: activeTab } }))}
+                  >
+                    <ChevronLeft className="h-5 w-5" />
+                  </Button>
+                ) : null}
                 <Sheet open={sidebarMenuOpen} onOpenChange={setSidebarMenuOpen}>
                   <SheetTrigger asChild>
-                    <Button variant="ghost" size="icon" className="touch-manipulation shrink-0 rounded-xl min-h-11 min-w-11" aria-label="Open navigation menu">
+                    <Button variant="ghost" size="icon" className={`touch-manipulation shrink-0 rounded-xl min-h-11 min-w-11${androidApp && androidNested ? ' net360-android-chrome-hide' : ''}`} aria-label="Open navigation menu">
                       <Menu className="h-5 w-5" />
                     </Button>
                   </SheetTrigger>
                   <SheetContent
                     side="left"
                     aria-label="Main navigation"
-                    className="h-dvh w-[290px] max-w-[88vw] overflow-hidden border-white/20 bg-gradient-to-b from-[#5f4ee6] via-[#5b40d7] to-[#5e3ae0] p-0 dark:border-slate-700/70 dark:bg-gradient-to-b dark:from-[#111827] dark:via-[#1e1b4b] dark:to-[#0f172a]"
+                    className={androidApp
+                      ? 'net360-drawer h-dvh w-[min(88vw,320px)] max-w-[88vw] overflow-hidden border-0 bg-[#f7f8fb] p-0 text-slate-900 shadow-2xl dark:bg-[#12182b] dark:text-slate-100'
+                      : 'h-dvh w-[290px] max-w-[88vw] overflow-hidden border-white/20 bg-gradient-to-b from-[#5f4ee6] via-[#5b40d7] to-[#5e3ae0] p-0 dark:border-slate-700/70 dark:bg-gradient-to-b dark:from-[#111827] dark:via-[#1e1b4b] dark:to-[#0f172a]'}
                   >
                     <SheetTitle className="sr-only">Main navigation</SheetTitle>
                     <SheetDescription className="sr-only">
                       Browse NET360 sections and open pages from the menu.
                     </SheetDescription>
                     <div className="flex h-full min-h-0 flex-col">
-                    <div className="shrink-0 border-b border-white/20 p-5 dark:border-slate-600/50">
+                    <div className={androidApp ? 'shrink-0 border-b border-[#e6eaf2] px-5 pb-4 pt-6 dark:border-white/10' : 'shrink-0 border-b border-white/20 p-5 dark:border-slate-600/50'}>
                       <div className="flex items-center gap-2">
-                        <div className="flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg border border-white/25 bg-transparent shadow-sm dark:border-slate-500/55 dark:bg-slate-900/35">
+                        <div className={androidApp ? 'flex h-10 w-10 items-center justify-center overflow-hidden rounded-2xl bg-white shadow-sm dark:bg-[#1a2238]' : 'flex h-9 w-9 items-center justify-center overflow-hidden rounded-lg border border-white/25 bg-transparent shadow-sm dark:border-slate-500/55 dark:bg-slate-900/35'}>
                           <img
                             src={brandLogoUrl()}
                             alt="NET360 logo"
@@ -1246,12 +1297,43 @@ export default function App() {
                           />
                         </div>
                         <div>
-                          <p className="text-lg font-semibold text-white dark:text-slate-100">NET360</p>
-                          <p className="text-xs text-indigo-100 dark:text-slate-300">Your Smart NET Preparation</p>
+                          <p className={androidApp ? 'text-lg font-semibold text-slate-900 dark:text-slate-100' : 'text-lg font-semibold text-white dark:text-slate-100'}>NET360</p>
+                          <p className={androidApp ? 'text-xs text-slate-500 dark:text-slate-400' : 'text-xs text-indigo-100 dark:text-slate-300'}>Your Smart NET Preparation</p>
                         </div>
                       </div>
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-8 [scrollbar-gutter:stable]">
+                      {androidApp ? (
+                        <div className="mb-3 space-y-1 border-b border-[#e6eaf2] pb-3 dark:border-white/10">
+                          <button
+                            type="button"
+                            className="net360-drawer-item flex min-h-12 w-full items-center rounded-2xl px-3 text-left text-sm font-semibold text-slate-800 active:bg-slate-100 dark:text-slate-100 dark:active:bg-white/10"
+                            onClick={() => setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'))}
+                          >
+                            {themeMode === 'dark' ? 'Light mode' : 'Dark mode'}
+                          </button>
+                          <button
+                            type="button"
+                            className="net360-drawer-item flex min-h-12 w-full items-center rounded-2xl px-3 text-left text-sm font-semibold text-slate-800 active:bg-slate-100 dark:text-slate-100 dark:active:bg-white/10"
+                            onClick={() => {
+                              showSuccessToast('We will show your updates here.');
+                              setSidebarMenuOpen(false);
+                            }}
+                          >
+                            Notifications
+                          </button>
+                          <button
+                            type="button"
+                            className="net360-drawer-item flex min-h-12 w-full items-center rounded-2xl px-3 text-left text-sm font-semibold text-slate-800 active:bg-slate-100 dark:text-slate-100 dark:active:bg-white/10"
+                            onClick={() => {
+                              window.dispatchEvent(new CustomEvent('net360:open-support-chat'));
+                              setSidebarMenuOpen(false);
+                            }}
+                          >
+                            Support chat
+                          </button>
+                        </div>
+                      ) : null}
                       <SidebarNavigation
                         navigationItems={androidApp ? STUDENT_NAVIGATION_ITEMS.filter((item) => !ANDROID_FOOTER_IDS.has(item.id)) : STUDENT_NAVIGATION_ITEMS}
                         activeTab={activeTab}
@@ -1259,6 +1341,7 @@ export default function App() {
                         navigate={navigateWithTransition}
                         setSidebarMenuOpen={setSidebarMenuOpen}
                         onSmartMentorClick={handleSmartMentorComingSoon}
+                        androidApp={androidApp}
                       />
                     </div>
                     </div>
@@ -1285,6 +1368,7 @@ export default function App() {
                 </div>
               </div>
               <div className="net360-header-actions ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
+                <div className={`flex items-center gap-1 sm:gap-2${androidApp ? ' net360-android-chrome-hide' : ''}`}>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -1319,6 +1403,7 @@ export default function App() {
                 >
                   <MessageSquare className="h-5 w-5" />
                 </Button>
+                </div>
                 <HeaderAuthControl onOpenProfile={() => navigate(PATH_BY_SECTION.profile)} />
               </div>
             </header>
@@ -1358,7 +1443,7 @@ export default function App() {
                         navigateWithTransition(PATH_BY_SECTION[item.id]);
                       }}
                     >
-                      <Icon aria-hidden="true" />
+                      <span className="net360-tab-icon"><Icon aria-hidden="true" /></span>
                       <span>{item.label}</span>
                     </button>
                   );

@@ -18,6 +18,7 @@ type PublicUser = {
   role: 'student' | 'admin';
   preferences: {
     emailNotifications: boolean;
+    notificationPreferences?: Record<string, boolean>;
     dailyReminders: boolean;
     performanceReports: boolean;
   };
@@ -2234,10 +2235,20 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
   if (url.pathname === '/api/auth/preferences' && method === 'PUT') {
     const { db, user } = requireAuth(token);
     const current = user.preferences || defaultPreferences();
+    const incomingNotes = body.notificationPreferences && typeof body.notificationPreferences === 'object'
+      ? body.notificationPreferences as Record<string, boolean>
+      : {};
+    const noteKeys = ['communityMessages', 'connectionRequests', 'connectionResponses', 'quizChallenges', 'quizResponses', 'quizResults', 'achievementUnlocks', 'supportReplies', 'nustUpdates'];
+    const currentNotes = { ...(current.notificationPreferences || {}) };
+    noteKeys.forEach((key) => {
+      if (typeof currentNotes[key] !== 'boolean') currentNotes[key] = true;
+      if (typeof incomingNotes[key] === 'boolean') currentNotes[key] = incomingNotes[key];
+    });
     user.preferences = {
       emailNotifications: typeof body.emailNotifications === 'boolean' ? body.emailNotifications : current.emailNotifications,
       dailyReminders: typeof body.dailyReminders === 'boolean' ? body.dailyReminders : current.dailyReminders,
       performanceReports: typeof body.performanceReports === 'boolean' ? body.performanceReports : current.performanceReports,
+      notificationPreferences: currentNotes,
     };
     writeDb(db);
     return { user: toPublicUser(user) } as T;

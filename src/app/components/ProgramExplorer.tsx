@@ -1,4 +1,5 @@
-import { type ComponentType } from 'react';
+import { type ComponentType, useState } from 'react';
+import { isNativeAndroidRuntime } from '../lib/nativeForeground';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Badge } from './ui/badge';
@@ -73,6 +74,9 @@ export function ProgramExplorer() {
 
   const totalInstitutions = 18;
   const majorLocations = ['Islamabad (Main Campus)', 'Rawalpindi', 'Risalpur', 'Karachi', 'Quetta'];
+  const androidApp = isNativeAndroidRuntime();
+  const categoryKeys = ['engineering', 'computing', 'business', 'architecture', 'sciences', 'applied'] as CategoryKey[];
+  const [category, setCategory] = useState<CategoryKey>('engineering');
 
   return (
     <div className="space-y-5">
@@ -84,10 +88,20 @@ export function ProgramExplorer() {
         </div>
       </section>
 
-      <Tabs defaultValue="engineering" className="space-y-4">
-        <div className="net360-horizontal-scroll net360-swipe-row pb-1">
+      <Tabs value={category} onValueChange={(value) => setCategory(value as CategoryKey)} className="space-y-4">
+        {androidApp ? (
+          <label className="net360-android-picker">
+            <span>Program category</span>
+            <select value={category} onChange={(event) => setCategory(event.target.value as CategoryKey)} aria-label="Program category">
+              {categoryKeys.map((key) => (
+                <option key={key} value={key}>{programs[key].label}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <div className={`${androidApp ? 'net360-android-chrome-hide ' : ''}net360-horizontal-scroll net360-swipe-row pb-1`}>
           <TabsList className="inline-flex h-auto min-w-max gap-1.5 rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-[#eef2ff] via-[#f1ecff] to-[#f5f8ff] p-1.5 shadow-[0_8px_18px_rgba(79,70,229,0.14)]">
-            {(['engineering', 'computing', 'business', 'architecture', 'sciences', 'applied'] as CategoryKey[]).map((key) => (
+            {categoryKeys.map((key) => (
               <TabsTrigger
                 key={key}
                 value={key}

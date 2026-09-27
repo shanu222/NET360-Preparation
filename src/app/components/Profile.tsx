@@ -18,6 +18,10 @@ import { useSubscription } from '../context/SubscriptionContext';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK } from '../lib/paymentMethods';
 import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
+import { isNativeAndroidRuntime } from '../lib/nativeForeground';
+import { NOTIFICATION_PREFERENCE_SECTIONS, resolveNotificationPreferences, type NotificationPreferenceKey } from '../lib/notificationPreferences';
+import { Switch } from './ui/switch';
+import { useAndroidNestedScreen } from '../lib/androidNestedScreen';
 import { getMediaUrl, loginBannerImageUrl, shouldUseLocalMediaFallback } from '../lib/publicMedia';
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 import { ImageWithFallback } from './figma/ImageWithFallback';
@@ -188,6 +192,9 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const [deletionLinkFeedback, setDeletionLinkFeedback] = useState('');
   const [isDeletingAccount, setIsDeletingAccount] = useState(false);
   const [isPersonalInfoExpanded, setIsPersonalInfoExpanded] = useState(true);
+  const androidApp = isNativeAndroidRuntime();
+  const [androidProfileScreen, setAndroidProfileScreen] = useState<null | 'account' | 'preparation' | 'achievements' | 'preferences' | 'danger'>(null);
+  useAndroidNestedScreen('profile', Boolean(androidProfileScreen), () => setAndroidProfileScreen(null));
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
   const [isSavingTargetProgram, setIsSavingTargetProgram] = useState(false);
   const [isSavingPersonalInfo, setIsSavingPersonalInfo] = useState(false);
@@ -547,13 +554,20 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     }
   };
 
-  const togglePreference = async (key: keyof typeof preferences) => {
-    const nextValue = !preferences[key];
+  const serverNotificationPreferences = resolveNotificationPreferences(preferences.notificationPreferences);
+  const [notificationPreferences, setNotificationPreferences] = useState(serverNotificationPreferences);
+  useEffect(() => {
+    setNotificationPreferences(serverNotificationPreferences);
+  }, [preferences.notificationPreferences]);
+
+  const toggleNotificationPreference = async (key: NotificationPreferenceKey, enabled: boolean) => {
+    const previous = notificationPreferences[key];
+    setNotificationPreferences((current) => ({ ...current, [key]: enabled }));
     try {
-      await savePreferences({ [key]: nextValue });
-      showNeutralToast(`${key} ${nextValue ? 'enabled' : 'disabled'}.`);
+      await savePreferences({ notificationPreferences: { [key]: enabled } });
     } catch (error) {
-      handleApiError(error, 'Could not save preference.');
+      setNotificationPreferences((current) => ({ ...current, [key]: previous }));
+      handleApiError(error, 'Could not save notification preference.');
     }
   };
 
@@ -1081,6 +1095,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   }
 
   const completedTests = attempts.length;
+  const showProfileBlock = (id: 'account' | 'preparation' | 'achievements' | 'preferences' | 'danger') => !androidApp || androidProfileScreen === id;
 
   return (
     <div className="space-y-6">
@@ -1114,7 +1129,27 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+      {androidApp && !androidProfileScreen ? (
+        <div className="net360-hub-grid">
+          <button type="button" className="net360-hub-card" onClick={() => setAndroidProfileScreen('account')}>Account</button>
+          <button type="button" className="net360-hub-card" onClick={() => setAndroidProfileScreen('preparation')}>NET preparation</button>
+          <button type="button" className="net360-hub-card" onClick={() => setAndroidProfileScreen('achievements')}>Achievements</button>
+          <button type="button" className="net360-hub-card" onClick={() => setAndroidProfileScreen('preferences')}>Notifications</button>
+          <button type="button" className="net360-hub-card" onClick={() => {
+            onNavigate?.('community');
+            window.dispatchEvent(new CustomEvent('net360:open-community-profile'));
+          }}>Privacy</button>
+          <button type="button" className="net360-hub-card" onClick={() => {
+            window.dispatchEvent(new CustomEvent('net360:open-support-chat'));
+          }}>Support chat</button>
+          <button type="button" className="net360-hub-card" onClick={() => setAndroidProfileScreen('danger')}>Delete account</button>
+        </div>
+      ) : null}
+      {androidApp && androidProfileScreen ? (
+        <button type="button" className="net360-screen-back" onClick={() => setAndroidProfileScreen(null)}>Back to profile</button>
+      ) : null}
+
+      <div className={`grid grid-cols-1 gap-6 lg:grid-cols-3${!showProfileBlock('account') ? ' net360-android-chrome-hide' : ''}`}>
         <Card className="lg:col-span-1">
           <CardHeader>
             <CardTitle as="h2">Profile</CardTitle>
@@ -1265,7 +1300,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         </Card>
       </div>
 
-      <Card>
+      <Card className={!showProfileBlock('preparation') ? 'net360-android-chrome-hide' : undefined}>
         <CardHeader>
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
@@ -1373,7 +1408,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className={!showProfileBlock('achievements') ? 'net360-android-chrome-hide' : undefined}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Award className="w-5 h-5" />
@@ -1401,47 +1436,53 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         </CardContent>
       </Card>
 
-      <Card>
+      <Card className={!showProfileBlock('preferences') ? 'net360-android-chrome-hide' : undefined}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Settings className="w-5 h-5" />
-            Preferences
+            Notification Preferences
           </CardTitle>
+          <CardDescription>
+            Choose which NET360 notifications you want to receive. You can change these settings at any time.
+          </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h4>Email Notifications</h4>
-              <p className="text-sm text-muted-foreground">Receive updates about tests and deadlines</p>
+        <CardContent className="space-y-5">
+          {NOTIFICATION_PREFERENCE_SECTIONS.map((section) => (
+            <div key={section.id} className="space-y-2">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{section.id}</h4>
+              {section.items.map((item) => {
+                const enabled = notificationPreferences[item.key] !== false;
+                return (
+                  <div key={item.key} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 active:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:active:bg-slate-800">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{item.label}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-300">{item.description}</p>
+                      <p className="mt-1 text-xs font-semibold text-indigo-700 dark:text-indigo-300">{enabled ? 'ON' : 'OFF'}</p>
+                    </div>
+                    <Switch
+                      checked={enabled}
+                      onCheckedChange={(checked) => void toggleNotificationPreference(item.key, checked)}
+                      aria-label={`${item.label} notifications`}
+                      className="active:scale-95"
+                    />
+                  </div>
+                );
+              })}
             </div>
-            <Button variant={preferences.emailNotifications ? 'default' : 'outline'} onClick={() => void togglePreference('emailNotifications')}>
-              {preferences.emailNotifications ? 'Enabled' : 'Disabled'}
-            </Button>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <h4>Daily Reminders</h4>
-              <p className="text-sm text-muted-foreground">Get reminded to practice daily</p>
-            </div>
-            <Button variant={preferences.dailyReminders ? 'default' : 'outline'} onClick={() => void togglePreference('dailyReminders')}>
-              {preferences.dailyReminders ? 'Enabled' : 'Disabled'}
-            </Button>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <h4>Performance Reports</h4>
-              <p className="text-sm text-muted-foreground">Weekly summary of your progress</p>
-            </div>
-            <Button variant={preferences.performanceReports ? 'default' : 'outline'} onClick={() => void togglePreference('performanceReports')}>
-              {preferences.performanceReports ? 'Enabled' : 'Disabled'}
-            </Button>
+          ))}
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900">
+            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Required account emails</h4>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-300">These keep your account secure and cannot be turned off.</p>
+            <ul className="mt-2 space-y-1 text-sm text-slate-700 dark:text-slate-200">
+              <li>Email verification</li>
+              <li>Password reset</li>
+              <li>Account deletion confirmation</li>
+            </ul>
           </div>
         </CardContent>
       </Card>
 
-      <Card className="border-red-200 bg-red-50/40">
+      <Card className={`border-red-200 bg-red-50/40${!showProfileBlock('danger') ? ' net360-android-chrome-hide' : ''}`}>
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>

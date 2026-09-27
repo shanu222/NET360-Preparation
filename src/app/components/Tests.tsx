@@ -34,6 +34,8 @@ import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTimi
 import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { navigateToExamSameTab } from '../lib/examWindowLaunch';
 import { formatTestStartFailureToast } from '../lib/testStartToast';
+import { isNativeAndroidRuntime } from '../lib/nativeForeground';
+import { useAndroidNestedScreen } from '../lib/androidNestedScreen';
 
 interface TestsProps {
   onNavigate?: (section: string) => void;
@@ -216,6 +218,16 @@ export function Tests({ onNavigate }: TestsProps) {
   const [subjectPickerOpen, setSubjectPickerOpen] = useState(false);
   const [adaptiveRecommendation, setAdaptiveRecommendation] = useState<AdaptiveRecommendationPayload | null>(null);
   const [adaptiveLoading, setAdaptiveLoading] = useState(false);
+  const androidApp = isNativeAndroidRuntime();
+  const [androidKind, setAndroidKind] = useState<TestKind | null>(null);
+  useAndroidNestedScreen('tests', Boolean(androidKind), () => {
+    if (selectedNetTypeId) {
+      setSelectedNetTypeId(null);
+      setSelectedTestKind(null);
+      return;
+    }
+    setAndroidKind(null);
+  });
 
   const launchingRef = useRef(false);
 
@@ -483,8 +495,34 @@ export function Tests({ onNavigate }: TestsProps) {
     );
   }
 
+  if (androidApp && !androidKind) {
+    return (
+      <div className="min-w-0 space-y-4">
+        <div>
+          <h1>Practice & Mock Tests</h1>
+          <p className="text-muted-foreground">Choose a test, then pick your NET type and start.</p>
+        </div>
+        <div className="net360-hub-grid">
+          {TEST_TYPE_CARDS.map((card) => (
+            <button key={card.id} type="button" className="net360-hub-card" onClick={() => setAndroidKind(card.id)}>
+              {card.title}
+            </button>
+          ))}
+        </div>
+        <button type="button" className="net360-screen-back" onClick={() => onNavigate?.('analytics')}>
+          View previous attempts and reports in Analytics
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="min-w-0 space-y-5">
+      {androidApp && androidKind ? (
+        <button type="button" className="net360-screen-back" onClick={() => setAndroidKind(null)}>
+          Back to tests
+        </button>
+      ) : null}
       <div>
         <h1>Practice & Mock Tests</h1>
         <p className="text-muted-foreground">A step-based professional simulator for NUST NET preparation</p>
@@ -609,6 +647,7 @@ export function Tests({ onNavigate }: TestsProps) {
         <section className="space-y-3 opacity-100 translate-y-0 transition-all duration-300">
           <h2 className="min-w-0 text-lg text-indigo-950 dark:text-slate-100">Step 3: Test Type Selection</h2>
 
+          {!androidApp || androidKind === 'adaptive' ? (
           <Card className="rounded-2xl border-indigo-100 bg-white/95 shadow-[0_12px_26px_rgba(93,109,201,0.10)]">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-indigo-950">
@@ -677,9 +716,10 @@ export function Tests({ onNavigate }: TestsProps) {
               )}
             </CardContent>
           </Card>
+          ) : null}
 
           <div className="grid gap-4 lg:grid-cols-3">
-            {TEST_TYPE_CARDS.map((card) => {
+            {TEST_TYPE_CARDS.filter((card) => !androidApp || card.id === androidKind).map((card) => {
               const Icon = card.icon;
               const selected = selectedTestKind === card.id;
               const isLaunchingThis = launchingKind === card.id;

@@ -1,4 +1,4 @@
-import { type ComponentType, useMemo } from 'react';
+import { type ComponentType, useMemo, useState } from 'react';
 import {
   Calendar,
   Flame,
@@ -18,6 +18,8 @@ import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
 import { getProgramCategoryKey, getRequiredSubjectsForTargetProgram } from '../lib/netPrograms';
 import { useSubscription, formatCountdown } from '../context/SubscriptionContext';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
+import { isNativeAndroidRuntime } from '../lib/nativeForeground';
+import { useAndroidNestedScreen } from '../lib/androidNestedScreen';
 
 interface DashboardProps {
   onNavigate: (section: string) => void;
@@ -91,6 +93,9 @@ const SUBJECT_STYLE_OVERRIDES: Partial<Record<DashboardSubjectKey, { badge: stri
 export function Dashboard({ onNavigate }: DashboardProps) {
   const { mcqsBySubject, mcqTotalsBySubject, attempts, profile } = useAppData();
   const { surface } = useSubscription();
+  const androidApp = isNativeAndroidRuntime();
+  const [androidHomeScreen, setAndroidHomeScreen] = useState<'subjects' | 'week' | null>(null);
+  useAndroidNestedScreen('home', Boolean(androidHomeScreen), () => setAndroidHomeScreen(null));
   const dashboardSubjects = useMemo(() => buildDashboardSubjects(profile.targetProgram), [profile.targetProgram]);
 
   const daysUntilNET = useMemo(() => {
@@ -231,8 +236,48 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     }));
   }, [attempts]);
 
+  const showHome = !androidApp || !androidHomeScreen;
+  const showSubjects = !androidApp || androidHomeScreen === 'subjects';
+  const showWeek = !androidApp || androidHomeScreen === 'week';
+
   return (
     <div className="space-y-4 sm:space-y-5">
+      {androidApp && androidHomeScreen ? (
+        <button type="button" className="net360-screen-back" onClick={() => setAndroidHomeScreen(null)}>
+          Back to Home
+        </button>
+      ) : null}
+      {showHome && androidApp ? (
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-3 px-1">
+            <div>
+              <h1 className="text-xl font-semibold text-slate-900 dark:text-slate-50">Hi, {firstName}</h1>
+              <p className="text-sm text-slate-500 dark:text-slate-300">{daysUntilNET} days to NET</p>
+            </div>
+            <PremiumCountdownBadge />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <article className="rounded-2xl bg-white p-3 shadow-sm dark:bg-[#1a2238]">
+              <p className="text-2xl font-semibold text-slate-900 dark:text-slate-50">{metrics.attemptedQuestions.toLocaleString()}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-300">Questions</p>
+            </article>
+            <article className="rounded-2xl bg-white p-3 shadow-sm dark:bg-[#1a2238]">
+              <p className="text-2xl font-semibold text-slate-900 dark:text-slate-50">{metrics.accuracy}%</p>
+              <p className="text-xs text-slate-500 dark:text-slate-300">Accuracy</p>
+            </article>
+            <article className="rounded-2xl bg-white p-3 shadow-sm dark:bg-[#1a2238]">
+              <p className="text-2xl font-semibold text-slate-900 dark:text-slate-50">{metrics.streakDays}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-300">Day streak</p>
+            </article>
+            <article className="rounded-2xl bg-white p-3 shadow-sm dark:bg-[#1a2238]">
+              <p className="text-2xl font-semibold text-slate-900 dark:text-slate-50">{metrics.overallProgress}%</p>
+              <p className="text-xs text-slate-500 dark:text-slate-300">Progress</p>
+            </article>
+          </div>
+        </section>
+      ) : null}
+      {showHome && !androidApp ? (
+      <>
       <div className="px-1">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -288,6 +333,28 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         </div>
       </section>
 
+      <section className="rounded-2xl border border-indigo-100 bg-white/90 p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <p className="inline-flex items-center gap-2 font-medium text-indigo-950"><Trophy className="h-4 w-4" /> Great progress! Keep it up!</p>
+          <span className="text-sm font-semibold text-indigo-950">{metrics.overallProgress}%</span>
+        </div>
+        <Progress
+          value={metrics.overallProgress}
+          aria-label={`Overall study progress, ${metrics.overallProgress} percent`}
+          className="h-2 bg-slate-200 [&>[data-slot=progress-indicator]]:bg-indigo-700"
+        />
+      </section>
+      </>
+      ) : null}
+
+      {androidApp && !androidHomeScreen ? (
+        <div className="net360-hub-grid">
+          <button type="button" className="net360-hub-card" onClick={() => setAndroidHomeScreen('subjects')}>Subject progress</button>
+          <button type="button" className="net360-hub-card" onClick={() => setAndroidHomeScreen('week')}>This week</button>
+        </div>
+      ) : null}
+
+      {showSubjects ? (
       <section className="grid gap-3 lg:grid-cols-3">
         {subjectStats.map((subject) => (
           <article key={subject.key} className="rounded-2xl border border-indigo-100 bg-white/90 p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
@@ -312,28 +379,18 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           </article>
         ))}
       </section>
+      ) : null}
 
-      <section className="rounded-2xl border border-indigo-100 bg-white/90 p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <p className="inline-flex items-center gap-2 font-medium text-indigo-950"><Trophy className="h-4 w-4" /> Great progress! Keep it up!</p>
-          <span className="text-sm font-semibold text-indigo-950">{metrics.overallProgress}%</span>
-        </div>
-        <Progress
-          value={metrics.overallProgress}
-          aria-label={`Overall study progress, ${metrics.overallProgress} percent`}
-          className="h-2 bg-slate-200 [&>[data-slot=progress-indicator]]:bg-indigo-700"
-        />
-      </section>
-
+      {showHome ? (
       <section className="space-y-3">
         <div className="space-y-3">
           <h3 className="px-1 text-xl text-indigo-950">Quick Actions</h3>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <QuickActionCard icon={Sparkles} title="Start Practice" tone="from-cyan-100 to-white" onClick={() => onNavigate('tests')} />
-            <QuickActionCard icon={FileText} title="Mock Test" tone="from-indigo-100 to-white" onClick={() => onNavigate('tests')} />
+          <div className={`grid gap-3 ${androidApp ? 'grid-cols-2' : 'grid-cols-1 sm:grid-cols-2'}`}>
+            <QuickActionCard icon={Sparkles} title={androidApp ? 'Practice' : 'Start Practice'} tone="from-cyan-100 to-white" onClick={() => onNavigate('tests')} />
+            <QuickActionCard icon={FileText} title={androidApp ? 'Mock test' : 'Mock Test'} tone="from-indigo-100 to-white" onClick={() => onNavigate('tests')} />
             <QuickActionCard
               icon={BookOpen}
-              title="Practice Board Question Bank"
+              title={androidApp ? 'Question bank' : 'Practice Board Question Bank'}
               tone="from-violet-100 to-white"
               onClick={() => {
                 const url = new URL(window.location.href);
@@ -344,16 +401,20 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             />
             <QuickActionCard
               icon={Brain}
-              title="Study Assistant"
+              title={androidApp ? 'Assistant' : 'Study Assistant'}
               tone="from-sky-100 to-white"
               disabled
               onClick={() => {
                 showNeutralToast('Coming Soon');
               }}
             />
-            <QuickActionCard icon={Calculator} title="Merit Predictor" tone="from-amber-100 to-white" onClick={() => onNavigate('merit-calculator')} />
+            <QuickActionCard icon={Calculator} title={androidApp ? 'Merit' : 'Merit Predictor'} tone="from-amber-100 to-white" onClick={() => onNavigate('merit-calculator')} />
           </div>
+        </div>
+      </section>
+      ) : null}
 
+      {showWeek ? (
           <div className="rounded-2xl border border-indigo-100 bg-white/90 p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-base text-indigo-950">This Week Performance</h3>
@@ -394,8 +455,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               ))}
             </div>
           </div>
-        </div>
-      </section>
+      ) : null}
     </div>
   );
 }

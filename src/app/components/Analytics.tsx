@@ -10,6 +10,8 @@ import { Button } from './ui/button';
 import { downloadReport } from '../lib/api';
 import { openOrSaveBlobOnDevice } from '../lib/nativeFileAccess';
 import { showSuccessToast, showErrorToast, handleApiError } from '../lib/userToast';
+import { isNativeAndroidRuntime } from '../lib/nativeForeground';
+import { useAndroidNestedScreen } from '../lib/androidNestedScreen';
 
 const AnalyticsLineChart = lazy(() =>
   import('./AnalyticsCharts').then((m) => ({ default: m.AnalyticsLineChart })),
@@ -27,6 +29,9 @@ const subjects: SubjectKey[] = ['mathematics', 'physics', 'english'];
 export function Analytics() {
   const { attempts, mcqsBySubject } = useAppData();
   const { token, user } = useAuth();
+  const androidApp = isNativeAndroidRuntime();
+  const [androidPanel, setAndroidPanel] = useState<null | 'subjects' | 'insights'>(null);
+  useAndroidNestedScreen('analytics', Boolean(androidPanel), () => setAndroidPanel(null));
 
   const [exportingPdf, setExportingPdf] = useState(false);
 
@@ -163,7 +168,17 @@ export function Analytics() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {androidApp && !androidPanel ? (
+        <div className="net360-hub-grid">
+          <button type="button" className="net360-hub-card" onClick={() => setAndroidPanel('subjects')}>Subject performance</button>
+          <button type="button" className="net360-hub-card" onClick={() => setAndroidPanel('insights')}>Weak areas</button>
+        </div>
+      ) : null}
+      {androidApp && androidPanel ? (
+        <button type="button" className="net360-screen-back" onClick={() => setAndroidPanel(null)}>Back to analytics</button>
+      ) : null}
+
+      <div className={`grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4${androidApp && androidPanel ? ' net360-android-chrome-hide' : ''}`}>
         <Card className="rounded-xl border-border bg-card">
           <CardHeader className="pb-2">
             <CardTitle as="h3" className="text-sm text-muted-foreground">
@@ -216,14 +231,14 @@ export function Analytics() {
         </Card>
       </div>
 
-      <Card className="rounded-2xl border-border bg-card">
+      <Card className={`rounded-2xl border-border bg-card${androidApp && !androidPanel ? ' net360-android-chrome-hide' : ''}`}>
         <CardHeader>
           <CardTitle as="h2">Subject-Wise Performance</CardTitle>
           <CardDescription>Your measured accuracy in each subject</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 xl:grid-cols-[1.15fr_1fr]">
-            <div className="space-y-4">
+            <div className={`space-y-4${androidApp && androidPanel === 'insights' ? ' net360-android-chrome-hide' : ''}`}>
               <div className="rounded-xl border border-border bg-background/80 p-4">
                 <div className="space-y-4">
                   {subjectPerformance.map((subject, idx) => (
@@ -256,7 +271,7 @@ export function Analytics() {
               </Suspense>
             </div>
 
-            <div className="space-y-4">
+            <div className={`space-y-4${androidApp && androidPanel === 'subjects' ? ' net360-android-chrome-hide' : ''}`}>
               <Suspense fallback={<AnalyticsChartFallback />}>
                 <AnalyticsRadarChart radarData={radarData} />
               </Suspense>

@@ -19,7 +19,8 @@ import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl } from '../lib/authSession';
 import { App as CapacitorApp } from '@capacitor/app';
 import { logNativeEvent } from '../lib/nativeDiagnostics';
-import { consumeBriefNativeHide, markNativeDocumentHidden } from '../lib/nativeForeground';
+import { consumeBriefNativeHide, isNativeAndroidRuntime, markNativeDocumentHidden } from '../lib/nativeForeground';
+import { useAndroidNestedScreen } from '../lib/androidNestedScreen';
 import {
   acquireRealtimeSocket,
   isRealtimeConnected,
@@ -589,7 +590,53 @@ function CommunityInner() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('discover-students');
+  const androidApp = isNativeAndroidRuntime();
+  const [androidSectionOpen, setAndroidSectionOpen] = useState(false);
+  const [androidQuizScreen, setAndroidQuizScreen] = useState<null | 'create' | 'incoming' | 'active' | 'completed' | 'history'>(null);
+  const [androidDiscover, setAndroidDiscover] = useState<null | 'profile' | 'find' | 'requests'>(null);
+  const [androidRoomOpen, setAndroidRoomOpen] = useState(false);
+  const showCommunitySection = (tab: string) => {
+    setActiveTab(tab);
+    setAndroidQuizScreen(null);
+    setAndroidDiscover(null);
+    setAndroidRoomOpen(false);
+    if (isNativeAndroidRuntime()) setAndroidSectionOpen(true);
+  };
+  useAndroidNestedScreen(
+    'community',
+    androidSectionOpen,
+    () => {
+      if (androidQuizScreen) {
+        setAndroidQuizScreen(null);
+        return;
+      }
+      if (androidRoomOpen) {
+        setAndroidRoomOpen(false);
+        return;
+      }
+      if (androidDiscover) {
+        setAndroidDiscover(null);
+        return;
+      }
+      if (activeTab === 'messages' && activeConnectionIdRef.current) {
+        setActiveConnectionId('');
+        return;
+      }
+      setAndroidSectionOpen(false);
+    },
+  );
   const [leaderboardPeriod, setLeaderboardPeriod] = useState<'weekly' | 'monthly'>('weekly');
+
+  useEffect(() => {
+    const openProfile = () => {
+      setActiveTab('discover-students');
+      setAndroidSectionOpen(true);
+      setAndroidDiscover('profile');
+      setIsCommunityProfileExpanded(true);
+    };
+    window.addEventListener('net360:open-community-profile', openProfile);
+    return () => window.removeEventListener('net360:open-community-profile', openProfile);
+  }, []);
 
   useEffect(() => {
     const activity = activeTab === 'quiz-battles'
@@ -1038,7 +1085,9 @@ function CommunityInner() {
         setRoomPosts([]);
       }
 
-      const nextConnectionId = activeConnectionId || (connectionsPayload.connections?.[0]?.connectionId || '');
+      const nextConnectionId = isNativeAndroidRuntime()
+        ? activeConnectionId
+        : (activeConnectionId || (connectionsPayload.connections?.[0]?.connectionId || ''));
       setActiveConnectionId(nextConnectionId);
       if (nextConnectionId) {
         const messagePayload = await requestCached<{ messages: MessageRow[] }>(`/api/community/messages/${nextConnectionId}`, { force: passForce, ttlMs: 15_000 });
@@ -1099,7 +1148,7 @@ function CommunityInner() {
     const connectionsPayload = readExpiredCommunityCachePayload<{ connections: ConnectionRow[] }>('/api/community/connections');
     if (connectionsPayload?.connections?.length) {
       setConnections(connectionsPayload.connections);
-      setActiveConnectionId((prev) => prev || connectionsPayload.connections[0]?.connectionId || '');
+      setActiveConnectionId((prev) => (isNativeAndroidRuntime() ? prev : (prev || connectionsPayload.connections[0]?.connectionId || '')));
     }
 
     const roomsPayload = readExpiredCommunityCachePayload<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms');
@@ -2241,7 +2290,7 @@ function CommunityInner() {
     const row = connections.find((c) => c.user.id === userId);
     if (row) {
       setActiveConnectionId(row.connectionId);
-      setActiveTab('messages');
+      showCommunitySection('messages');
       showInfoToast('Messages');
       return;
     }
@@ -2253,14 +2302,14 @@ function CommunityInner() {
   const inviteToQuizBattleFromPresence = (userId: string) => {
     if (!beginRosterAction(userId, 'quiz')) return;
     setQuizOpponentUserId(userId);
-    setActiveTab('quiz-battles');
+    showCommunitySection('quiz-battles');
     showInfoToast('Quiz Battles');
   };
 
   const openStudyRoomFromPresence = (userId: string) => {
     if (!beginRosterAction(userId, 'room')) return;
     if (rooms[0]?.id) setActiveRoomId(rooms[0].id);
-    setActiveTab('discussion-rooms');
+    showCommunitySection('discussion-rooms');
   };
 
   const downloadBadgeCertificate = async (badge: BadgeRow) => {
@@ -2321,8 +2370,39 @@ function CommunityInner() {
   return (
     <div className="community-page min-w-0 space-y-4">
       <h1 className="sr-only">Community — students, discussions, quiz battles, and messages</h1>
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-4" aria-label="Community sections">
-        <div className="net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1 [scrollbar-gutter:stable]">
+      <Tabs value={activeTab} onValueChange={showCommunitySection} className={`w-full space-y-4${androidApp && !androidSectionOpen ? ' net360-hub-closed' : ''}`} aria-label="Community sections">
+        {androidApp && !androidSectionOpen ? (
+          <div className="net360-hub-grid">
+            {[
+              ['online-students', 'Online Students'],
+              ['discover-students', 'Discover Students'],
+              ['study-partners', 'Connections'],
+              ['messages', 'Messages'],
+              ['quiz-battles', 'Quiz Battle'],
+              ['discussion-rooms', 'Discussion Rooms'],
+              ['leaderboard', 'Leaderboard'],
+            ].map(([id, label]) => (
+              <button key={id} type="button" className="net360-hub-card" onClick={() => {
+                if (id === 'messages') setActiveConnectionId('');
+                showCommunitySection(id);
+              }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {androidApp && androidSectionOpen ? (
+          <button type="button" className="net360-screen-back" onClick={() => {
+            if (androidQuizScreen) setAndroidQuizScreen(null);
+            else if (androidRoomOpen) setAndroidRoomOpen(false);
+            else if (androidDiscover) setAndroidDiscover(null);
+            else if (activeTab === 'messages' && activeConnectionId) setActiveConnectionId('');
+            else setAndroidSectionOpen(false);
+          }}>
+            Back
+          </button>
+        ) : null}
+        <div className={`${androidApp ? 'net360-android-chrome-hide ' : ''}net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1 [scrollbar-gutter:stable]`}>
           <TabsList className="inline-flex h-auto w-max min-w-max flex-nowrap gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 via-indigo-50 to-fuchsia-50 p-1.5 shadow-[0_10px_20px_rgba(99,102,241,0.12)]">
             <TabsTrigger value="online-students" className={sectionTabTriggerClassName}>Online</TabsTrigger>
             <TabsTrigger value="discover-students" className={sectionTabTriggerClassName}>Discover Students</TabsTrigger>
@@ -2423,7 +2503,7 @@ function CommunityInner() {
                           variant="outline"
                           onClick={() => {
                             if (netStatus === 'pending-received') {
-                              setActiveTab('discover-students');
+                              showCommunitySection('discover-students');
                               return;
                             }
                             void sendConnectionRequest(s.id);
@@ -2472,7 +2552,14 @@ function CommunityInner() {
         </TabsContent>
 
         <TabsContent value="discover-students" className="mt-0 space-y-4">
-          <Card className="min-h-[120px] min-w-0 max-w-full">
+          {androidApp && androidSectionOpen && !androidDiscover ? (
+            <div className="net360-hub-grid">
+              <button type="button" className="net360-hub-card" onClick={() => setAndroidDiscover('profile')}>Community profile</button>
+              <button type="button" className="net360-hub-card" onClick={() => setAndroidDiscover('find')}>Find students</button>
+              <button type="button" className="net360-hub-card" onClick={() => setAndroidDiscover('requests')}>Connection requests</button>
+            </div>
+          ) : null}
+          <Card className={`min-h-[120px] min-w-0 max-w-full${androidApp && androidSectionOpen && androidDiscover !== 'profile' ? ' net360-android-chrome-hide' : ''}`}>
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
@@ -2674,7 +2761,7 @@ function CommunityInner() {
           </Card>
 
           <div className="grid gap-4 xl:grid-cols-3">
-            <Card className="min-h-[120px] min-w-0 xl:col-span-1">
+            <Card className={`min-h-[120px] min-w-0 xl:col-span-1${androidApp && androidSectionOpen && androidDiscover !== 'find' ? ' net360-android-chrome-hide' : ''}`}>
               <CardHeader>
                 <CardTitle>Find Students</CardTitle>
                 <CardDescription>Search for students.</CardDescription>
@@ -2743,7 +2830,7 @@ function CommunityInner() {
               </CardContent>
             </Card>
 
-            <Card className="min-w-0 xl:col-span-2">
+            <Card className={`min-w-0 xl:col-span-2${androidApp && androidSectionOpen && androidDiscover !== 'requests' ? ' net360-android-chrome-hide' : ''}`}>
               <CardHeader>
                 <CardTitle>Connection Requests</CardTitle>
                 <CardDescription>Incoming and outgoing requests.</CardDescription>
@@ -2786,7 +2873,7 @@ function CommunityInner() {
             </Card>
           </div>
 
-          {profilePreview ? (
+          {profilePreview && (!androidApp || !androidSectionOpen || androidDiscover === 'find') ? (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -2887,7 +2974,7 @@ function CommunityInner() {
 
         <TabsContent value="discussion-rooms" className="mt-0 space-y-4">
           <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
-            <Card className="min-w-0">
+            <Card className={`min-w-0${androidApp && androidRoomOpen ? ' net360-android-chrome-hide' : ''}`}>
               <CardHeader>
                 <CardTitle>Topic Discussion Rooms</CardTitle>
                 <CardDescription>Subject discussion rooms.</CardDescription>
@@ -2900,7 +2987,7 @@ function CommunityInner() {
                       key={`trend-${room.id}`}
                       type="button"
                       className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-800 transition hover:bg-indigo-100 dark:border-indigo-500/40 dark:bg-indigo-950/40 dark:text-indigo-100"
-                      onClick={() => setActiveRoomId(room.id)}
+                      onClick={() => { setActiveRoomId(room.id); if (androidApp) setAndroidRoomOpen(true); }}
                     >
                       {room.title} ({room.posts})
                     </button>
@@ -2910,7 +2997,7 @@ function CommunityInner() {
                   <button
                     key={room.id}
                     type="button"
-                    onClick={() => setActiveRoomId(room.id)}
+                    onClick={() => { setActiveRoomId(room.id); if (androidApp) setAndroidRoomOpen(true); }}
                     className={`w-full rounded-lg border p-3 text-left ${activeRoomId === room.id ? 'border-indigo-400 bg-indigo-50' : ''}`}
                   >
                     <p className="text-sm">{room.title}</p>
@@ -2920,7 +3007,7 @@ function CommunityInner() {
               </CardContent>
             </Card>
 
-            <Card className="min-w-0">
+            <Card className={`min-w-0${androidApp && androidSectionOpen && !androidRoomOpen ? ' net360-android-chrome-hide' : ''}`}>
               <CardHeader>
                 <CardTitle>Room Feed</CardTitle>
                 <CardDescription>Room discussions.</CardDescription>
@@ -2989,8 +3076,17 @@ function CommunityInner() {
         </TabsContent>
 
         <TabsContent value="quiz-battles" className="mt-0 space-y-4">
-          <div className="grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]">
-            <Card className="min-w-0">
+          {androidApp && androidSectionOpen && !androidQuizScreen ? (
+            <div className="net360-hub-grid">
+              <button type="button" className="net360-hub-card" onClick={() => setAndroidQuizScreen('create')}>Create Challenge</button>
+              <button type="button" className="net360-hub-card" onClick={() => setAndroidQuizScreen('incoming')}>Incoming Requests</button>
+              <button type="button" className="net360-hub-card" onClick={() => setAndroidQuizScreen('active')}>Active Battles</button>
+              <button type="button" className="net360-hub-card" onClick={() => setAndroidQuizScreen('completed')}>Completed Battles</button>
+              <button type="button" className="net360-hub-card" onClick={() => setAndroidQuizScreen('history')}>History</button>
+            </div>
+          ) : null}
+          <div className={`grid gap-4 xl:grid-cols-[320px_minmax(0,1fr)]${androidApp && androidSectionOpen && !androidQuizScreen ? ' net360-android-chrome-hide' : ''}`}>
+            <Card className={`min-w-0${androidApp && androidQuizScreen && androidQuizScreen !== 'create' ? ' net360-android-chrome-hide' : ''}`}>
               <CardHeader>
                 <CardTitle>Create Quiz Challenge</CardTitle>
                 <CardDescription>Create a quiz challenge.</CardDescription>
@@ -3095,14 +3191,20 @@ function CommunityInner() {
               </CardContent>
             </Card>
 
-            <div className="min-w-0 space-y-4">
-              <Card>
+            <div className={`min-w-0 space-y-4${androidApp && androidQuizScreen === 'create' ? ' net360-android-chrome-hide' : ''}`}>
+              <Card className={androidApp && androidQuizScreen === 'create' ? 'net360-android-chrome-hide' : undefined}>
                 <CardHeader>
                   <CardTitle>Challenge Inbox & History</CardTitle>
                   <CardDescription>Your quiz challenges.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-2 max-h-[280px] overflow-auto">
-                  {quizChallenges.map((challenge) => {
+                  {quizChallenges.filter((challenge) => {
+                    if (!androidApp || !androidQuizScreen || androidQuizScreen === 'history' || androidQuizScreen === 'create') return true;
+                    if (androidQuizScreen === 'incoming') return challenge.status === 'pending' || !['in_progress', 'accepted', 'completed'].includes(String(challenge.status));
+                    if (androidQuizScreen === 'active') return challenge.status === 'in_progress' || challenge.status === 'accepted';
+                    if (androidQuizScreen === 'completed') return challenge.status === 'completed';
+                    return true;
+                  }).map((challenge) => {
                     const opponentUserId = challenge.isChallenger ? challenge.opponentUserId : challenge.challengerUserId;
                     const opponent = allCommunityUsers.find((row) => row.id === opponentUserId)
                       || connections.find((item) => item.user.id === opponentUserId)?.user;
@@ -3146,7 +3248,7 @@ function CommunityInner() {
                 </CardContent>
               </Card>
 
-              <Card>
+              <Card className={androidApp && androidQuizScreen === 'create' ? 'net360-android-chrome-hide' : undefined}>
                 <CardHeader>
                   <CardTitle>Battle Arena</CardTitle>
                   <CardDescription>
@@ -3190,7 +3292,7 @@ function CommunityInner() {
                 </CardContent>
               </Card>
 
-              <div className="grid gap-4 md:grid-cols-2">
+              <div className={`grid gap-4 md:grid-cols-2${androidApp && androidQuizScreen !== 'history' ? ' net360-android-chrome-hide' : ''}`}>
                 <Card>
                   <CardHeader>
                     <CardTitle>Your Quiz Profile</CardTitle>
@@ -3347,22 +3449,22 @@ function CommunityInner() {
           </Dialog>
         </TabsContent>
 
-        <TabsContent value="messages" className="mt-0 space-y-4">
+        <TabsContent value="messages" className={`mt-0 space-y-4${androidApp ? ' net360-msg-screen' : ''}`}>
           <div className="grid gap-4 xl:grid-cols-3">
-            <Card className="min-w-0 xl:col-span-1">
+            <Card className={`min-w-0 xl:col-span-1${androidApp && activeConnectionId ? ' net360-android-chrome-hide' : ''}`}>
               <CardHeader>
                 <CardTitle>Connected Students</CardTitle>
                 <CardDescription>Your connections.</CardDescription>
               </CardHeader>
               <CardContent>
-                <ScrollArea className="h-[420px] pr-2 sm:h-[500px]">
+                <ScrollArea className={`h-[420px] pr-2 sm:h-[500px]${androidApp ? ' net360-msg-list' : ''}`}>
                   <div className="space-y-2">
                     {connections.map((item) => (
                       <button
                         key={item.connectionId}
                         type="button"
                         onClick={() => setActiveConnectionId(item.connectionId)}
-                        className={`w-full rounded-lg border p-3 text-left ${activeConnectionId === item.connectionId ? 'border-indigo-400 bg-indigo-50' : ''}`}
+                        className={`net360-msg-row w-full rounded-lg border p-3 text-left ${androidApp ? 'flex items-center justify-between gap-3' : ''} ${activeConnectionId === item.connectionId ? 'border-indigo-400 bg-indigo-50' : ''}`}
                       >
                         <div className="flex items-center gap-2">
                           <CommunityAvatar userLike={item.user} />
@@ -3371,7 +3473,7 @@ function CommunityInner() {
                             <p className="text-xs text-muted-foreground">{item.user.targetProgram || 'Study partner'}</p>
                           </div>
                         </div>
-                        {item.unreadCount > 0 ? <Badge className="mt-2">{item.unreadCount} unread</Badge> : null}
+                        {item.unreadCount > 0 ? <Badge className={androidApp ? 'shrink-0' : 'mt-2'}>{item.unreadCount} unread</Badge> : null}
                       </button>
                     ))}
                     {!connections.length ? <p className="text-xs text-muted-foreground">No active connections yet.</p> : null}
@@ -3380,7 +3482,7 @@ function CommunityInner() {
               </CardContent>
             </Card>
 
-            <Card className="min-w-0 xl:col-span-2">
+            <Card className={`min-w-0 xl:col-span-2${androidApp && androidSectionOpen && !activeConnectionId ? ' net360-android-chrome-hide' : ''}`}>
               <CardHeader>
                 <CardTitle>Private Chat</CardTitle>
                 <CardDescription>
@@ -3400,7 +3502,7 @@ function CommunityInner() {
                   ) : 'Select a conversation.'}
                 </CardDescription>
               </CardHeader>
-              <CardContent className="space-y-3">
+              <CardContent className={`space-y-3${androidApp && activeConnectionId ? ' net360-msg-body' : ''}`}>
                 <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-2 text-xs text-emerald-800 dark:border-emerald-500/45 dark:bg-emerald-950/40 dark:text-emerald-100">
                   <span className="text-inherit">{ENCRYPTION_LABEL}</span>
                   {activeConnection ? (
@@ -3450,7 +3552,7 @@ function CommunityInner() {
                   </div>
                 ) : null}
 
-                <div className="max-h-[300px] overflow-auto rounded-xl border border-slate-200/90 bg-gradient-to-b from-slate-50/50 to-white p-3 space-y-2 shadow-inner dark:border-slate-700 dark:from-slate-900/40 dark:to-slate-950/20 sm:max-h-[380px]">
+                <div className={`max-h-[300px] overflow-auto rounded-xl border border-slate-200/90 bg-gradient-to-b from-slate-50/50 to-white p-3 space-y-2 shadow-inner dark:border-slate-700 dark:from-slate-900/40 dark:to-slate-950/20 sm:max-h-[380px]${androidApp ? ' net360-msg-thread' : ''}`}>
                   {messagesThreadLoading ? (
                     <div className="space-y-2">
                       <Skeleton className="h-10 w-[72%] rounded-lg" />
@@ -3541,7 +3643,7 @@ function CommunityInner() {
                   )}
                 </div>
                 <form
-                  className="flex flex-col gap-2 sm:flex-row"
+                  className={`flex flex-col gap-2 sm:flex-row${androidApp ? ' net360-msg-composer' : ''}`}
                   onSubmit={(event) => {
                     event.preventDefault();
                     void sendMessage();
@@ -3563,7 +3665,7 @@ function CommunityInner() {
                   </Button>
                 </form>
                 {activeConnection ? (
-                  <div className="space-y-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                  <div className={`space-y-2 rounded-lg border border-amber-200 bg-amber-50/60 p-3${androidApp ? ' net360-msg-report' : ''}`}>
                     <Label>Report this conversation</Label>
                     <Textarea
                       value={reportReason}

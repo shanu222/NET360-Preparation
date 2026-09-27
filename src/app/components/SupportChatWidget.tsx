@@ -6,6 +6,7 @@ import { Textarea } from './ui/textarea';
 import { ScrollArea } from './ui/scroll-area';
 import { Badge } from './ui/badge';
 import { useAuth } from '../context/AuthContext';
+import { useAppData } from '../context/AppDataContext';
 import { apiRequest } from '../lib/api';
 import { showSuccessToast, showErrorToast, showNeutralToast, handleApiError } from '../lib/userToast';
 import {
@@ -19,6 +20,7 @@ import {
 } from '../lib/realtimeSocket';
 import { PushNotifications } from '@capacitor/push-notifications';
 import { Capacitor } from '@capacitor/core';
+import { isNativeAndroidRuntime } from '../lib/nativeForeground';
 
 interface SupportMessage {
   id: string;
@@ -200,6 +202,9 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 export function SupportChatWidget() {
   const { token, user } = useAuth();
+  const { preferences } = useAppData();
+  const supportRepliesRef = useRef(preferences.notificationPreferences?.supportReplies !== false);
+  supportRepliesRef.current = preferences.notificationPreferences?.supportReplies !== false;
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -269,6 +274,7 @@ export function SupportChatWidget() {
     }
   };
 
+  const androidApp = isNativeAndroidRuntime();
   const isNativeRuntime = (() => {
     try {
       return Capacitor.isNativePlatform();
@@ -349,6 +355,20 @@ export function SupportChatWidget() {
     }
   };
 
+  useEffect(() => {
+    const runtime = window as Window & { __net360SupportChatOpen?: boolean };
+    runtime.__net360SupportChatOpen = open;
+    return () => {
+      runtime.__net360SupportChatOpen = false;
+    };
+  }, [open]);
+
+  useEffect(() => {
+    const close = () => setOpen(false);
+    window.addEventListener('net360:close-support-chat', close);
+    return () => window.removeEventListener('net360:close-support-chat', close);
+  }, []);
+
   const canUseChat = Boolean(token && user && user.role !== 'admin');
 
   const panelStyle = useMemo(() => {
@@ -366,6 +386,7 @@ export function SupportChatWidget() {
     if (!id || announcedAdminIdsRef.current.has(id)) return;
     announcedAdminIdsRef.current.add(id);
     lastAdminMessageIdRef.current = id;
+    if (!supportRepliesRef.current) return;
     playNotificationTone();
     showNeutralToast('New reply from admin support');
     notifyDesktop('NET360 Support', item?.text || 'You have a new reply from admin support.');
@@ -817,11 +838,11 @@ export function SupportChatWidget() {
     <>
       {open ? (
         <Card
-          className="fixed z-[60] w-full max-w-full overflow-hidden border-emerald-200 bg-white/95 text-slate-900 shadow-[0_16px_44px_rgba(15,118,110,0.24)] transition-all duration-200 dark:border-emerald-500/40 dark:bg-slate-900/96 dark:text-emerald-50 dark:shadow-[0_18px_44px_rgba(3,8,24,0.7)]"
-          style={panelStyle}
+          className={`fixed z-[60] w-full max-w-full overflow-hidden border-emerald-200 bg-white/95 text-slate-900 shadow-[0_16px_44px_rgba(15,118,110,0.24)] transition-all duration-200 dark:border-emerald-500/40 dark:bg-slate-900/96 dark:text-emerald-50 dark:shadow-[0_18px_44px_rgba(3,8,24,0.7)]${androidApp ? ' net360-support-panel' : ''}`}
+          style={androidApp ? undefined : panelStyle}
         >
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-2 cursor-move" onPointerDown={startPanelDrag}>
+            <div className={`flex items-center justify-between gap-2${androidApp ? '' : ' cursor-move'}`} onPointerDown={androidApp ? undefined : startPanelDrag}>
               <CardTitle className="text-base text-emerald-900 dark:text-emerald-300">Live Support Chat</CardTitle>
               <Button size="icon" variant="ghost" className="h-8 w-8 dark:hover:bg-emerald-500/15 dark:text-emerald-100" onClick={() => setOpen(false)} aria-label="Close support chat">
                 <X className="h-4 w-4" />
@@ -867,7 +888,7 @@ export function SupportChatWidget() {
                 <div className="rounded-md border border-emerald-200 bg-emerald-50/70 px-3 py-1.5 text-[11px] text-emerald-800 dark:border-emerald-500/45 dark:bg-emerald-900/30 dark:text-emerald-200">
                   Messages are end-to-end encrypted.
                 </div>
-                <ScrollArea className="h-[min(42vh,16rem)] rounded-lg border bg-slate-50 p-2 sm:h-64 dark:border-slate-600 dark:bg-slate-800/65">
+                <ScrollArea className={`h-[min(42vh,16rem)] rounded-lg border bg-slate-50 p-2 sm:h-64 dark:border-slate-600 dark:bg-slate-800/65${androidApp ? ' net360-support-thread' : ''}`}>
                   <div className="space-y-2">
                     {loading && !messages.length ? <p className="text-xs text-slate-500 dark:text-slate-300" aria-live="polite">Loading messages...</p> : null}
                     {!loading && !messages.length ? <p className="text-xs text-slate-500 dark:text-slate-300">Start a conversation with admin support.</p> : null}
@@ -949,7 +970,7 @@ export function SupportChatWidget() {
                   </div>
                 </ScrollArea>
 
-                <div className="flex min-w-0 items-end gap-2">
+                <div className={`flex min-w-0 items-end gap-2${androidApp ? ' net360-support-compose' : ''}`}>
                   <Textarea
                     value={messageText}
                     onChange={(event) => {

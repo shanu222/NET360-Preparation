@@ -22,6 +22,8 @@ import {
   Sparkles,
   Target,
 } from 'lucide-react';
+import { isNativeAndroidRuntime } from '../lib/nativeForeground';
+import { useAndroidNestedScreen } from '../lib/androidNestedScreen';
 
 type GuideTab = 'overview' | 'policy' | 'dates' | 'eligibility';
 
@@ -183,6 +185,9 @@ function statusToBadge(status: NustImportantDateRow['status']) {
 export function NUSTGuide() {
   const { token } = useAuth();
   const [activeTab, setActiveTab] = useState<GuideTab>('overview');
+  const androidApp = isNativeAndroidRuntime();
+  const [androidGuideOpen, setAndroidGuideOpen] = useState(false);
+  useAndroidNestedScreen('guide', androidGuideOpen, () => setAndroidGuideOpen(false));
   const [sscMarks, setSscMarks] = useState('');
   const [hsscMarks, setHsscMarks] = useState('');
   const [eligibilityResult, setEligibilityResult] = useState<string[]>([]);
@@ -271,6 +276,7 @@ export function NUSTGuide() {
 
   const navigateTo = (tab: GuideTab, sectionId?: string) => {
     setActiveTab(tab);
+    if (isNativeAndroidRuntime()) setAndroidGuideOpen(true);
 
     if (sectionId) {
       window.setTimeout(() => {
@@ -337,7 +343,7 @@ export function NUSTGuide() {
 
   return (
     <div className="space-y-5">
-      <section className="relative overflow-hidden rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-[#edf2ff] via-[#e8e5ff] to-[#f8dff0] p-5 sm:p-6 dark:border-indigo-900/60 dark:bg-gradient-to-r dark:from-slate-900 dark:via-indigo-950/90 dark:to-slate-900">
+      <section className={`relative overflow-hidden rounded-2xl border border-indigo-200/70 bg-gradient-to-r from-[#edf2ff] via-[#e8e5ff] to-[#f8dff0] p-5 sm:p-6 dark:border-indigo-900/60 dark:bg-gradient-to-r dark:from-slate-900 dark:via-indigo-950/90 dark:to-slate-900${androidApp && androidGuideOpen ? ' net360-android-chrome-hide' : ''}`}>
         <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_18%_24%,rgba(88,108,242,0.18),transparent_35%),radial-gradient(circle_at_84%_22%,rgba(247,180,214,0.28),transparent_32%)] dark:bg-[radial-gradient(circle_at_18%_24%,rgba(96,165,250,0.2),transparent_38%),radial-gradient(circle_at_84%_22%,rgba(129,140,248,0.16),transparent_34%)]" aria-hidden />
         <div className="relative space-y-4">
           <div>
@@ -353,8 +359,25 @@ export function NUSTGuide() {
         </div>
       </section>
 
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as GuideTab)} className="space-y-4">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1.5 rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-[#eef2ff] via-[#f1ecff] to-[#f5f8ff] p-1.5 shadow-[0_8px_18px_rgba(79,70,229,0.14)] sm:grid-cols-4">
+      <Tabs value={activeTab} onValueChange={(value) => { setActiveTab(value as GuideTab); if (androidApp) setAndroidGuideOpen(true); }} className={`space-y-4${androidApp && !androidGuideOpen ? ' net360-hub-closed' : ''}`}>
+        {androidApp && !androidGuideOpen ? (
+          <div className="net360-hub-grid">
+            {([
+              ['overview', 'Overview'],
+              ['policy', 'Admission policy'],
+              ['dates', 'Schedules & notices'],
+              ['eligibility', 'Eligibility'],
+            ] as Array<[GuideTab, string]>).map(([id, label]) => (
+              <button key={id} type="button" className="net360-hub-card" onClick={() => { setActiveTab(id); setAndroidGuideOpen(true); }}>
+                {label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {androidApp && androidGuideOpen ? (
+          <button type="button" className="net360-screen-back" onClick={() => setAndroidGuideOpen(false)}>Back to NUST guide</button>
+        ) : null}
+        <TabsList className={`${androidApp ? 'net360-android-chrome-hide ' : ''}grid h-auto w-full grid-cols-2 gap-1.5 rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-[#eef2ff] via-[#f1ecff] to-[#f5f8ff] p-1.5 shadow-[0_8px_18px_rgba(79,70,229,0.14)] sm:grid-cols-4`}>
           <TabsTrigger
             value="overview"
             className="rounded-xl border border-indigo-200/90 bg-white/88 px-3 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!to-violet-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)]"

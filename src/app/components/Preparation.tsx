@@ -17,6 +17,8 @@ import { SubjectKey, getSubjectLabel } from '../lib/mcq';
 import { dedupeNormalizedStrings, normalizeHierarchyLabel } from '../lib/hierarchyDedup';
 import { formatTestStartFailureToast } from '../lib/testStartToast';
 import { navigateToExamSameTab } from '../lib/examWindowLaunch';
+import { isNativeAndroidRuntime } from '../lib/nativeForeground';
+import { useAndroidNestedScreen } from '../lib/androidNestedScreen';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
@@ -584,6 +586,11 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
   const authReady = !authLoading && hasResolvableStudentAuth(authContextToken, user);
   const difficultyLevels: Array<'Easy' | 'Medium' | 'Hard'> = ['Easy', 'Medium', 'Hard'];
   const [selectedSubject, setSelectedSubject] = useState<TabKey>('mathematics');
+  const androidApp = isNativeAndroidRuntime();
+  const [androidSubjectOpen, setAndroidSubjectOpen] = useState(false);
+  const partSubject = (['mathematics', 'physics', 'english', 'biology', 'chemistry'] as TabKey[]).includes(selectedSubject)
+    ? (selectedSubject as PartStructuredSubjectKey)
+    : null;
   const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<PartStructuredSubjectKey, AcademicPart | null>>(() => (
     PART_STRUCTURED_SUBJECTS.reduce((acc, subject) => {
       acc[subject] = null;
@@ -616,6 +623,28 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
   const [selectedFlatTopicByTab, setSelectedFlatTopicByTab] = useState<Record<'quantitative-mathematics' | 'design-aptitude', string | null>>({
     'quantitative-mathematics': null,
     'design-aptitude': null,
+  });
+  useAndroidNestedScreen('preparation', androidSubjectOpen, () => {
+    if (selectedSubject === 'computer-science' && selectedComputerScienceChapterId) {
+      setSelectedComputerScienceChapterId(null);
+      setSelectedComputerScienceSection(null);
+      return;
+    }
+    if (selectedSubject === 'intelligence' && selectedIntelligenceChapterId) {
+      setSelectedIntelligenceChapterId(null);
+      setSelectedIntelligenceSection(null);
+      return;
+    }
+    if (partSubject && selectedChapterBySubject[partSubject]) {
+      setSelectedChapterBySubject((prev) => ({ ...prev, [partSubject]: null }));
+      setSelectedSectionBySubject((prev) => ({ ...prev, [partSubject]: null }));
+      return;
+    }
+    if (partSubject && selectedPartBySubject[partSubject]) {
+      setSelectedPartBySubject((prev) => ({ ...prev, [partSubject]: null }));
+      return;
+    }
+    setAndroidSubjectOpen(false);
   });
 
   const normalizeProgressKey = (value: string) => normalizeHierarchyLabel(String(value || '').trim());
@@ -934,8 +963,30 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
         <p className="text-muted-foreground">Syllabus browser by subject, part, chapter, and section</p>
       </div>
 
-      <Tabs value={selectedSubject} onValueChange={(value) => setSelectedSubject(value as TabKey)}>
-        <div className="net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1">
+      {androidApp && !androidSubjectOpen ? (
+        <div className="net360-hub-grid">
+          {tabItems.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              className="net360-hub-card"
+              onClick={() => {
+                setSelectedSubject(tab.key);
+                setAndroidSubjectOpen(true);
+              }}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {androidApp && androidSubjectOpen ? (
+        <button type="button" className="net360-screen-back" onClick={() => setAndroidSubjectOpen(false)}>
+          Back to subjects
+        </button>
+      ) : null}
+      <Tabs value={selectedSubject} onValueChange={(value) => setSelectedSubject(value as TabKey)} className={androidApp && !androidSubjectOpen ? 'net360-hub-closed' : undefined}>
+        <div className={`${androidApp ? 'net360-android-chrome-hide ' : ''}net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1`}>
           <TabsList className="inline-flex h-auto min-w-max flex-nowrap gap-1.5 rounded-2xl border border-indigo-200/80 bg-gradient-to-r from-[#eef2ff] via-[#f1ecff] to-[#f5f8ff] p-1.5 shadow-[0_8px_18px_rgba(79,70,229,0.14)] lg:min-w-0 lg:flex-wrap lg:justify-center">
             {tabItems.map((tab) => (
               <TabsTrigger
@@ -1047,8 +1098,13 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                     <CardDescription>Chapter and section structure (no part split).</CardDescription>
                   </CardHeader>
                   <CardContent>
+                    {androidApp && selectedChapterId ? (
+                      <button type="button" className="net360-screen-back" onClick={() => { setSelectedChapter(null); setSelectedSection(null); }}>
+                        Back to chapters
+                      </button>
+                    ) : null}
                     <div className="space-y-3">
-                      {chapterOnlySyllabus.map((chapter) => {
+                      {(androidApp && selectedChapterId ? chapterOnlySyllabus.filter((chapter) => chapter.id === selectedChapterId) : chapterOnlySyllabus).map((chapter) => {
                         const active = selectedChapterId === chapter.id;
                         return (
                           <div
@@ -1059,6 +1115,11 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                               type="button"
                               className="w-full p-3 text-left transition-transform duration-200 active:scale-[0.995]"
                               onClick={() => {
+                                if (androidApp) {
+                                  setSelectedChapter(chapter.id);
+                                  setSelectedSection(null);
+                                  return;
+                                }
                                 setSelectedChapter((prev) => (prev === chapter.id ? null : chapter.id));
                                 setSelectedSection(null);
                                 if (import.meta.env.DEV) {
@@ -1184,6 +1245,18 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                   <CardDescription>Select Part 1 or Part 2, then choose a chapter to view all sections.</CardDescription>
                 </CardHeader>
                 <CardContent>
+                  {androidApp && selectedChapterId ? (
+                    <button
+                      type="button"
+                      className="net360-screen-back"
+                      onClick={() => {
+                        setSelectedChapterBySubject((prev) => ({ ...prev, [subject]: null }));
+                        setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
+                      }}
+                    >
+                      Back to chapters
+                    </button>
+                  ) : (
                   <div className="mb-4 grid gap-3 sm:grid-cols-2">
                     {(['part1', 'part2'] as AcademicPart[]).map((part) => {
                       const isSelected = selectedPart === part;
@@ -1208,6 +1281,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                       );
                     })}
                   </div>
+                  )}
 
                   {!selectedPart ? (
                     <div className="py-4 text-center text-sm text-muted-foreground">Select Part 1 or Part 2 to continue.</div>
@@ -1215,7 +1289,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                     <div className="py-4 text-center text-sm text-muted-foreground">No chapters added yet for this part.</div>
                   ) : (
                     <div className="space-y-3">
-                      {currentPart.chapters.map((chapter) => {
+                      {(androidApp && selectedChapterId ? currentPart.chapters.filter((chapter) => chapter.id === selectedChapterId) : currentPart.chapters).map((chapter) => {
                         const active = selectedChapterId === chapter.id;
                         return (
                           <div
@@ -1226,6 +1300,11 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
                               type="button"
                               className="w-full p-3 text-left transition-transform duration-200 active:scale-[0.995]"
                               onClick={() => {
+                                if (androidApp) {
+                                  setSelectedChapterBySubject((prev) => ({ ...prev, [subject]: chapter.id }));
+                                  setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
+                                  return;
+                                }
                                 setSelectedChapterBySubject((prev) => ({
                                   ...prev,
                                   [subject]: prev[subject] === chapter.id ? null : chapter.id,
