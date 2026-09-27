@@ -283,6 +283,25 @@ export function subscribeRealtimeStatus(scope: RealtimeScope, listener: StatusLi
  * Called on tab visibility / network resume: nudge a disconnected socket. Socket.IO already
  * reconnects on its own; this only shortcuts a pending backoff timer.
  */
+/** Force-close the shared socket (logout). Safe if nothing is connected. */
+export function closeRealtimeScope(scope: RealtimeScope): void {
+  const entry = entries[scope];
+  entry.refCount = 0;
+  clearAuthRetry(entry);
+  entry.authRetryCount = 0;
+  entry.token = null;
+  const current = entry.socket;
+  entry.detachInternal?.();
+  entry.detachInternal = null;
+  entry.socket = null;
+  if (current) {
+    current.removeAllListeners();
+    current.close();
+    log(scope, 'info', 'closed (logout)');
+  }
+  setStatus(scope, entry, 'idle');
+}
+
 export function reconnectRealtimeIfNeeded(scope: RealtimeScope): void {
   const entry = entries[scope];
   const socket = entry.socket;

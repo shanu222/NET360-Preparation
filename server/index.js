@@ -53,7 +53,15 @@ import {
   getIo,
   emitSubscriptionRefresh,
   disconnectStudentSocketsWithStaleSession,
+  disconnectAllStudentSockets,
+  countStudentSockets,
 } from './services/socket.js';
+import {
+  upsertPresence,
+  removePresence,
+  listPresence,
+  sweepExpiredPresence,
+} from './services/communityPresence.js';
 import { subscriptionExpiryRefresh, requireTrialOrPremiumContent } from './middleware/subscriptionGate.js';
 import {
   mergedSubscription,
@@ -782,10 +790,101 @@ async function logSecurityEvent(req, {
   }
 }
 
-/** Active SSE tab ids per student user (multi-tab support). */
+/**
+ * Community presence. The shared record lives in Redis (services/communityPresence.js) and
+ * only exists while the client heartbeats; this map only tracks the realtime connections
+ * (Socket.IO sockets + SSE streams) held by THIS instance so a closed tab can go offline
+ * right away instead of waiting for the TTL.
+ */
 const studentPresenceClientIdsByUser = new Map();
-/** Ephemeral presence metadata (studying subject, away) keyed by userId string. */
-const studentPresenceMetaByUser = new Map();
+const studentLastSeenPersistedAt = new Map();
+/** First-seen identity snapshot so Redis records can list a name without a Mongo round-trip every beat. */
+const studentPresenceIdentityByUser = new Map();
+const STUDENT_PRESENCE_LAST_SEEN_PERSIST_MS = 5 * 60_000;
+/** A page reload closes the old socket and opens a new one; don't flash "offline" for that. */
+const STUDENT_PRESENCE_DISCONNECT_GRACE_MS = 5_000;
+
+function emitStudentPresenceEvent(action, userId, record = null) {
+  const data = { type: 'community.presence', action, userId: String(userId) };
+  if (record && action !== 'offline') {
+    data.status = record.status;
+    data.activity = record.activity;
+    data.studyingSubject = record.studyingSubject;
+    data.lastSeenAt = new Date(record.lastSeen).toISOString();
+  }
+  broadcastSyncEvent({ role: 'student', event: 'sync', data });
+}
+
+function persistStudentLastSeen(uid, force = false) {
+  const now = Date.now();
+  if (!force && now - Number(studentLastSeenPersistedAt.get(uid) || 0) < STUDENT_PRESENCE_LAST_SEEN_PERSIST_MS) return;
+  studentLastSeenPersistedAt.set(uid, now);
+  CommunityProfileModel.updateOne({ userId: uid }, { $set: { lastSeenAt: new Date(now) } }).catch(() => {});
+}
+
+/**
+ * Heartbeat / activity from the authenticated user (never a client-supplied id). Broadcasts
+ * `online` when the record is new and `update` only when status/activity actually changed.
+ * @param {string} userId
+ * @param {{ away?: boolean, activity?: string, studyingSubject?: string }} [patch]
+ */
+async function loadPresenceIdentity(userId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return {};
+  const cached = studentPresenceIdentityByUser.get(uid);
+  if (cached) return cached;
+  try {
+    const [u, p] = await Promise.all([
+      UserModel.findById(uid).select('firstName lastName').lean(),
+      CommunityProfileModel.findOne({ userId: uid }).select('username').lean(),
+    ]);
+    const identity = {
+      displayName: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim(),
+      username: String(p?.username || ''),
+    };
+    studentPresenceIdentityByUser.set(uid, identity);
+    return identity;
+  } catch {
+    return {};
+  }
+}
+
+async function touchStudentPresence(userId, patch = {}) {
+  const uid = String(userId || '').trim();
+  if (!uid) return null;
+  try {
+    const identity = patch.displayName || patch.username ? {} : await loadPresenceIdentity(uid);
+    const { record, previous } = await upsertPresence(uid, { ...identity, ...patch });
+    persistStudentLastSeen(uid);
+    if (!previous) {
+      emitStudentPresenceEvent('online', uid, record);
+    } else if (
+      previous.status !== record.status
+      || previous.activity !== record.activity
+      || previous.studyingSubject !== record.studyingSubject
+    ) {
+      emitStudentPresenceEvent('update', uid, record);
+    }
+    return record;
+  } catch (error) {
+    console.warn('[presence] touch failed:', error?.message || error);
+    return null;
+  }
+}
+
+async function endStudentPresence(userId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return;
+  try {
+    const removed = await removePresence(uid);
+    persistStudentLastSeen(uid, true);
+    studentLastSeenPersistedAt.delete(uid);
+    studentPresenceIdentityByUser.delete(uid);
+    if (removed) emitStudentPresenceEvent('offline', uid);
+  } catch (error) {
+    console.warn('[presence] end failed:', error?.message || error);
+  }
+}
 
 function registerStudentPresence(userId, clientId) {
   const uid = String(userId || '').trim();
@@ -795,91 +894,51 @@ function registerStudentPresence(userId, clientId) {
     set = new Set();
     studentPresenceClientIdsByUser.set(uid, set);
   }
-  const wasEmpty = set.size === 0;
   set.add(clientId);
-  if (!studentPresenceMetaByUser.has(uid)) {
-    studentPresenceMetaByUser.set(uid, { studyingSubject: '', away: false, lastPing: Date.now() });
-  } else {
-    const meta = studentPresenceMetaByUser.get(uid);
-    meta.lastPing = Date.now();
-  }
-  if (wasEmpty) {
-    broadcastSyncEvent({
-      role: 'student',
-      event: 'sync',
-      data: { type: 'community.presence', action: 'online', userId: uid },
-    });
-  }
+  void touchStudentPresence(uid);
 }
 
 function unregisterStudentPresence(userId, clientId) {
   const uid = String(userId || '').trim();
   if (!uid) return;
   const set = studentPresenceClientIdsByUser.get(uid);
-  if (!set) return;
-  set.delete(clientId);
-  if (!set.size) {
-    studentPresenceClientIdsByUser.delete(uid);
-    studentPresenceMetaByUser.delete(uid);
-    CommunityProfileModel.updateOne({ userId: uid }, { $set: { lastSeenAt: new Date() } }).catch(() => {});
-    broadcastSyncEvent({
-      role: 'student',
-      event: 'sync',
-      data: { type: 'community.presence', action: 'offline', userId: uid },
-    });
+  if (set) {
+    set.delete(clientId);
+    if (!set.size) studentPresenceClientIdsByUser.delete(uid);
   }
+  setTimeout(() => {
+    void (async () => {
+      if (studentPresenceClientIdsByUser.get(uid)?.size) return;
+      // Other API instances may still hold a socket for this user (Redis adapter); if that
+      // lookup fails, leave it to the heartbeat TTL rather than guessing.
+      const remote = await countStudentSockets(uid);
+      if (remote !== 0) return;
+      await endStudentPresence(uid);
+    })();
+  }, STUDENT_PRESENCE_DISCONNECT_GRACE_MS).unref?.();
 }
 
-/** No heartbeat for this long -> roster shows the user as "away" until the socket drops. */
-const STUDENT_PRESENCE_STALE_PING_MS = 120_000;
-const STUDENT_PRESENCE_LAST_SEEN_PERSIST_MS = 5 * 60_000;
-
-function isStudentPresencePingStale(meta, now = Date.now()) {
-  return now - Number(meta?.lastPing || 0) > STUDENT_PRESENCE_STALE_PING_MS;
+function heartbeatStudentPresence(userId, { away = false, activity } = {}) {
+  void touchStudentPresence(userId, { away, activity });
 }
 
-function broadcastStudentPresenceUpdate(uid) {
-  broadcastSyncEvent({
-    role: 'student',
-    event: 'sync',
-    data: { type: 'community.presence', action: 'update', userId: uid },
-  });
-}
-
-/**
- * Socket heartbeat from the web app (sent from every page while signed in). Keeps the user
- * "online" (not stale/away), throttles lastSeenAt writes, and only broadcasts when the
- * visible state actually changes so peers are not flooded with roster reloads.
- */
-function heartbeatStudentPresence(userId, { away = false } = {}) {
-  const uid = String(userId || '').trim();
-  if (!uid || !studentPresenceClientIdsByUser.has(uid)) return;
-  const now = Date.now();
-  const meta = studentPresenceMetaByUser.get(uid) || { studyingSubject: '', away: false, lastPing: 0 };
-  const changed = Boolean(meta.away) !== Boolean(away) || isStudentPresencePingStale(meta, now);
-  meta.away = Boolean(away);
-  meta.lastPing = now;
-  if (now - Number(meta.lastSeenPersistedAt || 0) > STUDENT_PRESENCE_LAST_SEEN_PERSIST_MS) {
-    meta.lastSeenPersistedAt = now;
-    CommunityProfileModel.updateOne({ userId: uid }, { $set: { lastSeenAt: new Date(now) } }).catch(() => {});
+const STUDENT_PRESENCE_SWEEP_MS = 15_000;
+setInterval(() => {
+  // SSE streams (older clients) are a live connection too: keep their record fresh.
+  const sseUserIds = new Set(Array.from(sseClients.student.values()).map((client) => String(client.userId || '')));
+  for (const uid of sseUserIds) {
+    if (uid) void touchStudentPresence(uid);
   }
-  studentPresenceMetaByUser.set(uid, meta);
-  if (changed) broadcastStudentPresenceUpdate(uid);
-}
-
-function touchStudentPresenceMeta(userId, patch) {
-  const uid = String(userId || '').trim();
-  if (!uid) return;
-  const prev = studentPresenceMetaByUser.get(uid) || { studyingSubject: '', away: false, lastPing: 0 };
-  if (patch.studyingSubject !== undefined) {
-    prev.studyingSubject = String(patch.studyingSubject || '').trim().slice(0, 80);
-  }
-  if (patch.away !== undefined) {
-    prev.away = Boolean(patch.away);
-  }
-  prev.lastPing = Date.now();
-  studentPresenceMetaByUser.set(uid, prev);
-}
+  void sweepExpiredPresence()
+    .then((expired) => {
+      for (const uid of expired) {
+        studentLastSeenPersistedAt.delete(uid);
+        studentPresenceIdentityByUser.delete(uid);
+        emitStudentPresenceEvent('offline', uid);
+      }
+    })
+    .catch(() => {});
+}, STUDENT_PRESENCE_SWEEP_MS).unref();
 
 function broadcastCommunityEventsToUserIds(targetUserIds, data) {
   const idSet = new Set(targetUserIds.map((x) => String(x || '')));
@@ -9041,26 +9100,48 @@ app.post('/api/auth/logout', async (req, res) => {
   const refreshToken = String(req.body?.refreshToken || readCookie(req, REFRESH_TOKEN_COOKIE_NAME) || '').trim();
   clearAuthCookies(res, req);
 
-  if (!refreshToken) {
+  let logoutUserId = '';
+  const accessToken = extractAccessToken(req);
+  if (accessToken) {
+    try {
+      const accessPayload = jwt.verify(accessToken, JWT_SECRET);
+      logoutUserId = String(accessPayload?.userId || '');
+    } catch {
+      // continue with refresh token
+    }
+  }
+
+  if (!refreshToken && !logoutUserId) {
     res.json({ message: 'Logged out.' });
     return;
   }
 
   try {
-    const payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
-    const user = await UserModel.findById(payload.userId);
+    let user = null;
+    let payload = null;
+    if (refreshToken) {
+      payload = jwt.verify(refreshToken, JWT_REFRESH_SECRET);
+      user = await UserModel.findById(payload.userId);
+    } else if (logoutUserId) {
+      user = await UserModel.findById(logoutUserId);
+    }
       if (user) {
-      const tokenHash = hashToken(refreshToken);
-      user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
+      logoutUserId = String(user._id);
+      if (refreshToken) {
+        const tokenHash = hashToken(refreshToken);
+        user.refreshTokens = (user.refreshTokens || []).filter((item) => item.tokenHash !== tokenHash);
+      }
 
+      let clearedActiveSession = false;
       if ((user.role || 'student') === 'student') {
-        const tokenSessionId = String(payload.sessionId || '');
+        const tokenSessionId = String(payload?.sessionId || '');
         const activeId = String(user.activeSession?.sessionId || '');
-        if (tokenSessionId && activeId === tokenSessionId) {
+        if (!refreshToken || (tokenSessionId && activeId === tokenSessionId)) {
           user.activeSession = null;
+          clearedActiveSession = true;
           console.log('[auth/logout] cleared_active_session', {
             userId: String(user._id),
-            sessionId: tokenSessionId,
+            sessionId: tokenSessionId || '(access-token)',
             email: redactEmailForLog(user.email || ''),
           });
         } else if (tokenSessionId) {
@@ -9077,6 +9158,10 @@ app.post('/api/auth/logout', async (req, res) => {
       if (isRedisConfigured() && (user.role || 'student') === 'student') {
         void cacheDel(cacheKey(`studentSession:${user._id}`));
       }
+      if (clearedActiveSession) {
+        await endStudentPresence(String(user._id));
+        void disconnectAllStudentSockets(String(user._id));
+      }
       await logSecurityEvent(req, {
         eventType: 'auth.logout_success',
         severity: 'info',
@@ -9085,6 +9170,10 @@ app.post('/api/auth/logout', async (req, res) => {
       });
     }
   } catch {
+    if (logoutUserId) {
+      await endStudentPresence(logoutUserId);
+      void disconnectAllStudentSockets(logoutUserId);
+    }
     await logSecurityEvent(req, {
       eventType: 'auth.logout_invalid_token',
       severity: 'warning',
@@ -9740,10 +9829,12 @@ app.put('/api/community/profile', ...studentPremiumSurface, async (req, res) => 
 app.get('/api/community/presence', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const viewerId = String(req.user._id);
-  const now = Date.now();
 
-  // "Online students" lists OTHER students only; the viewer is never part of their own roster.
-  const onlineUserIds = Array.from(studentPresenceClientIdsByUser.keys()).filter((id) => id !== viewerId);
+  // Live heartbeat records only (Redis, all instances). "Online students" lists OTHER
+  // students: the viewer is never part of their own roster.
+  const records = (await listPresence()).filter((record) => String(record.userId) !== viewerId);
+  const recordById = new Map(records.map((record) => [String(record.userId), record]));
+  const onlineUserIds = records.map((record) => String(record.userId)).filter((id) => isValidObjectId(id));
   if (!onlineUserIds.length) {
     res.json({ online: [], serverTime: new Date().toISOString() });
     return;
@@ -9759,30 +9850,48 @@ app.get('/api/community/presence', ...studentPremiumSurface, async (req, res) =>
     return !row?.hideOnlineStatus;
   });
 
-  const [users, profiles] = await Promise.all([
+  const participantKeys = visibleIds.map((id) => connectionKey(viewerId, id));
+  const [users, profiles, connectionRows, pendingSentRows, pendingReceivedRows] = await Promise.all([
     UserModel.find({ _id: { $in: visibleIds }, role: 'student' }).select(COMMUNITY_USER_SELECT).lean(),
     CommunityProfileModel.find({ userId: { $in: visibleIds } }).select(COMMUNITY_PROFILE_SELECT).lean(),
+    CommunityConnectionModel.find({ participantKey: { $in: participantKeys } }).select('participantKey blockedByUserIds').lean(),
+    CommunityConnectionRequestModel.find({ fromUserId: req.user._id, toUserId: { $in: visibleIds }, status: 'pending' }).select('toUserId').lean(),
+    CommunityConnectionRequestModel.find({ fromUserId: { $in: visibleIds }, toUserId: req.user._id, status: 'pending' }).select('fromUserId').lean(),
   ]);
 
   const profileByUser = new Map(profiles.map((item) => [String(item.userId), item]));
   const userById = new Map(users.map((item) => [String(item._id), item]));
+  const connectionByKey = new Map(connectionRows.map((item) => [String(item.participantKey), item]));
+  const pendingSent = new Set(pendingSentRows.map((item) => String(item.toUserId)));
+  const pendingReceived = new Set(pendingReceivedRows.map((item) => String(item.fromUserId)));
+
+  // Server-authoritative relationship state for each tile (drives Connect / Chat buttons).
+  const connectionStatusFor = (id) => {
+    const connection = connectionByKey.get(connectionKey(viewerId, id));
+    if (connection) {
+      return Array.isArray(connection.blockedByUserIds) && connection.blockedByUserIds.length ? 'blocked' : 'connected';
+    }
+    if (pendingSent.has(id)) return 'pending-sent';
+    if (pendingReceived.has(id)) return 'pending-received';
+    return 'none';
+  };
 
   const online = visibleIds
     .filter((id) => userById.has(id))
     .map((id) => {
       const u = userById.get(id);
       const p = profileByUser.get(id) || {};
-      const meta = studentPresenceMetaByUser.get(id) || { studyingSubject: '', away: false, lastPing: now };
-      const pingStale = isStudentPresencePingStale(meta, now);
-      const presenceStatus = meta.away || pingStale ? 'away' : 'online';
+      const record = recordById.get(id);
       const base = serializeCommunityUser({ user: u, profile: p });
       return {
         ...base,
-        presenceStatus,
-        studyingSubject: String(meta.studyingSubject || ''),
-        lastSeenAt: p.lastSeenAt ? new Date(p.lastSeenAt).toISOString() : null,
+        presenceStatus: record?.status === 'away' ? 'away' : 'online',
+        activity: String(record?.activity || ''),
+        studyingSubject: String(record?.studyingSubject || ''),
+        lastSeenAt: record?.lastSeen ? new Date(record.lastSeen).toISOString() : null,
         doNotDisturb: Boolean(p.doNotDisturb),
         hideOnlineStatus: Boolean(p.hideOnlineStatus),
+        connectionStatus: connectionStatusFor(id),
       };
     });
 
@@ -9791,22 +9900,11 @@ app.get('/api/community/presence', ...studentPremiumSurface, async (req, res) =>
 
 app.post('/api/community/presence/ping', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
-  const uid = String(req.user._id);
-  const before = studentPresenceMetaByUser.get(uid);
-  const beforeAway = Boolean(before?.away);
-  const beforeSubject = String(before?.studyingSubject || '');
-  const beforeStale = !before || isStudentPresencePingStale(before);
-  touchStudentPresenceMeta(uid, {
-    studyingSubject: req.body?.studyingSubject,
-    away: req.body?.away,
-  });
-  const after = studentPresenceMetaByUser.get(uid);
-  const changed = beforeStale
-    || beforeAway !== Boolean(after?.away)
-    || beforeSubject !== String(after?.studyingSubject || '');
-  if (changed && studentPresenceClientIdsByUser.has(uid)) {
-    broadcastStudentPresenceUpdate(uid);
-  }
+  const patch = {};
+  if (req.body?.away !== undefined) patch.away = Boolean(req.body.away);
+  if (typeof req.body?.studyingSubject === 'string') patch.studyingSubject = req.body.studyingSubject;
+  if (typeof req.body?.activity === 'string') patch.activity = req.body.activity;
+  await touchStudentPresence(String(req.user._id), patch);
   res.json({ ok: true });
 });
 
@@ -9977,10 +10075,11 @@ app.post('/api/community/connections/request', ...studentPremiumSurface, async (
     status: 'pending',
   });
 
-  broadcastSyncEvent({
-    role: 'all',
-    event: 'sync',
-    data: { type: 'community.connection.requested', fromUserId: String(req.user._id), toUserId },
+  broadcastCommunityEventsToUserIds([String(req.user._id), toUserId], {
+    type: 'community.connection.requested',
+    fromUserId: String(req.user._id),
+    toUserId,
+    requestId: String(created._id),
   });
 
   res.status(201).json({ requestId: String(created._id) });
@@ -10082,16 +10181,12 @@ app.post('/api/community/connections/requests/:requestId/respond', ...studentPre
   }
 
   await request.save();
-  broadcastSyncEvent({
-    role: 'all',
-    event: 'sync',
-    data: {
-      type: 'community.connection.responded',
-      requestId: String(request._id),
-      status: String(request.status || ''),
-      fromUserId: String(request.fromUserId),
-      toUserId: String(request.toUserId),
-    },
+  broadcastCommunityEventsToUserIds([String(request.fromUserId), String(request.toUserId)], {
+    type: 'community.connection.responded',
+    requestId: String(request._id),
+    status: String(request.status || ''),
+    fromUserId: String(request.fromUserId),
+    toUserId: String(request.toUserId),
   });
   res.json({ ok: true, status: request.status });
 });
@@ -10182,16 +10277,12 @@ app.post('/api/community/connections/:connectionId/unfriend', ...studentPremiumS
   await CommunityMessageModel.deleteMany({ connectionId: connection._id });
   await CommunityConnectionModel.deleteOne({ _id: connection._id });
 
-  broadcastSyncEvent({
-    role: 'all',
-    event: 'sync',
-    data: {
-      type: 'community.connection.unfriended',
-      connectionId,
-      actorUserId: myId,
-      participantA: participants[0],
-      participantB: participants[1],
-    },
+  broadcastCommunityEventsToUserIds(participants, {
+    type: 'community.connection.unfriended',
+    connectionId,
+    actorUserId: myId,
+    participantA: participants[0],
+    participantB: participants[1],
   });
 
   res.json({ ok: true });
@@ -10226,16 +10317,12 @@ app.post('/api/community/connections/:connectionId/block', ...studentPremiumSurf
     : { $pull: { blockedByUserIds: req.user._id } };
   await CommunityConnectionModel.updateOne({ _id: connection._id }, update);
 
-  broadcastSyncEvent({
-    role: 'all',
-    event: 'sync',
-    data: {
-      type: blocked ? 'community.connection.blocked' : 'community.connection.unblocked',
-      connectionId,
-      actorUserId: myId,
-      participantA: participants[0],
-      participantB: participants[1],
-    },
+  broadcastCommunityEventsToUserIds(participants, {
+    type: blocked ? 'community.connection.blocked' : 'community.connection.unblocked',
+    connectionId,
+    actorUserId: myId,
+    participantA: participants[0],
+    participantB: participants[1],
   });
 
   res.json({ ok: true, blocked });
@@ -10389,15 +10476,19 @@ app.post('/api/community/messages/:connectionId', ...studentPremiumSurface, asyn
     readByUserIds: [req.user._id],
   });
 
-  broadcastSyncEvent({
-    role: 'all',
-    event: 'sync',
-    data: {
-      type: 'community.message.sent',
-      connectionId,
-      senderUserId: String(req.user._id),
-      recipientUserId: otherUserId,
-    },
+  const serializedMessage = serializeCommunityMessage(created);
+  if (serializedMessage.attachment) {
+    serializedMessage.attachment = { ...serializedMessage.attachment, dataUrl: '' };
+  }
+  broadcastCommunityEventsToUserIds([String(req.user._id), otherUserId], {
+    type: 'community.message.sent',
+    connectionId,
+    senderUserId: String(req.user._id),
+    recipientUserId: otherUserId,
+    messageId: serializedMessage.id,
+    createdAt: serializedMessage.createdAt,
+    status: 'sent',
+    message: serializedMessage,
   });
 
   res.status(201).json({

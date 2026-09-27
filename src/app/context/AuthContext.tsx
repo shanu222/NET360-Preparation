@@ -32,6 +32,7 @@ import { showNeutralToast, showSuccessToast, showWarningToast } from '../lib/use
 import { updateAuthDebug } from '../lib/authDebugState';
 import { isNativeRuntime as isNativeRuntimePlatform, logNativeEvent } from '../lib/nativeDiagnostics';
 import { signInWithGoogleAndroidNative } from '../lib/nativeGoogleAuth';
+import { closeRealtimeScope } from '../lib/realtimeSocket';
 
 interface AuthUser {
   id: string;
@@ -1190,6 +1191,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       method: 'POST',
       body: JSON.stringify(rt ? { refreshToken: rt } : {}),
     }).catch(() => undefined);
+    closeRealtimeScope('student');
     clearClientAuthState();
     if (firebaseAuth) {
       void signOut(firebaseAuth).catch(() => undefined);

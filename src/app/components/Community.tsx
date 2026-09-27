@@ -33,6 +33,7 @@ import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, show
 
 interface CommunityUser {
   id: string;
+  userId?: string;
   firstName?: string;
   lastName?: string;
   targetProgram?: string;
@@ -56,11 +57,19 @@ interface CommunityUser {
   communityInterests?: string[];
   presenceStatus?: 'online' | 'away' | 'offline';
   studyingSubject?: string;
+  activity?: string;
 }
 
 interface OnlineStudentRow extends CommunityUser {
   presenceStatus?: 'online' | 'away' | 'offline';
   studyingSubject?: string;
+  activity?: string;
+}
+
+function isOwnCommunityRow(row: { id?: string; userId?: string } | null | undefined, selfId: string) {
+  const self = String(selfId || '').trim();
+  if (!self || !row) return false;
+  return String(row.id || '') === self || String(row.userId || '') === self;
 }
 
 interface CommunityRequestRow {
@@ -367,6 +376,8 @@ const ROSTER_ACTION_TARGET_TAB: Record<RosterActionKind, string> = {
 const PRESENCE_ROW_COMPARE_KEYS: Array<keyof OnlineStudentRow> = [
   'presenceStatus',
   'studyingSubject',
+  'activity',
+  'connectionStatus',
   'lastSeenAt',
   'doNotDisturb',
   'hideOnlineStatus',
@@ -411,6 +422,16 @@ function mergePresenceRoster(prev: OnlineStudentRow[], next: OnlineStudentRow[])
   return merged;
 }
 
+function upsertCommunityMessage(list: MessageRow[], incoming: MessageRow): MessageRow[] {
+  const id = String(incoming?.id || '');
+  if (!id) return list;
+  const index = list.findIndex((row) => String(row.id) === id);
+  if (index === -1) return [...list, incoming];
+  const next = list.slice();
+  next[index] = { ...list[index], ...incoming, id };
+  return next;
+}
+
 function CommunityInner() {
   const { token, user } = useAuth();
   const { surface, me, loading: subLoading } = useSubscription();
@@ -420,6 +441,18 @@ function CommunityInner() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState('discover-students');
   const [leaderboardPeriod, setLeaderboardPeriod] = useState<'weekly' | 'monthly'>('weekly');
+
+  useEffect(() => {
+    const activity = activeTab === 'quiz-battles'
+      ? 'Quiz Battle'
+      : activeTab === 'discussion-rooms'
+        ? 'Study Room'
+        : 'Community';
+    window.dispatchEvent(new CustomEvent('net360:presence-activity', { detail: { activity } }));
+    return () => {
+      window.dispatchEvent(new CustomEvent('net360:presence-activity', { detail: { activity: '' } }));
+    };
+  }, [activeTab]);
 
   const [profile, setProfile] = useState<CommunityUser | null>(null);
   const [usernameInput, setUsernameInput] = useState('');
@@ -526,6 +559,7 @@ function CommunityInner() {
   const memoryCacheRef = useRef<Map<string, CommunityCacheEntry>>(new Map());
   const inFlightGetRef = useRef<Map<string, Promise<unknown>>>(new Map());
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
+  const refreshQueuedRef = useRef(false);
   const searchDebounceRef = useRef<number | null>(null);
   const messageFileInputRef = useRef<HTMLInputElement | null>(null);
   const voiceRecorderRef = useRef<MediaRecorder | null>(null);
@@ -606,11 +640,10 @@ function CommunityInner() {
     if (!options?.force) {
       const cached = readCachedPayload<T>(path);
       if (cached) return cached;
-    }
-
-    const inFlight = inFlightGetRef.current.get(path);
-    if (inFlight) {
-      return inFlight as Promise<T>;
+      const inFlight = inFlightGetRef.current.get(path);
+      if (inFlight) {
+        return inFlight as Promise<T>;
+      }
     }
 
     const requestPromise = apiRequest<T>(path, {}, token)
@@ -722,7 +755,7 @@ function CommunityInner() {
       // A newer request already started; let it win to avoid applying a stale snapshot.
       if (seq !== presenceRequestSeqRef.current) return;
       const selfId = String(user?.id || '');
-      const others = (payload.online || []).filter((row) => String(row.id) !== selfId);
+      const others = (payload.online || []).filter((row) => !isOwnCommunityRow(row, selfId));
       setOnlineStudents((prev) => mergePresenceRoster(prev, others));
     } catch {
       // Keep the last known roster; a transient failure must not blank the list.
@@ -801,10 +834,14 @@ function CommunityInner() {
     if (!token) return;
 
     if (refreshInFlightRef.current) {
+      refreshQueuedRef.current = true;
       return refreshInFlightRef.current;
     }
 
     refreshInFlightRef.current = (async () => {
+      let passForce = force;
+      do {
+      refreshQueuedRef.current = false;
       const [
         profilePayload,
         requestsPayload,
@@ -812,11 +849,11 @@ function CommunityInner() {
         roomsPayload,
         partnersPayload,
       ] = await Promise.all([
-        requestCached<{ profile: CommunityUser }>('/api/community/profile', { force }),
-        requestCached<{ incoming: CommunityRequestRow[]; outgoing: CommunityRequestRow[] }>('/api/community/connections/requests', { force }),
-        requestCached<{ connections: ConnectionRow[] }>('/api/community/connections', { force }),
-        requestCached<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms', { force }),
-        requestCached<{ studyPartners: Array<{ compatibility: number; user: CommunityUser; reasons?: string[] }> }>('/api/community/study-partners', { force }),
+        requestCached<{ profile: CommunityUser }>('/api/community/profile', { force: passForce }),
+        requestCached<{ incoming: CommunityRequestRow[]; outgoing: CommunityRequestRow[] }>('/api/community/connections/requests', { force: passForce }),
+        requestCached<{ connections: ConnectionRow[] }>('/api/community/connections', { force: passForce }),
+        requestCached<{ rooms: DiscussionRoom[] }>('/api/community/discussion-rooms', { force: passForce }),
+        requestCached<{ studyPartners: Array<{ compatibility: number; user: CommunityUser; reasons?: string[] }> }>('/api/community/study-partners', { force: passForce }),
       ]);
 
       setProfile(profilePayload.profile || null);
@@ -845,7 +882,7 @@ function CommunityInner() {
       const nextRoomId = activeRoomId || (roomsPayload.rooms?.[0]?.id || '');
       setActiveRoomId(nextRoomId);
       if (nextRoomId) {
-        await loadDiscussionRoomPosts(nextRoomId, force);
+        await loadDiscussionRoomPosts(nextRoomId, passForce);
       } else {
         setRoomPosts([]);
       }
@@ -853,12 +890,14 @@ function CommunityInner() {
       const nextConnectionId = activeConnectionId || (connectionsPayload.connections?.[0]?.connectionId || '');
       setActiveConnectionId(nextConnectionId);
       if (nextConnectionId) {
-        const messagePayload = await requestCached<{ messages: MessageRow[] }>(`/api/community/messages/${nextConnectionId}`, { force, ttlMs: 15_000 });
+        const messagePayload = await requestCached<{ messages: MessageRow[] }>(`/api/community/messages/${nextConnectionId}`, { force: passForce, ttlMs: 15_000 });
         setMessages(messagePayload.messages || []);
       } else {
         setMessages([]);
       }
       void loadPresence({ silent: true });
+      passForce = true;
+      } while (refreshQueuedRef.current);
     })().finally(() => {
       refreshInFlightRef.current = null;
     });
@@ -867,9 +906,13 @@ function CommunityInner() {
   }, [token, requestCached, activeRoomId, activeConnectionId, loadDiscussionRoomPosts, loadPresence]);
 
   const refreshCommunityRef = useRef(refreshCommunity);
+  const invalidateCommunityCacheRef = useRef(invalidateCommunityCache);
   useEffect(() => {
     refreshCommunityRef.current = refreshCommunity;
   }, [refreshCommunity]);
+  useEffect(() => {
+    invalidateCommunityCacheRef.current = invalidateCommunityCache;
+  }, [invalidateCommunityCache]);
 
   useLayoutEffect(() => {
     if (!token) return;
@@ -1191,7 +1234,18 @@ function CommunityInner() {
       }, 160);
     };
 
-    const applyCommunityPayload = (parsed: { type?: string; action?: string; connectionId?: string; typing?: boolean; userId?: string }) => {
+    const applyCommunityPayload = (parsed: {
+      type?: string;
+      action?: string;
+      connectionId?: string;
+      typing?: boolean;
+      userId?: string;
+      status?: string;
+      activity?: string;
+      studyingSubject?: string;
+      lastSeenAt?: string;
+      message?: MessageRow;
+    }) => {
       const t = String(parsed.type || '');
       // The shared socket also carries non-community events (support chat, subscription,
       // profile...). Only community.* events may trigger a Community reload.
@@ -1213,13 +1267,27 @@ function CommunityInner() {
         // Our own presence changes are not part of our roster.
         if (uid && uid === authUserId) return;
         if (parsed.action === 'offline' && uid) {
-          // Server only emits offline once the user's last connection is gone: drop the tile now.
           setOnlineStudents((prev) => (
-            prev.some((row) => String(row.id) === uid) ? prev.filter((row) => String(row.id) !== uid) : prev
+            prev.some((row) => String(row.id) === uid || String(row.userId) === uid)
+              ? prev.filter((row) => String(row.id) !== uid && String(row.userId) !== uid)
+              : prev
           ));
+          return;
         }
-        // online / update (away, "currently studying") need profile fields: quiet reconcile.
-        schedulePresenceReconcile();
+        if (parsed.action === 'update' && uid) {
+          setOnlineStudents((prev) => prev.map((row) => {
+            if (String(row.id) !== uid && String(row.userId) !== uid) return row;
+            return {
+              ...row,
+              presenceStatus: parsed.status === 'away' ? 'away' : 'online',
+              activity: parsed.activity !== undefined ? String(parsed.activity) : row.activity,
+              studyingSubject: parsed.studyingSubject !== undefined ? String(parsed.studyingSubject) : row.studyingSubject,
+              lastSeenAt: parsed.lastSeenAt || row.lastSeenAt,
+            };
+          }));
+          return;
+        }
+        schedulePresenceReconcile(0);
         return;
       }
       if (t === 'community.message.read') {
@@ -1229,7 +1297,22 @@ function CommunityInner() {
         return;
       }
       if (t === 'community.message.sent') {
-        schedulePresenceReconcile();
+        const incoming = parsed.message;
+        if (incoming?.id && String(incoming.connectionId || parsed.connectionId || '') === activeConnectionIdRef.current) {
+          setMessages((prev) => upsertCommunityMessage(prev, incoming));
+        }
+        invalidateCommunityCacheRef.current('/api/community/messages');
+        invalidateCommunityCacheRef.current('/api/community/connections');
+        if (document.hidden) return;
+        scheduleFullCommunityRefresh();
+        return;
+      }
+      if (t.startsWith('community.connection.')) {
+        invalidateCommunityCacheRef.current('/api/community/connections');
+        invalidateCommunityCacheRef.current('/api/community');
+        if (document.hidden) return;
+        scheduleFullCommunityRefresh();
+        return;
       }
       if (document.hidden) return;
       scheduleFullCommunityRefresh();
@@ -1497,6 +1580,7 @@ function CommunityInner() {
     // One request per user at a time: a double click must not send two invitations.
     if (connectingUserIdsRef.current.has(toUserId)) return;
     const status = [
+      ...onlineStudents,
       ...searchResults,
       ...studyPartners.map((item) => item.user),
       ...allCommunityUsers,
@@ -1515,8 +1599,10 @@ function CommunityInner() {
         body: JSON.stringify({ toUserId }),
       }, token);
       showSuccessToast('Connection request sent.');
+      setOnlineStudents((prev) => prev.map((row) => (
+        row.id === toUserId ? { ...row, connectionStatus: 'pending-sent' } : row
+      )));
       invalidateCommunityCache('/api/community');
-      // Resulting state ("Request sent") comes from the server via the refreshed lists below.
       await Promise.all([refreshCommunity(true), searchUsers(searchQuery, true, true)]);
     } catch (error) {
       handleApiError(error, 'Could not send request.');
@@ -1644,31 +1730,32 @@ function CommunityInner() {
       }
     }, 2500);
 
-    const sendOnce = async () => {
-      await apiRequest(`/api/community/messages/${activeConnectionId}`, {
-        method: 'POST',
-        body: JSON.stringify(payload),
-      }, token);
-    };
+    const sendOnce = async () => apiRequest<{ message: MessageRow }>(`/api/community/messages/${activeConnectionId}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }, token);
 
     try {
       setIsSendingMessage(true);
+      let created: { message: MessageRow } | null = null;
       try {
-        await sendOnce();
+        created = await sendOnce();
       } catch (firstError) {
         await new Promise((r) => setTimeout(r, 400));
         try {
-          await sendOnce();
+          created = await sendOnce();
         } catch {
           throw firstError;
         }
+      }
+      if (created?.message?.id) {
+        setMessages((prev) => upsertCommunityMessage(prev, created.message));
       }
       showSuccessToast('Message sent.');
       setMessageInput('');
       setMessageAttachment(null);
       invalidateCommunityCache('/api/community/messages');
       await refreshActiveMessages();
-      await refreshCommunity(true);
     } catch (error) {
       handleApiError(error, 'Could not send message.');
       showErrorToast('Delivery failed. You can try again.');
@@ -2076,35 +2163,24 @@ function CommunityInner() {
                 )}
               </CardTitle>
               <CardDescription>
-                Real-time roster via your open session. Others only see you if you don&apos;t hide your status in your profile.
+                Students who are signed in on the web app right now. You never appear in your own list.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                <div className="min-w-0 flex-1 space-y-1.5">
-                  <Label>Currently studying (optional, shown on your tile)</Label>
-                  <Input
-                    value={studyingSubjectPing}
-                    onChange={(e) => setStudyingSubjectPing(e.target.value)}
-                    placeholder="e.g. Integration techniques"
-                  />
-                </div>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="shrink-0"
-                  onClick={() => void loadPresence({ silent: false })}
-                  disabled={presenceLoading}
-                  aria-busy={presenceLoading}
-                >
-                  {presenceLoading ? 'Refreshing…' : 'Refresh roster'}
-                </Button>
+              <div className="min-w-0 space-y-1.5">
+                <Label>Currently studying (optional, shown to others)</Label>
+                <Input
+                  value={studyingSubjectPing}
+                  onChange={(e) => setStudyingSubjectPing(e.target.value)}
+                  placeholder="e.g. Integration techniques"
+                />
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {onlineStudents.map((s) => {
-                  if (String(s.id) === String(user.id)) return null;
-                  const netStatus = [...allCommunityUsers, ...searchResults].find((x) => x.id === s.id)?.connectionStatus;
+                  if (isOwnCommunityRow(s, String(user.id))) return null;
+                  const netStatus = s.connectionStatus
+                    || [...allCommunityUsers, ...searchResults].find((x) => x.id === s.id)?.connectionStatus;
                   const pendingKind = pendingRosterAction?.userId === s.id ? pendingRosterAction.kind : null;
                   const isConnecting = connectingUserIds.has(s.id);
                   const tileName = displayName(s);
@@ -2133,9 +2209,14 @@ function CommunityInner() {
                           </p>
                         </div>
                       </div>
+                      {s.activity ? (
+                        <p className="mt-3 text-xs font-medium text-slate-700 dark:text-slate-200">
+                          {s.activity}
+                        </p>
+                      ) : null}
                       {s.studyingSubject ? (
-                        <p className="mt-3 rounded-lg border border-slate-200/80 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-800 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100">
-                          <span className="text-muted-foreground">Focus: </span>
+                        <p className={`${s.activity ? 'mt-1' : 'mt-3'} rounded-lg border border-slate-200/80 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-800 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100`}>
+                          <span className="text-muted-foreground">Currently studying: </span>
                           <span className="font-medium">{s.studyingSubject}</span>
                         </p>
                       ) : null}
@@ -2149,9 +2230,9 @@ function CommunityInner() {
                           variant="secondary"
                           className="shadow-sm"
                           onClick={() => openChatWithUser(s.id)}
-                          disabled={Boolean(pendingRosterAction)}
+                          disabled={netStatus !== 'connected' || Boolean(pendingRosterAction)}
                           aria-busy={pendingKind === 'chat'}
-                          aria-label={pendingKind === 'chat' ? `Opening chat with ${tileName}` : `Chat with ${tileName}`}
+                          aria-label={netStatus !== 'connected' ? `Chat locked until connected with ${tileName}` : pendingKind === 'chat' ? `Opening chat with ${tileName}` : `Chat with ${tileName}`}
                         >
                           {pendingKind === 'chat' ? 'Opening…' : 'Chat'}
                         </Button>
@@ -2159,8 +2240,14 @@ function CommunityInner() {
                           type="button"
                           size="sm"
                           variant="outline"
-                          onClick={() => void sendConnectionRequest(s.id)}
-                          disabled={isConnecting || !canSendConnectionRequest(netStatus)}
+                          onClick={() => {
+                            if (netStatus === 'pending-received') {
+                              setActiveTab('discover-students');
+                              return;
+                            }
+                            void sendConnectionRequest(s.id);
+                          }}
+                          disabled={isConnecting || (netStatus !== 'pending-received' && !canSendConnectionRequest(netStatus))}
                           aria-busy={isConnecting}
                           aria-label={`${connectButtonLabel(netStatus, s.id)} — ${tileName}`}
                         >
@@ -2194,7 +2281,7 @@ function CommunityInner() {
                   );
                 })}
               </div>
-              {!onlineStudents.some((s) => String(s.id) !== String(user.id)) && !presenceLoading ? (
+              {!onlineStudents.some((s) => !isOwnCommunityRow(s, String(user.id))) && !presenceLoading ? (
                 <div className="rounded-xl border border-dashed p-8 text-center">
                   <p className="text-sm font-medium text-slate-800 dark:text-slate-100">No other students are currently online.</p>
                   <p className="mt-1 text-xs text-muted-foreground">Study sessions spike after school hours — invite friends or jump into Discussion Rooms meanwhile.</p>

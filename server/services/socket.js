@@ -41,6 +41,8 @@ function resolveHandshakeToken(handshake, accessCookieName) {
 /** @type {import('socket.io').Server | null} */
 let ioRef = null;
 
+const SESSION_RECHECK_MS = 5 * 60_000;
+
 function studentRoom(userId) {
   return `user:${String(userId || '')}`;
 }
@@ -59,7 +61,7 @@ function adminRoom(userId) {
  * @param {boolean | string[]} [opts.corsOrigins] Same as Express CORS: true = any, or allowlist of origins
  * @param {(userId: string, clientId: string) => void} [opts.onStudentPresenceRegister]
  * @param {(userId: string, clientId: string) => void} [opts.onStudentPresenceUnregister]
- * @param {(userId: string, meta: { away: boolean }) => void} [opts.onStudentPresenceHeartbeat]
+ * @param {(userId: string, meta: { away: boolean, activity?: string }) => void} [opts.onStudentPresenceHeartbeat]
  */
 export async function initSocketIo(httpServer, opts) {
   const {
@@ -170,17 +172,38 @@ export async function initSocketIo(httpServer, opts) {
 
     // App-wide presence heartbeat from the web client (any page, not just Community).
     // Offline is still driven by socket disconnect / Socket.IO ping timeout.
+    // The user id is always the authenticated socket's, never taken from the payload.
     let lastHeartbeatAt = 0;
-    let lastHeartbeatAway = null;
-    socket.on('presence:heartbeat', (payload) => {
+    let lastHeartbeatKey = '';
+    let lastSessionCheckAt = Date.now();
+    socket.on('presence:heartbeat', async (payload) => {
       if (role === 'admin') return;
       const now = Date.now();
-      const away = Boolean(payload && typeof payload === 'object' && payload.away);
-      if (away === lastHeartbeatAway && now - lastHeartbeatAt < 5_000) return;
+      const body = payload && typeof payload === 'object' ? payload : {};
+      const away = Boolean(body.away);
+      const activity = typeof body.activity === 'string' ? body.activity.slice(0, 40) : undefined;
+      const key = `${away}|${activity ?? ''}`;
+      if (key === lastHeartbeatKey && now - lastHeartbeatAt < 5_000) return;
       lastHeartbeatAt = now;
-      lastHeartbeatAway = away;
+      lastHeartbeatKey = key;
+
+      // Sockets are authenticated at handshake; re-check the session every few minutes so a
+      // logged-out / replaced session cannot keep heartbeating on an old connection.
+      if (now - lastSessionCheckAt > SESSION_RECHECK_MS) {
+        lastSessionCheckAt = now;
+        try {
+          const user = await UserModel.findById(userId).select('role activeSession').lean();
+          if (!user || !isSocketSessionValid(user, { sessionId: socket.data.sessionId })) {
+            socket.disconnect(true);
+            return;
+          }
+        } catch {
+          // transient DB error: keep the socket, check again next time
+        }
+      }
+
       try {
-        onStudentPresenceHeartbeat?.(userId, { away });
+        onStudentPresenceHeartbeat?.(userId, { away, activity });
       } catch {
         // non-fatal
       }
@@ -228,7 +251,35 @@ export async function disconnectStudentSocketsWithStaleSession(userId, staleSess
   }
 }
 
+/**
+ * Number of sockets a student holds across ALL instances (via the Redis adapter).
+ * @returns {Promise<number>} -1 when it could not be determined
+ */
+export async function countStudentSockets(userId) {
+  if (!ioRef) return 0;
+  try {
+    const sockets = await ioRef.in(studentRoom(userId)).fetchSockets();
+    return sockets.length;
+  } catch {
+    return -1;
+  }
+}
+
 /** @param {string} userId */
+/** Drop every socket for this student (logout). Works across instances via the Redis adapter. */
+export async function disconnectAllStudentSockets(userId) {
+  const uid = String(userId || '').trim();
+  if (!ioRef || !uid) return;
+  try {
+    const sockets = await ioRef.in(studentRoom(uid)).fetchSockets();
+    for (const s of sockets) {
+      s.disconnect(true);
+    }
+  } catch {
+    // non-fatal
+  }
+}
+
 export function emitSocketSyncToStudentUser(userId, data) {
   if (!ioRef) return;
   try {
