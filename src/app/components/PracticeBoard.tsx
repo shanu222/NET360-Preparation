@@ -11,7 +11,6 @@ import {
 } from './ui/dialog';
 import { Input } from './ui/input';
 import { apiRequest, downloadBinary, API_BASE } from '../lib/api';
-import { Capacitor } from '@capacitor/core';
 import { logNativeEvent } from '../lib/nativeDiagnostics';
 import {
   downloadDataUrlFile as downloadDataUrlFileSafe,
@@ -142,23 +141,59 @@ function buildRandomQuestionQuery(excludeIds: string[] = []) {
   return query ? `?${query}` : '';
 }
 
+const practiceBoardMediaCache = new Map<string, Promise<string>>();
+
+function practiceBoardApiPath(raw?: string | null) {
+  const value = String(raw || '').trim();
+  if (!value || value.startsWith('data:') || value.startsWith('blob:')) return '';
+  try {
+    const path = /^https?:\/\//i.test(value)
+      ? `${new URL(value).pathname}${new URL(value).search}`
+      : (value.startsWith('/') ? value : `/${value}`);
+    return path.startsWith('/api/') ? path : '';
+  } catch {
+    return '';
+  }
+}
+
+function loadPracticeBoardMediaSrc(raw?: string | null): Promise<string> {
+  const resolved = resolvePracticeBoardMediaSrc(raw);
+  if (!resolved) return Promise.resolve('');
+  if (resolved.startsWith('data:') || resolved.startsWith('blob:')) return Promise.resolve(resolved);
+  const apiPath = practiceBoardApiPath(raw) || practiceBoardApiPath(resolved);
+  if (!apiPath) return Promise.resolve(resolved);
+  const cached = practiceBoardMediaCache.get(apiPath);
+  if (cached) return cached;
+  const pending = downloadBinary(apiPath)
+    .then(({ blob }) => {
+      if (!blob || blob.size < 8) throw new Error('empty practice board file');
+      return URL.createObjectURL(blob);
+    })
+    .catch((error) => {
+      practiceBoardMediaCache.delete(apiPath);
+      throw error;
+    });
+  practiceBoardMediaCache.set(apiPath, pending);
+  return pending;
+}
+
 async function requestRandomBoardQuestion(excludeIds: string[] = []): Promise<BoardQuestion | null> {
   const payload = await apiRequest<{ question: BoardQuestion }>(
     `/api/practice-board/questions/random${buildRandomQuestionQuery(excludeIds)}`,
-    { retryCount: 1, retryDelayMs: 400, timeoutMs: 12_000 },
+    { retryCount: 0, timeoutMs: 12_000 },
   );
-  return isUsableBoardQuestion(payload?.question) ? payload.question : null;
+  const question = isUsableBoardQuestion(payload?.question) ? payload.question : null;
+  if (question) prefetchBoardQuestionMedia(question);
+  return question;
 }
 
 function prefetchBoardQuestionMedia(question: BoardQuestion | null | undefined) {
   if (!isUsableBoardQuestion(question)) return;
   for (const file of [question.questionFile, question.solutionFile]) {
-    const src = resolvePracticeBoardMediaSrc(file?.dataUrl);
-    if (!src || src.startsWith('data:')) continue;
-    if (!isImageMimeType(file?.mimeType, file?.name) && !src.includes('/files/')) continue;
-    const img = new Image();
-    img.decoding = 'async';
-    img.src = src;
+    const raw = file?.dataUrl;
+    if (!raw) continue;
+    if (!isImageMimeType(file?.mimeType, file?.name) && !String(raw).includes('/files/')) continue;
+    void loadPracticeBoardMediaSrc(raw).catch(() => undefined);
   }
 }
 
@@ -225,39 +260,34 @@ function PracticeBoardImage({
 }: {
   src: string;
   alt: string;
-  onOpenFullSize: () => void;
+  onOpenFullSize: (loadedSrc: string) => void;
   frameClassName: string;
 }) {
-  const [displaySrc, setDisplaySrc] = useState(() => resolvePracticeBoardMediaSrc(src));
+  const [displaySrc, setDisplaySrc] = useState('');
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    const resolved = resolvePracticeBoardMediaSrc(src);
-    setFailed(false);
-    setDisplaySrc(resolved);
-    if (!resolved || resolved.startsWith('data:') || resolved.startsWith('blob:')) return undefined;
-    if (!Capacitor.isNativePlatform()) return undefined;
-
-    let objectUrl = '';
     let cancelled = false;
-    const apiPath = String(src || '').startsWith('/') ? src : '';
-    void downloadBinary(apiPath || resolved)
-      .then(({ blob }) => {
-        if (cancelled || !blob || blob.size < 8) return;
-        objectUrl = URL.createObjectURL(blob);
-        setDisplaySrc(objectUrl);
+    setFailed(false);
+    setDisplaySrc('');
+    void loadPracticeBoardMediaSrc(src)
+      .then((next) => {
+        if (cancelled) return;
+        if (!next) {
+          setFailed(true);
+          return;
+        }
+        setDisplaySrc(next);
       })
       .catch(() => {
-        if (!cancelled) setDisplaySrc(resolved);
+        if (!cancelled) setFailed(true);
       });
-
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [src]);
 
-  if (failed || !displaySrc) {
+  if (failed) {
     return (
       <p className="mt-3 text-sm text-slate-700 dark:text-slate-200">
         Question image could not be displayed. Tap Next Question to load another.
@@ -265,22 +295,30 @@ function PracticeBoardImage({
     );
   }
 
+  if (!displaySrc) {
+    return (
+      <div className={`mt-3 flex min-h-28 w-full items-center justify-center rounded-xl border bg-white px-4 py-6 text-sm text-slate-600 dark:bg-slate-900 dark:text-slate-200 ${frameClassName}`}>
+        Loading question…
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"
-      onClick={onOpenFullSize}
-      className={`group relative mt-3 block max-w-full overflow-hidden rounded-xl border bg-white text-left shadow-sm transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 dark:border-slate-600 dark:bg-slate-900 ${frameClassName}`}
+      onClick={() => onOpenFullSize(displaySrc)}
+      className={`group relative mt-3 block w-full max-w-full overflow-hidden rounded-xl border bg-white text-left shadow-sm transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 active:brightness-95 dark:border-slate-600 dark:bg-slate-900 ${frameClassName}`}
       aria-label={`View ${alt} full size`}
     >
       <img
         src={displaySrc}
         alt={alt}
-        className="max-h-56 w-auto max-w-full object-contain sm:max-h-72"
+        className="mx-auto block h-auto max-h-[min(46vh,360px)] w-full object-contain"
         loading="eager"
         decoding="async"
         onError={() => setFailed(true)}
       />
-      <span className="pointer-events-none absolute inset-0 bg-gradient-to-t from-slate-950/45 via-transparent to-transparent opacity-80 transition group-hover:opacity-100" />
+      <span className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-slate-950/55 to-transparent" />
       <span className="absolute bottom-2 right-2 inline-flex items-center gap-1.5 rounded-full bg-white/95 px-2.5 py-1 text-[11px] font-semibold tracking-wide text-slate-800 shadow-md ring-1 ring-black/5">
         <Maximize2 className="h-3.5 w-3.5 text-indigo-600" />
         Full size
@@ -504,10 +542,10 @@ export function PracticeBoard() {
   const applyQuestion = useCallback((question: BoardQuestion) => {
     currentIdRef.current = question.id;
     rememberSeenQuestion(question.id);
+    prefetchBoardQuestionMedia(question);
     setActiveQuestion(question);
     writeCachedQuestion(question);
     setShowAnswer(false);
-    prefetchBoardQuestionMedia(question);
     logNativeEvent('practice-board', 'random-question-loaded', {
       hasQuestion: true,
       subject: question.subject || '',
@@ -902,9 +940,9 @@ export function PracticeBoard() {
                 src={questionImage.dataUrl}
                 alt="Question"
                 frameClassName="border-indigo-100"
-                onOpenFullSize={() =>
+                onOpenFullSize={(loadedSrc) =>
                   setFullSizeImage({
-                    src: resolvePracticeBoardMediaSrc(questionImage.dataUrl),
+                    src: loadedSrc,
                     title: 'Question',
                     alt: 'Question',
                   })
@@ -936,9 +974,9 @@ export function PracticeBoard() {
                   src={solutionImage.dataUrl}
                   alt="Answer"
                   frameClassName="border-emerald-200"
-                  onOpenFullSize={() =>
+                  onOpenFullSize={(loadedSrc) =>
                     setFullSizeImage({
-                      src: resolvePracticeBoardMediaSrc(solutionImage.dataUrl),
+                      src: loadedSrc,
                       title: 'Answer',
                       alt: 'Answer',
                     })
@@ -959,21 +997,21 @@ export function PracticeBoard() {
       </Card>
 
       <Dialog open={Boolean(fullSizeImage)} onOpenChange={(open) => { if (!open) setFullSizeImage(null); }}>
-        <DialogContent className="max-h-[min(96dvh,calc(100dvh-1rem))] w-[min(96vw,1120px)] max-w-[min(96vw,1120px)] overflow-hidden border-slate-800 bg-slate-950 p-0 text-white shadow-2xl sm:max-w-[min(96vw,1120px)] md:max-w-[min(96vw,1120px)] [&>button]:text-white [&>button]:hover:bg-white/10 [&>button]:hover:text-white">
-          <div className="border-b border-white/10 px-4 py-3 pr-12">
+        <DialogContent className="net360-fullscreen-media gap-0 overflow-hidden border-0 bg-slate-950 p-0 text-white shadow-none [&>button]:text-white [&>button]:hover:bg-white/10 [&>button]:hover:text-white">
+          <div className="shrink-0 border-b border-white/10 px-4 py-3 pr-14 pt-[max(0.75rem,env(safe-area-inset-top))]">
             <DialogTitle className="text-sm font-semibold tracking-wide text-white">
               {fullSizeImage?.title || 'Preview'}
             </DialogTitle>
             <DialogDescription className="text-xs text-slate-300">
-              Click outside or press Esc to close
+              Tap outside or press Esc to close
             </DialogDescription>
           </div>
-          <div className="flex max-h-[min(82dvh,860px)] items-center justify-center bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.18),transparent_58%),#020617] p-3 sm:p-5">
+          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[radial-gradient(circle_at_center,rgba(99,102,241,0.18),transparent_58%),#020617] px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
             {fullSizeImage ? (
               <img
                 src={fullSizeImage.src}
                 alt={fullSizeImage.alt}
-                className="max-h-[min(78dvh,820px)] w-auto max-w-full rounded-lg object-contain shadow-[0_24px_60px_rgba(0,0,0,0.45)]"
+                className="max-h-full max-w-full object-contain"
               />
             ) : null}
           </div>

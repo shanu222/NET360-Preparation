@@ -2472,7 +2472,7 @@ function CommunityInner() {
         </TabsContent>
 
         <TabsContent value="discover-students" className="mt-0 space-y-4">
-          <Card className="min-h-[120px]">
+          <Card className="min-h-[120px] min-w-0 max-w-full">
             <CardHeader>
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div>
@@ -2498,7 +2498,7 @@ function CommunityInner() {
                 ) : null}
               </div>
             </CardHeader>
-            <CardContent className="space-y-3">
+            <CardContent className="min-w-0 space-y-3">
               {!isCommunityProfileExpanded ? (
                 <div className="grid gap-2 rounded-lg border bg-slate-50/70 p-3 text-sm md:grid-cols-2">
                   <p><span className="text-muted-foreground">Username:</span> {usernameInput || 'Not set'}</p>
@@ -2621,18 +2621,28 @@ function CommunityInner() {
                 />
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="flex items-center gap-3 rounded-lg border border-slate-200/80 bg-white/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
-                  <Switch checked={hideOnlineStatus} onCheckedChange={setHideOnlineStatus} id="hide-online" />
-                  <Label htmlFor="hide-online" className="cursor-pointer text-sm leading-snug">
+              <div className="grid min-w-0 grid-cols-1 gap-3">
+                <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-200/80 bg-white/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                  <Label htmlFor="hide-online" className="min-w-0 cursor-pointer text-sm leading-snug">
                     Hide my online status
                   </Label>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className={`text-xs font-semibold ${hideOnlineStatus ? 'text-indigo-600 dark:text-indigo-300' : 'text-slate-500'}`}>
+                      {hideOnlineStatus ? 'On' : 'Off'}
+                    </span>
+                    <Switch checked={hideOnlineStatus} onCheckedChange={setHideOnlineStatus} id="hide-online" aria-label="Hide my online status" />
+                  </div>
                 </div>
-                <div className="flex items-center gap-3 rounded-lg border border-slate-200/80 bg-white/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
-                  <Switch checked={doNotDisturb} onCheckedChange={setDoNotDisturb} id="dnd-mode" />
-                  <Label htmlFor="dnd-mode" className="cursor-pointer text-sm leading-snug">
+                <div className="flex min-w-0 items-center justify-between gap-3 rounded-lg border border-slate-200/80 bg-white/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                  <Label htmlFor="dnd-mode" className="min-w-0 cursor-pointer text-sm leading-snug">
                     Do not disturb
                   </Label>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className={`text-xs font-semibold ${doNotDisturb ? 'text-indigo-600 dark:text-indigo-300' : 'text-slate-500'}`}>
+                      {doNotDisturb ? 'On' : 'Off'}
+                    </span>
+                    <Switch checked={doNotDisturb} onCheckedChange={setDoNotDisturb} id="dnd-mode" aria-label="Do not disturb" />
+                  </div>
                 </div>
               </div>
 

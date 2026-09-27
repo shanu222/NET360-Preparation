@@ -7162,12 +7162,15 @@ function practiceBoardUsableQuestionMatch() {
 }
 
 async function pickRandomPracticeBoardQuestion(filter) {
-  const sampled = await PracticeBoardQuestionModel.aggregate([
-    { $match: filter },
-    { $sample: { size: 1 } },
-    { $project: { _id: 1 } },
-  ]);
-  const pickedId = sampled[0]?._id;
+  const total = await PracticeBoardQuestionModel.countDocuments(filter);
+  if (!total) return null;
+  const skip = Math.floor(Math.random() * total);
+  const picked = await PracticeBoardQuestionModel.find(filter)
+    .select('_id')
+    .skip(skip)
+    .limit(1)
+    .lean();
+  const pickedId = picked[0]?._id;
   if (!pickedId) return null;
   return PracticeBoardQuestionModel.findById(pickedId).select(PRACTICE_BOARD_CLIENT_SELECT).lean();
 }

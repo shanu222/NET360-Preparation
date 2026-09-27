@@ -698,22 +698,39 @@ export default function App() {
     };
 
     const enableDragFallback = (row: HTMLElement) => {
-      let isPointerDown = false;
+      let pointerActive = false;
+      let touchActive = false;
       let isDragging = false;
       let startX = 0;
+      let startY = 0;
       let startScrollLeft = 0;
+      let suppressClickUntil = 0;
 
       const shouldSkipTarget = (target: EventTarget | null) => {
         if (!(target instanceof Element)) return false;
         return Boolean(target.closest('button, a, input, textarea, select, [role="button"], [data-no-drag-scroll]'));
       };
 
+      const markDrag = () => {
+        isDragging = true;
+        row.dataset.dragging = 'true';
+        suppressClickUntil = Date.now() + 500;
+      };
+
+      const endGesture = () => {
+        pointerActive = false;
+        touchActive = false;
+        if (isDragging) suppressClickUntil = Date.now() + 500;
+        row.dataset.dragging = 'false';
+        window.setTimeout(() => {
+          isDragging = false;
+        }, 520);
+      };
+
       const onPointerDown = (event: PointerEvent) => {
-        const isNativeAndroid = document.documentElement.classList.contains('native-android');
-        if (isNativeAndroid && event.pointerType !== 'mouse') return;
-        if (event.pointerType === 'mouse' && event.button !== 0) return;
+        if (event.pointerType !== 'mouse' || event.button !== 0) return;
         if (shouldSkipTarget(event.target)) return;
-        isPointerDown = true;
+        pointerActive = true;
         isDragging = false;
         startX = event.clientX;
         startScrollLeft = row.scrollLeft;
@@ -722,26 +739,47 @@ export default function App() {
       };
 
       const onPointerMove = (event: PointerEvent) => {
-        if (!isPointerDown) return;
+        if (!pointerActive) return;
         const deltaX = event.clientX - startX;
-        if (!isDragging && Math.abs(deltaX) > 6) {
-          isDragging = true;
-          row.dataset.dragging = 'true';
-        }
+        if (!isDragging && Math.abs(deltaX) > 6) markDrag();
         if (!isDragging) return;
         row.scrollLeft = startScrollLeft - deltaX;
         updateRowScrollState(row);
       };
 
       const onPointerUp = (event: PointerEvent) => {
-        if (isPointerDown) {
-          row.releasePointerCapture?.(event.pointerId);
-        }
-        isPointerDown = false;
+        if (!pointerActive) return;
+        row.releasePointerCapture?.(event.pointerId);
+        endGesture();
+      };
+
+      const onTouchStart = (event: TouchEvent) => {
+        if (event.touches.length !== 1) return;
+        const touch = event.touches[0];
+        touchActive = true;
+        isDragging = false;
+        startX = touch.clientX;
+        startY = touch.clientY;
+        startScrollLeft = row.scrollLeft;
         row.dataset.dragging = 'false';
-        window.setTimeout(() => {
-          isDragging = false;
-        }, 0);
+      };
+
+      const onTouchMove = (event: TouchEvent) => {
+        if (!touchActive || event.touches.length !== 1) return;
+        const touch = event.touches[0];
+        const deltaX = touch.clientX - startX;
+        const deltaY = touch.clientY - startY;
+        if (!isDragging) {
+          if (Math.abs(deltaX) < 8 && Math.abs(deltaY) < 8) return;
+          if (Math.abs(deltaY) > Math.abs(deltaX)) {
+            touchActive = false;
+            return;
+          }
+          markDrag();
+        }
+        row.scrollLeft = startScrollLeft - deltaX;
+        updateRowScrollState(row);
+        if (event.cancelable) event.preventDefault();
       };
 
       const onScroll = () => {
@@ -749,17 +787,29 @@ export default function App() {
       };
 
       const onClickCapture = (event: MouseEvent) => {
-        if (!isDragging) return;
+        if (!isDragging && Date.now() > suppressClickUntil) return;
+        event.preventDefault();
+        event.stopPropagation();
+      };
+
+      const onPointerUpCapture = (event: PointerEvent) => {
+        if (event.pointerType === 'mouse') return;
+        if (!isDragging && Date.now() > suppressClickUntil) return;
         event.preventDefault();
         event.stopPropagation();
       };
 
       row.addEventListener('pointerdown', onPointerDown, { passive: true });
       row.addEventListener('pointermove', onPointerMove, { passive: true });
-      row.addEventListener('pointerup', onPointerUp, { passive: true });
-      row.addEventListener('pointercancel', onPointerUp, { passive: true });
+      row.addEventListener('pointerup', onPointerUp);
+      row.addEventListener('pointercancel', onPointerUp);
+      row.addEventListener('touchstart', onTouchStart, { passive: true });
+      row.addEventListener('touchmove', onTouchMove, { passive: false });
+      row.addEventListener('touchend', endGesture, { passive: true });
+      row.addEventListener('touchcancel', endGesture, { passive: true });
       row.addEventListener('scroll', onScroll, { passive: true });
       row.addEventListener('click', onClickCapture, true);
+      row.addEventListener('pointerup', onPointerUpCapture, true);
       updateRowScrollState(row);
 
       return () => {
@@ -767,8 +817,13 @@ export default function App() {
         row.removeEventListener('pointermove', onPointerMove);
         row.removeEventListener('pointerup', onPointerUp);
         row.removeEventListener('pointercancel', onPointerUp);
+        row.removeEventListener('touchstart', onTouchStart);
+        row.removeEventListener('touchmove', onTouchMove);
+        row.removeEventListener('touchend', endGesture);
+        row.removeEventListener('touchcancel', endGesture);
         row.removeEventListener('scroll', onScroll);
         row.removeEventListener('click', onClickCapture, true);
+        row.removeEventListener('pointerup', onPointerUpCapture, true);
       };
     };
 

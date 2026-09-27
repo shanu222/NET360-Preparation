@@ -490,7 +490,15 @@
   .net360-swipe-row[data-scrollable='true']:active,
   .net360-swipe-row[data-dragging='true'] {
     cursor: grabbing;
+    scroll-behavior: auto;
     user-select: none;
+  }
+
+  .net360-swipe-row button,
+  .net360-swipe-row [data-slot='tabs-trigger'],
+  .net360-horizontal-scroll button,
+  .net360-horizontal-scroll [data-slot='tabs-trigger'] {
+    touch-action: pan-x pan-y;
   }
 
   .net360-page .recharts-responsive-container,
@@ -1494,7 +1502,7 @@ html.dark.native-android .net360-header {
 
 .native-android .net360-page [data-slot='dialog-content'],
 .native-android .net360-page [data-slot='sheet-content'],
-.native-android [role='dialog'] {
+.native-android [role='dialog']:not(.net360-fullscreen-media) {
   max-height: min(90dvh, 90vh);
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
@@ -1547,7 +1555,7 @@ html.dark.native-android .net360-header {
 
 .native-android .net360-page [data-slot='tabs-trigger'],
 .native-android .net360-page [data-slot='button'],
-.native-android .net360-page button {
+.native-android .net360-page button:not([data-slot='switch']):not([data-slot='checkbox']) {
   min-height: 42px;
 }
 
@@ -1707,16 +1715,22 @@ html.native-android .net360-page [data-slot='badge'] {
 }
 
 html.native-android .net360-page [data-slot='button'],
-html.native-android .net360-page button {
+html.native-android .net360-page button:not([data-slot='switch']):not([data-slot='checkbox']) {
   max-width: 100%;
 }
 
 html.native-android .net360-page .net360-swipe-row button,
 html.native-android .net360-page .net360-horizontal-scroll button,
 html.native-android .net360-page .net360-swipe-row [data-slot='tabs-trigger'],
-html.native-android .net360-page .net360-horizontal-scroll [data-slot='tabs-trigger'] {
-  max-width: none;
+html.native-android .net360-page .net360-horizontal-scroll [data-slot='tabs-trigger'],
+html.native-ios .net360-page .net360-swipe-row button,
+html.native-ios .net360-page .net360-horizontal-scroll button,
+html.native-ios .net360-page .net360-swipe-row [data-slot='tabs-trigger'],
+html.native-ios .net360-page .net360-horizontal-scroll [data-slot='tabs-trigger'] {
+  max-width: none !important;
   width: auto;
+  flex: 0 0 auto;
+  touch-action: pan-x pan-y;
 }
 
 html.native-android .net360-page h1,
@@ -1782,4 +1796,72 @@ html.dark.native-android [data-slot='select-item'] {
   .net360-page a.inline-flex {
     min-height: 44px;
   }
+}
+
+/* Immediate pressed feedback on Web, Android, and iOS. */
+#root button:not(:disabled):not([data-slot='switch']):not([data-slot='checkbox']):active,
+#root [role='button']:not(:disabled):active,
+#root [data-slot='tabs-trigger']:not(:disabled):active,
+#root a[href]:active,
+#root summary:active {
+  filter: brightness(0.9);
+  transform: scale(0.98);
+}
+
+#root [data-slot='switch']:active {
+  filter: brightness(0.88);
+}
+
+#root button,
+#root [role='button'],
+#root [data-slot='tabs-trigger'],
+#root a[href],
+#root summary,
+#root [data-slot='switch'] {
+  -webkit-tap-highlight-color: rgba(89, 112, 255, 0.28);
+  touch-action: manipulation;
+}
+
+#root .net360-swipe-row button,
+#root .net360-swipe-row [data-slot='tabs-trigger'],
+#root .net360-horizontal-scroll button,
+#root .net360-horizontal-scroll [data-slot='tabs-trigger'] {
+  touch-action: pan-x pan-y;
+}
+
+[data-slot='dialog-content'].net360-fullscreen-media {
+  position: fixed !important;
+  inset: 0 !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100% !important;
+  max-width: none !important;
+  height: 100% !important;
+  max-height: none !important;
+  transform: none !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 0 !important;
+}
+
+.native-android [role='dialog'].net360-fullscreen-media,
+.native-ios [role='dialog'].net360-fullscreen-media {
+  max-height: none !important;
+  height: 100% !important;
+  overflow: hidden !important;
+}
+
+.net360-fullscreen-media img {
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
+
+.net360-fullscreen-media > button {
+  top: max(0.75rem, env(safe-area-inset-top)) !important;
+  right: max(0.75rem, env(safe-area-inset-right)) !important;
 }
