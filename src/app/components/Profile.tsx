@@ -18,6 +18,7 @@ import { useSubscription } from '../context/SubscriptionContext';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK } from '../lib/paymentMethods';
 import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
+import { canonicalSeriesKey, useLiveNustSeries } from '../lib/nustLiveSchedule';
 import { getMediaUrl, loginBannerImageUrl, shouldUseLocalMediaFallback } from '../lib/publicMedia';
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 import { ImageWithFallback } from './figma/ImageWithFallback';
@@ -155,7 +156,12 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, deleteAccount, requestAccountDeletionLink, logout } = useAuth();
   const { surface } = useSubscription();
   const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
+  const { status: seriesStatus, series: liveSeries } = useLiveNustSeries();
   const [localProfile, setLocalProfile] = useState(profile);
+  const selectedSeries = useMemo(
+    () => liveSeries.find((item) => item.key === canonicalSeriesKey(localProfile.testSeries)) || null,
+    [liveSeries, localProfile.testSeries],
+  );
   const [avatarPreview, setAvatarPreview] = useState(() => {
     try {
       return localStorage.getItem(PROFILE_PHOTO_STORAGE_KEY) || '';
@@ -1290,7 +1296,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
           {!isPreparationExpanded ? (
             <div className="grid gap-2 rounded-lg border bg-slate-50/70 p-3 text-sm md:grid-cols-2">
               <p><span className="text-muted-foreground">Target Program:</span> {selectedTargetProgramLabel || 'Not set'}</p>
-              <p><span className="text-muted-foreground">Test Series:</span> {localProfile.testSeries || 'Not set'}</p>
+              <p><span className="text-muted-foreground">Test Series:</span> {selectedSeries?.label || (seriesStatus === 'loading' ? 'Loading NUST series…' : seriesStatus === 'error' ? 'NUST schedule unavailable' : seriesStatus === 'empty' ? 'No NET series published' : 'Not set')}</p>
               <p><span className="text-muted-foreground">SSC %:</span> {localProfile.sscPercentage || 'Not set'}</p>
               <p><span className="text-muted-foreground">HSSC %:</span> {localProfile.hsscPercentage || 'Not set'}</p>
               <p className="md:col-span-2"><span className="text-muted-foreground">NET Test Date:</span> {localProfile.testDate || 'Not set'}</p>
@@ -1329,17 +1335,28 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
 
             <div className="space-y-2">
               <Label htmlFor="test-series">Target Test Series</Label>
-              <Select value={localProfile.testSeries} onValueChange={(value) => updateField('testSeries', value)}>
+              <Select
+                value={selectedSeries?.key || undefined}
+                onValueChange={(value) => updateField('testSeries', value)}
+                disabled={seriesStatus !== 'ready' || liveSeries.length === 0}
+              >
                 <SelectTrigger id="test-series">
-                  <SelectValue placeholder="Select series" />
+                  <SelectValue placeholder={seriesStatus === 'loading' ? 'Loading NUST series…' : seriesStatus === 'error' ? 'NUST schedule unavailable' : 'No NET series published'} />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="series1">NET Series 1 (Dec 2025)</SelectItem>
-                  <SelectItem value="series2">NET Series 2 (Feb 2026)</SelectItem>
-                  <SelectItem value="series3">NET Series 3 (Apr 2026)</SelectItem>
-                  <SelectItem value="series4">NET Series 4 (Jun 2026)</SelectItem>
+                  {liveSeries.map((item) => (
+                    <SelectItem key={item.key} value={item.key}>{item.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
+              {seriesStatus === 'error' ? (
+                <p className="text-xs text-muted-foreground">Couldn&apos;t load the NUST schedule. Check your connection and try again.</p>
+              ) : null}
+              {seriesStatus === 'empty' ? (
+                <p className="text-xs text-muted-foreground">No NET series is published on the NUST admissions page right now.</p>
+              ) : null}
+              {selectedSeries?.registration ? <p className="text-xs text-muted-foreground">{selectedSeries.registration}</p> : null}
+              {selectedSeries?.testDate ? <p className="text-xs text-muted-foreground">{selectedSeries.testDate}</p> : null}
             </div>
           </div>
 

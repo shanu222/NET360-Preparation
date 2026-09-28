@@ -1348,6 +1348,13 @@ html {
   color: #0f172a;
 }
 
+[data-slot='select-content'] [data-radix-select-viewport] {
+  max-height: min(24rem, var(--radix-select-content-available-height));
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
+
 [data-slot='select-item'][data-highlighted],
 [data-slot='select-item']:focus,
 [data-slot='dropdown-menu-item']:focus,

@@ -1545,47 +1545,6 @@ const mcqsReadLimiter = rateLimit({
   message: { error: 'Too many MCQ data requests. Please try again later.' },
 });
 
-const DEFAULT_NUST_IMPORTANT_DATES = [
-  {
-    key: 'series-1',
-    title: 'NET Series 1',
-    registration: 'Online Registration: 05 Oct - 25 Nov 2025',
-    testDate: 'Test Schedule: 22 Nov - 10 Dec 2025',
-    status: 'completed',
-  },
-  {
-    key: 'series-2',
-    title: 'NET Series 2',
-    registration: 'Online Registration: 14 Dec 2025 - 01 Feb 2026',
-    testDate: 'Test Schedule: 31 Jan - 15 Feb 2026 (Islamabad); 25 - 26 Mar 2026 (Quetta)',
-    status: 'open',
-  },
-  {
-    key: 'series-3',
-    title: 'NET Series 3',
-    registration: 'Online Registration: 22 Feb - 30 Mar 2026',
-    testDate: 'Test Schedule: 04 Apr 2026 onwards',
-    status: 'upcoming',
-  },
-  {
-    key: 'series-4',
-    title: 'NET Series 4',
-    registration: 'Online Registration: Apr - Jun 2026',
-    testDate: 'Test Schedule: Jun 2026 (Islamabad); Jul 2026 (Quetta)',
-    status: 'upcoming',
-  },
-];
-
-const DEFAULT_NUST_IMPORTANT_NOTICES = [
-  {
-    key: 'notice-default-1',
-    title: 'Important notices are being refreshed automatically.',
-    subtitle: 'Latest updates from NUST undergraduate admissions will appear here shortly.',
-    category: 'notice',
-    status: 'info',
-  },
-];
-
 const nustUpdatesCache = {
   fetchedAt: 0,
   lastAttemptAt: 0,
@@ -1594,8 +1553,8 @@ const nustUpdatesCache = {
   lastError: '',
   contentHash: '',
   sessionLabel: '',
-  dates: DEFAULT_NUST_IMPORTANT_DATES,
-  notices: DEFAULT_NUST_IMPORTANT_NOTICES,
+  dates: [],
+  notices: [],
   updates: [],
 };
 
@@ -9355,12 +9314,8 @@ app.get('/api/public/nust-admissions-feed', async (_req, res) => {
       : null,
     sessionLabel: nustUpdatesCache.sessionLabel || '',
     refreshIntervalMs: NUST_ADMISSIONS_REFRESH_MS,
-    dates: Array.isArray(nustUpdatesCache.dates) && nustUpdatesCache.dates.length
-      ? nustUpdatesCache.dates
-      : DEFAULT_NUST_IMPORTANT_DATES,
-    notices: safeNotices.length
-      ? safeNotices
-      : DEFAULT_NUST_IMPORTANT_NOTICES,
+    dates: source === 'seed' ? [] : (Array.isArray(nustUpdatesCache.dates) ? nustUpdatesCache.dates : []),
+    notices: source === 'seed' ? [] : safeNotices,
   });
 });
 
@@ -9370,13 +9325,12 @@ app.get('/api/public/nust-updates', async (_req, res) => {
     await refreshNustAdmissionsCache({ force: true });
   }
   const safeUpdates = filterNustNotices(nustUpdatesCache.updates);
+  const hasLiveUpdates = Number(nustUpdatesCache.lastSuccessAt || nustUpdatesCache.fetchedAt || 0) > 0;
 
   res.json({
-    source: nustUpdatesCache.lastError ? 'stale-cache' : 'cache',
+    source: hasLiveUpdates ? (nustUpdatesCache.lastError ? 'stale-cache' : 'cache') : 'seed',
     fetchedAt: nustUpdatesCache.fetchedAt ? new Date(nustUpdatesCache.fetchedAt).toISOString() : null,
-    updates: safeUpdates.length
-      ? safeUpdates
-      : DEFAULT_NUST_IMPORTANT_NOTICES.map((item) => ({ title: item.title, subtitle: item.subtitle })),
+    updates: hasLiveUpdates ? safeUpdates : [],
   });
 });
 
