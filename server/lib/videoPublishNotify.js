@@ -117,7 +117,7 @@ export async function deliverVideoPublicationEmails(video, options = {}) {
   const subjectLine = `New Video Available — ${title}`;
   const announcement = `${title} is now available in ${pathLabel}.`;
   const link = videoWatchLink(video);
-  const send = options.send || sendTransactionalEmail;
+  const send = options.send || ((message) => sendTransactionalEmail(message, { brevoOnly: true }));
   const receipts = options.receipts || mongoReceipts();
   const users = options.users || UserModel.find({ role: { $ne: 'admin' } })
     .select('_id email firstName role preferences')

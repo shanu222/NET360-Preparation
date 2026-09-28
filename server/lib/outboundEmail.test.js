@@ -2,6 +2,22 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { isProviderLimitError, sendTransactionalEmail } from './outboundEmail.js';
 
+test('notification emails marked brevoOnly never call Resend', async () => {
+  let resendCalled = false;
+  const sent = await sendTransactionalEmail({ to: 'a@example.com', subject: 'Hi', text: 'Hi', html: '<p>Hi</p>' }, {
+    brevoOnly: true,
+    resendReady: true,
+    sendResend: async () => {
+      resendCalled = true;
+      return { provider: 'resend', messageId: 'should-not-send' };
+    },
+    sendBrevo: async () => ({ provider: 'brevo', messageId: 'brevo-only' }),
+  });
+  assert.equal(resendCalled, false);
+  assert.equal(sent.provider, 'brevo');
+  assert.equal(sent.messageId, 'brevo-only');
+});
+
 test('mail uses Resend first and Brevo only after a sending limit', async () => {
   const calls = [];
   const sent = await sendTransactionalEmail({ to: 'a@example.com', subject: 'Hi', text: 'Hi', html: '<p>Hi</p>' }, {

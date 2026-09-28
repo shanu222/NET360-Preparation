@@ -4430,12 +4430,12 @@ function escapeNotifyHtml(value) {
   return escapeHtml(value);
 }
 
-async function dispatchNotificationEmail({ to, subject, text, html, preferences, emailType, mandatory }) {
+async function dispatchNotificationEmail({ to, subject, text, html, preferences, emailType, mandatory, brevoOnly }) {
   const dest = normalizeEmail(to);
   if (!isValidEmail(dest)) return;
   if (!mandatory && emailType && !notificationAllowed(preferences, emailType)) return;
   try {
-    await sendTransactionalEmail({ to: dest, subject, text, html });
+    await sendTransactionalEmail({ to: dest, subject, text, html }, brevoOnly ? { brevoOnly: true } : {});
   } catch (error) {
     console.warn('[email] notification send failed:', sanitizeResendError(error));
   }
@@ -4533,6 +4533,7 @@ async function queueCommunityNotice({ eventKey, preferenceKey, toUser, subject, 
     html,
     preferences: toUser.preferences,
     emailType: preferenceKey || '',
+    brevoOnly: true,
   });
 }
 
@@ -4946,7 +4947,7 @@ async function notifyAdminsOfSupportMessage(user, message) {
   for (const to of emails) {
     const claimed = await claimCommunityNotificationDelivery(eventKey, `admin:${to}`, to);
     if (!claimed) continue;
-    void dispatchNotificationEmail({ to, subject, text, html });
+    void dispatchNotificationEmail({ to, subject, text, html, brevoOnly: true });
   }
 }
 
