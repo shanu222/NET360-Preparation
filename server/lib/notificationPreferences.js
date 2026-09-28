@@ -78,11 +78,20 @@ export const OPTIONAL_NOTIFICATIONS = [
   {
     key: 'nustUpdates',
     section: 'Tests and preparation',
-    label: 'NUST admission updates',
-    description: 'Email when official NUST undergraduate admission information changes.',
+    label: 'NUST Notices / Schedule',
+    description: 'Email when official NUST notices or schedules change.',
     trigger: 'Scheduled NUST portal check finds a new public update',
     channel: 'email',
     schedule: 'scheduled',
+  },
+  {
+    key: 'videoUploads',
+    section: 'Tests and preparation',
+    label: 'New Video Uploads',
+    description: 'Email when an admin publishes a new video.',
+    trigger: 'Admin publishes a video for the first time',
+    channel: 'email',
+    schedule: 'event',
   },
 ];
 

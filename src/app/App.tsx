@@ -49,7 +49,7 @@ import { AppDataProvider } from './context/AppDataContext';
 import { useAuth } from './context/AuthContext';
 import { preloadCommunityCache } from './lib/communityPreload';
 import { prefetchStudentSection, scheduleIdleStudentPrefetch } from './lib/routePrefetch';
-import { showNeutralToast, showSuccessToast } from './lib/userToast';
+import { showNeutralToast } from './lib/userToast';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -1316,8 +1316,9 @@ export default function App() {
                             type="button"
                             className="net360-drawer-item flex min-h-12 w-full items-center rounded-2xl px-3 text-left text-sm font-semibold text-slate-800 active:bg-slate-100 dark:text-slate-100 dark:active:bg-white/10"
                             onClick={() => {
-                              showSuccessToast('We will show your updates here.');
+                              sessionStorage.setItem('net360-open-notification-preferences', '1');
                               setSidebarMenuOpen(false);
+                              navigate(PATH_BY_SECTION.profile);
                             }}
                           >
                             Notifications
@@ -1384,7 +1385,10 @@ export default function App() {
                   variant="ghost"
                   size="icon"
                   className="touch-manipulation min-h-11 min-w-11 rounded-xl text-slate-700 hover:bg-indigo-50 dark:text-slate-100"
-                  onClick={() => showSuccessToast('We will show your updates here.')}
+                  onClick={() => {
+                    sessionStorage.setItem('net360-open-notification-preferences', '1');
+                    navigate(PATH_BY_SECTION.profile);
+                  }}
                   aria-label="Notifications"
                 >
                   <Bell className="h-5 w-5" />

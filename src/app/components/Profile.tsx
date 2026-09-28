@@ -19,7 +19,7 @@ import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK } from '../lib/paymentMethods';
 import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 import { isNativeAndroidRuntime } from '../lib/nativeForeground';
-import { NOTIFICATION_PREFERENCE_SECTIONS, resolveNotificationPreferences, type NotificationPreferenceKey } from '../lib/notificationPreferences';
+import { DELIVERY_PREFERENCE_SECTIONS, NOTIFICATION_PREFERENCE_SECTIONS, resolveNotificationPreferences, type DeliveryPreferenceKey, type NotificationPreferenceKey } from '../lib/notificationPreferences';
 import { Switch } from './ui/switch';
 import { useAndroidNestedScreen } from '../lib/androidNestedScreen';
 import { getMediaUrl, loginBannerImageUrl, shouldUseLocalMediaFallback } from '../lib/publicMedia';
@@ -195,6 +195,14 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const androidApp = isNativeAndroidRuntime();
   const [androidProfileScreen, setAndroidProfileScreen] = useState<null | 'account' | 'preparation' | 'achievements' | 'preferences' | 'danger'>(null);
   useAndroidNestedScreen('profile', Boolean(androidProfileScreen), () => setAndroidProfileScreen(null));
+  useEffect(() => {
+    if (sessionStorage.getItem('net360-open-notification-preferences') !== '1') return;
+    sessionStorage.removeItem('net360-open-notification-preferences');
+    if (isNativeAndroidRuntime()) setAndroidProfileScreen('preferences');
+    window.setTimeout(() => {
+      document.getElementById('notification-preferences')?.scrollIntoView({ block: 'start' });
+    }, 50);
+  }, []);
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
   const [isSavingTargetProgram, setIsSavingTargetProgram] = useState(false);
   const [isSavingPersonalInfo, setIsSavingPersonalInfo] = useState(false);
@@ -556,9 +564,19 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
 
   const serverNotificationPreferences = resolveNotificationPreferences(preferences.notificationPreferences);
   const [notificationPreferences, setNotificationPreferences] = useState(serverNotificationPreferences);
+  const [deliveryPreferences, setDeliveryPreferences] = useState({
+    emailNotifications: preferences.emailNotifications !== false,
+    dailyReminders: preferences.dailyReminders !== false,
+    performanceReports: preferences.performanceReports !== false,
+  });
   useEffect(() => {
     setNotificationPreferences(serverNotificationPreferences);
-  }, [preferences.notificationPreferences]);
+    setDeliveryPreferences({
+      emailNotifications: preferences.emailNotifications !== false,
+      dailyReminders: preferences.dailyReminders !== false,
+      performanceReports: preferences.performanceReports !== false,
+    });
+  }, [preferences]);
 
   const toggleNotificationPreference = async (key: NotificationPreferenceKey, enabled: boolean) => {
     const previous = notificationPreferences[key];
@@ -567,6 +585,17 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       await savePreferences({ notificationPreferences: { [key]: enabled } });
     } catch (error) {
       setNotificationPreferences((current) => ({ ...current, [key]: previous }));
+      handleApiError(error, 'Could not save notification preference.');
+    }
+  };
+
+  const toggleDeliveryPreference = async (key: DeliveryPreferenceKey, enabled: boolean) => {
+    const previous = deliveryPreferences[key];
+    setDeliveryPreferences((current) => ({ ...current, [key]: enabled }));
+    try {
+      await savePreferences({ [key]: enabled });
+    } catch (error) {
+      setDeliveryPreferences((current) => ({ ...current, [key]: previous }));
       handleApiError(error, 'Could not save notification preference.');
     }
   };
@@ -1436,7 +1465,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         </CardContent>
       </Card>
 
-      <Card className={!showProfileBlock('preferences') ? 'net360-android-chrome-hide' : undefined}>
+      <Card id="notification-preferences" className={!showProfileBlock('preferences') ? 'net360-android-chrome-hide' : undefined}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Settings className="w-5 h-5" />
@@ -1447,6 +1476,29 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
+          {DELIVERY_PREFERENCE_SECTIONS.map((section) => (
+            <div key={section.id} className="space-y-2">
+              <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{section.id}</h4>
+              {section.items.map((item) => {
+                const enabled = deliveryPreferences[item.key] !== false;
+                return (
+                  <div key={item.key} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 active:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:active:bg-slate-800">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">{item.label}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-300">{item.description}</p>
+                      <p className="mt-1 text-xs font-semibold text-indigo-700 dark:text-indigo-300">{enabled ? 'ON' : 'OFF'}</p>
+                    </div>
+                    <Switch
+                      checked={enabled}
+                      onCheckedChange={(checked) => void toggleDeliveryPreference(item.key, checked)}
+                      aria-label={`${item.label} notifications`}
+                      className="active:scale-95"
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          ))}
           {NOTIFICATION_PREFERENCE_SECTIONS.map((section) => (
             <div key={section.id} className="space-y-2">
               <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500">{section.id}</h4>

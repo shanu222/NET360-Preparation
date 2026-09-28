@@ -2238,7 +2238,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
     const incomingNotes = body.notificationPreferences && typeof body.notificationPreferences === 'object'
       ? body.notificationPreferences as Record<string, boolean>
       : {};
-    const noteKeys = ['communityMessages', 'connectionRequests', 'connectionResponses', 'quizChallenges', 'quizResponses', 'quizResults', 'achievementUnlocks', 'supportReplies', 'nustUpdates'];
+    const noteKeys = ['communityMessages', 'connectionRequests', 'connectionResponses', 'quizChallenges', 'quizResponses', 'quizResults', 'achievementUnlocks', 'supportReplies', 'nustUpdates', 'videoUploads'];
     const currentNotes = { ...(current.notificationPreferences || {}) };
     noteKeys.forEach((key) => {
       if (typeof currentNotes[key] !== 'boolean') currentNotes[key] = true;

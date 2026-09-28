@@ -59,8 +59,13 @@ export const NOTIFICATION_PREFERENCE_SECTIONS = [
     items: [
       {
         key: 'nustUpdates',
-        label: 'NUST admission updates',
-        description: 'Email when official NUST undergraduate admission information changes.',
+        label: 'NUST Notices / Schedule',
+        description: 'Email when official NUST notices or schedules change.',
+      },
+      {
+        key: 'videoUploads',
+        label: 'New Video Uploads',
+        description: 'Email when an admin publishes a new video.',
       },
     ],
   },
@@ -78,6 +83,36 @@ export const NOTIFICATION_PREFERENCE_SECTIONS = [
 
 export type NotificationPreferenceKey = (typeof NOTIFICATION_PREFERENCE_SECTIONS)[number]['items'][number]['key'];
 
+export const DELIVERY_PREFERENCE_SECTIONS = [
+  {
+    id: 'Email',
+    items: [
+      {
+        key: 'emailNotifications',
+        label: 'Email notifications',
+        description: 'Send optional NET360 emails. When this is off, no optional email is sent.',
+      },
+    ],
+  },
+  {
+    id: 'Reminders',
+    items: [
+      {
+        key: 'dailyReminders',
+        label: 'Daily practice reminders',
+        description: 'Email a daily reminder to continue practice.',
+      },
+      {
+        key: 'performanceReports',
+        label: 'Weekly performance reports',
+        description: 'Email a weekly summary of your practice.',
+      },
+    ],
+  },
+] as const;
+
+export type DeliveryPreferenceKey = (typeof DELIVERY_PREFERENCE_SECTIONS)[number]['items'][number]['key'];
+
 export type NotificationPreferenceMap = Record<NotificationPreferenceKey, boolean>;
 
 export function defaultNotificationPreferences(): NotificationPreferenceMap {
@@ -91,6 +126,7 @@ export function defaultNotificationPreferences(): NotificationPreferenceMap {
     achievementUnlocks: true,
     supportReplies: true,
     nustUpdates: true,
+    videoUploads: true,
   };
 }
 

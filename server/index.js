@@ -8319,7 +8319,7 @@ async function notifyVerifiedStudentsOfNustAdmission({ contentHash, notices }) {
   const users = UserModel.find({
     role: { $ne: 'admin' },
     email: { $exists: true, $nin: [null, ''] },
-  }).select('firstName lastName email role requiresEmailVerification emailVerifiedAt authProvider').lean().cursor();
+  }).select('firstName lastName email role requiresEmailVerification emailVerifiedAt authProvider authProviderDetail preferences').lean().cursor();
 
   for await (const user of users) {
     await queueCommunityNotice({

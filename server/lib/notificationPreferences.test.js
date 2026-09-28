@@ -11,7 +11,7 @@ import {
 test('every optional notification defaults to ON when missing', () => {
   const { preferences, changed } = resolveNotificationPreferences(undefined);
   assert.equal(changed, true);
-  assert.equal(OPTIONAL_NOTIFICATIONS.length, 9);
+  assert.equal(OPTIONAL_NOTIFICATIONS.length, 10);
   for (const item of OPTIONAL_NOTIFICATIONS) {
     assert.equal(preferences[item.key], true);
     assert.equal(isOptionalNotificationEnabled({}, item.key), true);
@@ -46,6 +46,7 @@ test('turning one notification off does not change the others', () => {
   assert.equal(next.quizChallenges, false);
   assert.equal(next.communityMessages, true);
   assert.equal(next.nustUpdates, false);
+  assert.equal(next.videoUploads, true);
   assert.equal(next.connectionRequests, true);
   assert.equal(isOptionalNotificationEnabled({ notificationPreferences: next }, 'quizChallenges'), false);
   assert.equal(isOptionalNotificationEnabled({ notificationPreferences: next }, 'communityMessages'), true);

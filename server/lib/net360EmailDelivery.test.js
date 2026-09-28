@@ -219,7 +219,49 @@ test('a video is announced only the first time it is published', () => {
   assert.equal(shouldAnnounceVideoPublish('', ''), false);
 });
 
-test('republishing the same video event does not send another email', async () => {
+test('a category that is off does not send even when email notifications are on', async () => {
+  const { sendNet360Email, calls } = harness();
+  const videoOff = await sendNet360Email({
+    ...message,
+    mandatory: false,
+    eventId: 'video-published:vid-off:user-1',
+    emailType: 'video-published',
+    preferences: { emailNotifications: true, notificationPreferences: { videoUploads: false } },
+  });
+  const nustOff = await sendNet360Email({
+    ...message,
+    mandatory: false,
+    eventId: 'nustUpdates:hash-off:user-1',
+    emailType: 'nustUpdates',
+    preferences: { emailNotifications: true, notificationPreferences: { nustUpdates: false, videoUploads: true } },
+  });
+  const videoOn = await sendNet360Email({
+    ...message,
+    mandatory: false,
+    eventId: 'video-published:vid-on:user-1',
+    emailType: 'video-published',
+    preferences: { emailNotifications: true, notificationPreferences: { videoUploads: true } },
+  });
+  assert.equal(videoOff.status, 'skipped');
+  assert.equal(nustOff.status, 'skipped');
+  assert.equal(videoOn.status, 'sent');
+  assert.equal(calls.length, 1);
+});
+
+test('email notifications off blocks a category that is on', async () => {
+  const { sendNet360Email, calls } = harness();
+  const result = await sendNet360Email({
+    ...message,
+    mandatory: false,
+    eventId: 'nustUpdates:hash-email-off:user-1',
+    emailType: 'nustUpdates',
+    preferences: { emailNotifications: false, notificationPreferences: { nustUpdates: true } },
+  });
+  assert.equal(result.status, 'skipped');
+  assert.equal(calls.length, 0);
+});
+
+test('the same notice or video is not emailed twice', async () => {
   const { sendNet360Email, calls } = harness();
   const eventId = 'video-published:mcq-9:user-1';
   await sendNet360Email({ ...message, eventId, emailType: 'video-published', preferences: { emailNotifications: true } });
