@@ -1,10 +1,13 @@
 import { UserModel } from '../models/User.js';
-import { UserNotificationModel } from '../models/UserNotification.js';
-import { claimCommunityNotificationDelivery } from './communityNotifications.js';
+import { VideoModel } from '../models/Video.js';
 import { notificationShell } from '../services/notificationEmail.js';
 
 function normalizeEmail(value) {
   return String(value || '').trim().toLowerCase();
+}
+
+function isValidEmail(value) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
 }
 
 function escapeHtml(value) {
@@ -17,7 +20,10 @@ function escapeHtml(value) {
 
 async function sendResendEmail({ to, subject, text, html }) {
   const apiKey = String(process.env.RESEND_API_KEY || '').trim();
-  if (!apiKey) return;
+  if (!apiKey) {
+    console.warn('[videos] publication email skipped: RESEND_API_KEY is not configured.');
+    return;
+  }
   const from = String(process.env.RESEND_FROM_EMAIL || '').trim() || 'NET360 <beth.t@example.com>';
   const response = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -34,7 +40,7 @@ async function sendResendEmail({ to, subject, text, html }) {
 }
 
 function publicWebBase() {
-  return String(process.env.NET360_PUBLIC_WEB_BASE || process.env.PUBLIC_WEB_BASE_URL || 'https://net360preparation.com')
+  return String(process.env.NET360_PUBLIC_WEB_BASE || process.env.PUBLIC_WEB_BASE_URL || 'https://www.net360preparation.com')
     .replace(/\/$/, '');
 }
 
@@ -45,62 +51,93 @@ export function videoWatchLink(video) {
   return `${publicWebBase()}/videos?${params.toString()}`;
 }
 
-export async function notifyVideoPublished(video) {
-  const sectionLabel = String(video.section || '').trim();
-  const subjectLabel = String(video.subject || video.subjectId || '').trim();
-  const title = 'New video available';
-  const body = `A new ${subjectLabel} video has been added to ${sectionLabel}.`;
-  const link = videoWatchLink(video);
-  const eventKey = `video.published:${String(video._id)}`;
+function locationPath(video) {
+  return [video.subject, video.part, video.chapter, video.section]
+    .map((item) => String(item || '').trim())
+    .filter(Boolean)
+    .join(' → ');
+}
 
-  const cursor = UserModel.find({ role: 'student' })
-    .select('_id email firstName preferences requiresEmailVerification emailVerifiedAt')
+/**
+ * Claims the one-time publication email campaign. Returns the updated video or null if another
+ * request already claimed it, or if this is not a first-time publish.
+ */
+export async function claimVideoPublicationEmail(video) {
+  if (!video?._id) return null;
+  if (String(video.status || '') !== 'published') return null;
+  const now = new Date();
+  return VideoModel.findOneAndUpdate(
+    {
+      _id: video._id,
+      status: 'published',
+      publicationNotificationSent: { $ne: true },
+      $and: [
+        {
+          $or: [
+            { publishedNotifySentAt: null },
+            { publishedNotifySentAt: { $exists: false } },
+          ],
+        },
+        {
+          $or: [
+            { publishedAt: null },
+            { publishedAt: { $exists: false } },
+          ],
+        },
+      ],
+    },
+    {
+      $set: {
+        publicationNotificationSent: true,
+        publicationNotificationSentAt: now,
+        publishedNotifySentAt: now,
+        publishedAt: now,
+      },
+    },
+    { new: true },
+  );
+}
+
+export async function notifyVideoPublished(video) {
+  const claimed = await claimVideoPublicationEmail(video);
+  if (!claimed) return;
+
+  const title = String(claimed.title || 'New lecture').trim() || 'New lecture';
+  const pathLabel = locationPath(claimed) || 'Videos';
+  const subjectLine = `New Video Available — ${title}`;
+  const announcement = `${title} is now available in ${pathLabel}.`;
+  const link = videoWatchLink(claimed);
+
+  const cursor = UserModel.find({})
+    .select('_id email firstName preferences')
     .lean()
     .cursor();
 
   for await (const user of cursor) {
-    const prefs = user.preferences || {};
-    const contentOk = prefs.contentUpdates !== false;
-    if (!contentOk) continue;
-
-    const claimed = await claimCommunityNotificationDelivery(eventKey, user._id, user.email);
-    if (!claimed) continue;
-
-    await UserNotificationModel.create({
-      userId: user._id,
-      kind: 'video.published',
-      title,
-      body,
-      link: `/videos?sectionId=${encodeURIComponent(String(video.sectionId || ''))}&videoId=${encodeURIComponent(String(video._id || ''))}`,
-      videoId: String(video._id || ''),
-      sectionId: String(video.sectionId || ''),
-    });
-
-    if (prefs.emailNotifications === false) continue;
-    if (user.requiresEmailVerification === true && !user.emailVerifiedAt) continue;
     const dest = normalizeEmail(user.email);
-    if (!dest) continue;
+    if (!dest || !isValidEmail(dest)) {
+      console.warn('[videos] publication email skipped: invalid or missing address', String(user._id));
+      continue;
+    }
+    if (user.preferences?.emailNotifications === false) continue;
+
     const greeting = String(user.firstName || '').trim() || 'there';
-    const paragraphs = [
-      body,
-      'Open NET360 to watch the lecture in the Videos section.',
-    ];
     try {
       await sendResendEmail({
         to: dest,
-        subject: title,
-        text: `Hi ${greeting},\n\n${paragraphs.join('\n')}\n\n${link}\n`,
+        subject: subjectLine,
+        text: `Hi ${greeting},\n\n${announcement}\n\nWatch it here:\n${link}\n`,
         html: notificationShell({
-          title,
+          title: escapeHtml(subjectLine),
           greeting: escapeHtml(greeting),
-          paragraphs: paragraphs.map((item) => escapeHtml(item)),
-          ctaLabel: 'Watch video',
+          paragraphs: [escapeHtml(announcement)],
+          ctaLabel: 'Watch lecture',
           ctaUrl: escapeHtml(link),
-          footer: 'You received this because content updates are enabled in your NET360 preferences.',
+          footer: 'You received this because email notifications are enabled on your NET360 account.',
         }),
       });
     } catch (error) {
-      console.warn('[videos] publish email failed:', error?.message || error);
+      console.warn('[videos] publication email failed:', dest, error?.message || error);
     }
   }
 }

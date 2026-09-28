@@ -26,6 +26,8 @@ const videoSchema = new mongoose.Schema(
     uploadedAt: { type: Date, default: null },
     publishedAt: { type: Date, default: null },
     publishedNotifySentAt: { type: Date, default: null },
+    publicationNotificationSent: { type: Boolean, default: false, index: true },
+    publicationNotificationSentAt: { type: Date, default: null },
     uploadSessionId: { type: String, default: '', index: true },
     createdByUserId: { type: String, default: '' },
     createdByEmail: { type: String, default: '' },

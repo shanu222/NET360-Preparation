@@ -118,14 +118,12 @@ function applySyllabusNode(target, node) {
 
 async function maybeNotifyPublish(previousStatus, video) {
   if (video.status !== 'published') return;
-  if (previousStatus === 'published') return;
-  if (video.publishedNotifySentAt) return;
-  video.publishedAt = video.publishedAt || new Date();
-  video.publishedNotifySentAt = new Date();
-  await video.save();
+  const previous = String(previousStatus || '').trim().toLowerCase();
+  if (previous === 'published') return;
+  if (previous === 'unpublished' || previous === 'disabled') return;
   setImmediate(() => {
     void notifyVideoPublished(video).catch((error) => {
-      console.warn('[videos] notify failed:', error?.message || error);
+      console.warn('[videos] publication email campaign failed:', error?.message || error);
     });
   });
 }
