@@ -43,46 +43,7 @@ interface NustImportantNoticeRow {
   status: 'open' | 'closed' | 'upcoming' | 'completed' | 'info';
 }
 
-const DEFAULT_IMPORTANT_DATES: NustImportantDateRow[] = [
-  {
-    key: 'series-1',
-    title: 'NET Series 1',
-    registration: 'Online Registration: 05 Oct - 25 Nov 2025',
-    testDate: 'Test Schedule: 22 Nov - 10 Dec 2025',
-    status: 'completed',
-  },
-  {
-    key: 'series-2',
-    title: 'NET Series 2',
-    registration: 'Online Registration: 14 Dec 2025 - 01 Feb 2026',
-    testDate: 'Test Schedule: 31 Jan - 15 Feb 2026 (Islamabad); 25 - 26 Mar 2026 (Quetta)',
-    status: 'open',
-  },
-  {
-    key: 'series-3',
-    title: 'NET Series 3',
-    registration: 'Online Registration: 22 Feb - 30 Mar 2026',
-    testDate: 'Test Schedule: 04 Apr 2026 onwards',
-    status: 'upcoming',
-  },
-  {
-    key: 'series-4',
-    title: 'NET Series 4',
-    registration: 'Online Registration: Apr - Jun 2026',
-    testDate: 'Test Schedule: Jun 2026 (Islamabad); Jul 2026 (Quetta)',
-    status: 'upcoming',
-  },
-];
-
-const DEFAULT_IMPORTANT_NOTICES: NustImportantNoticeRow[] = [
-  {
-    key: 'notice-default',
-    title: 'Important notices update automatically from admissions data.',
-    subtitle: 'Latest NET, result, and ACT/SAT updates will appear here.',
-    category: 'notice',
-    status: 'info',
-  },
-];
+type NustFeedStatus = 'loading' | 'ready' | 'empty' | 'error';
 
 const NOTICE_BLOCKLIST_PATTERNS = [
   /mathematics\s*course/i,
@@ -191,8 +152,9 @@ export function NUSTGuide() {
   const [sscMarks, setSscMarks] = useState('');
   const [hsscMarks, setHsscMarks] = useState('');
   const [eligibilityResult, setEligibilityResult] = useState<string[]>([]);
-  const [importantDates, setImportantDates] = useState<NustImportantDateRow[]>(DEFAULT_IMPORTANT_DATES);
-  const [importantNotices, setImportantNotices] = useState<NustImportantNoticeRow[]>(DEFAULT_IMPORTANT_NOTICES);
+  const [importantDates, setImportantDates] = useState<NustImportantDateRow[]>([]);
+  const [importantNotices, setImportantNotices] = useState<NustImportantNoticeRow[]>([]);
+  const [feedStatus, setFeedStatus] = useState<NustFeedStatus>('loading');
   const [lastUpdatedFromNust, setLastUpdatedFromNust] = useState('');
   const [sessionLabel, setSessionLabel] = useState('');
 
@@ -200,19 +162,22 @@ export function NUSTGuide() {
     let cancelled = false;
 
     const applyFeed = (payload: {
+      source?: string;
       dates?: NustImportantDateRow[];
       notices?: NustImportantNoticeRow[];
       lastUpdatedFromNust?: string | null;
       fetchedAt?: string | null;
       sessionLabel?: string;
     }) => {
-      if (Array.isArray(payload.dates) && payload.dates.length) {
-        setImportantDates(payload.dates);
+      if (payload.source === 'seed') {
+        setFeedStatus((current) => (current === 'ready' ? 'ready' : 'empty'));
+        return;
       }
-      if (Array.isArray(payload.notices) && payload.notices.length) {
-        const safeNotices = filterBlockedImportantNotices(payload.notices);
-        setImportantNotices(safeNotices.length ? safeNotices : DEFAULT_IMPORTANT_NOTICES);
-      }
+      const dates = Array.isArray(payload.dates) ? payload.dates : [];
+      const notices = filterBlockedImportantNotices(Array.isArray(payload.notices) ? payload.notices : []);
+      setImportantDates(dates);
+      setImportantNotices(notices);
+      setFeedStatus(dates.length || notices.length ? 'ready' : 'empty');
       const updated = formatNustUpdatedAt(payload.lastUpdatedFromNust || payload.fetchedAt);
       if (updated) setLastUpdatedFromNust(updated);
       if (payload.sessionLabel) setSessionLabel(String(payload.sessionLabel));
@@ -221,6 +186,7 @@ export function NUSTGuide() {
     const loadFeed = async () => {
       try {
         const payload = await apiRequest<{
+          source?: string;
           dates?: NustImportantDateRow[];
           notices?: NustImportantNoticeRow[];
           lastUpdatedFromNust?: string | null;
@@ -231,7 +197,7 @@ export function NUSTGuide() {
         if (cancelled) return;
         applyFeed(payload);
       } catch {
-        // Keep fallback data when live updates are unavailable.
+        if (!cancelled) setFeedStatus((current) => (current === 'ready' ? 'ready' : 'error'));
       }
     };
 
@@ -455,6 +421,16 @@ export function NUSTGuide() {
                 <CardTitle>Admission Timeline</CardTitle>
               </CardHeader>
               <CardContent>
+                {feedStatus !== 'ready' || timeline.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    {feedStatus === 'loading'
+                      ? 'Loading the latest NUST schedule…'
+                      : feedStatus === 'error'
+                        ? 'Couldn\'t load the NUST schedule. Check your connection and try again.'
+                        : 'No NET series is published on the NUST admissions page right now.'}
+                  </p>
+                ) : (
+                <>
                 <div className="relative mb-5 mt-2 h-2 rounded-full bg-indigo-100">
                   <div className="absolute left-0 top-0 h-2 w-full rounded-full bg-gradient-to-r from-violet-400 via-blue-400 to-orange-400" />
                   <div className="absolute inset-0 grid grid-cols-4">
@@ -477,6 +453,8 @@ export function NUSTGuide() {
                     </div>
                   ))}
                 </div>
+                </>
+                )}
             </CardContent>
           </Card>
 
@@ -631,6 +609,15 @@ export function NUSTGuide() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {feedStatus === 'loading' && importantDates.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Loading the latest NUST schedule…</p>
+              ) : null}
+              {feedStatus === 'error' && importantDates.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Couldn&apos;t load the NUST schedule. Check your connection and try again.</p>
+              ) : null}
+              {feedStatus !== 'loading' && feedStatus !== 'error' && importantDates.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No NET series is published on the NUST admissions page right now.</p>
+              ) : null}
               <div className="grid gap-4">
                 {importantDates.map((item) => {
                   const badge = statusToBadge(item.status);
@@ -655,6 +642,15 @@ export function NUSTGuide() {
               <CardDescription>Live admission announcements, result alerts, and ACT/SAT updates</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
+              {feedStatus === 'loading' && importantNotices.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Loading official NUST notices…</p>
+              ) : null}
+              {feedStatus === 'error' && importantNotices.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Couldn&apos;t load official NUST notices. Check your connection and try again.</p>
+              ) : null}
+              {feedStatus !== 'loading' && feedStatus !== 'error' && importantNotices.length === 0 ? (
+                <p className="text-sm text-muted-foreground">No official notices are published on the NUST admissions page right now.</p>
+              ) : null}
               <div className="grid gap-4">
                 {filterBlockedImportantNotices(importantNotices).map((item) => {
                   const badge = statusToBadge(item.status);

@@ -71,7 +71,7 @@ export function extractNustSeriesDates(html) {
   $('table.nettable tr').each((_, row) => {
     const cells = $(row).find('td').toArray().map((cell) => cellText($, cell));
     if (!cells.length) return;
-    const seriesMatch = String(cells[0] || '').match(/series\s*[-–]?\s*([1-4])/i);
+    const seriesMatch = String(cells[0] || '').match(/series\s*[-–]?\s*(\d+)/i);
     if (!seriesMatch) return;
     const series = Number(seriesMatch[1]);
     const registrationRaw = cells[1] || '';
@@ -86,17 +86,13 @@ export function extractNustSeriesDates(html) {
     items.push({
       key: `series-${series}`,
       title: `NET Series ${series}`,
-      registration: registrationRaw
-        ? `Online Registration: ${registrationRaw}`
-        : 'Online Registration: See official NUST portal',
-      testDate: locationBits.length
-        ? `Test Schedule: ${locationBits.join('; ')}`
-        : 'Test Schedule: See official NUST portal',
+      registration: registrationRaw ? `Online Registration: ${registrationRaw}` : '',
+      testDate: locationBits.length ? `Test Schedule: ${locationBits.join('; ')}` : '',
       status: normalizeNustStatus(`${registrationRaw} ${locationBits.join(' ')}`, 'upcoming'),
     });
   });
 
-  items.sort((a, b) => Number(a.key.slice(-1)) - Number(b.key.slice(-1)));
+  items.sort((a, b) => Number(String(a.key).match(/(\d+)/)?.[1] || 0) - Number(String(b.key).match(/(\d+)/)?.[1] || 0));
   return items;
 }
 
