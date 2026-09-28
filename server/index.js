@@ -74,6 +74,14 @@ import {
 } from './services/communityPresence.js';
 import { notificationShell } from './services/notificationEmail.js';
 import {
+  announcePublishedVideo,
+  classifyProviderError,
+  sendNet360Email,
+  setEmailTransports,
+  shouldAnnounceVideoPublish,
+  startNet360EmailMaintenance,
+} from './services/net360EmailDelivery.js';
+import {
   applyAchievementNotices,
   buildAchievementCertificatePdf,
   buildCommunityAchievementBadges,
@@ -4360,7 +4368,7 @@ function resolveNet360PublicWebBaseUrl() {
 }
 
 async function ensureDeletionEmailDeliveryReady() {
-  if (RESEND_API_KEY) {
+  if (RESEND_API_KEY || String(process.env.BREVO_API_KEY || '').trim()) {
     return { ok: true, detail: '' };
   }
   if (!smtpRuntime.enabled || !smtpTransporter || !SMTP_FROM_EMAIL) {
@@ -4404,10 +4412,16 @@ async function postResendEmail({ from, to, subject, text, html }) {
       /* keep raw snippet */
     }
     const error = new Error(sanitizeResendError(new Error(`Resend ${response.status}: ${detail}`)));
+    error.status = response.status;
     resendRuntime.lastError = error.message;
     throw error;
   }
   resendRuntime.lastError = '';
+  try {
+    return { messageId: String(JSON.parse(body)?.id || '') };
+  } catch {
+    return { messageId: '' };
+  }
 }
 
 async function sendDeletionEmailViaResend({ to, subject, text, html }) {
@@ -4415,18 +4429,19 @@ async function sendDeletionEmailViaResend({ to, subject, text, html }) {
   let lastError = new Error('Resend from-address is not configured.');
   for (let i = 0; i < froms.length; i += 1) {
     try {
-      await postResendEmail({
+      const sent = await postResendEmail({
         from: froms[i],
         to,
         subject,
         text,
         html,
       });
-      return;
+      return sent;
     } catch (error) {
       lastError = error;
       console.warn(`[resend] send failed from=${resendRuntime.lastFrom}: ${sanitizeResendError(error)}`);
-      if (i >= froms.length - 1) throw error;
+      const category = classifyProviderError(error);
+      if (category === 'quota' || category === 'permanent-recipient' || i >= froms.length - 1) throw error;
     }
   }
   throw lastError;
@@ -4437,21 +4452,48 @@ async function sendNotificationEmailViaResend({ to, subject, text, html }) {
   let lastError = new Error('Resend from-address is not configured.');
   for (let i = 0; i < froms.length; i += 1) {
     try {
-      await postResendEmail({
+      const sent = await postResendEmail({
         from: froms[i],
         to,
         subject,
         text,
         html,
       });
-      return;
+      return sent;
     } catch (error) {
       lastError = error;
       console.warn(`[resend] notify failed from=${resendRuntime.lastFrom}: ${sanitizeResendError(error)}`);
-      if (i >= froms.length - 1) throw error;
+      const category = classifyProviderError(error);
+      if (category === 'quota' || category === 'permanent-recipient' || i >= froms.length - 1) throw error;
     }
   }
   throw lastError;
+}
+
+setEmailTransports({
+  sendResend: sendNotificationEmailViaResend,
+  sendSmtp: async ({ to, subject, text, html }) => {
+    await sendSmtpMail({ from: SMTP_FROM_EMAIL, to, subject, text, html });
+    return { messageId: '' };
+  },
+});
+
+function maybeAnnounceVideoPublish(mcq, previousUrl = '') {
+  const nextUrl = String(mcq?.videoUrl || '').trim();
+  if (!shouldAnnounceVideoPublish(previousUrl, nextUrl)) return;
+  const videoId = String(mcq?._id || '').trim();
+  if (!videoId) return;
+  void announcePublishedVideo({
+    videoId,
+    title: String(mcq.question || mcq.topic || 'New video').trim().slice(0, 160),
+    subject: mcq.subject,
+    part: mcq.part,
+    chapter: mcq.chapter,
+    section: mcq.section,
+    appBaseUrl: resolveNet360PublicWebBaseUrl(),
+  }).catch((error) => {
+    console.warn('[email] video publish notice failed:', error instanceof Error ? error.message : 'unknown');
+  });
 }
 
 function studentNotifyName(user) {
@@ -4470,13 +4512,26 @@ function escapeNotifyHtml(value) {
   return escapeHtml(value);
 }
 
-async function dispatchNotificationEmail({ to, subject, text, html }) {
+async function dispatchNotificationEmail({ to, subject, text, html, eventId, userId, emailType, preferences, mandatory }) {
   const dest = normalizeEmail(to);
-  if (!isValidEmail(dest) || !RESEND_API_KEY) return;
+  if (!isValidEmail(dest)) {
+    return { status: 'failed', errorCategory: 'permanent-recipient' };
+  }
   try {
-    await sendNotificationEmailViaResend({ to: dest, subject, text, html });
+    return await sendNet360Email({
+      eventId,
+      userId,
+      recipientEmail: dest,
+      emailType: emailType || 'transactional',
+      preferences,
+      mandatory: Boolean(mandatory),
+      subject,
+      text,
+      html,
+    });
   } catch (error) {
     console.warn('[email] notification send failed:', sanitizeResendError(error));
+    return { status: 'retry', errorCategory: 'temporary' };
   }
 }
 
@@ -4526,6 +4581,10 @@ async function sendStudentEmailVerification(user) {
     subject: 'Verify your NET360 email address',
     text,
     html,
+    eventId: `verification:${user.emailVerifyTokenHash}:${user._id}`,
+    userId: String(user._id),
+    emailType: 'verification',
+    mandatory: true,
   });
   return { sent: true, reason: '', retryAfterSeconds: 0 };
 }
@@ -4564,7 +4623,16 @@ async function queueCommunityNotice({ eventKey, toUser, subject, title, paragrap
     ctaUrl: escapeNotifyHtml(destUrl),
     footer,
   });
-  void dispatchNotificationEmail({ to: dest, subject, text, html });
+  void dispatchNotificationEmail({
+    to: dest,
+    subject,
+    text,
+    html,
+    eventId: eventKey,
+    userId: String(toUser._id),
+    emailType: preferenceKey || 'community',
+    preferences: toUser.preferences,
+  });
 }
 
 async function notifyCommunityDirectMessage(fromUserId, toUserId, connectionId, messageId) {
@@ -4977,7 +5045,16 @@ async function notifyAdminsOfSupportMessage(user, message) {
   for (const to of emails) {
     const claimed = await claimCommunityNotificationDelivery(eventKey, `admin:${to}`, to);
     if (!claimed) continue;
-    void dispatchNotificationEmail({ to, subject, text, html });
+    void dispatchNotificationEmail({
+      to,
+      subject,
+      text,
+      html,
+      eventId: `${eventKey}:${to}`,
+      userId: `admin:${to}`,
+      emailType: 'support',
+      mandatory: true,
+    });
   }
 }
 
@@ -5088,34 +5165,21 @@ async function sendAccountDeletionLinkEmail({ toEmail, firstName, deleteUrl, exp
   </table>
 </body></html>`;
 
-  try {
-    if (RESEND_API_KEY) {
-      await sendDeletionEmailViaResend({
-        to: toEmail,
-        subject,
-        text,
-        html,
-      });
-      console.log('[email] deletion link sent via Resend');
-      return { status: 'sent', detail: 'Deletion email sent.' };
-    }
-  } catch (resendError) {
-    console.warn('[email] Resend deletion send failed:', sanitizeResendError(resendError));
-  }
-
-  try {
-    await sendSmtpMail({
-      from: SMTP_FROM_EMAIL,
-      to: toEmail,
-      subject,
-      text,
-      html,
-    });
-    console.log('[email] deletion link sent via SMTP');
+  const delivered = await sendNet360Email({
+    eventId: `account-deletion:${hashAccountDeletionRawToken(deleteUrl)}:${normalizeEmail(toEmail)}`,
+    userId: normalizeEmail(toEmail),
+    recipientEmail: toEmail,
+    emailType: 'account-deletion',
+    mandatory: true,
+    allowSmtpFallback: true,
+    subject,
+    text,
+    html,
+  });
+  if (delivered?.status === 'sent') {
     return { status: 'sent', detail: 'Deletion email sent.' };
-  } catch (error) {
-    return { status: 'failed', detail: sanitizeResendError(error) || sanitizeSmtpError(error) };
   }
+  return { status: 'failed', detail: 'Email delivery is temporarily unavailable.' };
 }
 
 function escapeHtml(value) {
@@ -9195,6 +9259,9 @@ app.get('/api/health', async (_req, res) => {
       SMTP_FROM_EMAIL: Boolean(SMTP_FROM_EMAIL),
       RESEND_API_KEY: Boolean(RESEND_API_KEY),
       RESEND_FROM_EMAIL: Boolean(RESEND_FROM_EMAIL),
+      BREVO_API_KEY: Boolean(String(process.env.BREVO_API_KEY || '').trim()),
+      BREVO_FROM_EMAIL: Boolean(String(process.env.BREVO_FROM_EMAIL || '').trim()),
+      BREVO_FROM_NAME: Boolean(String(process.env.BREVO_FROM_NAME || '').trim()),
       NET360_PUBLIC_APP_URL: Boolean(NET360_PUBLIC_APP_URL),
       REDIS_URL: Boolean(String(process.env.REDIS_URL || '').trim()),
       REDIS_HOST: Boolean(String(process.env.REDIS_HOST || '').trim()),
@@ -18915,6 +18982,7 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
   try {
     const mcqDocument = buildAdminMcqDocument(req.body || {});
     const mcq = await MCQModel.create(mcqDocument);
+    maybeAnnounceVideoPublish(mcq);
 
     await cacheDel(cacheKey('mcqs:counts:v1'));
     broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'create' } });
@@ -18966,6 +19034,7 @@ app.post('/api/admin/upload-mcqs-bulk', authMiddleware, requireAdmin, async (req
     try {
       const mcqDocument = buildAdminMcqDocument(payload);
       const mcq = await MCQModel.create(mcqDocument);
+      maybeAnnounceVideoPublish(mcq);
       created.push(serializeMcq(mcq));
     } catch (error) {
       errors.push(`MCQ #${index + 1}: ${error instanceof Error ? error.message : 'Could not save.'}`);
@@ -19135,8 +19204,10 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
     return;
   }
 
+  const previousVideoUrl = String(mcq.videoUrl || '');
   Object.assign(mcq, payload);
   await mcq.save();
+  maybeAnnounceVideoPublish(mcq, previousVideoUrl);
 
   await cacheDel(cacheKey('mcqs:counts:v1'));
   broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'update' } });
@@ -19566,6 +19637,7 @@ async function bootstrap() {
         void backfillCommunityNotificationsGlobal().catch((error) => {
           console.warn('[community-notify] startup backfill failed:', error?.message || error);
         });
+        startNet360EmailMaintenance();
       } else {
         const rs = mongoConnection?.readyState ?? '(no connection)';
         console.warn(`[startup] MongoDB not ready (readyState=${rs}). Background reconnect may be active; see [mongo] logs.`);
