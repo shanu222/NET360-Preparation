@@ -6,6 +6,7 @@ const preferencesSchema = new mongoose.Schema(
     dailyReminders: { type: Boolean, default: true },
     performanceReports: { type: Boolean, default: true },
     contentUpdates: { type: Boolean, default: true },
+    notificationPreferences: { type: mongoose.Schema.Types.Mixed, default: () => ({}) },
   },
   { _id: false },
 );
@@ -140,6 +141,9 @@ const userSchema = new mongoose.Schema(
     /** Set true only for new email/password signups. Existing and Google accounts stay false. */
     requiresEmailVerification: { type: Boolean, default: false, index: true },
     emailVerifiedAt: { type: Date, default: null },
+    /** False only on a brand-new account until the one welcome email is sent. Missing means an existing account. */
+    welcomeEmailSent: { type: Boolean },
+    welcomeEmailSentAt: { type: Date, default: null },
     emailVerifyTokenHash: { type: String, default: null, index: true },
     emailVerifyExpiresAt: { type: Date, default: null },
     emailVerifyLastSentAt: { type: Date, default: null },
