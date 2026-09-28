@@ -57,7 +57,13 @@ export function NotificationPreferencesPanel() {
     const previous = notificationPreferences[key];
     setNotificationPreferences((current) => ({ ...current, [key]: enabled }));
     try {
-      await savePreferences({ notificationPreferences: { [key]: enabled } });
+      const notificationPreferences: Record<string, boolean> = { [key]: enabled };
+      if (key === 'videoUploads') notificationPreferences.newVideos = enabled;
+      if (key === 'nustUpdates') {
+        notificationPreferences.nustNotices = enabled;
+        notificationPreferences.netUpdates = enabled;
+      }
+      await savePreferences({ notificationPreferences });
     } catch (error) {
       setNotificationPreferences((current) => ({ ...current, [key]: previous }));
       handleApiError(error, 'Could not save notification preference.');
@@ -68,7 +74,12 @@ export function NotificationPreferencesPanel() {
     const previous = deliveryPreferences[key];
     setDeliveryPreferences((current) => ({ ...current, [key]: enabled }));
     try {
-      await savePreferences({ [key]: enabled });
+      const notificationPreferences = key === 'emailNotifications'
+        ? { enabled }
+        : key === 'dailyReminders'
+          ? { dailyReminders: enabled }
+          : { performanceReports: enabled };
+      await savePreferences({ [key]: enabled, notificationPreferences });
     } catch (error) {
       setDeliveryPreferences((current) => ({ ...current, [key]: previous }));
       handleApiError(error, 'Could not save notification preference.');

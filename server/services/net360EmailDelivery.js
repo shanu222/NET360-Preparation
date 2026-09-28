@@ -1,7 +1,7 @@
 import { EmailDeliveryModel } from '../models/EmailDelivery.js';
 import { UserModel } from '../models/User.js';
 import { accountNeedsEmailVerification } from '../lib/emailVerification.js';
-import { isOptionalNotificationEnabled, isOptionalNotificationKey } from '../lib/notificationPreferences.js';
+import { notificationAllowed } from '../lib/unifiedNotificationPreferences.js';
 
 const RETRY_BASE_MS = 60 * 1000;
 const RETRY_MAX_MS = 6 * 60 * 60 * 1000;
@@ -34,18 +34,7 @@ export function sanitizeEmailError(error, secrets = []) {
 
 export function emailAllowedByPreference({ emailType, preferences, mandatory }) {
   if (mandatory || emailType === 'verification' || emailType === 'account-deletion') return true;
-  const prefs = preferences && typeof preferences === 'object' ? preferences : {};
-  if (prefs.emailNotifications === false) return false;
-  if (emailType === 'video-published' && prefs.contentUpdates === false) return false;
-  if (emailType === 'daily-reminder') return prefs.dailyReminders !== false;
-  if (emailType === 'weekly-report') return prefs.performanceReports !== false;
-  const category = emailType === 'video-published'
-    ? 'videoUploads'
-    : emailType === 'nust'
-      ? 'nustUpdates'
-      : emailType;
-  if (isOptionalNotificationKey(category) && !isOptionalNotificationEnabled(prefs, category)) return false;
-  return true;
+  return notificationAllowed(preferences, emailType);
 }
 
 export function shouldAnnounceVideoPublish(previousUrl, nextUrl) {

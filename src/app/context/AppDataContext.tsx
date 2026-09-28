@@ -217,9 +217,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       hsscPercentage: userData.hsscPercentage || '',
       testDate: userData.testDate || '',
     });
+    const nested = userData.preferences?.notificationPreferences as Record<string, boolean> | undefined;
+    const enabled = typeof nested?.enabled === 'boolean' ? nested.enabled : userData.preferences?.emailNotifications !== false;
     setPreferences({
       ...defaultPreferences,
       ...(userData.preferences || {}),
+      emailNotifications: enabled,
+      dailyReminders: typeof nested?.dailyReminders === 'boolean' ? nested.dailyReminders : userData.preferences?.dailyReminders !== false,
+      performanceReports: typeof nested?.performanceReports === 'boolean' ? nested.performanceReports : userData.preferences?.performanceReports !== false,
       notificationPreferences: resolveNotificationPreferences(userData.preferences?.notificationPreferences),
     });
   }, []);
@@ -729,7 +734,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   };
 
   const savePreferences = async (partial: Partial<Omit<PreferencesState, 'notificationPreferences'>> & {
-    notificationPreferences?: Partial<PreferencesState['notificationPreferences']>;
+    notificationPreferences?: Record<string, boolean>;
   }) => {
     const authToken = resolveClientAuthToken();
     if (!authToken || !user) {
@@ -745,9 +750,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       authToken,
     );
 
+    const savedNotes = payload.user.preferences?.notificationPreferences as Record<string, boolean> | undefined;
+    const savedEnabled = typeof savedNotes?.enabled === 'boolean' ? savedNotes.enabled : payload.user.preferences?.emailNotifications !== false;
     setPreferences({
       ...defaultPreferences,
       ...(payload.user.preferences || {}),
+      emailNotifications: savedEnabled,
+      dailyReminders: typeof savedNotes?.dailyReminders === 'boolean' ? savedNotes.dailyReminders : payload.user.preferences?.dailyReminders !== false,
+      performanceReports: typeof savedNotes?.performanceReports === 'boolean' ? savedNotes.performanceReports : payload.user.preferences?.performanceReports !== false,
       notificationPreferences: resolveNotificationPreferences(payload.user.preferences?.notificationPreferences),
     });
   };

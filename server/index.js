@@ -156,10 +156,10 @@ import {
   sniffCommunityFileKind,
 } from './lib/communityNotifications.js';
 import {
-  isOptionalNotificationEnabled,
-  mergeNotificationPreferencePatch,
-  resolveNotificationPreferences,
-} from './lib/notificationPreferences.js';
+  applySharedNotificationPreferences,
+  notificationAllowed,
+  resolveSharedNotificationPreferences,
+} from './lib/unifiedNotificationPreferences.js';
 import { SignupRequestModel } from './models/SignupRequest.js';
 import { SignupTokenModel } from './models/SignupToken.js';
 import { PremiumSubscriptionRequestModel } from './models/PremiumSubscriptionRequest.js';
@@ -4558,7 +4558,8 @@ async function queueCommunityNotice({ eventKey, toUser, subject, title, paragrap
   const dest = normalizeEmail(toUser?.email);
   if (!dest || (toUser?.role || 'student') === 'admin') return;
   if (accountNeedsEmailVerification(toUser)) return;
-  if (preferenceKey && !isOptionalNotificationEnabled(toUser?.preferences, preferenceKey)) return;
+  if (preferenceKey && !notificationAllowed(toUser?.preferences, preferenceKey)) return;
+  if ((preferenceKey === 'nustUpdates' || preferenceKey === 'nustNotices') && !notificationAllowed(toUser?.preferences, 'netUpdates')) return;
   const claimed = await claimCommunityNotificationDelivery(eventKey, toUser._id, dest);
   if (!claimed) return;
   const greeting = String(toUser.firstName || '').trim() || 'there';
@@ -4600,7 +4601,7 @@ async function notifyCommunityDirectMessage(fromUserId, toUserId, connectionId, 
   if (!String(connectionId || '').trim()) return;
   await markChatNotificationSpeaker(communityChatWindowKey(connectionId, fromUserId));
   const [fromUser, toUser] = await Promise.all([loadUserForNotify(fromUserId), loadUserForNotify(toUserId)]);
-  if (!toUser || !isOptionalNotificationEnabled(toUser.preferences, 'communityMessages')) return;
+  if (!toUser || !notificationAllowed(toUser.preferences, 'communityMessages')) return;
   const windowClaim = await claimChatNotificationWindow(communityChatWindowKey(connectionId, toUserId));
   if (!windowClaim.allowed) return;
   const who = studentNotifyName(fromUser);
@@ -5023,7 +5024,7 @@ async function notifyUserOfSupportAdminReply(userId, messageId) {
   if (!studentId) return;
   await markChatNotificationSpeaker(supportChatWindowKey(studentId, 'admin'));
   const toUser = await loadUserForNotify(userId);
-  if (!toUser || !isOptionalNotificationEnabled(toUser.preferences, 'supportReplies')) return;
+  if (!toUser || !notificationAllowed(toUser.preferences, 'supportReplies')) return;
   const windowClaim = await claimChatNotificationWindow(supportChatWindowKey(studentId, 'user'));
   if (!windowClaim.allowed) return;
   await queueCommunityNotice({
@@ -6772,11 +6773,7 @@ function userPublic(user) {
     authProvider: String(user.authProvider || 'local'),
     authProviderDetail: normalizeAuthProviderDetail(user.authProviderDetail),
     deletionChannel: classifyStudentDeletionChannelSync(user),
-    preferences: {
-      ...defaultPreferences(),
-      ...(user.preferences || {}),
-      notificationPreferences: resolveNotificationPreferences(user.preferences?.notificationPreferences).preferences,
-    },
+    preferences: resolveSharedNotificationPreferences(user.preferences),
     progress,
     subscription: {
       ...subscription,
@@ -10716,16 +10713,6 @@ app.post('/api/auth/reset-password', async (req, res) => {
 });
 
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
-  const resolvedNotes = resolveNotificationPreferences(req.user.preferences?.notificationPreferences);
-  if (resolvedNotes.changed) {
-    req.user.preferences = {
-      ...defaultPreferences(),
-      ...(req.user.preferences?.toObject?.() || req.user.preferences || {}),
-      notificationPreferences: resolvedNotes.preferences,
-    };
-    req.user.markModified('preferences');
-    await req.user.save();
-  }
   const u = userPublic(req.user);
   u.deletionChannel = await resolveStudentDeletionChannel(req.user, firebaseAdminAuth);
   if ((req.user.role || 'student') === 'student' && req.user.activeSession?.sessionId) {
@@ -10810,16 +10797,7 @@ app.put('/api/auth/profile', authMiddleware, async (req, res) => {
 
 app.put('/api/auth/preferences', authMiddleware, async (req, res) => {
   const current = req.user.preferences || defaultPreferences();
-  req.user.preferences = {
-    emailNotifications: typeof req.body?.emailNotifications === 'boolean' ? req.body.emailNotifications : current.emailNotifications,
-    dailyReminders: typeof req.body?.dailyReminders === 'boolean' ? req.body.dailyReminders : current.dailyReminders,
-    performanceReports: typeof req.body?.performanceReports === 'boolean' ? req.body.performanceReports : current.performanceReports,
-    contentUpdates: typeof req.body?.contentUpdates === 'boolean' ? req.body.contentUpdates : (current.contentUpdates !== false),
-    notificationPreferences: mergeNotificationPreferencePatch(
-      current.notificationPreferences,
-      req.body?.notificationPreferences,
-    ),
-  };
+  req.user.preferences = applySharedNotificationPreferences(current, req.body);
   req.user.markModified('preferences');
 
   await req.user.save();

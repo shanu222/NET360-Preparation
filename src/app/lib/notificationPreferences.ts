@@ -133,9 +133,15 @@ export function defaultNotificationPreferences(): NotificationPreferenceMap {
 export function resolveNotificationPreferences(stored: Partial<NotificationPreferenceMap> | null | undefined): NotificationPreferenceMap {
   const defaults = defaultNotificationPreferences();
   const next = { ...defaults };
-  if (!stored) return next;
+  const source = (stored || {}) as Partial<NotificationPreferenceMap> & Record<string, boolean | undefined>;
   (Object.keys(defaults) as NotificationPreferenceKey[]).forEach((key) => {
-    if (typeof stored[key] === 'boolean') next[key] = stored[key];
+    if (typeof source[key] === 'boolean') next[key] = source[key];
   });
+  if (typeof source.newVideos === 'boolean') next.videoUploads = source.newVideos;
+  if (typeof source.nustNotices === 'boolean' || typeof source.netUpdates === 'boolean') {
+    const notices = source.nustNotices !== false;
+    const updates = typeof source.netUpdates === 'boolean' ? source.netUpdates : notices;
+    next.nustUpdates = notices && updates;
+  }
   return next;
 }
