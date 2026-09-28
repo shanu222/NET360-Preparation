@@ -11,6 +11,7 @@ import {
   EyeOff,
   FileCheck2,
   FileQuestion,
+  Film,
   Gauge,
   KeyRound,
   LayoutDashboard,
@@ -73,6 +74,7 @@ import {
 } from '../app/components/ui/alert-dialog';
 import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../app/lib/userToast';
 import { COMPUTER_SCIENCE_SYLLABUS, FLAT_TOPIC_TABS, INTELLIGENCE_SYLLABUS, SYLLABUS } from '../app/components/Preparation';
+import { AdminVideos } from './AdminVideos';
 import type { SubjectKey } from '../app/lib/mcq';
 import {
   downloadBlobFile,
@@ -740,6 +742,7 @@ type AdminSection =
   | 'password-recovery'
   | 'security-info'
   | 'mcqs'
+  | 'videos'
   | 'practice-board'
   | 'submissions'
   | 'community-moderation'
@@ -755,6 +758,7 @@ const ADMIN_SECTION_ROUTES: Record<AdminSection, string> = {
   'password-recovery': '/admin/password-recovery',
   'security-info': '/admin/security-info',
   mcqs: '/admin/mcqs',
+  videos: '/admin/videos',
   'practice-board': '/admin/practice-board',
   submissions: '/admin/submissions',
   'community-moderation': '/admin/community-moderation',
@@ -766,6 +770,7 @@ const ADMIN_SECTION_META: Array<{ section: AdminSection; label: string; icon: Lu
   { section: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { section: 'users', label: 'Users', icon: Users },
   { section: 'mcqs', label: 'MCQs', icon: FileQuestion },
+  { section: 'videos', label: 'Videos', icon: Film },
   { section: 'practice-board', label: 'Practice Board', icon: BookCheck },
   { section: 'submissions', label: 'Submissions', icon: FileCheck2 },
   { section: 'community-moderation', label: 'Community', icon: ShieldAlert },
@@ -787,6 +792,7 @@ function getSectionFromPath(pathname: string): AdminSection {
   if (normalized.startsWith('/admin/security-info')) return 'security-info';
   if (normalized.startsWith('/admin/password-recovery')) return 'password-recovery';
   if (normalized.startsWith('/admin/mcqs')) return 'mcqs';
+  if (normalized.startsWith('/admin/videos')) return 'videos';
   if (normalized.startsWith('/admin/practice-board')) return 'practice-board';
   if (normalized.startsWith('/admin/submissions')) return 'submissions';
   if (normalized.startsWith('/admin/community-moderation')) return 'community-moderation';
@@ -11170,6 +11176,10 @@ export default function AdminApp() {
               ) : null}
             </div>
           </div>
+        </TabsContent>
+
+        <TabsContent value="videos" className="space-y-4">
+          <AdminVideos />
         </TabsContent>
 
         <TabsContent value="subscriptions" className="space-y-4">

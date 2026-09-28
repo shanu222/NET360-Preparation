@@ -102,6 +102,7 @@ interface PreferencesState {
   emailNotifications: boolean;
   dailyReminders: boolean;
   performanceReports: boolean;
+  contentUpdates: boolean;
 }
 
 interface AppDataContextValue {
@@ -164,6 +165,7 @@ const defaultPreferences: PreferencesState = {
   emailNotifications: true,
   dailyReminders: true,
   performanceReports: true,
+  contentUpdates: true,
 };
 
 const AppDataContext = createContext<AppDataContextValue | undefined>(undefined);

@@ -75,6 +75,7 @@ export default defineConfig(({ mode }) => {
       alias: {
         // Alias @ to the src directory
         '@': path.resolve(__dirname, './src'),
+        '@shared': path.resolve(__dirname, './shared'),
       },
     },
 

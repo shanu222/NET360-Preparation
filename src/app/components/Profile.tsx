@@ -1431,6 +1431,16 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
 
           <div className="flex items-center justify-between">
             <div>
+              <h4>Content Updates</h4>
+              <p className="text-sm text-muted-foreground">Notify me when new videos or study content are published</p>
+            </div>
+            <Button variant={preferences.contentUpdates !== false ? 'default' : 'outline'} onClick={() => void togglePreference('contentUpdates')}>
+              {preferences.contentUpdates !== false ? 'Enabled' : 'Disabled'}
+            </Button>
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
               <h4>Performance Reports</h4>
               <p className="text-sm text-muted-foreground">Weekly summary of your progress</p>
             </div>

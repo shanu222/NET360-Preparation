@@ -14,6 +14,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 import { PageRouteFallback } from './components/PageRouteFallback';
+import { StudentNotifications } from './components/StudentNotifications';
 import { GlobalFreeAccessAnnouncement } from './components/GlobalFreeAccessAnnouncement';
 import { StudentPresenceHeartbeat } from './components/StudentPresenceHeartbeat';
 import { SubscriptionProvider } from './context/SubscriptionContext';
@@ -30,10 +31,9 @@ import {
   Brain,
   FileText,
   TrendingUp,
-  Calculator,
+  Calendar,
   User,
   Menu,
-  Bell,
   MessageSquare,
   Users,
   ChevronDown,
@@ -41,6 +41,7 @@ import {
   Sun,
   Crown,
   LogOut,
+  Video,
 } from 'lucide-react';
 import { Button } from './components/ui/button';
 import { Sheet, SheetContent, SheetDescription, SheetTitle, SheetTrigger } from './components/ui/sheet';
@@ -48,7 +49,7 @@ import { AppDataProvider } from './context/AppDataContext';
 import { useAuth } from './context/AuthContext';
 import { preloadCommunityCache } from './lib/communityPreload';
 import { prefetchStudentSection, scheduleIdleStudentPrefetch } from './lib/routePrefetch';
-import { showNeutralToast, showSuccessToast } from './lib/userToast';
+import { showNeutralToast } from './lib/userToast';
 import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
@@ -65,6 +66,7 @@ const NUSTSchoolsCampuses = lazyWithRetry(() => import('./components/NUSTSchools
 const PracticeBoard = lazyWithRetry(() => import('./components/PracticeBoard').then((m) => ({ default: m.PracticeBoard })));
 const QuestionContribution = lazyWithRetry(() => import('./components/QuestionContribution').then((m) => ({ default: m.QuestionContribution })));
 const Preparation = lazyWithRetry(() => import('./components/Preparation').then((m) => ({ default: m.Preparation })));
+const Videos = lazyWithRetry(() => import('./components/Videos').then((m) => ({ default: m.Videos })));
 const Tests = lazyWithRetry(() => import('./components/Tests').then((m) => ({ default: m.Tests })));
 const Analytics = lazyWithRetry(() => import('./components/Analytics').then((m) => ({ default: m.Analytics })));
 const MeritCalculator = lazyWithRetry(() => import('./components/MeritCalculator').then((m) => ({ default: m.MeritCalculator })));
@@ -156,6 +158,7 @@ type SectionId =
   | 'question-contribution'
   | 'smart-mentor'
   | 'preparation'
+  | 'videos'
   | 'tests'
   | 'analytics'
   | 'merit-calculator'
@@ -180,6 +183,7 @@ const PATH_BY_SECTION: Record<SectionId, string> = {
   'question-contribution': '/question-contribution',
   'smart-mentor': '/smart-mentor',
   preparation: '/preparation',
+  videos: '/videos',
   tests: '/tests',
   analytics: '/analytics',
   'merit-calculator': '/merit-calculator',
@@ -207,7 +211,7 @@ function isRestorableAndroidRoute(route: string) {
     const parsed = new URL(route, 'https://net360preparation.com');
     if (isStandaloneAuthPath(parsed.pathname)) return false;
     if (resolveSectionFromPath(parsed.pathname)) return true;
-    return /^\/(test|exam|community|guide|analytics|practice-board)/.test(parsed.pathname);
+    return /^\/(test|exam|community|guide|analytics|practice-board|videos)/.test(parsed.pathname);
   } catch {
     return false;
   }
@@ -223,6 +227,7 @@ const STUDENT_NAVIGATION_ITEMS: Array<{ id: SectionId; label: string; icon: type
   { id: 'question-contribution', label: 'Question Contribution', icon: Upload },
   { id: 'smart-mentor', label: 'Smart Study Mentor', icon: Brain },
   { id: 'preparation', label: 'Preparation Materials', icon: BookOpen },
+  { id: 'videos', label: 'Videos', icon: Video },
   { id: 'tests', label: 'Tests', icon: FileText },
   { id: 'analytics', label: 'Analytics', icon: TrendingUp },
   { id: 'merit-calculator', label: 'Merit Calculator', icon: Calculator },
@@ -907,6 +912,12 @@ export default function App() {
             <Preparation />
           </div>
         );
+      case 'videos':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <Videos />
+          </div>
+        );
       case 'tests':
         return (
           <div className="mt-0 net360-page net360-page-enter">
@@ -1107,15 +1118,7 @@ export default function App() {
                   {themeMode === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
                   <span className="ml-1 hidden text-xs font-medium sm:inline">{themeMode === 'dark' ? 'Light' : 'Dark'}</span>
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="touch-manipulation min-h-10 min-w-10 rounded-xl text-slate-600 hover:bg-indigo-50 sm:min-h-9 sm:min-w-9"
-                  onClick={() => showSuccessToast('We will show your updates here.')}
-                  aria-label="Notifications"
-                >
-                  <Bell className="w-4 h-4" />
-                </Button>
+                <StudentNotifications />
                 <div className="hidden sm:block">
                   <PremiumCountdownBadge compact />
                 </div>

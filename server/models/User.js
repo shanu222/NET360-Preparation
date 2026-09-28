@@ -5,6 +5,7 @@ const preferencesSchema = new mongoose.Schema(
     emailNotifications: { type: Boolean, default: true },
     dailyReminders: { type: Boolean, default: true },
     performanceReports: { type: Boolean, default: true },
+    contentUpdates: { type: Boolean, default: true },
   },
   { _id: false },
 );

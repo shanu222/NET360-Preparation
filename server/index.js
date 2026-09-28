@@ -103,6 +103,8 @@ import {
   isPayfastSuccessPayload,
 } from './services/payfastClient.js';
 import { createUploadRouter } from './routes/upload.js';
+import { createVideosRouter } from './routes/videos.js';
+import { ensureR2Cors } from './lib/r2.js';
 import { buildMcqContentFingerprint } from './lib/mcqIdentity.js';
 import { encryptSecurityAnswerPlaintext, decryptSecurityAnswerCiphertext } from './lib/securityAnswerCrypto.js';
 import { UserModel } from './models/User.js';
@@ -797,6 +799,7 @@ function buildCspDirectives() {
     objectSrc: ["'none'"],
     frameAncestors: ["'none'"],
     imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+    mediaSrc: ["'self'", 'blob:', 'https:'],
     fontSrc: ["'self'", 'data:', 'blob:', 'https://fonts.gstatic.com'],
     styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
     // CWE-829: external JS only from same origin or jsDelivr (MathJax); no other script hosts
@@ -5945,6 +5948,7 @@ function defaultPreferences() {
     emailNotifications: true,
     dailyReminders: true,
     performanceReports: true,
+    contentUpdates: true,
   };
 }
 
@@ -8762,6 +8766,8 @@ const studentPremiumSurface = [
   requireTrialOrPremiumContent(UserModel, resolveEntitlementsForUser),
 ];
 
+app.use('/api', createVideosRouter({ authMiddleware, requireAdmin, studentPremiumSurface }));
+
 /** Legacy token-based signup, admin premium proof queues, and recovery lists â€” fully retired (410). */
 function respondLegacyAdminWorkflowGone(_req, res) {
   res.status(410).json({
@@ -10732,6 +10738,7 @@ app.put('/api/auth/preferences', authMiddleware, async (req, res) => {
     emailNotifications: typeof req.body?.emailNotifications === 'boolean' ? req.body.emailNotifications : current.emailNotifications,
     dailyReminders: typeof req.body?.dailyReminders === 'boolean' ? req.body.dailyReminders : current.dailyReminders,
     performanceReports: typeof req.body?.performanceReports === 'boolean' ? req.body.performanceReports : current.performanceReports,
+    contentUpdates: typeof req.body?.contentUpdates === 'boolean' ? req.body.contentUpdates : (current.contentUpdates !== false),
   };
 
   await req.user.save();
@@ -19377,6 +19384,7 @@ async function bootstrap() {
   // Listen first so Railway health checks can pass while Socket.IO/Redis warm up.
   const server = httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`[server] running on 0.0.0.0:${PORT}`);
+    void ensureR2Cors();
     if (NODE_ENV) {
       console.log(`[server] NODE_ENV=${NODE_ENV}`);
     }

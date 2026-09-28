@@ -20,6 +20,7 @@ type PublicUser = {
     emailNotifications: boolean;
     dailyReminders: boolean;
     performanceReports: boolean;
+    contentUpdates: boolean;
   };
   progress: {
     questionsSolved: number;
@@ -540,6 +541,7 @@ function defaultPreferences(): PublicUser['preferences'] {
     emailNotifications: true,
     dailyReminders: true,
     performanceReports: true,
+    contentUpdates: true,
   };
 }
 
@@ -2238,6 +2240,7 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       emailNotifications: typeof body.emailNotifications === 'boolean' ? body.emailNotifications : current.emailNotifications,
       dailyReminders: typeof body.dailyReminders === 'boolean' ? body.dailyReminders : current.dailyReminders,
       performanceReports: typeof body.performanceReports === 'boolean' ? body.performanceReports : current.performanceReports,
+      contentUpdates: typeof body.contentUpdates === 'boolean' ? body.contentUpdates : (current.contentUpdates !== false),
     };
     writeDb(db);
     return { user: toPublicUser(user) } as T;
