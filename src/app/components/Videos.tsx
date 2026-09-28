@@ -10,6 +10,7 @@ import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import { PremiumLockScreen } from './subscription/PremiumLockScreen';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
+import { brandLogoUrl } from '../lib/publicMedia';
 import {
   COMPUTER_SCIENCE_SYLLABUS,
   FLAT_TOPIC_TABS,
@@ -69,6 +70,60 @@ function formatDuration(seconds: number) {
   const s = total % 60;
   if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   return `${m}:${String(s).padStart(2, '0')}`;
+}
+
+function VideoThumbnail({
+  src,
+  title,
+  section,
+  duration,
+  active,
+}: {
+  src?: string;
+  title: string;
+  section: string;
+  duration: number;
+  active?: boolean;
+}) {
+  const [broken, setBroken] = useState(false);
+  const showImage = Boolean(src) && !broken;
+  return (
+    <div className={`relative overflow-hidden rounded-xl ${active ? 'ring-2 ring-indigo-400 ring-offset-2 ring-offset-transparent' : ''}`}>
+      {showImage ? (
+        <img
+          src={src}
+          alt=""
+          className="aspect-video h-full w-full object-cover"
+          onError={() => setBroken(true)}
+        />
+      ) : (
+        <div className="relative aspect-video w-full bg-gradient-to-br from-indigo-700 via-violet-600 to-slate-950">
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,255,255,0.22),transparent_42%)]" />
+          <div className="absolute inset-0 flex flex-col justify-between p-3">
+            <div className="flex items-center gap-2">
+              <img src={brandLogoUrl()} alt="" className="h-7 w-7 rounded-md bg-white/15 object-contain p-0.5" />
+              <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/80">NET360 Lecture</p>
+            </div>
+            <div>
+              <p className="line-clamp-2 text-sm font-semibold leading-snug text-white drop-shadow">{title}</p>
+              <p className="mt-1 line-clamp-1 text-[11px] text-indigo-100/90">{section}</p>
+            </div>
+          </div>
+        </div>
+      )}
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/55 via-black/10 to-transparent" />
+      <span className="absolute inset-0 flex items-center justify-center">
+        <span className="flex h-11 w-11 items-center justify-center rounded-full bg-white/95 text-indigo-700 shadow-[0_10px_24px_rgba(15,23,42,0.35)]">
+          <Play className="h-5 w-5 fill-current" />
+        </span>
+      </span>
+      {duration > 0 ? (
+        <span className="absolute bottom-2 right-2 rounded-md bg-black/80 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-white">
+          {formatDuration(duration)}
+        </span>
+      ) : null}
+    </div>
+  );
 }
 
 function sectionIdFor(params: {
@@ -134,6 +189,8 @@ export function Videos() {
   const [playbackUrl, setPlaybackUrl] = useState('');
   const [playbackLoading, setPlaybackLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState('');
+  const [capturedThumbs, setCapturedThumbs] = useState<Record<string, string>>({});
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
   const videoPanelRef = useRef<HTMLDivElement | null>(null);
   const fetchedSectionRef = useRef<string | null>(null);
 
@@ -215,6 +272,28 @@ export function Videos() {
       setPlaybackLoading(false);
     }
   };
+
+  const capturePlayingFrame = useCallback(() => {
+    const el = videoElRef.current;
+    const id = playingId;
+    if (!el || !id || el.videoWidth < 16) return;
+    try {
+      const canvas = document.createElement('canvas');
+      const width = 640;
+      const height = Math.max(1, Math.round((el.videoHeight / el.videoWidth) * width));
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(el, 0, 0, width, height);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.82);
+      if (dataUrl.length > 32) {
+        setCapturedThumbs((prev) => (prev[id] ? prev : { ...prev, [id]: dataUrl }));
+      }
+    } catch {
+      /* Cross-origin frame capture may be blocked; branded fallback remains. */
+    }
+  }, [playingId]);
 
   if (!user) {
     return (
@@ -309,43 +388,50 @@ export function Videos() {
             ) : playbackUrl ? (
               <video
                 key={playbackUrl}
+                ref={videoElRef}
                 className="aspect-video w-full bg-black"
                 controls
                 playsInline
                 preload="metadata"
+                poster={
+                  (playingId && (videos.find((item) => item.id === playingId)?.thumbnailUrl || capturedThumbs[playingId])) || undefined
+                }
                 src={playbackUrl}
+                onLoadedData={capturePlayingFrame}
               />
             ) : null}
           </div>
         ) : null}
 
         <div className="grid gap-3">
-          {videos.map((video, index) => (
+          {videos.map((video, index) => {
+            const thumbSrc = video.thumbnailUrl || capturedThumbs[video.id] || '';
+            return (
             <button
               key={video.id}
               type="button"
               onClick={() => void playVideo(video.id)}
-              className={`grid gap-3 rounded-2xl border p-3 text-left transition-all duration-200 active:scale-[0.99] sm:grid-cols-[160px_minmax(0,1fr)] ${playingId === video.id ? 'border-indigo-400 bg-indigo-50 shadow-[0_10px_18px_rgba(79,70,229,0.18)]' : 'border-indigo-100 bg-white hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-indigo-50/50'}`}
+              className={`grid gap-3 overflow-hidden rounded-2xl border p-3 text-left transition-all duration-200 active:scale-[0.99] sm:grid-cols-[minmax(200px,34%)_minmax(0,1fr)] ${playingId === video.id ? 'border-indigo-400 bg-indigo-50 shadow-[0_10px_18px_rgba(79,70,229,0.18)] dark:bg-indigo-950/40' : 'border-indigo-100 bg-white hover:-translate-y-0.5 hover:border-indigo-200 hover:bg-indigo-50/50 dark:border-slate-600 dark:bg-slate-900/70'}`}
             >
-              <div className="relative overflow-hidden rounded-xl bg-slate-900">
-                {video.thumbnailUrl ? (
-                  <img src={video.thumbnailUrl} alt="" className="aspect-video h-full w-full object-cover" />
-                ) : (
-                  <div className="flex aspect-video items-center justify-center text-indigo-100">
-                    <Play className="h-8 w-8" />
-                  </div>
-                )}
-              </div>
-              <div className="min-w-0">
+              <VideoThumbnail
+                key={`${video.id}-${thumbSrc ? 'img' : 'art'}`}
+                src={thumbSrc}
+                title={video.title}
+                section={video.section}
+                duration={video.duration}
+                active={playingId === video.id}
+              />
+              <div className="min-w-0 self-center">
                 <p className="text-xs font-medium uppercase tracking-[0.14em] text-indigo-500">
                   {String(video.displayOrder || index + 1).padStart(2, '0')} · {video.section}
                 </p>
                 <p className="mt-1 font-semibold text-indigo-950 dark:text-white">{video.title}</p>
-                {video.description ? <p className="mt-1 line-clamp-2 text-sm text-slate-600">{video.description}</p> : null}
-                <p className="mt-2 text-sm text-slate-500">{formatDuration(video.duration)}</p>
+                {video.description ? <p className="mt-1 line-clamp-2 text-sm text-slate-600 dark:text-slate-300">{video.description}</p> : null}
+                <p className="mt-2 text-sm font-medium text-slate-500">{formatDuration(video.duration)}</p>
               </div>
             </button>
-          ))}
+            );
+          })}
         </div>
       </CardContent>
     </Card>
