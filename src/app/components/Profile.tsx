@@ -553,10 +553,17 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     }
   };
 
-  const togglePreference = async (key: keyof typeof preferences) => {
+  const togglePreference = async (key: 'emailNotifications' | 'dailyReminders' | 'contentUpdates' | 'performanceReports') => {
     const nextValue = !preferences[key];
+    const notificationPreferences = key === 'emailNotifications'
+      ? { enabled: nextValue }
+      : key === 'contentUpdates'
+        ? { newVideos: nextValue }
+        : key === 'dailyReminders'
+          ? { dailyReminders: nextValue }
+          : { performanceReports: nextValue };
     try {
-      await savePreferences({ [key]: nextValue });
+      await savePreferences({ [key]: nextValue, notificationPreferences });
       showNeutralToast(`${key} ${nextValue ? 'enabled' : 'disabled'}.`);
     } catch (error) {
       handleApiError(error, 'Could not save preference.');

@@ -103,6 +103,7 @@ interface PreferencesState {
   dailyReminders: boolean;
   performanceReports: boolean;
   contentUpdates: boolean;
+  notificationPreferences?: Record<string, boolean>;
 }
 
 interface AppDataContextValue {
@@ -166,7 +167,34 @@ const defaultPreferences: PreferencesState = {
   dailyReminders: true,
   performanceReports: true,
   contentUpdates: true,
+  notificationPreferences: {},
 };
+
+function normalizeSharedPreferences(preferences: PreferencesState): PreferencesState {
+  const nested = preferences.notificationPreferences || {};
+  const enabled = typeof nested.enabled === 'boolean' ? nested.enabled : preferences.emailNotifications !== false;
+  const newVideos = typeof nested.newVideos === 'boolean'
+    ? nested.newVideos
+    : typeof nested.videoUploads === 'boolean'
+      ? nested.videoUploads
+      : preferences.contentUpdates !== false;
+  const dailyReminders = typeof nested.dailyReminders === 'boolean' ? nested.dailyReminders : preferences.dailyReminders !== false;
+  const performanceReports = typeof nested.performanceReports === 'boolean' ? nested.performanceReports : preferences.performanceReports !== false;
+  return {
+    emailNotifications: enabled,
+    dailyReminders,
+    performanceReports,
+    contentUpdates: newVideos,
+    notificationPreferences: {
+      ...nested,
+      enabled,
+      newVideos,
+      videoUploads: newVideos,
+      dailyReminders,
+      performanceReports,
+    },
+  };
+}
 
 const AppDataContext = createContext<AppDataContextValue | undefined>(undefined);
 
@@ -206,7 +234,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       hsscPercentage: userData.hsscPercentage || '',
       testDate: userData.testDate || '',
     });
-    setPreferences(userData.preferences || defaultPreferences);
+    setPreferences(normalizeSharedPreferences(userData.preferences || defaultPreferences));
   }, []);
 
   const loadMcqData = useCallback(async () => {
@@ -728,7 +756,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       authToken,
     );
 
-    setPreferences(payload.user.preferences || defaultPreferences);
+    setPreferences(normalizeSharedPreferences(payload.user.preferences || defaultPreferences));
   };
 
   return (

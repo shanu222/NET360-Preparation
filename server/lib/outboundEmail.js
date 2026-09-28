@@ -75,19 +75,28 @@ async function sendResendEmail({ to, subject, text, html }) {
   return { provider: 'resend', messageId: String(payload?.id || '') };
 }
 
+export function isProviderLimitError(error) {
+  const status = Number(error?.status || 0);
+  const message = String(error?.message || error || '').toLowerCase();
+  return status === 429 || /quota|rate limit|rate_limit|too many requests|daily sending limit|daily_quota|limit exceeded/.test(message);
+}
+
 /**
- * Brevo is the configured sender. Resend is used only when Brevo is not configured
- * or Brevo returns a temporary failure.
+ * Every NET360 email tries Resend first. Brevo is used only when Resend is not
+ * configured or Resend reports that its sending limit has been exceeded.
  */
-export async function sendTransactionalEmail(message) {
-  const brevoReady = Boolean(String(process.env.BREVO_API_KEY || '').trim() && String(process.env.BREVO_FROM_EMAIL || '').trim());
-  if (brevoReady) {
+export async function sendTransactionalEmail(message, deps = {}) {
+  const sendResend = deps.sendResend || sendResendEmail;
+  const sendBrevo = deps.sendBrevo || sendBrevoEmail;
+  const resendReady = deps.resendReady !== undefined
+    ? Boolean(deps.resendReady)
+    : Boolean(String(process.env.RESEND_API_KEY || '').trim());
+  if (resendReady) {
     try {
-      return await sendBrevoEmail(message);
+      return await sendResend(message);
     } catch (error) {
-      const status = Number(error?.status || 0);
-      if (status && status < 500 && status !== 429) throw error;
+      if (!isProviderLimitError(error)) throw error;
     }
   }
-  return sendResendEmail(message);
+  return sendBrevo(message);
 }

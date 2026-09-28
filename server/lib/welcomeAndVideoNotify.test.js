@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { wantsVideoNotification, mergeNotificationPreferencePatch } from './videoNotificationPreference.js';
+import { wantsVideoNotification } from './videoNotificationPreference.js';
+import { applySharedNotificationPreferences } from './unifiedNotificationPreferences.js';
 import { WELCOME_EMAIL_SUBJECT, buildWelcomeEmail, sendWelcomeEmailOnce } from './welcomeEmail.js';
 import { deliverVideoPublicationEmails } from './videoPublishNotify.js';
 
@@ -53,10 +54,15 @@ test('video notifications follow the saved preference and do not repeat', async 
   assert.equal(wantsVideoNotification({ emailNotifications: false, contentUpdates: true }), false);
   assert.equal(wantsVideoNotification({}), true);
 
-  const turnedOff = mergeNotificationPreferencePatch({ videoUploads: true }, { videoUploads: false });
-  assert.equal(turnedOff.videoUploads, false);
-  const turnedOn = mergeNotificationPreferencePatch(turnedOff, { videoUploads: true });
-  assert.equal(turnedOn.videoUploads, true);
+  const turnedOff = applySharedNotificationPreferences(
+    { notificationPreferences: { videoUploads: true } },
+    { notificationPreferences: { videoUploads: false } },
+  );
+  assert.equal(turnedOff.notificationPreferences.videoUploads, false);
+  assert.equal(turnedOff.contentUpdates, false);
+  const turnedOn = applySharedNotificationPreferences(turnedOff, { contentUpdates: true });
+  assert.equal(turnedOn.notificationPreferences.newVideos, true);
+  assert.equal(turnedOn.notificationPreferences.videoUploads, true);
 
   const video = {
     _id: 'vid-1',

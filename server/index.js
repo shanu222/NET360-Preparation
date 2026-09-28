@@ -51,7 +51,8 @@ import {
   clearEmailVerificationToken,
 } from './lib/emailVerification.js';
 import { sendWelcomeEmailOnce } from './lib/welcomeEmail.js';
-import { mergeNotificationPreferencePatch } from './lib/videoNotificationPreference.js';
+import { isProviderLimitError, sendTransactionalEmail } from './lib/outboundEmail.js';
+import { applySharedNotificationPreferences, notificationAllowed, resolveSharedNotificationPreferences } from './lib/unifiedNotificationPreferences.js';
 import { getBuildInfo } from './lib/buildInfo.js';
 import { logAuthDebug, normalizeAuthDebugRoute, shouldAuthDebugRoute } from './lib/authDebug.js';
 import { getRedisMain, isRedisConfigured, isRedisReady, isSocketIoRedisAdapterReady } from './services/redis.js';
@@ -4355,6 +4356,7 @@ async function postResendEmail({ from, to, subject, text, html }) {
       /* keep raw snippet */
     }
     const error = new Error(sanitizeResendError(new Error(`Resend ${response.status}: ${detail}`)));
+    error.status = response.status;
     resendRuntime.lastError = error.message;
     throw error;
   }
@@ -4377,6 +4379,10 @@ async function sendDeletionEmailViaResend({ to, subject, text, html }) {
     } catch (error) {
       lastError = error;
       console.warn(`[resend] send failed from=${resendRuntime.lastFrom}: ${sanitizeResendError(error)}`);
+      if (isProviderLimitError(error)) {
+        await sendTransactionalEmail({ to, subject, text, html });
+        return;
+      }
       if (i >= froms.length - 1) throw error;
     }
   }
@@ -4421,11 +4427,23 @@ function escapeNotifyHtml(value) {
   return escapeHtml(value);
 }
 
-async function dispatchNotificationEmail({ to, subject, text, html }) {
+async function dispatchNotificationEmail({ to, subject, text, html, preferences, emailType, mandatory }) {
   const dest = normalizeEmail(to);
-  if (!isValidEmail(dest) || !RESEND_API_KEY) return;
+  if (!isValidEmail(dest)) return;
+  if (!mandatory && emailType && !notificationAllowed(preferences, emailType)) return;
   try {
-    await sendNotificationEmailViaResend({ to: dest, subject, text, html });
+    if (RESEND_API_KEY) {
+      await sendNotificationEmailViaResend({ to: dest, subject, text, html });
+      return;
+    }
+  } catch (error) {
+    if (!isProviderLimitError(error)) {
+      console.warn('[email] notification send failed:', sanitizeResendError(error));
+      return;
+    }
+  }
+  try {
+    await sendTransactionalEmail({ to: dest, subject, text, html }, { resendReady: false });
   } catch (error) {
     console.warn('[email] notification send failed:', sanitizeResendError(error));
   }
@@ -4483,13 +4501,15 @@ async function sendStudentEmailVerification(user) {
 
 async function loadUserForNotify(userId) {
   if (!isValidObjectId(String(userId || ''))) return null;
-  return UserModel.findById(userId).select('firstName lastName email role requiresEmailVerification emailVerifiedAt authProvider authProviderDetail').lean();
+  return UserModel.findById(userId).select('firstName lastName email role requiresEmailVerification emailVerifiedAt authProvider authProviderDetail preferences').lean();
 }
 
-async function queueCommunityNotice({ eventKey, toUser, subject, title, paragraphs, openUrl }) {
+async function queueCommunityNotice({ eventKey, preferenceKey, toUser, subject, title, paragraphs, openUrl }) {
   const dest = normalizeEmail(toUser?.email);
   if (!dest || (toUser?.role || 'student') === 'admin') return;
   if (accountNeedsEmailVerification(toUser)) return;
+  if (preferenceKey && !notificationAllowed(toUser?.preferences, preferenceKey)) return;
+  if ((preferenceKey === 'nustUpdates' || preferenceKey === 'nustNotices') && !notificationAllowed(toUser?.preferences, 'netUpdates')) return;
   const claimed = await claimCommunityNotificationDelivery(eventKey, toUser._id, dest);
   if (!claimed) return;
   const greeting = String(toUser.firstName || '').trim() || 'there';
@@ -4514,7 +4534,14 @@ async function queueCommunityNotice({ eventKey, toUser, subject, title, paragrap
     ctaUrl: escapeNotifyHtml(destUrl),
     footer,
   });
-  void dispatchNotificationEmail({ to: dest, subject, text, html });
+  void dispatchNotificationEmail({
+    to: dest,
+    subject,
+    text,
+    html,
+    preferences: toUser.preferences,
+    emailType: preferenceKey || '',
+  });
 }
 
 async function notifyCommunityDirectMessage(fromUserId, toUserId, connectionId, messageId) {
@@ -4528,6 +4555,7 @@ async function notifyCommunityDirectMessage(fromUserId, toUserId, connectionId, 
   const who = studentNotifyName(fromUser);
   await queueCommunityNotice({
     eventKey: communityNotifyEvent.communityChatWindow(connectionId, toUserId, windowClaim.notifiedAtMs),
+    preferenceKey: 'communityMessages',
     toUser,
     subject: 'NET360: new Community message',
     title: 'New Community message',
@@ -4544,6 +4572,7 @@ async function notifyCommunityConnectionRequested(fromUserId, toUserId, requestI
   const who = studentNotifyName(fromUser);
   await queueCommunityNotice({
     eventKey: communityNotifyEvent.connectionRequest(requestId),
+    preferenceKey: 'connectionRequests',
     toUser,
     subject: 'NET360: new Community connection request',
     title: 'Community connection request',
@@ -4561,6 +4590,7 @@ async function notifyCommunityConnectionResponded(fromUserId, toUserId, status, 
   const accepted = String(status) === 'accepted';
   await queueCommunityNotice({
     eventKey: communityNotifyEvent.connectionResponse(requestId, accepted ? 'accepted' : 'rejected'),
+    preferenceKey: 'connectionResponses',
     toUser: fromUser,
     subject: accepted ? 'NET360: your Community request was accepted' : 'NET360: your Community request was declined',
     title: accepted ? 'Connection request accepted' : 'Connection request declined',
@@ -4579,6 +4609,7 @@ async function notifyQuizChallengeCreated(challengerUserId, opponentUserId, chal
   const who = studentNotifyName(challenger);
   await queueCommunityNotice({
     eventKey: communityNotifyEvent.quizInvite(challengeId),
+    preferenceKey: 'quizChallenges',
     toUser: opponent,
     subject: 'NET360: new Quiz Battle request',
     title: 'Quiz Battle request',
@@ -4593,6 +4624,7 @@ function notifyBadgeUnlocked(toUser, badge) {
   if (!toUser || !badge) return;
   void queueCommunityNotice({
     eventKey: communityNotifyEvent.badgeUnlock(badge.id),
+    preferenceKey: 'achievementUnlocks',
     toUser,
     subject: `NET360: you unlocked ${badge.label}`,
     title: 'Achievement unlocked',
@@ -4715,6 +4747,7 @@ async function notifyQuizChallengeResponded(challengerUserId, opponentUserId, ac
   const accepted = String(action) === 'accept';
   await queueCommunityNotice({
     eventKey: communityNotifyEvent.quizResponse(challengeId, accepted ? 'accept' : 'decline'),
+    preferenceKey: 'quizResponses',
     toUser: challenger,
     subject: accepted ? 'NET360: your Quiz Battle was accepted' : 'NET360: your Quiz Battle was declined',
     title: accepted ? 'Quiz Battle accepted' : 'Quiz Battle declined',
@@ -4747,6 +4780,7 @@ async function notifyQuizChallengeCompleted(challenge) {
     if (!toUser) continue;
     await queueCommunityNotice({
       eventKey,
+      preferenceKey: 'quizResults',
       toUser,
       subject: 'NET360: Quiz Battle result',
       title: 'Quiz Battle result',
@@ -4934,6 +4968,7 @@ async function notifyUserOfSupportAdminReply(userId, messageId) {
   if (!toUser) return;
   await queueCommunityNotice({
     eventKey: communityNotifyEvent.supportAdminWindow(studentId, windowClaim.notifiedAtMs),
+    preferenceKey: 'supportReplies',
     toUser,
     subject: 'NET360: Admin replied to your Support Chat',
     title: 'Admin replied to your Support Chat',
@@ -6698,7 +6733,7 @@ function userPublic(user) {
     authProvider: String(user.authProvider || 'local'),
     authProviderDetail: normalizeAuthProviderDetail(user.authProviderDetail),
     deletionChannel: classifyStudentDeletionChannelSync(user),
-    preferences: { ...defaultPreferences(), ...(user.preferences || {}) },
+    preferences: resolveSharedNotificationPreferences(user.preferences),
     progress,
     subscription: {
       ...subscription,
@@ -8192,11 +8227,12 @@ async function notifyVerifiedStudentsOfNustAdmission({ contentHash, notices }) {
   const users = UserModel.find({
     role: { $ne: 'admin' },
     email: { $exists: true, $nin: [null, ''] },
-  }).select('firstName lastName email role requiresEmailVerification emailVerifiedAt authProvider').lean().cursor();
+  }).select('firstName lastName email role requiresEmailVerification emailVerifiedAt authProvider authProviderDetail preferences').lean().cursor();
 
   for await (const user of users) {
     await queueCommunityNotice({
       eventKey,
+      preferenceKey: 'nustUpdates',
       toUser: user,
       subject,
       title,
@@ -10702,16 +10738,7 @@ app.put('/api/auth/profile', authMiddleware, async (req, res) => {
 
 app.put('/api/auth/preferences', authMiddleware, async (req, res) => {
   const current = req.user.preferences || defaultPreferences();
-  req.user.preferences = {
-    emailNotifications: typeof req.body?.emailNotifications === 'boolean' ? req.body.emailNotifications : current.emailNotifications,
-    dailyReminders: typeof req.body?.dailyReminders === 'boolean' ? req.body.dailyReminders : current.dailyReminders,
-    performanceReports: typeof req.body?.performanceReports === 'boolean' ? req.body.performanceReports : current.performanceReports,
-    contentUpdates: typeof req.body?.contentUpdates === 'boolean' ? req.body.contentUpdates : (current.contentUpdates !== false),
-    notificationPreferences: mergeNotificationPreferencePatch(
-      current.notificationPreferences,
-      req.body?.notificationPreferences,
-    ),
-  };
+  req.user.preferences = applySharedNotificationPreferences(current, req.body);
   req.user.markModified('preferences');
 
   await req.user.save();
