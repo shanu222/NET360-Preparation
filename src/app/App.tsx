@@ -31,7 +31,7 @@ import {
   Brain,
   FileText,
   TrendingUp,
-  Calendar,
+  Calculator,
   User,
   Menu,
   MessageSquare,
