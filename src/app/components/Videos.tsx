@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronRight, Loader2, Play } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
@@ -125,17 +125,20 @@ export function Videos() {
     'design-aptitude': null,
   });
 
-  const [activeSectionId, setActiveSectionId] = useState<string | null>(searchParams.get('sectionId'));
+  const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
   const [activeSectionTitle, setActiveSectionTitle] = useState('');
   const [videos, setVideos] = useState<CatalogVideo[]>([]);
-  const [videosLoading, setVideosLoading] = useState(false);
+  const [videosLoading, setVideosLoading] = useState(Boolean(searchParams.get('sectionId')));
   const [videosError, setVideosError] = useState('');
   const [playingId, setPlayingId] = useState<string | null>(searchParams.get('videoId'));
   const [playbackUrl, setPlaybackUrl] = useState('');
   const [playbackLoading, setPlaybackLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState('');
+  const videoPanelRef = useRef<HTMLDivElement | null>(null);
+  const fetchedSectionRef = useRef<string | null>(null);
 
   const loadSectionVideos = useCallback(async (sectionId: string, sectionTitle: string) => {
+    fetchedSectionRef.current = sectionId;
     setActiveSectionId(sectionId);
     setActiveSectionTitle(sectionTitle);
     setVideos([]);
@@ -181,10 +184,18 @@ export function Videos() {
   }, [querySectionId]);
 
   useEffect(() => {
-    if (!querySectionId || querySectionId === activeSectionId) return;
+    if (!querySectionId) return;
+    if (fetchedSectionRef.current === querySectionId) return;
     const node = resolveSyllabusSection(querySectionId);
     void loadSectionVideos(querySectionId, node?.section || 'Section');
-  }, [querySectionId, activeSectionId, loadSectionVideos]);
+  }, [querySectionId, loadSectionVideos]);
+
+  useEffect(() => {
+    if (!activeSectionId) return;
+    window.requestAnimationFrame(() => {
+      videoPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }, [activeSectionId, videosLoading, videos.length, videosError]);
 
   const playVideo = async (videoId: string) => {
     setPlayingId(videoId);
@@ -250,10 +261,11 @@ export function Videos() {
   };
 
   const videoPanel = (
-    <Card className="border-indigo-100">
+    <div ref={videoPanelRef} className="mt-2">
+    <Card className="border-indigo-100 dark:border-indigo-500/40">
       <CardHeader>
         <CardTitle>{activeSectionTitle || 'Videos'}</CardTitle>
-        <CardDescription>Only lectures for the selected section are loaded.</CardDescription>
+        <CardDescription>Published lectures for this section.</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {videosLoading ? (
@@ -328,7 +340,7 @@ export function Videos() {
                 <p className="text-xs font-medium uppercase tracking-[0.14em] text-indigo-500">
                   {String(video.displayOrder || index + 1).padStart(2, '0')} · {video.section}
                 </p>
-                <p className="mt-1 font-semibold text-indigo-950">{video.title}</p>
+                <p className="mt-1 font-semibold text-indigo-950 dark:text-white">{video.title}</p>
                 {video.description ? <p className="mt-1 line-clamp-2 text-sm text-slate-600">{video.description}</p> : null}
                 <p className="mt-2 text-sm text-slate-500">{formatDuration(video.duration)}</p>
               </div>
@@ -337,6 +349,7 @@ export function Videos() {
         </div>
       </CardContent>
     </Card>
+    </div>
   );
 
   const renderChapterTree = (
@@ -373,12 +386,12 @@ export function Videos() {
                     topicId: topicIdForChapter(chapter.id),
                     sectionTitle,
                   });
-                  const selected = selectedSection === sectionTitle;
+                  const selected = selectedSection === sectionTitle || activeSectionId === sectionId;
                   return (
+                    <div key={sectionTitle}>
                     <button
-                      key={sectionTitle}
                       type="button"
-                      className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition active:scale-[0.99] ${selected ? 'border-transparent bg-gradient-to-r from-indigo-600 to-violet-500 text-white' : 'border-indigo-100 bg-white hover:bg-indigo-50'}`}
+                      className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition active:scale-[0.99] ${selected ? 'border-transparent bg-gradient-to-r from-indigo-600 to-violet-500 text-white' : 'border-indigo-100 bg-white hover:bg-indigo-50 dark:border-slate-600 dark:bg-slate-900'}`}
                       onClick={() => {
                         onSection(sectionTitle);
                         selectSection(sectionId, sectionTitle);
@@ -387,6 +400,8 @@ export function Videos() {
                       <span>{sectionTitle}</span>
                       <Play className="h-3.5 w-3.5 opacity-80" />
                     </button>
+                    {selected ? videoPanel : null}
+                    </div>
                   );
                 })}
               </div>
@@ -453,12 +468,12 @@ export function Videos() {
                           >
                             {topic}
                           </button>
+                          {selectedFlatTopic === topic ? videoPanel : null}
                         </li>
                       ))}
                     </ul>
                   </CardContent>
                 </Card>
-                {selectedFlatTopic || (selectedSubject === flatKey && activeSectionId) ? videoPanel : null}
               </TabsContent>
             );
           }
@@ -481,7 +496,6 @@ export function Videos() {
                     {renderChapterTree(subject, chapters, '', selectedChapterId, selectedSection, (id) => setChapter(id || null), setSection)}
                   </CardContent>
                 </Card>
-                {selectedSection || (selectedSubject === subject && activeSectionId) ? videoPanel : null}
               </TabsContent>
             );
           }
@@ -499,6 +513,7 @@ export function Videos() {
                     type="button"
                     className={`rounded-2xl border px-4 py-3 text-left transition active:scale-[0.99] ${selectedPart === part ? 'border-transparent bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-[0_12px_24px_rgba(79,70,229,0.28)]' : 'border-indigo-200 bg-indigo-50/50 hover:bg-indigo-100'}`}
                     onClick={() => {
+                      if (selectedPart === part) return;
                       setSelectedPartBySubject((prev) => ({ ...prev, [subject]: part }));
                       setSelectedChapterBySubject((prev) => ({ ...prev, [subject]: null }));
                       setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: null }));
@@ -528,7 +543,6 @@ export function Videos() {
                   </CardContent>
                 </Card>
               ) : null}
-              {selectedSection || (selectedSubject === subject && activeSectionId) ? videoPanel : null}
             </TabsContent>
           );
         })}
