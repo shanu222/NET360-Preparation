@@ -71,7 +71,7 @@ export async function sendWelcomeEmailOnce(user, deps = {}) {
     return { status: 'skipped' };
   }
   const users = deps.users || UserModel;
-  const send = deps.send || ((message) => sendTransactionalEmail(message, { brevoOnly: true }));
+  const send = deps.send || sendTransactionalEmail;
   const claimed = await users.findOneAndUpdate(
     { _id: user._id, role: { $ne: 'admin' }, welcomeEmailSent: false },
     { $set: { welcomeEmailSent: true, welcomeEmailSentAt: new Date() } },

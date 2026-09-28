@@ -173,17 +173,16 @@ async function sendResendWithCandidates(message, deps = {}) {
 }
 
 /**
- * Notification emails pass brevoOnly so this test uses Brevo and does not call Resend.
- * Resend configuration stays in place. Other callers still try Resend first.
+ * Every NET360 email tries Resend first, using a verified from-address.
+ * Brevo is used when Resend is not configured or cannot deliver (sending limit,
+ * outage, or sender rejection). An invalid recipient is not sent through Brevo.
  */
 export async function sendTransactionalEmail(message, deps = {}) {
   const sendResend = deps.sendResend || ((payload) => sendResendWithCandidates(payload, deps));
   const sendBrevo = deps.sendBrevo || sendBrevoEmail;
-  const resendReady = deps.brevoOnly
-    ? false
-    : deps.resendReady !== undefined
-      ? Boolean(deps.resendReady)
-      : Boolean(String(process.env.RESEND_API_KEY || '').trim());
+  const resendReady = deps.resendReady !== undefined
+    ? Boolean(deps.resendReady)
+    : Boolean(String(process.env.RESEND_API_KEY || '').trim());
   if (resendReady) {
     try {
       return await sendResend(message);
