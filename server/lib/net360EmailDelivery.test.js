@@ -221,6 +221,14 @@ test('a video is announced only the first time it is published', () => {
 
 test('a category that is off does not send even when email notifications are on', async () => {
   const { sendNet360Email, calls } = harness();
+  const contentOff = await sendNet360Email({
+    ...message,
+    mandatory: false,
+    eventId: 'video-published:vid-content-off:user-1',
+    emailType: 'video-published',
+    preferences: { emailNotifications: true, contentUpdates: false, notificationPreferences: { videoUploads: true } },
+  });
+  assert.equal(contentOff.status, 'skipped');
   const videoOff = await sendNet360Email({
     ...message,
     mandatory: false,

@@ -50,6 +50,7 @@ import {
   markEmailVerified,
   clearEmailVerificationToken,
 } from './lib/emailVerification.js';
+import { sendWelcomeEmailOnce } from './lib/welcomeEmail.js';
 import { getBuildInfo } from './lib/buildInfo.js';
 import { logAuthDebug, normalizeAuthDebugRoute, shouldAuthDebugRoute } from './lib/authDebug.js';
 import { getRedisMain, isRedisConfigured, isRedisReady, isSocketIoRedisAdapterReady } from './services/redis.js';
@@ -5990,6 +5991,7 @@ function defaultPreferences() {
     emailNotifications: true,
     dailyReminders: true,
     performanceReports: true,
+    contentUpdates: true,
   };
 }
 
@@ -9586,6 +9588,7 @@ async function createDirectStudentAccount(req, res) {
     activeSession: isGoogleSignup ? activeSession : null,
     preferences: defaultPreferences(),
     progress: defaultProgress(),
+    welcomeEmailSent: false,
   });
   const syncedTrial = await syncTrialStateFromLedger(UserModel, user._id, {
     trialLedgerModel: FreeTrialLedgerModel,
@@ -9593,6 +9596,12 @@ async function createDirectStudentAccount(req, res) {
   });
   if (syncedTrial?.subscription) {
     user.subscription = syncedTrial.subscription;
+  }
+
+  if (user.welcomeEmailSent === false) {
+    void sendWelcomeEmailOnce(user).catch((error) => {
+      console.warn('[email] welcome email failed:', error instanceof Error ? error.message : 'unknown');
+    });
   }
 
   if (!isGoogleSignup) {
@@ -10013,6 +10022,11 @@ app.post('/api/auth/login', async (req, res) => {
           : {}),
       });
       mirrorStudentSessionRedis(user._id, newSessionId, deviceId);
+      if (user.welcomeEmailSent === false) {
+        void sendWelcomeEmailOnce(user).catch((error) => {
+          console.warn('[email] welcome email failed:', error instanceof Error ? error.message : 'unknown');
+        });
+      }
       if (previousSessionId && previousSessionId !== newSessionId) {
         notifyRevokedStudentSession(String(user._id), previousSessionId);
         console.log('[auth/login] revoked_previous_session', {
@@ -10800,6 +10814,7 @@ app.put('/api/auth/preferences', authMiddleware, async (req, res) => {
     emailNotifications: typeof req.body?.emailNotifications === 'boolean' ? req.body.emailNotifications : current.emailNotifications,
     dailyReminders: typeof req.body?.dailyReminders === 'boolean' ? req.body.dailyReminders : current.dailyReminders,
     performanceReports: typeof req.body?.performanceReports === 'boolean' ? req.body.performanceReports : current.performanceReports,
+    contentUpdates: typeof req.body?.contentUpdates === 'boolean' ? req.body.contentUpdates : (current.contentUpdates !== false),
     notificationPreferences: mergeNotificationPreferencePatch(
       current.notificationPreferences,
       req.body?.notificationPreferences,

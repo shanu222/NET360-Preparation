@@ -36,6 +36,7 @@ export function emailAllowedByPreference({ emailType, preferences, mandatory }) 
   if (mandatory || emailType === 'verification' || emailType === 'account-deletion') return true;
   const prefs = preferences && typeof preferences === 'object' ? preferences : {};
   if (prefs.emailNotifications === false) return false;
+  if (emailType === 'video-published' && prefs.contentUpdates === false) return false;
   if (emailType === 'daily-reminder') return prefs.dailyReminders !== false;
   if (emailType === 'weekly-report') return prefs.performanceReports !== false;
   const category = emailType === 'video-published'
