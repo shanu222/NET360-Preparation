@@ -211,7 +211,7 @@ function isRestorableAndroidRoute(route: string) {
     const parsed = new URL(route, 'https://net360preparation.com');
     if (isStandaloneAuthPath(parsed.pathname)) return false;
     if (resolveSectionFromPath(parsed.pathname)) return true;
-    return /^\/(test|exam|community|guide|analytics|practice-board|videos)/.test(parsed.pathname);
+    return /^\/(test|exam|community|guide|analytics|practice-board)/.test(parsed.pathname);
   } catch {
     return false;
   }
@@ -512,6 +512,14 @@ export default function App() {
   const [, startRouteTransition] = useTransition();
   const { user, loading: authLoading } = useAuth();
   const activeTab = useMemo(() => resolveSectionFromLocation(location.pathname, location.hash), [location.hash, location.pathname]);
+  const isNativeRuntime = Boolean(
+    typeof window !== 'undefined'
+      && (window as Window & { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.(),
+  );
+  const studentNavigationItems = useMemo(
+    () => (isNativeRuntime ? STUDENT_NAVIGATION_ITEMS.filter((item) => item.id !== 'videos') : STUDENT_NAVIGATION_ITEMS),
+    [isNativeRuntime],
+  );
   const [profileVisited, setProfileVisited] = useState(
     () => resolveSectionFromLocation(
       typeof window !== 'undefined' ? window.location.pathname : '/',
@@ -528,6 +536,13 @@ export default function App() {
   }, [location.pathname]);
   const isStandaloneAuthRoute = isConfirmAccountDeletionRoute || isVerifyEmailRoute;
   const androidRouteRestoredRef = useRef(false);
+
+  useEffect(() => {
+    if (!isNativeRuntime || isStandaloneAuthRoute) return;
+    if (activeTab === 'videos') {
+      navigate(PATH_BY_SECTION.home, { replace: true });
+    }
+  }, [activeTab, isNativeRuntime, isStandaloneAuthRoute, navigate]);
 
   /** Native: unauthenticated users always land on Login (Profile), never Dashboard first. */
   useEffect(() => {
@@ -1074,7 +1089,7 @@ export default function App() {
                     </div>
                     <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-4 pb-8 [scrollbar-gutter:stable]">
                       <SidebarNavigation
-                        navigationItems={STUDENT_NAVIGATION_ITEMS}
+                        navigationItems={studentNavigationItems}
                         activeTab={activeTab}
                         smartMentorTabId={smartMentorTabId}
                         navigate={navigateWithTransition}

@@ -1,5 +1,8 @@
 import {
+  AbortMultipartUploadCommand,
+  CompleteMultipartUploadCommand,
   CopyObjectCommand,
+  CreateMultipartUploadCommand,
   DeleteObjectCommand,
   GetObjectCommand,
   HeadObjectCommand,
@@ -7,6 +10,7 @@ import {
   PutBucketCorsCommand,
   PutObjectCommand,
   S3Client,
+  UploadPartCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -87,9 +91,9 @@ export async function ensureR2Cors() {
         CORSRules: [
           {
             AllowedOrigins: corsOrigins(),
-            AllowedMethods: ['GET', 'PUT', 'HEAD'],
+            AllowedMethods: ['GET', 'PUT', 'HEAD', 'POST'],
             AllowedHeaders: ['*'],
-            ExposeHeaders: ['ETag', 'Content-Length', 'Content-Type'],
+            ExposeHeaders: ['ETag', 'Content-Length', 'Content-Type', 'x-amz-request-id'],
             MaxAgeSeconds: 3600,
           },
         ],
@@ -119,16 +123,79 @@ export function objectMetadataFromVideo(fields) {
   return meta;
 }
 
-export async function presignPut({ key, contentType, expiresIn = 60 * 15 }) {
+export async function presignPut({ key, contentType, metadata, expiresIn = 60 * 60 }) {
   const cfg = assertR2Ready();
   const client = getR2Client();
   const command = new PutObjectCommand({
     Bucket: cfg.bucket,
     Key: key,
     ContentType: contentType || 'application/octet-stream',
+    Metadata: metadata && Object.keys(metadata).length ? metadata : undefined,
   });
   const url = await getSignedUrl(client, command, { expiresIn });
-  return { url, bucket: cfg.bucket, key, expiresIn };
+  const headers = { 'Content-Type': contentType || 'application/octet-stream' };
+  Object.entries(metadata || {}).forEach(([metaKey, metaValue]) => {
+    headers[`x-amz-meta-${String(metaKey).toLowerCase()}`] = String(metaValue);
+  });
+  return { url, bucket: cfg.bucket, key, expiresIn, headers };
+}
+
+export const MULTIPART_PART_SIZE = 16 * 1024 * 1024;
+export const MULTIPART_THRESHOLD = 32 * 1024 * 1024;
+
+export async function startMultipartUpload({ key, contentType, metadata }) {
+  const cfg = assertR2Ready();
+  const client = getR2Client();
+  const result = await client.send(new CreateMultipartUploadCommand({
+    Bucket: cfg.bucket,
+    Key: key,
+    ContentType: contentType || 'video/mp4',
+    Metadata: metadata && Object.keys(metadata).length ? metadata : undefined,
+  }));
+  return { uploadId: result.UploadId, key, bucket: cfg.bucket };
+}
+
+export async function presignMultipartPart({ key, uploadId, partNumber, expiresIn = 60 * 60 }) {
+  const cfg = assertR2Ready();
+  const client = getR2Client();
+  const command = new UploadPartCommand({
+    Bucket: cfg.bucket,
+    Key: key,
+    UploadId: uploadId,
+    PartNumber: partNumber,
+  });
+  const url = await getSignedUrl(client, command, { expiresIn });
+  return { url, partNumber, expiresIn };
+}
+
+export async function completeMultipartUpload({ key, uploadId, parts }) {
+  const cfg = assertR2Ready();
+  const client = getR2Client();
+  await client.send(new CompleteMultipartUploadCommand({
+    Bucket: cfg.bucket,
+    Key: key,
+    UploadId: uploadId,
+    MultipartUpload: {
+      Parts: (parts || [])
+        .map((part) => ({
+          ETag: String(part.eTag || part.ETag || '').replaceAll('"', ''),
+          PartNumber: Number(part.partNumber || part.PartNumber),
+        }))
+        .filter((part) => part.ETag && part.PartNumber > 0)
+        .map((part) => ({ ETag: `"${part.ETag}"`, PartNumber: part.PartNumber }))
+        .sort((a, b) => a.PartNumber - b.PartNumber),
+    },
+  }));
+}
+
+export async function abortMultipartUpload({ key, uploadId }) {
+  const cfg = assertR2Ready();
+  const client = getR2Client();
+  await client.send(new AbortMultipartUploadCommand({
+    Bucket: cfg.bucket,
+    Key: key,
+    UploadId: uploadId,
+  }));
 }
 
 export async function presignGet({ key, expiresIn = 120, filename, contentType }) {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Copy, Film, Loader2, Play, Upload } from 'lucide-react';
 import { apiRequest } from '../app/lib/api';
 import { publicHierarchyPayload, resolveSyllabusSection } from '../../shared/syllabusCatalog.js';
@@ -21,9 +21,10 @@ import {
 } from '../app/components/ui/alert-dialog';
 import { BusyButton } from '../app/components/BusyButton';
 import { showErrorToast, showSuccessToast, handleApiError } from '../app/lib/userToast';
+import { uploadMultipartWithProgress, uploadWithProgress } from './directR2Upload';
 
 type AdminPanel = 'library' | 'upload' | 'import' | 'manage';
-type VideoStatus = 'draft' | 'published' | 'disabled';
+type VideoStatus = 'draft' | 'published' | 'unpublished';
 
 type AdminVideo = {
   id: string;
@@ -67,17 +68,6 @@ async function readVideoDuration(file: File) {
   });
 }
 
-async function putToSignedUrl(url: string, file: File, contentType: string) {
-  const response = await fetch(url, {
-    method: 'PUT',
-    headers: { 'Content-Type': contentType },
-    body: file,
-  });
-  if (!response.ok) {
-    throw new Error('Direct upload to storage failed.');
-  }
-}
-
 export function AdminVideos() {
   const hierarchy = useMemo(() => publicHierarchyPayload(), []);
   const [panel, setPanel] = useState<AdminPanel>('library');
@@ -111,6 +101,9 @@ export function AdminVideos() {
   const [videoFile, setVideoFile] = useState<File | null>(null);
   const [thumbFile, setThumbFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [uploadPercent, setUploadPercent] = useState(0);
+  const [uploadPhase, setUploadPhase] = useState('');
+  const uploadAbortRef = useRef<AbortController | null>(null);
 
   const [r2Prefix, setR2Prefix] = useState('');
   const [r2Objects, setR2Objects] = useState<Array<{ key: string; size: number; linked: boolean }>>([]);
@@ -220,12 +213,25 @@ export function AdminVideos() {
       showErrorToast('Select a section, enter a title, and choose a video file.');
       return;
     }
+    if (uploading) return;
+    const abort = new AbortController();
+    uploadAbortRef.current = abort;
     setUploading(true);
+    setUploadPercent(0);
+    setUploadPhase('Authorizing upload...');
+    let createdId = '';
     try {
       const duration = await readVideoDuration(videoFile);
+      const contentType = videoFile.type || 'video/mp4';
       const start = await apiRequest<{
         video: AdminVideo;
-        upload: { url: string; headers: Record<string, string> };
+        intendedStatus?: VideoStatus;
+        upload: { url: string; headers: Record<string, string>; objectKey: string } | null;
+        multipart?: {
+          uploadId: string;
+          partSize: number;
+          partCount: number;
+        } | null;
         thumbnailUpload?: { url: string; headers: Record<string, string> } | null;
       }>('/api/admin/videos/upload', {
         method: 'POST',
@@ -235,39 +241,85 @@ export function AdminVideos() {
           title: title.trim(),
           description,
           displayOrder: Number(displayOrder) || 1,
-          mimeType: videoFile.type || 'video/mp4',
+          mimeType: contentType,
           fileSize: videoFile.size,
           duration,
           thumbnailMimeType: thumbFile?.type || '',
+          status,
         }),
       });
-      await putToSignedUrl(start.upload.url, videoFile, videoFile.type || 'video/mp4');
-      if (thumbFile && start.thumbnailUpload?.url) {
-        await putToSignedUrl(start.thumbnailUpload.url, thumbFile, thumbFile.type);
+      createdId = start.video.id;
+      if (start.multipart?.uploadId && start.multipart.partCount) {
+        setUploadPhase('Uploading to Cloudflare R2...');
+        const parts = await uploadMultipartWithProgress(
+          videoFile,
+          {
+            partSize: start.multipart.partSize,
+            partCount: start.multipart.partCount,
+            getPartUrl: async (partNumber) => {
+              const signed = await apiRequest<{ url: string }>(`/api/admin/videos/${createdId}/upload-part-url`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ uploadId: start.multipart?.uploadId, partNumber }),
+              });
+              return signed.url;
+            },
+          },
+          setUploadPercent,
+          abort.signal,
+        );
+        setUploadPhase('Processing...');
+        await apiRequest(`/api/admin/videos/${createdId}/complete-multipart`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ uploadId: start.multipart.uploadId, parts }),
+        });
+      } else if (start.upload?.url) {
+        setUploadPhase('Uploading to Cloudflare R2...');
+        await uploadWithProgress(
+          start.upload.url,
+          videoFile,
+          start.upload.headers || { 'Content-Type': contentType },
+          setUploadPercent,
+          abort.signal,
+        );
+      } else {
+        throw new Error('Upload authorization did not return a storage URL.');
       }
-      await apiRequest(`/api/admin/videos/${start.video.id}/complete`, {
+      if (thumbFile && start.thumbnailUpload?.url) {
+        setUploadPhase('Uploading thumbnail...');
+        await uploadWithProgress(
+          start.thumbnailUpload.url,
+          thumbFile,
+          start.thumbnailUpload.headers || { 'Content-Type': thumbFile.type },
+          () => undefined,
+          abort.signal,
+        );
+      }
+      setUploadPhase('Saving metadata...');
+      await apiRequest(`/api/admin/videos/${createdId}/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ duration }),
+        body: JSON.stringify({ duration, status }),
       });
-      if (status === 'published') {
-        await apiRequest(`/api/admin/videos/${start.video.id}`, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ status: 'published' }),
-        });
-      }
-      showSuccessToast('Video uploaded. Metadata saved as draft until you publish.');
+      showSuccessToast(status === 'published' ? 'Video uploaded and published.' : 'Video uploaded successfully.');
       setTitle('');
       setDescription('');
       setVideoFile(null);
       setThumbFile(null);
+      setUploadPercent(100);
       setPanel('library');
       void loadLibrary();
     } catch (error) {
-      handleApiError(error, 'Upload failed.');
+      const message = String((error as Error)?.message || error || '');
+      if (createdId && /cancelled|storage failed|authorization did not return/i.test(message)) {
+        void apiRequest(`/api/admin/videos/${createdId}/abort-upload`, { method: 'POST' }).catch(() => undefined);
+      }
+      handleApiError(error, 'Upload failed. You can retry; a new storage key will be generated.');
     } finally {
       setUploading(false);
+      setUploadPhase('');
+      uploadAbortRef.current = null;
     }
   };
 
@@ -467,12 +519,24 @@ export function AdminVideos() {
                 <SelectContent>
                   <SelectItem value="draft">Draft</SelectItem>
                   <SelectItem value="published">Published</SelectItem>
-                  <SelectItem value="disabled">Disabled</SelectItem>
+                  <SelectItem value="unpublished">Unpublished</SelectItem>
                 </SelectContent>
               </Select>
             </div>
-            <BusyButton type="button" busy={uploading} busyLabel="Uploading..." onClick={() => void uploadVideo()}>
-              Upload to R2
+            {uploading ? (
+              <div className="space-y-2 rounded-lg border border-cyan-200 bg-cyan-50/70 p-3 text-sm">
+                <p className="font-medium text-cyan-950">{uploadPhase || 'Uploading...'}</p>
+                <div className="h-2 overflow-hidden rounded-full bg-white">
+                  <div className="h-full bg-cyan-600 transition-all" style={{ width: `${uploadPercent}%` }} />
+                </div>
+                <p>Uploading {uploadPercent}%</p>
+                <Button type="button" variant="outline" onClick={() => uploadAbortRef.current?.abort()}>
+                  Cancel upload
+                </Button>
+              </div>
+            ) : null}
+            <BusyButton type="button" busy={uploading} busyLabel={uploadPhase || 'Uploading...'} onClick={() => void uploadVideo()}>
+              Upload Video
             </BusyButton>
           </CardContent>
         </Card>
@@ -512,7 +576,7 @@ export function AdminVideos() {
               <SelectContent>
                 <SelectItem value="draft">Draft</SelectItem>
                 <SelectItem value="published">Published</SelectItem>
-                <SelectItem value="disabled">Disabled</SelectItem>
+                <SelectItem value="unpublished">Unpublished</SelectItem>
               </SelectContent>
             </Select>
             <BusyButton type="button" busy={uploading} busyLabel="Importing..." onClick={() => void importR2()}>
@@ -556,7 +620,7 @@ export function AdminVideos() {
                   <SelectItem value="all">All statuses</SelectItem>
                   <SelectItem value="draft">Draft</SelectItem>
                   <SelectItem value="published">Published</SelectItem>
-                  <SelectItem value="disabled">Disabled</SelectItem>
+                  <SelectItem value="unpublished">Unpublished</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -593,7 +657,7 @@ export function AdminVideos() {
                           {video.status !== 'published' ? (
                             <Button size="sm" onClick={() => void patchStatus(video, 'published')}>Publish</Button>
                           ) : (
-                            <Button size="sm" variant="outline" onClick={() => void patchStatus(video, 'disabled')}>Disable</Button>
+                            <Button size="sm" variant="outline" onClick={() => void patchStatus(video, 'unpublished')}>Unpublish</Button>
                           )}
                           <Button size="sm" variant="destructive" onClick={() => { setDeleteTarget(video); setDeleteObjectToo(false); }}>Delete</Button>
                         </div>
@@ -622,7 +686,7 @@ export function AdminVideos() {
               <SelectContent>
                 <SelectItem value="draft">Draft</SelectItem>
                 <SelectItem value="published">Published</SelectItem>
-                <SelectItem value="disabled">Disabled</SelectItem>
+                <SelectItem value="unpublished">Unpublished</SelectItem>
               </SelectContent>
             </Select>
             <BusyButton type="button" busy={busyId === editVideo.id} onClick={() => void saveEdit()}>Save changes</BusyButton>
@@ -637,12 +701,17 @@ export function AdminVideos() {
                   void (async () => {
                     setBusyId(editVideo.id);
                     try {
-                      const start = await apiRequest<{ upload: { url: string; objectKey: string } }>(`/api/admin/videos/${editVideo.id}/replace`, {
+                      const start = await apiRequest<{ upload: { url: string; objectKey: string; headers?: Record<string, string> } }>(`/api/admin/videos/${editVideo.id}/replace`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ mimeType: file.type || 'video/mp4' }),
+                        body: JSON.stringify({ mimeType: file.type || 'video/mp4', fileSize: file.size }),
                       });
-                      await putToSignedUrl(start.upload.url, file, file.type || 'video/mp4');
+                      await uploadWithProgress(
+                        start.upload.url,
+                        file,
+                        start.upload.headers || { 'Content-Type': file.type || 'video/mp4' },
+                        () => undefined,
+                      );
                       const duration = await readVideoDuration(file);
                       await apiRequest(`/api/admin/videos/${editVideo.id}/replace/complete`, {
                         method: 'POST',

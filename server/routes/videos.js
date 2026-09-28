@@ -15,16 +15,21 @@ import {
   slugifyKey,
 } from '../../shared/syllabusCatalog.js';
 import {
+  abortMultipartUpload,
   assertR2Ready,
+  completeMultipartUpload,
   copyObject,
   deleteObject,
   headObject,
   listObjects,
+  MULTIPART_PART_SIZE,
+  MULTIPART_THRESHOLD,
   objectMetadataFromVideo,
   presignGet,
+  presignMultipartPart,
   presignPut,
   r2Config,
-  replaceObjectMetadata,
+  startMultipartUpload,
 } from '../lib/r2.js';
 import { notifyVideoPublished } from '../lib/videoPublishNotify.js';
 
@@ -43,7 +48,8 @@ function sanitizeText(value, max = 300) {
 
 function parseStatus(value, fallback = 'draft') {
   const status = String(value || '').trim().toLowerCase();
-  if (status === 'draft' || status === 'published' || status === 'disabled') return status;
+  if (status === 'unpublished' || status === 'disabled') return status === 'disabled' ? 'unpublished' : 'unpublished';
+  if (status === 'draft' || status === 'published') return status;
   return fallback;
 }
 
@@ -181,7 +187,11 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
         res.status(404).json({ error: 'Section not found in the syllabus.' });
         return;
       }
-      const videos = await VideoModel.find({ sectionId, status: 'published' })
+      const videos = await VideoModel.find({
+        sectionId,
+        status: 'published',
+        $or: [{ uploadComplete: true }, { uploadedAt: { $ne: null } }],
+      })
         .sort({ displayOrder: 1, createdAt: 1 })
         .lean();
       const items = [];
@@ -204,7 +214,7 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
         return;
       }
       const video = await VideoModel.findById(req.params.id).lean();
-      if (!video || video.status !== 'published') {
+      if (!video || video.status !== 'published' || (!video.uploadComplete && !video.uploadedAt)) {
         res.status(404).json({ error: 'Video not found.' });
         return;
       }
@@ -231,7 +241,7 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
         return;
       }
       const video = await VideoModel.findById(req.params.id).lean();
-      if (!video || video.status !== 'published') {
+      if (!video || video.status !== 'published' || (!video.uploadComplete && !video.uploadedAt)) {
         res.status(404).json({ error: 'Video not found.' });
         return;
       }
@@ -340,7 +350,7 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
     }
   });
 
-  router.post('/admin/videos/upload', authMiddleware, requireAdmin, async (req, res) => {
+  const startAdminVideoUpload = async (req, res) => {
     try {
       const cfg = assertR2Ready();
       const sectionId = sanitizeText(req.body?.sectionId, 240);
@@ -368,17 +378,20 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
       const description = sanitizeText(req.body?.description, 2000);
       const duration = Math.max(0, Number(req.body?.duration) || 0);
       const thumbnailMimeType = sanitizeText(req.body?.thumbnailMimeType, 80).toLowerCase();
-      const r2ObjectKey = sanitizeText(req.body?.r2ObjectKey, 500) || buildVideoObjectKey(node, {
-        displayOrder,
-        title,
+      const requestedStatus = parseStatus(req.body?.status, 'draft');
+      const videoId = new mongoose.Types.ObjectId();
+      const r2ObjectKey = buildVideoObjectKey(node, {
+        videoId,
         ext: extFromMime(mimeType),
       });
-      const existing = await VideoModel.findOne({ r2ObjectKey }).select('_id').lean();
-      if (existing) {
-        res.status(409).json({ error: 'An object with this key already exists in the library.' });
-        return;
-      }
+      const metadata = objectMetadataFromVideo({
+        ...node,
+        videoId: String(videoId),
+        mimeType,
+        title,
+      });
       const video = await VideoModel.create({
+        _id: videoId,
         ...node,
         title,
         description,
@@ -390,44 +403,147 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
         mimeType,
         displayOrder,
         status: 'draft',
+        uploadComplete: false,
         createdByUserId: String(req.user._id),
         createdByEmail: req.user.email || '',
       });
-      const upload = await presignPut({
-        key: r2ObjectKey,
-        contentType: mimeType,
-      });
+      const useMultipart = fileSize >= MULTIPART_THRESHOLD;
+      let upload = null;
+      let multipart = null;
+      if (useMultipart) {
+        const started = await startMultipartUpload({
+          key: r2ObjectKey,
+          contentType: mimeType,
+          metadata,
+        });
+        video.uploadSessionId = started.uploadId;
+        await video.save();
+        const partCount = Math.max(1, Math.ceil(Math.max(fileSize, 1) / MULTIPART_PART_SIZE));
+        multipart = {
+          uploadId: started.uploadId,
+          objectKey: r2ObjectKey,
+          partSize: MULTIPART_PART_SIZE,
+          partCount,
+        };
+      } else {
+        upload = await presignPut({
+          key: r2ObjectKey,
+          contentType: mimeType,
+          metadata,
+        });
+      }
       let thumbnailUpload = null;
       if (IMAGE_MIME.has(thumbnailMimeType)) {
-        const thumbKey = buildThumbnailObjectKey(r2ObjectKey);
+        const thumbKey = buildThumbnailObjectKey(r2ObjectKey, String(videoId));
         video.thumbnailObjectKey = thumbKey;
         await video.save();
         thumbnailUpload = await presignPut({
           key: thumbKey,
           contentType: thumbnailMimeType,
+          metadata,
         });
       }
       res.json({
         video: serializeVideo(video),
-        upload: {
-          url: upload.url,
-          method: 'PUT',
-          headers: { 'Content-Type': mimeType },
-          objectKey: r2ObjectKey,
-          expiresIn: upload.expiresIn,
-        },
+        intendedStatus: requestedStatus === 'published' ? 'published' : requestedStatus,
+        upload: upload
+          ? {
+            url: upload.url,
+            method: 'PUT',
+            headers: upload.headers,
+            objectKey: r2ObjectKey,
+            expiresIn: upload.expiresIn,
+          }
+          : null,
+        multipart,
         thumbnailUpload: thumbnailUpload
           ? {
             url: thumbnailUpload.url,
             method: 'PUT',
-            headers: { 'Content-Type': thumbnailMimeType },
+            headers: thumbnailUpload.headers,
             objectKey: video.thumbnailObjectKey,
             expiresIn: thumbnailUpload.expiresIn,
           }
           : null,
       });
     } catch (error) {
+      if (error?.code === 11000) {
+        res.status(409).json({ error: 'That upload collided with an existing record. Retry to generate a new object key.' });
+        return;
+      }
       res.status(500).json({ error: error.message || 'Unable to start upload.' });
+    }
+  };
+
+  router.post('/admin/videos/upload', authMiddleware, requireAdmin, startAdminVideoUpload);
+  router.post('/admin/videos/upload-url', authMiddleware, requireAdmin, startAdminVideoUpload);
+  router.post('/admin/videos', authMiddleware, requireAdmin, startAdminVideoUpload);
+
+  router.post('/admin/videos/:id/upload-part-url', authMiddleware, requireAdmin, async (req, res) => {
+    try {
+      const video = await VideoModel.findById(req.params.id);
+      if (!video) {
+        res.status(404).json({ error: 'Video not found.' });
+        return;
+      }
+      const uploadId = sanitizeText(req.body?.uploadId || video.uploadSessionId, 500);
+      const partNumber = Number(req.body?.partNumber);
+      if (!uploadId || !Number.isInteger(partNumber) || partNumber < 1) {
+        res.status(400).json({ error: 'A valid multipart part number is required.' });
+        return;
+      }
+      const signed = await presignMultipartPart({
+        key: video.r2ObjectKey,
+        uploadId,
+        partNumber,
+      });
+      res.json({ url: signed.url, partNumber: signed.partNumber, expiresIn: signed.expiresIn });
+    } catch (error) {
+      res.status(500).json({ error: error.message || 'Unable to authorize this upload part.' });
+    }
+  });
+
+  router.post('/admin/videos/:id/complete-multipart', authMiddleware, requireAdmin, async (req, res) => {
+    try {
+      const video = await VideoModel.findById(req.params.id);
+      if (!video) {
+        res.status(404).json({ error: 'Video not found.' });
+        return;
+      }
+      const uploadId = sanitizeText(req.body?.uploadId || video.uploadSessionId, 500);
+      if (!uploadId) {
+        res.status(400).json({ error: 'Multipart upload id is missing.' });
+        return;
+      }
+      await completeMultipartUpload({
+        key: video.r2ObjectKey,
+        uploadId,
+        parts: Array.isArray(req.body?.parts) ? req.body.parts : [],
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message || 'Unable to finish multipart upload.' });
+    }
+  });
+
+  router.post('/admin/videos/:id/abort-upload', authMiddleware, requireAdmin, async (req, res) => {
+    try {
+      const video = await VideoModel.findById(req.params.id);
+      if (!video) {
+        res.status(404).json({ error: 'Video not found.' });
+        return;
+      }
+      if (video.uploadSessionId) {
+        await abortMultipartUpload({ key: video.r2ObjectKey, uploadId: video.uploadSessionId }).catch(() => undefined);
+      }
+      if (!video.uploadComplete && !video.uploadedAt) {
+        if (video.r2ObjectKey) await deleteObject(video.r2ObjectKey).catch(() => undefined);
+        if (video.thumbnailObjectKey) await deleteObject(video.thumbnailObjectKey).catch(() => undefined);
+        await video.deleteOne();
+      }
+      res.json({ ok: true });
+    } catch (error) {
+      res.status(500).json({ error: error.message || 'Unable to cancel upload.' });
     }
   });
 
@@ -450,21 +566,17 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
       video.fileSize = head.contentLength || video.fileSize;
       video.mimeType = head.contentType || video.mimeType;
       video.uploadedAt = new Date();
+      video.uploadComplete = true;
+      video.uploadSessionId = '';
       if (Number(req.body?.duration) > 0) video.duration = Number(req.body.duration);
-      try {
-        await replaceObjectMetadata(video.r2ObjectKey, objectMetadataFromVideo({
-          subjectId: video.subjectId,
-          partId: video.partId,
-          chapterId: video.chapterId,
-          topicId: video.topicId,
-          section: video.section,
-          sectionId: video.sectionId,
-          videoId: String(video._id),
-          mimeType: video.mimeType,
-          title: video.title,
-        }), video.mimeType);
-      } catch (metaError) {
-        console.warn('[videos] object metadata skipped:', metaError?.message || metaError);
+      const nextStatus = parseStatus(req.body?.status, video.status || 'draft');
+      if (nextStatus === 'published' || nextStatus === 'unpublished' || nextStatus === 'draft') {
+        const previousStatus = video.status;
+        video.status = nextStatus;
+        if (nextStatus === 'published') {
+          await video.save();
+          await maybeNotifyPublish(previousStatus, video);
+        }
       }
       if (video.thumbnailObjectKey) {
         const thumb = await headObject(video.thumbnailObjectKey);
@@ -514,6 +626,7 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
         mimeType: head.contentType || sanitizeText(req.body?.mimeType, 80) || 'video/mp4',
         displayOrder: Math.max(1, Number(req.body?.displayOrder) || 1),
         status: parseStatus(req.body?.status, 'draft'),
+        uploadComplete: true,
         uploadedAt: head.lastModified || new Date(),
         createdByUserId: String(req.user._id),
         createdByEmail: req.user.email || '',
@@ -571,8 +684,7 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
         }
         if (req.body?.moveObject === true && node.sectionId !== video.sectionId) {
           const nextKey = buildVideoObjectKey(node, {
-            displayOrder: Number(req.body?.displayOrder) || video.displayOrder,
-            title: sanitizeText(req.body?.title, 180) || video.title,
+            videoId: String(video._id),
             ext: extFromMime(video.mimeType),
           });
           await copyObject(video.r2ObjectKey, nextKey, objectMetadataFromVideo({
@@ -593,7 +705,14 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
       if (typeof req.body?.description === 'string') video.description = sanitizeText(req.body.description, 2000);
       if (req.body?.displayOrder != null) video.displayOrder = Math.max(1, Number(req.body.displayOrder) || 1);
       if (req.body?.duration != null) video.duration = Math.max(0, Number(req.body.duration) || 0);
-      if (typeof req.body?.status === 'string') video.status = parseStatus(req.body.status, video.status);
+      if (typeof req.body?.status === 'string') {
+        const nextStatus = parseStatus(req.body.status, video.status);
+        if (nextStatus === 'published' && !video.uploadComplete && !video.uploadedAt) {
+          res.status(400).json({ error: 'Finish uploading the file before publishing.' });
+          return;
+        }
+        video.status = nextStatus;
+      }
       if (typeof req.body?.thumbnailObjectKey === 'string') {
         video.thumbnailObjectKey = sanitizeText(req.body.thumbnailObjectKey, 500);
       }
@@ -629,18 +748,16 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
         chapter: video.chapter,
         section: video.section,
       }, {
-        displayOrder: video.displayOrder,
-        title: `${video.title}-replace-${Date.now()}`,
+        videoId: `${video._id}-r${Date.now()}`,
         ext: extFromMime(mimeType),
       });
       const upload = await presignPut({ key: nextKey, contentType: mimeType });
-      video._pendingReplaceKey = nextKey;
       await VideoModel.updateOne({ _id: video._id }, { $set: { uploadSessionId: nextKey } });
       res.json({
         upload: {
           url: upload.url,
           method: 'PUT',
-          headers: { 'Content-Type': mimeType },
+          headers: upload.headers,
           objectKey: nextKey,
           expiresIn: upload.expiresIn,
         },

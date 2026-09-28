@@ -108,7 +108,7 @@ function httpStatusUserMessage(status: number): string | null {
   if (status === 402) return 'This feature is available for Premium members.';
   if (status === 403) return 'This feature is available for Premium members.';
   if (status === 404) return 'We could not find what you requested.';
-  if (status === 409) return 'An account with this email already exists. Please sign in instead.';
+  if (status === 409) return 'This item already exists. Please review and try again.';
   if (status === 410) return 'That option is no longer available.';
   if (status === 413) return 'That file is too large. Try a smaller file.';
   if (status === 422) return 'Some information could not be processed. Check your input.';
@@ -194,6 +194,13 @@ export function audienceFriendlyError(error: unknown, fallback = 'We could not c
       if (!msg || !isLikelySafeServerMessage(msg)) {
         return 'Session expired. Please log in again.';
       }
+    } else if (status === 409) {
+      const lowerMsg = msg.toLowerCase();
+      if (lowerMsg.includes('email') || lowerMsg.includes('account')) {
+        return 'An account with this email already exists. Please sign in instead.';
+      }
+      if (msg && isLikelySafeServerMessage(msg)) return msg;
+      return 'This item already exists. Please review and try again.';
     } else {
       const fromStatus = httpStatusUserMessage(status);
       if (fromStatus && (!msg || !isLikelySafeServerMessage(msg))) return fromStatus;

@@ -250,9 +250,9 @@ export function Videos() {
         ) : null}
         {!videosLoading && !videosError && activeSectionId && videos.length === 0 ? (
           <div className="rounded-xl border border-dashed border-indigo-200 bg-indigo-50/40 p-5">
-            <p className="font-medium text-indigo-950">No videos available yet.</p>
+            <p className="font-medium text-indigo-950">No videos available yet</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              {activeSectionTitle} — new lectures will appear here when they are published.
+              Video lessons for this section will appear here once published.
             </p>
           </div>
         ) : null}

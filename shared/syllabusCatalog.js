@@ -453,16 +453,21 @@ export function buildR2Prefix(node) {
   return `${segments.join('/')}/`;
 }
 
-export function buildVideoObjectKey(node, { displayOrder, title, ext = 'mp4' }) {
+export function buildVideoObjectKey(node, { displayOrder, title, ext = 'mp4', videoId } = {}) {
+  const safeExt = String(ext || 'mp4').replace(/^\./, '');
+  if (videoId) {
+    return `${buildR2Prefix(node)}${String(videoId)}.${safeExt}`;
+  }
   const order = String(Math.max(1, Number(displayOrder) || 1)).padStart(3, '0');
-  const file = `${order}-${slugifyKey(title)}.${String(ext || 'mp4').replace(/^\./, '')}`;
+  const file = `${order}-${slugifyKey(title)}.${safeExt}`;
   return `${buildR2Prefix(node)}${file}`;
 }
 
-export function buildThumbnailObjectKey(videoObjectKey) {
+export function buildThumbnailObjectKey(videoObjectKey, videoId) {
   const prefix = String(videoObjectKey || '').replace(/\/[^/]+$/, '/');
-  const base = String(videoObjectKey || '').split('/').pop() || 'video';
-  const stem = base.replace(/\.[^.]+$/, '');
+  const stem = videoId
+    ? String(videoId)
+    : (String(videoObjectKey || '').split('/').pop() || 'video').replace(/\.[^.]+$/, '');
   return `${prefix}thumbnails/${stem}.jpg`;
 }
 
