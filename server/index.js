@@ -51,8 +51,9 @@ import {
   clearEmailVerificationToken,
 } from './lib/emailVerification.js';
 import { sendWelcomeEmailOnce } from './lib/welcomeEmail.js';
-import { isProviderLimitError, sendTransactionalEmail } from './lib/outboundEmail.js';
+import { isPermanentRecipientError, sendTransactionalEmail } from './lib/outboundEmail.js';
 import { applySharedNotificationPreferences, notificationAllowed, resolveSharedNotificationPreferences } from './lib/unifiedNotificationPreferences.js';
+import { retryIncompleteVideoPublicationEmails } from './lib/videoPublishNotify.js';
 import { getBuildInfo } from './lib/buildInfo.js';
 import { logAuthDebug, normalizeAuthDebugRoute, shouldAuthDebugRoute } from './lib/authDebug.js';
 import { getRedisMain, isRedisConfigured, isRedisReady, isSocketIoRedisAdapterReady } from './services/redis.js';
@@ -4379,11 +4380,13 @@ async function sendDeletionEmailViaResend({ to, subject, text, html }) {
     } catch (error) {
       lastError = error;
       console.warn(`[resend] send failed from=${resendRuntime.lastFrom}: ${sanitizeResendError(error)}`);
-      if (isProviderLimitError(error)) {
-        await sendTransactionalEmail({ to, subject, text, html });
-        return;
+      if (isPermanentRecipientError(error) || i >= froms.length - 1) {
+        if (!isPermanentRecipientError(error)) {
+          await sendTransactionalEmail({ to, subject, text, html }, { resendReady: false });
+          return;
+        }
+        throw error;
       }
-      if (i >= froms.length - 1) throw error;
     }
   }
   throw lastError;
@@ -4432,18 +4435,7 @@ async function dispatchNotificationEmail({ to, subject, text, html, preferences,
   if (!isValidEmail(dest)) return;
   if (!mandatory && emailType && !notificationAllowed(preferences, emailType)) return;
   try {
-    if (RESEND_API_KEY) {
-      await sendNotificationEmailViaResend({ to: dest, subject, text, html });
-      return;
-    }
-  } catch (error) {
-    if (!isProviderLimitError(error)) {
-      console.warn('[email] notification send failed:', sanitizeResendError(error));
-      return;
-    }
-  }
-  try {
-    await sendTransactionalEmail({ to: dest, subject, text, html }, { resendReady: false });
+    await sendTransactionalEmail({ to: dest, subject, text, html });
   } catch (error) {
     console.warn('[email] notification send failed:', sanitizeResendError(error));
   }
@@ -9169,6 +9161,8 @@ app.get('/api/health', async (_req, res) => {
       SMTP_FROM_EMAIL: Boolean(SMTP_FROM_EMAIL),
       RESEND_API_KEY: Boolean(RESEND_API_KEY),
       RESEND_FROM_EMAIL: Boolean(RESEND_FROM_EMAIL),
+      BREVO_API_KEY: Boolean(String(process.env.BREVO_API_KEY || '').trim()),
+      BREVO_FROM_EMAIL: Boolean(String(process.env.BREVO_FROM_EMAIL || '').trim()),
       NET360_PUBLIC_APP_URL: Boolean(NET360_PUBLIC_APP_URL),
       REDIS_URL: Boolean(String(process.env.REDIS_URL || '').trim()),
       REDIS_HOST: Boolean(String(process.env.REDIS_HOST || '').trim()),
@@ -19385,6 +19379,13 @@ async function bootstrap() {
   const server = httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`[server] running on 0.0.0.0:${PORT}`);
     void ensureR2Cors();
+    const retryVideoEmails = () => {
+      void retryIncompleteVideoPublicationEmails().catch((error) => {
+        console.warn('[videos] publication email retry failed:', error instanceof Error ? error.message : 'unknown');
+      });
+    };
+    setTimeout(retryVideoEmails, 20_000).unref?.();
+    setInterval(retryVideoEmails, 2 * 60 * 1000).unref?.();
     if (NODE_ENV) {
       console.log(`[server] NODE_ENV=${NODE_ENV}`);
     }

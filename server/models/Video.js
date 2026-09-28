@@ -25,6 +25,7 @@ const videoSchema = new mongoose.Schema(
     uploadComplete: { type: Boolean, default: false, index: true },
     uploadedAt: { type: Date, default: null },
     publishedAt: { type: Date, default: null },
+    publicationNotificationStartedAt: { type: Date, default: null },
     publishedNotifySentAt: { type: Date, default: null },
     publicationNotificationSent: { type: Boolean, default: false, index: true },
     publicationNotificationSentAt: { type: Date, default: null },

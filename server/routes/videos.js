@@ -32,7 +32,7 @@ import {
   r2Config,
   startMultipartUpload,
 } from '../lib/r2.js';
-import { notifyVideoPublished } from '../lib/videoPublishNotify.js';
+import { notifyVideoPublished, shouldStartVideoPublicationCampaign } from '../lib/videoPublishNotify.js';
 
 const VIDEO_MIME = new Set(['video/mp4', 'video/webm', 'video/quicktime', 'video/x-m4v']);
 const IMAGE_MIME = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp']);
@@ -118,10 +118,7 @@ function applySyllabusNode(target, node) {
 }
 
 async function maybeNotifyPublish(previousStatus, video) {
-  if (video.status !== 'published') return;
-  const previous = String(previousStatus || '').trim().toLowerCase();
-  if (previous === 'published') return;
-  if (previous === 'unpublished' || previous === 'disabled') return;
+  if (!shouldStartVideoPublicationCampaign(previousStatus, video.status)) return;
   setImmediate(() => {
     void notifyVideoPublished(video).catch((error) => {
       console.warn('[videos] publication email campaign failed:', error?.message || error);

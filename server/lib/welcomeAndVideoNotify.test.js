@@ -5,6 +5,14 @@ import { applySharedNotificationPreferences } from './unifiedNotificationPrefere
 import { WELCOME_EMAIL_SUBJECT, buildWelcomeEmail, sendWelcomeEmailOnce } from './welcomeEmail.js';
 import { deliverVideoPublicationEmails } from './videoPublishNotify.js';
 
+function memoryReceipts() {
+  const rows = new Map();
+  return {
+    async find(eventId) { return rows.get(eventId) || null; },
+    async save(receipt) { rows.set(receipt.eventId, { ...receipt }); },
+  };
+}
+
 test('old users without the welcome flag are not emailed', async () => {
   let sends = 0;
   const result = await sendWelcomeEmailOnce(
@@ -78,14 +86,16 @@ test('video notifications follow the saved preference and do not repeat', async 
     { _id: 'web-off', email: 'web@example.com', firstName: 'Web', preferences: { emailNotifications: true, contentUpdates: false } },
   ];
   const sent = [];
+  const receipts = memoryReceipts();
   await deliverVideoPublicationEmails(video, {
     users,
+    receipts,
     send: async (message) => { sent.push(message.to); },
   });
   await deliverVideoPublicationEmails(video, {
     users: users.filter((user) => user._id === 'on'),
+    receipts,
     send: async (message) => { sent.push(message.to); },
-    alreadySentUserIds: new Set(['on']),
   });
   assert.deepEqual(sent, ['on@example.com']);
   assert.match(sent.length ? 'Limits and continuity' : '', /Limits/);
@@ -103,6 +113,7 @@ test('a video email includes the title and topic path', async () => {
     topic: 'Naming',
   }, {
     users: [{ _id: 'u', email: 'u@example.com', firstName: 'Ali', preferences: { contentUpdates: true, notificationPreferences: { videoUploads: true } } }],
+    receipts: memoryReceipts(),
     send: async (message) => { sent.push(message); },
   });
   assert.equal(sent.length, 1);

@@ -1,7 +1,8 @@
 import { UserModel } from '../models/User.js';
 import { VideoModel } from '../models/Video.js';
+import { VideoEmailReceiptModel } from '../models/VideoEmailReceipt.js';
 import { notificationShell } from '../services/notificationEmail.js';
-import { sendTransactionalEmail } from './outboundEmail.js';
+import { isPermanentRecipientError, sendTransactionalEmail } from './outboundEmail.js';
 import { wantsVideoNotification } from './videoNotificationPreference.js';
 
 function normalizeEmail(value) {
@@ -40,44 +41,74 @@ function locationPath(video) {
     .join(' → ');
 }
 
+export function shouldStartVideoPublicationCampaign(previousStatus, nextStatus) {
+  if (String(nextStatus || '') !== 'published') return false;
+  const previous = String(previousStatus || '').trim().toLowerCase();
+  return previous !== 'published' && previous !== 'unpublished' && previous !== 'disabled';
+}
+
 /**
- * Claims the one-time publication email campaign. Returns the updated video or null if another
- * request already claimed it, or if this is not a first-time publish.
+ * Starts the one-time campaign for a newly published video.
+ * A campaign that already started but did not finish can be continued.
+ * A finished campaign, or a video that was never started, is not reopened.
  */
 export async function claimVideoPublicationEmail(video) {
   if (!video?._id) return null;
   if (String(video.status || '') !== 'published') return null;
+  const existing = await VideoModel.findById(video._id)
+    .select('status publicationNotificationSent publicationNotificationStartedAt publishedAt')
+    .lean();
+  if (!existing || existing.status !== 'published') return null;
+  if (existing.publicationNotificationSent === true) return null;
+  if (existing.publicationNotificationStartedAt) return VideoModel.findById(video._id);
   const now = new Date();
   return VideoModel.findOneAndUpdate(
     {
       _id: video._id,
       status: 'published',
       publicationNotificationSent: { $ne: true },
-      $and: [
-        {
-          $or: [
-            { publishedNotifySentAt: null },
-            { publishedNotifySentAt: { $exists: false } },
-          ],
-        },
-        {
-          $or: [
-            { publishedAt: null },
-            { publishedAt: { $exists: false } },
-          ],
-        },
+      $or: [
+        { publicationNotificationStartedAt: null },
+        { publicationNotificationStartedAt: { $exists: false } },
       ],
     },
+    {
+      $set: {
+        publicationNotificationStartedAt: now,
+        publishedAt: existing.publishedAt || now,
+      },
+    },
+    { new: true },
+  );
+}
+
+async function markCampaignComplete(videoId) {
+  const now = new Date();
+  await VideoModel.updateOne(
+    { _id: videoId, publicationNotificationSent: { $ne: true } },
     {
       $set: {
         publicationNotificationSent: true,
         publicationNotificationSentAt: now,
         publishedNotifySentAt: now,
-        publishedAt: now,
       },
     },
-    { new: true },
   );
+}
+
+function mongoReceipts() {
+  return {
+    async find(eventId) {
+      return VideoEmailReceiptModel.findOne({ eventId }).lean();
+    },
+    async save(receipt) {
+      await VideoEmailReceiptModel.updateOne(
+        { eventId: receipt.eventId },
+        { $set: receipt },
+        { upsert: true },
+      );
+    },
+  };
 }
 
 export async function deliverVideoPublicationEmails(video, options = {}) {
@@ -87,26 +118,32 @@ export async function deliverVideoPublicationEmails(video, options = {}) {
   const announcement = `${title} is now available in ${pathLabel}.`;
   const link = videoWatchLink(video);
   const send = options.send || sendTransactionalEmail;
-  const alreadySentUserIds = options.alreadySentUserIds || new Set();
-  const users = options.users || UserModel.find({})
-    .select('_id email firstName preferences')
+  const receipts = options.receipts || mongoReceipts();
+  const users = options.users || UserModel.find({ role: { $ne: 'admin' } })
+    .select('_id email firstName role preferences')
     .lean()
     .cursor();
+  const summary = { sent: 0, skipped: 0, failed: 0 };
 
   for await (const user of users) {
     const userId = String(user?._id || '');
-    if (!userId || alreadySentUserIds.has(userId)) continue;
-    const dest = normalizeEmail(user.email);
-    if (!dest || !isValidEmail(dest)) {
-      console.warn('[videos] publication email skipped: invalid or missing address', userId);
+    if (!userId || (user.role || 'student') === 'admin') continue;
+    const eventId = `video-published:${video._id}:${userId}`;
+    const existing = await receipts.find(eventId);
+    if (existing?.status === 'sent' || existing?.status === 'skipped') {
+      summary.skipped += 1;
       continue;
     }
-    if (!wantsVideoNotification(user.preferences)) continue;
-    alreadySentUserIds.add(userId);
+    const dest = normalizeEmail(user.email);
+    if (!dest || !isValidEmail(dest) || !wantsVideoNotification(user.preferences)) {
+      await receipts.save({ eventId, videoId: String(video._id), userId, status: 'skipped', provider: '', error: '' });
+      summary.skipped += 1;
+      continue;
+    }
 
     const greeting = String(user.firstName || '').trim() || 'there';
     try {
-      await send({
+      const result = await send({
         to: dest,
         subject: subjectLine,
         text: `Hi ${greeting},\n\n${announcement}\n\nWatch it here:\n${link}\n`,
@@ -119,15 +156,56 @@ export async function deliverVideoPublicationEmails(video, options = {}) {
           footer: 'You received this because Video Notifications are enabled on your NET360 account. Only this new upload is included.',
         }),
       });
+      await receipts.save({
+        eventId,
+        videoId: String(video._id),
+        userId,
+        status: 'sent',
+        provider: String(result?.provider || ''),
+        error: '',
+      });
+      summary.sent += 1;
     } catch (error) {
-      alreadySentUserIds.delete(userId);
-      console.warn('[videos] publication email failed:', dest, error instanceof Error ? error.message : 'unknown');
+      const permanent = isPermanentRecipientError(error);
+      const message = error instanceof Error ? error.message : 'unknown';
+      await receipts.save({
+        eventId,
+        videoId: String(video._id),
+        userId,
+        status: permanent ? 'skipped' : 'failed',
+        provider: '',
+        error: message.slice(0, 220),
+      });
+      if (permanent) summary.skipped += 1;
+      else summary.failed += 1;
+      console.warn('[videos] publication email failed:', userId, permanent ? 'invalid-recipient' : message);
     }
   }
+  return summary;
 }
 
-export async function notifyVideoPublished(video) {
-  const claimed = await claimVideoPublicationEmail(video);
-  if (!claimed) return;
-  await deliverVideoPublicationEmails(claimed);
+export async function notifyVideoPublished(video, options = {}) {
+  const claim = options.claim || claimVideoPublicationEmail;
+  const claimed = await claim(video);
+  if (!claimed) return { status: 'not-claimed', sent: 0, skipped: 0, failed: 0 };
+  const summary = await deliverVideoPublicationEmails(claimed, options);
+  if (summary.failed === 0) {
+    if (options.complete) await options.complete(claimed._id);
+    else await markCampaignComplete(claimed._id);
+    return { status: 'complete', ...summary };
+  }
+  return { status: 'retry', ...summary };
+}
+
+export async function retryIncompleteVideoPublicationEmails() {
+  const videos = await VideoModel.find({
+    status: 'published',
+    publicationNotificationStartedAt: { $type: 'date' },
+    publicationNotificationSent: { $ne: true },
+  }).sort({ publicationNotificationStartedAt: 1 }).limit(3);
+  const results = [];
+  for (const video of videos) {
+    results.push(await notifyVideoPublished(video));
+  }
+  return results;
 }

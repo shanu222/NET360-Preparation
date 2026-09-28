@@ -81,12 +81,104 @@ export function isProviderLimitError(error) {
   return status === 429 || /quota|rate limit|rate_limit|too many requests|daily sending limit|daily_quota|limit exceeded/.test(message);
 }
 
+export function isPermanentRecipientError(error) {
+  const status = Number(error?.status || 0);
+  const message = String(error?.message || error || '').toLowerCase();
+  const recipientProblem = /invalid `to`|invalid to field|invalid email address|recipient address|email address is not valid|does not comply with addr-spec|invalid recipient/;
+  const senderProblem = /domain|from address|sender|not verified/;
+  if (senderProblem.test(message) && !recipientProblem.test(message)) return false;
+  return recipientProblem.test(message) || ((status === 400 || status === 422) && recipientProblem.test(message));
+}
+
+let resendFromCache = { at: 0, froms: [] };
+
+export function resetResendFromCache() {
+  resendFromCache = { at: 0, froms: [] };
+}
+
+async function resendFromCandidates(apiKey, deps = {}) {
+  const now = Date.now();
+  if (!deps.listDomains && resendFromCache.froms.length && now - resendFromCache.at < 5 * 60 * 1000) {
+    return resendFromCache.froms;
+  }
+  const seen = new Set();
+  const froms = [];
+  const add = (value) => {
+    const from = String(value || '').trim();
+    const key = from.toLowerCase();
+    if (!from || seen.has(key)) return;
+    seen.add(key);
+    froms.push(from);
+  };
+  const listDomains = deps.listDomains || (async () => {
+    const response = await fetch('https://api.resend.com/domains', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!response.ok) return [];
+    const parsed = await response.json().catch(() => ({}));
+    return Array.isArray(parsed?.data) ? parsed.data : [];
+  });
+  try {
+    const rows = await listDomains();
+    for (const row of rows || []) {
+      const name = String(row?.name || '').trim().toLowerCase();
+      const status = String(row?.status || '').trim().toLowerCase();
+      if (name && status.includes('verified')) add(`NET360 Preparation <noreply@${name}>`);
+    }
+  } catch {
+    /* A domain lookup failure still leaves the configured from-address. */
+  }
+  add(process.env.RESEND_FROM_EMAIL);
+  add('NET360 Preparation <noreply@net360preparation.com>');
+  resendFromCache = { at: now, froms };
+  return froms;
+}
+
+async function sendResendWithCandidates(message, deps = {}) {
+  const apiKey = String(process.env.RESEND_API_KEY || '').trim();
+  if (!apiKey && !deps.sendOnce) {
+    const error = new Error('Resend is not configured');
+    error.status = 503;
+    throw error;
+  }
+  const froms = deps.froms || await resendFromCandidates(apiKey, deps);
+  if (!froms.length) {
+    const error = new Error('Resend from-address is not configured');
+    error.status = 503;
+    throw error;
+  }
+  const sendOnce = deps.sendOnce || (async (from) => {
+    const payload = await postJson('https://api.resend.com/emails', {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    }, {
+      from,
+      to: [message.to],
+      subject: message.subject,
+      text: message.text,
+      html: message.html,
+    });
+    return { provider: 'resend', messageId: String(payload?.id || '') };
+  });
+  let lastError = new Error('Resend did not accept the email');
+  for (let index = 0; index < froms.length; index += 1) {
+    try {
+      return await sendOnce(froms[index], message);
+    } catch (error) {
+      lastError = error;
+      if (isPermanentRecipientError(error) || isProviderLimitError(error) || index >= froms.length - 1) throw error;
+    }
+  }
+  throw lastError;
+}
+
 /**
- * Every NET360 email tries Resend first. Brevo is used only when Resend is not
- * configured or Resend reports that its sending limit has been exceeded.
+ * Every NET360 email tries Resend first, using a verified from-address.
+ * Brevo is used when Resend is not configured or cannot deliver (sending limit,
+ * outage, or sender rejection). An invalid recipient is not sent through Brevo.
  */
 export async function sendTransactionalEmail(message, deps = {}) {
-  const sendResend = deps.sendResend || sendResendEmail;
+  const sendResend = deps.sendResend || ((payload) => sendResendWithCandidates(payload, deps));
   const sendBrevo = deps.sendBrevo || sendBrevoEmail;
   const resendReady = deps.resendReady !== undefined
     ? Boolean(deps.resendReady)
@@ -95,7 +187,7 @@ export async function sendTransactionalEmail(message, deps = {}) {
     try {
       return await sendResend(message);
     } catch (error) {
-      if (!isProviderLimitError(error)) throw error;
+      if (isPermanentRecipientError(error)) throw error;
     }
   }
   return sendBrevo(message);

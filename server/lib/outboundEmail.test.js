@@ -36,7 +36,7 @@ test('mail uses Resend first and Brevo only after a sending limit', async () => 
   assert.deepEqual(calls, ['resend', 'resend', 'brevo']);
 });
 
-test('a non-limit Resend failure does not switch providers', async () => {
+test('an invalid recipient does not switch to Brevo', async () => {
   await assert.rejects(
     () => sendTransactionalEmail({ to: 'a@example.com', subject: 'Hi', text: 'Hi', html: '<p>Hi</p>' }, {
       resendReady: true,
@@ -51,4 +51,24 @@ test('a non-limit Resend failure does not switch providers', async () => {
     }),
     /Invalid email address/,
   );
+});
+
+test('a Resend sender rejection falls through to Brevo', async () => {
+  const calls = [];
+  const sent = await sendTransactionalEmail({ to: 'a@example.com', subject: 'Hi', text: 'Hi', html: '<p>Hi</p>' }, {
+    resendReady: true,
+    sendResend: async () => {
+      calls.push('resend');
+      const error = new Error('Resend 403: domain is not verified');
+      error.status = 403;
+      throw error;
+    },
+    sendBrevo: async () => {
+      calls.push('brevo');
+      return { provider: 'brevo', messageId: 'b-real' };
+    },
+  });
+  assert.equal(sent.provider, 'brevo');
+  assert.equal(sent.messageId, 'b-real');
+  assert.deepEqual(calls, ['resend', 'brevo']);
 });
