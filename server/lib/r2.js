@@ -92,9 +92,25 @@ export async function ensureR2Cors() {
           {
             AllowedOrigins: corsOrigins(),
             AllowedMethods: ['GET', 'PUT', 'HEAD', 'POST'],
-            AllowedHeaders: ['*'],
+            AllowedHeaders: [
+              'Content-Type',
+              'Content-Length',
+              'Content-MD5',
+              'x-amz-content-sha256',
+              'x-amz-date',
+              'x-amz-meta-subject',
+              'x-amz-meta-part',
+              'x-amz-meta-chapter',
+              'x-amz-meta-topic',
+              'x-amz-meta-section',
+              'x-amz-meta-sectionid',
+              'x-amz-meta-videoid',
+              'x-amz-meta-title',
+              'x-amz-meta-contenttype',
+              'authorization',
+            ],
             ExposeHeaders: ['ETag', 'Content-Length', 'Content-Type', 'x-amz-request-id'],
-            MaxAgeSeconds: 3600,
+            MaxAgeSeconds: 86400,
           },
         ],
       },
@@ -126,18 +142,22 @@ export function objectMetadataFromVideo(fields) {
 export async function presignPut({ key, contentType, metadata, expiresIn = 60 * 60 }) {
   const cfg = assertR2Ready();
   const client = getR2Client();
+  // Do not sign object metadata into the browser PUT. Extra x-amz-meta-* headers
+  // trigger a CORS preflight that R2 rejects unless the bucket CORS policy is exact.
+  void metadata;
   const command = new PutObjectCommand({
     Bucket: cfg.bucket,
     Key: key,
     ContentType: contentType || 'application/octet-stream',
-    Metadata: metadata && Object.keys(metadata).length ? metadata : undefined,
   });
   const url = await getSignedUrl(client, command, { expiresIn });
-  const headers = { 'Content-Type': contentType || 'application/octet-stream' };
-  Object.entries(metadata || {}).forEach(([metaKey, metaValue]) => {
-    headers[`x-amz-meta-${String(metaKey).toLowerCase()}`] = String(metaValue);
-  });
-  return { url, bucket: cfg.bucket, key, expiresIn, headers };
+  return {
+    url,
+    bucket: cfg.bucket,
+    key,
+    expiresIn,
+    headers: { 'Content-Type': contentType || 'application/octet-stream' },
+  };
 }
 
 export const MULTIPART_PART_SIZE = 16 * 1024 * 1024;

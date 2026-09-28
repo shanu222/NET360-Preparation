@@ -20,6 +20,7 @@ import {
   completeMultipartUpload,
   copyObject,
   deleteObject,
+  ensureR2Cors,
   headObject,
   listObjects,
   MULTIPART_PART_SIZE,
@@ -400,6 +401,7 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
   const startAdminVideoUpload = async (req, res) => {
     try {
       const cfg = assertR2Ready();
+      await ensureR2Cors().catch(() => undefined);
       const sectionId = sanitizeText(req.body?.sectionId, 240);
       const node = resolveSyllabusSection(sectionId);
       if (!node) {
