@@ -1405,7 +1405,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 disabled={seriesStatus !== 'ready' || liveSeries.length === 0}
               >
                 <SelectTrigger id="test-series">
-                  <SelectValue placeholder={seriesStatus === 'loading' ? 'Loading NUST series…' : seriesStatus === 'error' ? 'NUST schedule unavailable' : 'No NET series published'} />
+                  <SelectValue placeholder={seriesStatus === 'loading' ? 'Loading NUST series…' : seriesStatus === 'error' ? 'NUST schedule unavailable' : seriesStatus === 'empty' ? 'No NET series published' : 'Select series'} />
                 </SelectTrigger>
                 <SelectContent>
                   {liveSeries.map((item) => (
