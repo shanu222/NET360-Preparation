@@ -11,7 +11,6 @@ import {
 } from './ui/dialog';
 import { Input } from './ui/input';
 import { apiRequest, downloadBinary, API_BASE } from '../lib/api';
-import { Capacitor } from '@capacitor/core';
 import { logNativeEvent } from '../lib/nativeDiagnostics';
 import {
   downloadDataUrlFile as downloadDataUrlFileSafe,
@@ -150,15 +149,19 @@ async function requestRandomBoardQuestion(excludeIds: string[] = []): Promise<Bo
   return isUsableBoardQuestion(payload?.question) ? payload.question : null;
 }
 
-function prefetchBoardQuestionMedia(question: BoardQuestion | null | undefined) {
+function prefetchBoardQuestionMedia(
+  question: BoardQuestion | null | undefined,
+  includeSolution = false,
+  userFacing = true,
+) {
   if (!isUsableBoardQuestion(question)) return;
-  for (const file of [question.questionFile, question.solutionFile]) {
-    const src = resolvePracticeBoardMediaSrc(file?.dataUrl);
-    if (!src || src.startsWith('data:')) continue;
-    if (!isImageMimeType(file?.mimeType, file?.name) && !src.includes('/files/')) continue;
-    const img = new Image();
-    img.decoding = 'async';
-    img.src = src;
+  const files = includeSolution ? [question.solutionFile] : [question.questionFile];
+  for (const file of files) {
+    if (!file?.dataUrl) continue;
+    const src = resolvePracticeBoardMediaSrc(file.dataUrl);
+    if (!src || src.startsWith('data:') || src.startsWith('blob:')) continue;
+    if (!isImageMimeType(file.mimeType, file.name) && !src.includes('/files/')) continue;
+    void loadPracticeBoardMediaSrc(file.dataUrl, includeSolution || userFacing).catch(() => '');
   }
 }
 
@@ -192,6 +195,107 @@ function resolvePracticeBoardMediaSrc(dataUrl?: string | null) {
   return `${String(API_BASE || '').replace(/\/$/, '')}${path}`;
 }
 
+const practiceBoardMediaCache = new Map<string, Promise<string>>();
+const practiceBoardMediaJobs: Array<{
+  apiPath: string;
+  resolved: string;
+  userFacing: boolean;
+  resolve: (value: string) => void;
+  reject: (reason?: unknown) => void;
+}> = [];
+let practiceBoardMediaPumping = false;
+
+function practiceBoardApiPath(raw?: string | null) {
+  const value = String(raw || '').trim();
+  if (!value || value.startsWith('data:') || value.startsWith('blob:')) return '';
+  try {
+    const path = /^https?:\/\//i.test(value)
+      ? `${new URL(value).pathname}${new URL(value).search}`
+      : (value.startsWith('/') ? value : `/${value}`);
+    return path.startsWith('/api/') ? path : '';
+  } catch {
+    return '';
+  }
+}
+
+const PRACTICE_BOARD_MEDIA_CACHE = 'net360-practice-board-media-v1';
+
+async function readPersistentPracticeBoardBlob(absoluteUrl: string) {
+  if (typeof caches === 'undefined' || !absoluteUrl) return null;
+  try {
+    const cache = await caches.open(PRACTICE_BOARD_MEDIA_CACHE);
+    const match = await cache.match(absoluteUrl);
+    if (!match) return null;
+    const blob = await match.blob();
+    return blob && blob.size >= 8 ? blob : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writePersistentPracticeBoardBlob(absoluteUrl: string, blob: Blob) {
+  if (typeof caches === 'undefined' || !absoluteUrl || !blob || blob.size < 8) return;
+  try {
+    const cache = await caches.open(PRACTICE_BOARD_MEDIA_CACHE);
+    await cache.put(absoluteUrl, new Response(blob.slice(0, blob.size, blob.type), {
+      headers: { 'Content-Type': blob.type || 'application/octet-stream' },
+    }));
+  } catch {
+    // Ignore quota or private-mode cache failures.
+  }
+}
+
+function pumpPracticeBoardMediaQueue() {
+  if (practiceBoardMediaPumping) return;
+  const priorityIndex = practiceBoardMediaJobs.findIndex((job) => job.userFacing);
+  const job = priorityIndex >= 0
+    ? practiceBoardMediaJobs.splice(priorityIndex, 1)[0]
+    : practiceBoardMediaJobs.shift();
+  if (!job) return;
+  practiceBoardMediaPumping = true;
+  void (async () => {
+    try {
+      const stored = await readPersistentPracticeBoardBlob(job.resolved);
+      if (stored) {
+        job.resolve(URL.createObjectURL(stored));
+        return;
+      }
+      const { blob } = await downloadBinary(job.apiPath);
+      if (!blob || blob.size < 8) throw new Error('empty practice board file');
+      await writePersistentPracticeBoardBlob(job.resolved, blob);
+      job.resolve(URL.createObjectURL(blob));
+    } catch (error) {
+      practiceBoardMediaCache.delete(job.apiPath);
+      job.reject(error);
+    } finally {
+      practiceBoardMediaPumping = false;
+      pumpPracticeBoardMediaQueue();
+    }
+  })();
+}
+
+function loadPracticeBoardMediaSrc(raw?: string | null, userFacing = false): Promise<string> {
+  const resolved = resolvePracticeBoardMediaSrc(raw);
+  if (!resolved) return Promise.resolve('');
+  if (resolved.startsWith('data:') || resolved.startsWith('blob:')) return Promise.resolve(resolved);
+  const apiPath = practiceBoardApiPath(raw) || practiceBoardApiPath(resolved);
+  if (!apiPath) return Promise.resolve(resolved);
+  const cached = practiceBoardMediaCache.get(apiPath);
+  if (cached) {
+    if (userFacing) {
+      const queued = practiceBoardMediaJobs.find((job) => job.apiPath === apiPath);
+      if (queued) queued.userFacing = true;
+    }
+    return cached;
+  }
+  const pending = new Promise<string>((resolve, reject) => {
+    practiceBoardMediaJobs.push({ apiPath, resolved, userFacing, resolve, reject });
+    pumpPracticeBoardMediaQueue();
+  });
+  practiceBoardMediaCache.set(apiPath, pending);
+  return pending;
+}
+
 function openDataUrlFile(file?: { dataUrl?: string | null } | null) {
   const src = resolvePracticeBoardMediaSrc(file?.dataUrl);
   if (!src) return;
@@ -201,7 +305,13 @@ function openDataUrlFile(file?: { dataUrl?: string | null } | null) {
     }
     return;
   }
-  window.open(src, '_blank', 'noopener,noreferrer');
+  void loadPracticeBoardMediaSrc(file?.dataUrl)
+    .then((loaded) => {
+      window.open(loaded || src, '_blank', 'noopener,noreferrer');
+    })
+    .catch(() => {
+      window.open(src, '_blank', 'noopener,noreferrer');
+    });
 }
 
 function downloadDataUrlFile(file?: { dataUrl?: string | null; name?: string | null } | null) {
@@ -214,7 +324,23 @@ function downloadDataUrlFile(file?: { dataUrl?: string | null; name?: string | n
     }
     return;
   }
-  window.open(src, '_blank', 'noopener,noreferrer');
+  void loadPracticeBoardMediaSrc(file?.dataUrl)
+    .then((loaded) => {
+      if (!loaded) {
+        window.open(src, '_blank', 'noopener,noreferrer');
+        return;
+      }
+      const link = document.createElement('a');
+      link.href = loaded;
+      link.download = String(file?.name || 'practice-file');
+      link.rel = 'noopener';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    })
+    .catch(() => {
+      window.open(src, '_blank', 'noopener,noreferrer');
+    });
 }
 
 function PracticeBoardImage({
@@ -225,39 +351,45 @@ function PracticeBoardImage({
 }: {
   src: string;
   alt: string;
-  onOpenFullSize: () => void;
+  onOpenFullSize: (loadedSrc: string) => void;
   frameClassName: string;
 }) {
-  const [displaySrc, setDisplaySrc] = useState(() => resolvePracticeBoardMediaSrc(src));
+  const [displaySrc, setDisplaySrc] = useState('');
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    const resolved = resolvePracticeBoardMediaSrc(src);
-    setFailed(false);
-    setDisplaySrc(resolved);
-    if (!resolved || resolved.startsWith('data:') || resolved.startsWith('blob:')) return undefined;
-    if (!Capacitor.isNativePlatform()) return undefined;
-
-    let objectUrl = '';
     let cancelled = false;
-    const apiPath = String(src || '').startsWith('/') ? src : '';
-    void downloadBinary(apiPath || resolved)
-      .then(({ blob }) => {
-        if (cancelled || !blob || blob.size < 8) return;
-        objectUrl = URL.createObjectURL(blob);
-        setDisplaySrc(objectUrl);
+    setFailed(false);
+    setDisplaySrc('');
+    const resolved = resolvePracticeBoardMediaSrc(src);
+    if (!resolved) {
+      setFailed(true);
+      return undefined;
+    }
+    if (resolved.startsWith('data:') || resolved.startsWith('blob:')) {
+      setDisplaySrc(resolved);
+      return undefined;
+    }
+
+    void loadPracticeBoardMediaSrc(src, true)
+      .then((next) => {
+        if (cancelled) return;
+        if (!next) {
+          setFailed(true);
+          return;
+        }
+        setDisplaySrc(next);
       })
       .catch(() => {
-        if (!cancelled) setDisplaySrc(resolved);
+        if (!cancelled) setFailed(true);
       });
 
     return () => {
       cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [src]);
 
-  if (failed || !displaySrc) {
+  if (failed) {
     return (
       <p className="mt-3 text-sm text-slate-700 dark:text-slate-200">
         Question image could not be displayed. Tap Next Question to load another.
@@ -265,10 +397,18 @@ function PracticeBoardImage({
     );
   }
 
+  if (!displaySrc) {
+    return (
+      <p className="mt-3 text-base text-slate-800 dark:text-slate-100 sm:text-lg">
+        {alt === 'Answer' ? 'Loading answer…' : 'Loading question…'}
+      </p>
+    );
+  }
+
   return (
     <button
       type="button"
-      onClick={onOpenFullSize}
+      onClick={() => onOpenFullSize(displaySrc)}
       className={`group relative mt-3 block max-w-full overflow-hidden rounded-xl border bg-white text-left shadow-sm transition hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 dark:border-slate-600 dark:bg-slate-900 ${frameClassName}`}
       aria-label={`View ${alt} full size`}
     >
@@ -526,7 +666,7 @@ export function PracticeBoard() {
       .then((question) => {
         if (question && question.id !== currentIdRef.current) {
           preloadRef.current = question;
-          prefetchBoardQuestionMedia(question);
+          prefetchBoardQuestionMedia(question, false, false);
         }
         return question;
       })
@@ -681,7 +821,7 @@ export function PracticeBoard() {
         if (cached) {
           if (isUsableBoardQuestion(warmed) && warmed.id !== cached.id) {
             preloadRef.current = warmed;
-            prefetchBoardQuestionMedia(warmed);
+            prefetchBoardQuestionMedia(warmed, false, false);
           }
           if (!preloadRef.current) void ensurePreload();
           return;
@@ -742,6 +882,11 @@ export function PracticeBoard() {
   useEffect(() => {
     setFullSizeImage(null);
   }, [activeQuestion?.id]);
+
+  useEffect(() => {
+    if (!showAnswer || !activeQuestion) return;
+    prefetchBoardQuestionMedia(activeQuestion, true);
+  }, [showAnswer, activeQuestion]);
 
   if (isQuestionBankView) {
     return (
@@ -902,9 +1047,9 @@ export function PracticeBoard() {
                 src={questionImage.dataUrl}
                 alt="Question"
                 frameClassName="border-indigo-100"
-                onOpenFullSize={() =>
+                onOpenFullSize={(loadedSrc) =>
                   setFullSizeImage({
-                    src: resolvePracticeBoardMediaSrc(questionImage.dataUrl),
+                    src: loadedSrc,
                     title: 'Question',
                     alt: 'Question',
                   })
@@ -936,9 +1081,9 @@ export function PracticeBoard() {
                   src={solutionImage.dataUrl}
                   alt="Answer"
                   frameClassName="border-emerald-200"
-                  onOpenFullSize={() =>
+                  onOpenFullSize={(loadedSrc) =>
                     setFullSizeImage({
-                      src: resolvePracticeBoardMediaSrc(solutionImage.dataUrl),
+                      src: loadedSrc,
                       title: 'Answer',
                       alt: 'Answer',
                     })
