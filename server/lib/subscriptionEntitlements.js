@@ -17,12 +17,14 @@ export const PAID_SERVICE_TYPES = {
   tests: 'tests',
   preparation: 'preparation',
   community: 'community',
+  videos: 'videos',
 };
 
 export const PAID_SERVICE_KEYS = [
   PAID_SERVICE_TYPES.tests,
   PAID_SERVICE_TYPES.preparation,
   PAID_SERVICE_TYPES.community,
+  PAID_SERVICE_TYPES.videos,
 ];
 
 export function defaultManualGrant() {
@@ -285,23 +287,35 @@ export async function migrateSharedSubscriptionToIndependentPaidServices(UserMod
   const user = await UserModel.findById(uid).select('subscription paidServices').lean();
   if (!user) return { migrated: false, keys: [] };
 
-  const sub = mergedSubscription(user);
-  if (!hasPremiumSurfaceAccess(sub)) return { migrated: false, keys: [] };
-
   const paid = toPlain(user.paidServices || {});
-  const seed = buildIndependentPaidServiceGrantFromSubscription(sub, {
-    source: 'legacy_migrated',
-    now: new Date(),
-  });
-  if (!seed) return { migrated: false, keys: [] };
-
   const updates = {};
   const keys = [];
-  for (const key of PAID_SERVICE_KEYS) {
-    if (!shouldMigratePaidServiceSlot(paid[key])) continue;
-    updates[`paidServices.${key}`] = seed;
-    keys.push(key);
+  const sub = mergedSubscription(user);
+  if (hasPremiumSurfaceAccess(sub)) {
+    const seed = buildIndependentPaidServiceGrantFromSubscription(sub, {
+      source: 'legacy_migrated',
+      now: new Date(),
+    });
+    if (seed) {
+      for (const key of PAID_SERVICE_KEYS) {
+        if (!shouldMigratePaidServiceSlot(paid[key])) continue;
+        updates[`paidServices.${key}`] = seed;
+        keys.push(key);
+      }
+    }
   }
+
+  if (!updates['paidServices.videos'] && shouldMigratePaidServiceSlot(paid.videos)) {
+    const preparationGrant = normalizeManualGrant(paid.preparation);
+    if (isGrantActive(preparationGrant)) {
+      updates['paidServices.videos'] = {
+        ...preparationGrant,
+        notes: String(preparationGrant.notes || 'Registered from existing preparation access').slice(0, 300),
+      };
+      keys.push(PAID_SERVICE_TYPES.videos);
+    }
+  }
+
   if (!keys.length) return { migrated: false, keys: [] };
 
   await UserModel.updateOne({ _id: uid }, { $set: updates }, { runValidators: true });
@@ -377,6 +391,7 @@ export function resolvePaidServices(userLike, globalGrantMap, serverNow = Date.n
   const tests = resolveManualPaidService(PAID_SERVICE_TYPES.tests, paidServices, sub, now);
   const preparation = resolveManualPaidService(PAID_SERVICE_TYPES.preparation, paidServices, sub, now);
   const community = resolveManualPaidService(PAID_SERVICE_TYPES.community, paidServices, sub, now);
+  const videos = resolveManualPaidService(PAID_SERVICE_TYPES.videos, paidServices, sub, now);
   const globals = buildGlobalGrantMap([globalsInput?.mentor, globalsInput?.preparation]);
   const prepGlobal = globals.preparation;
 
@@ -402,6 +417,7 @@ export function resolvePaidServices(userLike, globalGrantMap, serverNow = Date.n
     tests: applyGlobalPremium(tests),
     preparation: applyGlobalPremium(preparation),
     community: applyGlobalPremium(community),
+    videos: applyGlobalPremium(videos),
   };
 }
 
@@ -409,6 +425,7 @@ export function resolveRequestedServiceAccess(paidServices, serviceType) {
   const key = String(serviceType || '').trim().toLowerCase();
   if (key === PAID_SERVICE_TYPES.tests) return paidServices?.tests;
   if (key === PAID_SERVICE_TYPES.community) return paidServices?.community;
+  if (key === PAID_SERVICE_TYPES.videos) return paidServices?.videos;
   return paidServices?.preparation;
 }
 

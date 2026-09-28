@@ -100,6 +100,7 @@ const paidServicesSchema = new mongoose.Schema(
     tests: { type: manualAccessGrantSchema, default: () => ({}) },
     preparation: { type: manualAccessGrantSchema, default: () => ({}) },
     community: { type: manualAccessGrantSchema, default: () => ({}) },
+    videos: { type: manualAccessGrantSchema, default: () => ({}) },
   },
   { _id: false },
 );

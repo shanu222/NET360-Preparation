@@ -14351,6 +14351,7 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
   const testsAccessPayload = accessStatusPayload(entitlements?.paidServices?.tests);
   const preparationAccessPayload = accessStatusPayload(entitlements?.paidServices?.preparation);
   const communityAccessPayload = accessStatusPayload(entitlements?.paidServices?.community);
+  const videosAccessPayload = accessStatusPayload(entitlements?.paidServices?.videos);
   const trialActive = trialIsActive(subPlain);
   const nowMs = Date.now();
 
@@ -14400,6 +14401,12 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
       expiresAt: communityAccessPayload.expiresAt,
       status: communityAccessPayload.status,
     }, nowMs),
+    videos: buildTimelineStatus({
+      allowed: videosAccessPayload.allowed && !(videosAccessPayload.source === 'legacy' && trialActive),
+      startsAt: videosAccessPayload.startsAt,
+      expiresAt: videosAccessPayload.expiresAt,
+      status: videosAccessPayload.status,
+    }, nowMs),
     mentor: buildTimelineStatus({
       allowed: Boolean(mentorAccessPayload.allowed),
       startsAt: mentorAccessPayload.startsAt || subscription.startedAt,
@@ -14437,6 +14444,10 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
       community: {
         ...communityAccessPayload,
         ...paidServicesTimeline.community,
+      },
+      videos: {
+        ...videosAccessPayload,
+        ...paidServicesTimeline.videos,
       },
       mentor: {
         ...mentorAccessPayload,
@@ -16027,7 +16038,8 @@ function normalizeSelectedPaidServices(payload) {
   const tests = Boolean(selected.tests);
   const preparation = Boolean(selected.preparation);
   const community = Boolean(selected.community);
-  return { tests, preparation, community };
+  const videos = Boolean(selected.videos);
+  return { tests, preparation, community, videos };
 }
 
 app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async (_req, res) => {
@@ -16281,6 +16293,7 @@ app.get('/api/admin/paid-services/users', authMiddleware, requireAdmin, async (r
         tests: accessStatusPayload(paidServices.tests),
         preparation: accessStatusPayload(paidServices.preparation),
         community: accessStatusPayload(paidServices.community),
+        videos: accessStatusPayload(paidServices.videos),
       },
     })),
   });
@@ -16356,6 +16369,7 @@ app.post('/api/admin/paid-services/:userId/grant', authMiddleware, requireAdmin,
         tests: accessStatusPayload(paidServices.tests),
         preparation: accessStatusPayload(paidServices.preparation),
         community: accessStatusPayload(paidServices.community),
+        videos: accessStatusPayload(paidServices.videos),
       },
     },
   });

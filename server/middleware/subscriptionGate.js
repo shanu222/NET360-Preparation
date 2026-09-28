@@ -47,16 +47,20 @@ export function requireTrialOrPremiumContent(UserModel, resolveEntitlements) {
         ? await resolveEntitlements(fresh || req.user)
         : null;
       const fullPath = String(req.originalUrl || req.path || '').toLowerCase();
-      const serviceType = fullPath.startsWith('/api/community')
-        ? 'community'
-        : fullPath.startsWith('/api/tests')
-          ? 'tests'
-          : 'preparation';
+      const serviceType = fullPath.includes('/api/videos')
+        ? 'videos'
+        : fullPath.startsWith('/api/community')
+          ? 'community'
+          : fullPath.startsWith('/api/tests')
+            ? 'tests'
+            : 'preparation';
       const serviceAccess = serviceType === 'community'
         ? entitlementSnapshot?.paidServices?.community
         : serviceType === 'tests'
           ? entitlementSnapshot?.paidServices?.tests
-          : entitlementSnapshot?.paidServices?.preparation;
+          : serviceType === 'videos'
+            ? entitlementSnapshot?.paidServices?.videos
+            : entitlementSnapshot?.paidServices?.preparation;
       // Preparation also honors accessControls.preparationManual / global preparation grants.
       const preparationEntitlement = serviceType === 'preparation'
         ? entitlementSnapshot?.preparation
