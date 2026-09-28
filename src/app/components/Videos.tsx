@@ -17,7 +17,7 @@ import {
   SYLLABUS,
   type ChapterItem,
 } from './Preparation';
-import { buildSectionId, slugifyKey, topicIdForChapter } from '../../../shared/syllabusCatalog.js';
+import { buildSectionId, resolveSyllabusSection, slugifyKey, topicIdForChapter } from '../../../shared/syllabusCatalog.js';
 
 type AcademicPart = 'part1' | 'part2';
 type TabKey = SubjectKey;
@@ -145,7 +145,9 @@ export function Videos() {
     setPlaybackUrl('');
     setPlaybackError('');
     try {
-      const payload = await apiRequest<{ videos: CatalogVideo[] }>(`/api/videos/sections/${encodeURIComponent(sectionId)}`);
+      const payload = await apiRequest<{ videos: CatalogVideo[] }>(
+        `/api/videos/sections?sectionId=${encodeURIComponent(sectionId)}`,
+      );
       setVideos(Array.isArray(payload.videos) ? payload.videos : []);
     } catch {
       setVideosError('Unable to load videos.');
@@ -154,12 +156,35 @@ export function Videos() {
     }
   }, []);
 
+  const querySectionId = searchParams.get('sectionId');
+
   useEffect(() => {
-    const fromQuery = searchParams.get('sectionId');
-    if (fromQuery && fromQuery !== activeSectionId) {
-      void loadSectionVideos(fromQuery, activeSectionTitle || 'Section');
+    if (!querySectionId) return;
+    const node = resolveSyllabusSection(querySectionId);
+    if (!node?.subjectId) return;
+    setSelectedSubject(node.subjectId as TabKey);
+    if (PART_STRUCTURED_SUBJECTS.includes(node.subjectId as PartStructuredSubjectKey)) {
+      const subject = node.subjectId as PartStructuredSubjectKey;
+      const part = node.partId === 'part2' ? 'part2' : 'part1';
+      setSelectedPartBySubject((prev) => ({ ...prev, [subject]: part }));
+      setSelectedChapterBySubject((prev) => ({ ...prev, [subject]: node.chapterId }));
+      setSelectedSectionBySubject((prev) => ({ ...prev, [subject]: node.section }));
+    } else if (node.subjectId === 'computer-science') {
+      setSelectedComputerScienceChapterId(node.chapterId);
+      setSelectedComputerScienceSection(node.section);
+    } else if (node.subjectId === 'intelligence') {
+      setSelectedIntelligenceChapterId(node.chapterId);
+      setSelectedIntelligenceSection(node.section);
+    } else if (node.subjectId === 'quantitative-mathematics' || node.subjectId === 'design-aptitude') {
+      setSelectedFlatTopicByTab((prev) => ({ ...prev, [node.subjectId]: node.section }));
     }
-  }, [searchParams, activeSectionId, activeSectionTitle, loadSectionVideos]);
+  }, [querySectionId]);
+
+  useEffect(() => {
+    if (!querySectionId || querySectionId === activeSectionId) return;
+    const node = resolveSyllabusSection(querySectionId);
+    void loadSectionVideos(querySectionId, node?.section || 'Section');
+  }, [querySectionId, activeSectionId, loadSectionVideos]);
 
   const playVideo = async (videoId: string) => {
     setPlayingId(videoId);
@@ -433,7 +458,7 @@ export function Videos() {
                     </ul>
                   </CardContent>
                 </Card>
-                {selectedFlatTopic ? videoPanel : null}
+                {selectedFlatTopic || (selectedSubject === flatKey && activeSectionId) ? videoPanel : null}
               </TabsContent>
             );
           }
@@ -456,7 +481,7 @@ export function Videos() {
                     {renderChapterTree(subject, chapters, '', selectedChapterId, selectedSection, (id) => setChapter(id || null), setSection)}
                   </CardContent>
                 </Card>
-                {selectedSection ? videoPanel : null}
+                {selectedSection || (selectedSubject === subject && activeSectionId) ? videoPanel : null}
               </TabsContent>
             );
           }
@@ -503,7 +528,7 @@ export function Videos() {
                   </CardContent>
                 </Card>
               ) : null}
-              {selectedSection ? videoPanel : null}
+              {selectedSection || (selectedSubject === subject && activeSectionId) ? videoPanel : null}
             </TabsContent>
           );
         })}

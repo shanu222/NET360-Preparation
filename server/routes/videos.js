@@ -179,29 +179,78 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
     });
   });
 
-  router.get('/videos/sections/:sectionId', ...studentPremiumSurface, async (req, res) => {
+  function publishedReadyFilter() {
+    return {
+      $or: [
+        { uploadComplete: true },
+        { uploadedAt: { $ne: null } },
+        { r2ObjectKey: { $exists: true, $nin: [null, ''] } },
+      ],
+    };
+  }
+
+  async function respondSectionVideos(req, res, rawSectionId) {
+    const sectionId = decodeURIComponent(String(rawSectionId || '').trim());
+    const node = resolveSyllabusSection(sectionId);
+    if (!node) {
+      res.status(404).json({ error: 'Section not found in the syllabus.' });
+      return;
+    }
+    const videos = await VideoModel.find({
+      status: 'published',
+      $and: [
+        publishedReadyFilter(),
+        {
+          $or: [
+            { sectionId: node.sectionId },
+            { sectionId },
+            {
+              subjectId: node.subjectId,
+              chapterId: node.chapterId,
+              section: node.section,
+              ...(node.partId ? { partId: node.partId } : {}),
+            },
+          ],
+        },
+      ],
+    })
+      .sort({ displayOrder: 1, createdAt: 1 })
+      .lean();
+    const items = [];
+    for (const video of videos) {
+      items.push(publicVideo(video, { thumbnailUrl: await signedThumb(video) }));
+    }
+    res.json({
+      section: node,
+      videos: items,
+    });
+  }
+
+  // Query-string lookup avoids Vercel/proxy path matchers truncating IDs that contain "::".
+  router.get('/videos/sections', ...studentPremiumSurface, async (req, res) => {
     try {
-      const sectionId = decodeURIComponent(String(req.params.sectionId || ''));
-      const node = resolveSyllabusSection(sectionId);
-      if (!node) {
-        res.status(404).json({ error: 'Section not found in the syllabus.' });
+      const sectionId = Array.isArray(req.query.sectionId) ? req.query.sectionId[0] : req.query.sectionId;
+      if (!sectionId) {
+        res.status(400).json({ error: 'sectionId is required.' });
         return;
       }
-      const videos = await VideoModel.find({
-        sectionId,
-        status: 'published',
-        $or: [{ uploadComplete: true }, { uploadedAt: { $ne: null } }],
-      })
-        .sort({ displayOrder: 1, createdAt: 1 })
-        .lean();
-      const items = [];
-      for (const video of videos) {
-        items.push(publicVideo(video, { thumbnailUrl: await signedThumb(video) }));
-      }
-      res.json({
-        section: node,
-        videos: items,
-      });
+      await respondSectionVideos(req, res, sectionId);
+    } catch (error) {
+      res.status(500).json({ error: 'Unable to load videos.' });
+    }
+  });
+
+  router.get('/videos/sections/*', ...studentPremiumSurface, async (req, res) => {
+    try {
+      await respondSectionVideos(req, res, req.params[0] || '');
+    } catch (error) {
+      res.status(500).json({ error: 'Unable to load videos.' });
+    }
+  });
+
+  router.get('/videos/sections/:sectionId', ...studentPremiumSurface, async (req, res) => {
+    try {
+      await respondSectionVideos(req, res, req.params.sectionId);
     } catch (error) {
       res.status(500).json({ error: 'Unable to load videos.' });
     }
@@ -214,7 +263,7 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
         return;
       }
       const video = await VideoModel.findById(req.params.id).lean();
-      if (!video || video.status !== 'published' || (!video.uploadComplete && !video.uploadedAt)) {
+      if (!video || video.status !== 'published' || (!video.uploadComplete && !video.uploadedAt && !video.r2ObjectKey)) {
         res.status(404).json({ error: 'Video not found.' });
         return;
       }
@@ -241,7 +290,7 @@ export function createVideosRouter({ authMiddleware, requireAdmin, studentPremiu
         return;
       }
       const video = await VideoModel.findById(req.params.id).lean();
-      if (!video || video.status !== 'published' || (!video.uploadComplete && !video.uploadedAt)) {
+      if (!video || video.status !== 'published' || (!video.uploadComplete && !video.uploadedAt && !video.r2ObjectKey)) {
         res.status(404).json({ error: 'Video not found.' });
         return;
       }
