@@ -1,4 +1,6 @@
 import { type ComponentType, useMemo } from 'react';
+import { isNativeRuntime } from '../lib/nativeDiagnostics';
+import { NustUpdatesCard } from './dashboard/NustUpdatesCard';
 import {
   Calendar,
   Flame,
@@ -92,6 +94,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const { mcqsBySubject, mcqTotalsBySubject, attempts, profile } = useAppData();
   const { surface } = useSubscription();
   const dashboardSubjects = useMemo(() => buildDashboardSubjects(profile.targetProgram), [profile.targetProgram]);
+  const showWebNustUpdates = useMemo(() => !isNativeRuntime(), []);
 
   const daysUntilNET = useMemo(() => {
     const userTestDate = profile.testDate ? new Date(profile.testDate) : TEST_DATE;
@@ -324,6 +327,8 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           className="h-2 bg-slate-200 [&>[data-slot=progress-indicator]]:bg-indigo-700"
         />
       </section>
+
+      {showWebNustUpdates ? <NustUpdatesCard onOpenGuide={() => onNavigate('guide')} /> : null}
 
       <section className="space-y-3">
         <div className="space-y-3">

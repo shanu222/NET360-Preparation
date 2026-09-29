@@ -6,6 +6,7 @@ import { Textarea } from './ui/textarea';
 import { ScrollArea } from './ui/scroll-area';
 import { Badge } from './ui/badge';
 import { useAuth } from '../context/AuthContext';
+import { useAppData } from '../context/AppDataContext';
 import { apiRequest } from '../lib/api';
 import { showSuccessToast, showErrorToast, showNeutralToast, handleApiError } from '../lib/userToast';
 import {
@@ -65,7 +66,6 @@ const TYPING_INDICATOR_TTL_MS = 4_000;
 const TYPING_EMIT_MIN_INTERVAL_MS = 1_500;
 const TYPING_IDLE_STOP_MS = 2_500;
 
-const USER_SUPPORT_NOTIFICATIONS_KEY = 'net360-support-notifications-user';
 /** Fallback reconcile interval while the realtime socket is down (events are the primary path). */
 const SUPPORT_FALLBACK_POLL_MS = 20_000;
 
@@ -200,6 +200,8 @@ function readFileAsDataUrl(file: File): Promise<string> {
 
 export function SupportChatWidget() {
   const { token, user } = useAuth();
+  const { preferences } = useAppData();
+  const supportRepliesEnabled = preferences.notificationPreferences?.supportReplies !== false;
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [sending, setSending] = useState(false);
@@ -207,13 +209,6 @@ export function SupportChatWidget() {
   const [messageText, setMessageText] = useState('');
   const [messageAttachment, setMessageAttachment] = useState<SupportMessage['attachment']>(null);
   const [unreadCount, setUnreadCount] = useState(0);
-  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(() => {
-    try {
-      return sessionStorage.getItem(USER_SUPPORT_NOTIFICATIONS_KEY) === '1';
-    } catch {
-      return false;
-    }
-  });
   const [viewport, setViewport] = useState(() => getViewportSize());
   const [position, setPosition] = useState(() => {
     const { width, height } = getViewportSize();
@@ -279,23 +274,14 @@ export function SupportChatWidget() {
   const canUseWebNotifications = typeof window !== 'undefined' && 'Notification' in window;
   const panelMetrics = useMemo(() => getPanelMetrics(viewport.width, viewport.height), [viewport.height, viewport.width]);
 
-  const setNotificationPreference = (enabled: boolean) => {
-    setNotificationsEnabled(enabled);
-    try {
-      sessionStorage.setItem(USER_SUPPORT_NOTIFICATIONS_KEY, enabled ? '1' : '0');
-    } catch {
-      // Ignore storage failures.
-    }
-  };
-
   const enableNotifications = async () => {
+    if (!supportRepliesEnabled) return;
     if (isNativeRuntime) {
       try {
         const permission = await PushNotifications.requestPermissions();
         if (permission.receive === 'granted') {
           await PushNotifications.register();
-          setNotificationPreference(true);
-          showSuccessToast('Notifications enabled on this device.');
+          showSuccessToast('Device alerts are allowed. Support replies follow your notification settings.');
         } else {
           showErrorToast('Notification permission was not granted on this device.');
         }
@@ -311,8 +297,7 @@ export function SupportChatWidget() {
     }
 
     if (Notification.permission === 'granted') {
-      setNotificationPreference(true);
-      showSuccessToast('Notifications enabled for this tab.');
+      showSuccessToast('Browser alerts are already allowed.');
       return;
     }
 
@@ -323,15 +308,14 @@ export function SupportChatWidget() {
 
     const permission = await Notification.requestPermission();
     if (permission === 'granted') {
-      setNotificationPreference(true);
-      showSuccessToast('Notifications enabled for this tab.');
+      showSuccessToast('Browser alerts are allowed. Support replies follow your notification settings.');
     } else {
       showErrorToast('Notification permission was not granted.');
     }
   };
 
   const notifyDesktop = (title: string, body: string) => {
-    if (!notificationsEnabled || isNativeRuntime || !canUseWebNotifications) return;
+    if (!supportRepliesEnabled || isNativeRuntime || !canUseWebNotifications) return;
     if (Notification.permission !== 'granted') return;
     if (!document.hidden) return;
 
@@ -838,15 +822,16 @@ export function SupportChatWidget() {
                   </Badge>
                 )
               ) : null}
-              {notificationsEnabled ? (
-                <Button type="button" size="sm" variant="outline" className="h-7 text-[11px] dark:border-emerald-500/45 dark:bg-emerald-900/30 dark:text-emerald-100 dark:hover:bg-emerald-800/40" onClick={() => setNotificationPreference(false)}>
-                  Notifications: On
-                </Button>
-              ) : (
+              {supportRepliesEnabled && canUseWebNotifications && typeof Notification !== 'undefined' && Notification.permission !== 'granted' ? (
                 <Button type="button" size="sm" variant="outline" className="h-7 text-[11px] dark:border-emerald-500/45 dark:bg-slate-800 dark:text-emerald-100 dark:hover:bg-emerald-900/35" onClick={() => void enableNotifications()}>
-                  Enable Notifications
+                  Allow browser alerts
                 </Button>
-              )}
+              ) : null}
+              {isNativeRuntime && supportRepliesEnabled ? (
+                <Button type="button" size="sm" variant="outline" className="h-7 text-[11px] dark:border-emerald-500/45 dark:bg-slate-800 dark:text-emerald-100 dark:hover:bg-emerald-900/35" onClick={() => void enableNotifications()}>
+                  Allow device alerts
+                </Button>
+              ) : null}
             </div>
           </CardHeader>
           <CardContent className="space-y-3">

@@ -21,6 +21,7 @@ import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 import { canonicalSeriesKey, useLiveNustSeries } from '../lib/nustLiveSchedule';
 import { getMediaUrl, loginBannerImageUrl, shouldUseLocalMediaFallback } from '../lib/publicMedia';
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
+import { NotificationPreferencesList } from './NotificationPreferences';
 import { ImageWithFallback } from './figma/ImageWithFallback';
 import { getAuthDebugSnapshot, subscribeAuthDebug, type AuthDebugSnapshot } from '../lib/authDebugState';
 import { Capacitor } from '@capacitor/core';
@@ -155,7 +156,7 @@ function loginFriendlyAuthError(error: unknown, fallback: string): string {
 export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const { user, login, loginWithGoogle, registerWithToken, sendRecoveryEmail, deleteAccount, requestAccountDeletionLink, logout } = useAuth();
   const { surface } = useSubscription();
-  const { profile, preferences, attempts, saveProfile, savePreferences } = useAppData();
+  const { profile, attempts, saveProfile } = useAppData();
   const { status: seriesStatus, series: liveSeries } = useLiveNustSeries();
   const [localProfile, setLocalProfile] = useState(profile);
   const selectedSeries = useMemo(
@@ -550,23 +551,6 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       handleApiError(error, 'Could not update target program.');
     } finally {
       setIsSavingTargetProgram(false);
-    }
-  };
-
-  const togglePreference = async (key: 'emailNotifications' | 'dailyReminders' | 'contentUpdates' | 'performanceReports') => {
-    const nextValue = !preferences[key];
-    const notificationPreferences = key === 'emailNotifications'
-      ? { enabled: nextValue }
-      : key === 'contentUpdates'
-        ? { newVideos: nextValue }
-        : key === 'dailyReminders'
-          ? { dailyReminders: nextValue }
-          : { performanceReports: nextValue };
-    try {
-      await savePreferences({ [key]: nextValue, notificationPreferences });
-      showNeutralToast(`${key} ${nextValue ? 'enabled' : 'disabled'}.`);
-    } catch (error) {
-      handleApiError(error, 'Could not save preference.');
     }
   };
 
@@ -1432,46 +1416,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
             Preferences
           </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h4>Email Notifications</h4>
-              <p className="text-sm text-muted-foreground">Receive updates about tests and deadlines</p>
-            </div>
-            <Button variant={preferences.emailNotifications ? 'default' : 'outline'} onClick={() => void togglePreference('emailNotifications')}>
-              {preferences.emailNotifications ? 'Enabled' : 'Disabled'}
-            </Button>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <h4>Daily Reminders</h4>
-              <p className="text-sm text-muted-foreground">Get reminded to practice daily</p>
-            </div>
-            <Button variant={preferences.dailyReminders ? 'default' : 'outline'} onClick={() => void togglePreference('dailyReminders')}>
-              {preferences.dailyReminders ? 'Enabled' : 'Disabled'}
-            </Button>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <h4>Content Updates</h4>
-              <p className="text-sm text-muted-foreground">Notify me when new videos or study content are published</p>
-            </div>
-            <Button variant={preferences.contentUpdates !== false ? 'default' : 'outline'} onClick={() => void togglePreference('contentUpdates')}>
-              {preferences.contentUpdates !== false ? 'Enabled' : 'Disabled'}
-            </Button>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <div>
-              <h4>Performance Reports</h4>
-              <p className="text-sm text-muted-foreground">Weekly summary of your progress</p>
-            </div>
-            <Button variant={preferences.performanceReports ? 'default' : 'outline'} onClick={() => void togglePreference('performanceReports')}>
-              {preferences.performanceReports ? 'Enabled' : 'Disabled'}
-            </Button>
-          </div>
+        <CardContent>
+          <NotificationPreferencesList />
         </CardContent>
       </Card>
 

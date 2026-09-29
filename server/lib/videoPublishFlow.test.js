@@ -47,11 +47,13 @@ test('a real publish sends one email to eligible users and none when notificatio
   assert.equal(shouldStartVideoPublicationCampaign('', 'draft'), false);
 
   const calls = [];
+  const inbox = [];
   const receipts = memoryReceipts();
   let completed = false;
   const first = await notifyVideoPublished(video, {
     users,
     receipts,
+    recordInbox: async (user) => { inbox.push(String(user._id)); },
     claim: async () => video,
     complete: async () => { completed = true; },
     send: (message) => sendTransactionalEmail(message, {
@@ -82,6 +84,7 @@ test('a real publish sends one email to eligible users and none when notificatio
   assert.equal(receipts.rows.get('video-published:upload-1:android-off').status, 'skipped');
   assert.equal(receipts.rows.get('video-published:upload-1:master-off').status, 'skipped');
   assert.equal(receipts.rows.has('video-published:upload-1:admin'), false);
+  assert.deepEqual(inbox, ['on']);
 
   calls.length = 0;
   const again = await notifyVideoPublished(video, {

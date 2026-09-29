@@ -1,6 +1,8 @@
+import mongoose from 'mongoose';
 import { UserModel } from '../models/User.js';
 import { VideoModel } from '../models/Video.js';
 import { VideoEmailReceiptModel } from '../models/VideoEmailReceipt.js';
+import { UserNotificationModel } from '../models/UserNotification.js';
 import { notificationShell } from '../services/notificationEmail.js';
 import { isPermanentRecipientError, sendTransactionalEmail } from './outboundEmail.js';
 import { wantsVideoNotification } from './videoNotificationPreference.js';
@@ -32,6 +34,39 @@ export function videoWatchLink(video) {
   if (video?.sectionId) params.set('sectionId', String(video.sectionId));
   if (video?._id) params.set('videoId', String(video._id));
   return `${publicWebBase()}/videos?${params.toString()}`;
+}
+
+export function videoInboxLink(video) {
+  const params = new URLSearchParams();
+  if (video?.sectionId) params.set('sectionId', String(video.sectionId));
+  if (video?._id) params.set('videoId', String(video._id));
+  const query = params.toString();
+  return query ? `/videos?${query}` : '/videos';
+}
+
+export async function recordVideoInboxNotification(user, video, announcement) {
+  if (mongoose.connection.readyState !== 1) return;
+  if (!wantsVideoNotification(user?.preferences)) return;
+  const userId = String(user?._id || '');
+  const videoId = String(video?._id || '');
+  if (!userId || !videoId) return;
+  const title = String(video?.title || 'New lecture').trim() || 'New lecture';
+  await UserNotificationModel.updateOne(
+    { userId, kind: 'video.published', videoId },
+    {
+      $setOnInsert: {
+        userId,
+        kind: 'video.published',
+        videoId,
+        sectionId: String(video?.sectionId || ''),
+        title: `New video: ${title}`,
+        body: String(announcement || `${title} is now available.`),
+        link: videoInboxLink(video),
+        readAt: null,
+      },
+    },
+    { upsert: true },
+  );
 }
 
 function locationPath(video) {
@@ -134,8 +169,13 @@ export async function deliverVideoPublicationEmails(video, options = {}) {
       summary.skipped += 1;
       continue;
     }
+    const wantsNotice = wantsVideoNotification(user.preferences);
+    if (wantsNotice) {
+      const recordInbox = options.recordInbox || recordVideoInboxNotification;
+      await recordInbox(user, video, announcement).catch(() => undefined);
+    }
     const dest = normalizeEmail(user.email);
-    if (!dest || !isValidEmail(dest) || !wantsVideoNotification(user.preferences)) {
+    if (!dest || !isValidEmail(dest) || !wantsNotice) {
       await receipts.save({ eventId, videoId: String(video._id), userId, status: 'skipped', provider: '', error: '' });
       summary.skipped += 1;
       continue;
