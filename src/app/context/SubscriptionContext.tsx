@@ -20,6 +20,7 @@ import {
   isCookieSessionApiMarker,
   shouldPersistAuthTokens,
 } from '../lib/authSession';
+import { isNativeRuntime } from '../lib/nativeDiagnostics';
 
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 
@@ -79,6 +80,7 @@ export interface PaidServicesState {
   tests: AccessState;
   preparation: AccessState;
   community: AccessState;
+  videos?: AccessState;
   mentor?: AccessState;
 }
 
@@ -112,6 +114,16 @@ export interface SubscriptionMePayload {
     reason?: string;
   };
   activationRequest?: unknown;
+  demoMode?: DemoModeState;
+}
+
+export interface DemoModeState {
+  started: boolean;
+  startedAt: string | null;
+  tests: { used: boolean; usedAt: string | null };
+  preparation: { used: boolean; usedAt: string | null };
+  videos?: { used: boolean; videoId: string | null };
+  community: { started?: boolean; active: boolean; endsAt: string | null; msRemaining: number };
 }
 
 const emptySurface: PremiumSurfaceState = {
@@ -197,7 +209,7 @@ export function SubscriptionProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const uid = user?.id?.trim();
-    if (!uid || !me) {
+    if (!uid || !me || isNativeRuntime()) {
       trialAutoSyncAttemptedRef.current = false;
       trialAutoSyncUserIdRef.current = null;
       return;

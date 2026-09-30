@@ -41,6 +41,7 @@ import {
   Sun,
   Crown,
   LogOut,
+  Video,
   ChevronLeft,
 } from 'lucide-react';
 import { Button } from './components/ui/button';
@@ -56,6 +57,7 @@ import { Helmet } from 'react-helmet-async';
 import { brandLogoUrl } from './lib/publicMedia';
 import { fetchAndApplyPublicMediaConfig } from './lib/publicMediaRuntime';
 import { PremiumCountdownBadge } from './components/subscription/PremiumCountdownBadge';
+import { AndroidDemoModeButton } from './components/subscription/DemoModeButton';
 import { logNativeEvent } from './lib/nativeDiagnostics';
 import { isNativeAndroidRuntime } from './lib/nativeForeground';
 
@@ -66,6 +68,7 @@ const NUSTSchoolsCampuses = lazyWithRetry(() => import('./components/NUSTSchools
 const PracticeBoard = lazyWithRetry(() => import('./components/PracticeBoard').then((m) => ({ default: m.PracticeBoard })));
 const QuestionContribution = lazyWithRetry(() => import('./components/QuestionContribution').then((m) => ({ default: m.QuestionContribution })));
 const Preparation = lazyWithRetry(() => import('./components/Preparation').then((m) => ({ default: m.Preparation })));
+const Videos = lazyWithRetry(() => import('./components/Videos').then((m) => ({ default: m.Videos })));
 const Tests = lazyWithRetry(() => import('./components/Tests').then((m) => ({ default: m.Tests })));
 const Analytics = lazyWithRetry(() => import('./components/Analytics').then((m) => ({ default: m.Analytics })));
 const MeritCalculator = lazyWithRetry(() => import('./components/MeritCalculator').then((m) => ({ default: m.MeritCalculator })));
@@ -157,6 +160,7 @@ type SectionId =
   | 'question-contribution'
   | 'smart-mentor'
   | 'preparation'
+  | 'videos'
   | 'tests'
   | 'analytics'
   | 'merit-calculator'
@@ -181,6 +185,7 @@ const PATH_BY_SECTION: Record<SectionId, string> = {
   'question-contribution': '/question-contribution',
   'smart-mentor': '/smart-mentor',
   preparation: '/preparation',
+  videos: '/videos',
   tests: '/tests',
   analytics: '/analytics',
   'merit-calculator': '/merit-calculator',
@@ -234,6 +239,7 @@ const STUDENT_NAVIGATION_ITEMS: Array<{ id: SectionId; label: string; icon: type
   { id: 'question-contribution', label: 'Question Contribution', icon: Upload },
   { id: 'smart-mentor', label: 'Smart Study Mentor', icon: Brain },
   { id: 'preparation', label: 'Preparation Materials', icon: BookOpen },
+  { id: 'videos', label: 'Videos', icon: Video },
   { id: 'tests', label: 'Tests', icon: FileText },
   { id: 'analytics', label: 'Analytics', icon: TrendingUp },
   { id: 'merit-calculator', label: 'Merit Calculator', icon: Calculator },
@@ -1135,6 +1141,12 @@ export default function App() {
             <Preparation />
           </div>
         );
+      case 'videos':
+        return (
+          <div className="mt-0 net360-page net360-page-enter">
+            <Videos />
+          </div>
+        );
       case 'tests':
         return (
           <div className="mt-0 net360-page net360-page-enter">
@@ -1408,6 +1420,7 @@ export default function App() {
                   <MessageSquare className="h-5 w-5" />
                 </Button>
                 </div>
+                {androidApp ? <AndroidDemoModeButton /> : null}
                 <HeaderAuthControl onOpenProfile={() => navigate(PATH_BY_SECTION.profile)} />
               </div>
             </header>

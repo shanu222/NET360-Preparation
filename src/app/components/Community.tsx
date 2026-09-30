@@ -31,6 +31,9 @@ import {
 } from '../lib/realtimeSocket';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
+import { formatDemoTimeLeft, useDemoMode } from '../lib/demoMode';
+import { DemoModeBanner } from './subscription/DemoModeButton';
+import { useNavigate } from 'react-router-dom';
 import { PremiumLockScreen } from './subscription/PremiumLockScreen';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, showNeutralToast, handleApiError, audienceFriendlyError } from '../lib/userToast';
@@ -585,7 +588,18 @@ function upsertCommunityMessage(list: MessageRow[], incoming: MessageRow): Messa
 function CommunityInner() {
   const { token, user } = useAuth();
   const { surface, me, loading: subLoading } = useSubscription();
-  const communityAccessAllowed = Boolean(me?.paidServices?.community?.allowed);
+  const communityPaidAllowed = Boolean(me?.paidServices?.community?.allowed);
+  const demo = useDemoMode();
+  const demoCommunity = !communityPaidAllowed && demo.communityActive;
+  const demoCommunityExpired = !communityPaidAllowed && demo.communityExpired;
+  const communityAccessAllowed = communityPaidAllowed || demoCommunity;
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!demoCommunityExpired || subLoading) return;
+    showInfoToast('Your 24-hour demo Community access has ended. Subscribe to Community to continue.');
+    navigate('/subscription', { replace: true });
+  }, [demoCommunityExpired, navigate, subLoading]);
 
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -2356,7 +2370,7 @@ function CommunityInner() {
         </div>
         <PremiumLockScreen
           title="Unlock community"
-          description="Connect with students, join quiz battles, and use discussion rooms with an active trial or premium subscription."
+          description="Subscribe to Community, or start the 1-day demo, to connect with students, join quiz battles, and use discussion rooms."
         />
       </div>
     );
@@ -2370,6 +2384,9 @@ function CommunityInner() {
   return (
     <div className="community-page min-w-0 space-y-4">
       <h1 className="sr-only">Community — students, discussions, quiz battles, and messages</h1>
+      {demoCommunity ? (
+        <DemoModeBanner message={`Community access ends in ${formatDemoTimeLeft(demo.communityMsLeft)}.`} />
+      ) : null}
       <Tabs value={activeTab} onValueChange={showCommunitySection} className={`w-full space-y-4${androidApp && !androidSectionOpen ? ' net360-hub-closed' : ''}`} aria-label="Community sections">
         {androidApp && !androidSectionOpen ? (
           <div className="net360-hub-grid">

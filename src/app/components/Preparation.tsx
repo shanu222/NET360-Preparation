@@ -22,6 +22,9 @@ import { useAndroidNestedScreen } from '../lib/androidNestedScreen';
 import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
+import { isDemoLimitError, useDemoMode } from '../lib/demoMode';
+import { DemoModeBanner } from './subscription/DemoModeButton';
+import { useNavigate } from 'react-router-dom';
 import { PremiumLockScreen } from './subscription/PremiumLockScreen';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 
@@ -577,6 +580,13 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     || (me?.preparationAccess?.allowed && me?.preparationAccess?.source !== 'legacy')
     || (surface?.allowed && (surface?.source === 'global' || surface?.source === 'manual')),
   );
+  const demo = useDemoMode();
+  const demoPreparation = !preparationAccessAllowed && demo.started;
+  const navigate = useNavigate();
+  const redirectDemoPreparationUsed = () => {
+    showInfoToast('You have used your demo preparation item. Subscribe to Preparation Material to continue.');
+    navigate('/subscription');
+  };
   const authLoadingRef = useRef(authLoading);
   authLoadingRef.current = authLoading;
   const tokenRef = useRef(authContextToken);
@@ -701,6 +711,10 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     sectionTitle: string;
     difficulty: 'Easy' | 'Medium' | 'Hard';
   }) => {
+    if (demoPreparation && demo.preparationUsed) {
+      redirectDemoPreparationUsed();
+      return;
+    }
     if (launchingRef.current || !authReady) return;
     launchingRef.current = true;
 
@@ -767,11 +781,17 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
 
       mobileSectionStartRetryRef.current = 0;
       const launchToken = (await resolveLaunchToken()) || authToken;
+      if (demoPreparation) void demo.refresh();
       openExamWindow({ sessionId: session.id, token: launchToken });
       showSuccessToast('Section test launched.');
     } catch (error) {
       if (import.meta.env.DEV) {
         console.error('Section test start error:', error);
+      }
+      if (isDemoLimitError(error)) {
+        void demo.refresh();
+        redirectDemoPreparationUsed();
+        return;
       }
       const msg = error instanceof Error ? error.message : '';
       if (
@@ -801,6 +821,10 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     topicTitle: string,
     difficulty: 'Easy' | 'Medium' | 'Hard',
   ) => {
+    if (demoPreparation && demo.preparationUsed) {
+      redirectDemoPreparationUsed();
+      return;
+    }
     if (launchingRef.current || !authReady) return;
     launchingRef.current = true;
 
@@ -869,11 +893,13 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
 
           mobileFlatStartRetryRef.current = 0;
           const launchToken = (await resolveLaunchToken()) || authToken;
+          if (demoPreparation) void demo.refresh();
           openExamWindow({ sessionId: session.id, token: launchToken });
           showSuccessToast('Topic test launched.');
           return;
         } catch (error) {
           lastError = error;
+          if (isDemoLimitError(error)) break;
         }
       }
 
@@ -881,6 +907,11 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     } catch (error) {
       if (import.meta.env.DEV) {
         console.error('Topic test start error:', error);
+      }
+      if (isDemoLimitError(error)) {
+        void demo.refresh();
+        redirectDemoPreparationUsed();
+        return;
       }
       const msg = error instanceof Error ? error.message : '';
       if (
@@ -923,7 +954,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
     );
   }
 
-  if (!preparationAccessAllowed) {
+  if (!preparationAccessAllowed && !demo.started) {
     return (
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -935,7 +966,7 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
         </div>
         <PremiumLockScreen
           title="Unlock preparation tools"
-          description="Your free plan includes MCQs on the practice board. Preparation materials and topic tests require an active trial or premium subscription."
+          description="Your free plan includes MCQs on the practice board. Subscribe to Preparation Material, or try one free demo item, to unlock notes and topic tests."
         />
       </div>
     );
@@ -962,6 +993,15 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
         <h1>Preparation Materials</h1>
         <p className="text-muted-foreground">Syllabus browser by subject, part, chapter, and section</p>
       </div>
+
+      {demoPreparation ? (
+        <DemoModeBanner
+          used={demo.preparationUsed}
+          message={demo.preparationUsed
+            ? 'You have used your free demo preparation item. Subscribe to Preparation Material to continue.'
+            : '1 free preparation item remaining. Pick any subject, chapter, or topic.'}
+        />
+      ) : null}
 
       {androidApp && !androidSubjectOpen ? (
         <div className="net360-hub-grid">
