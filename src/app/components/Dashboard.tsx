@@ -21,13 +21,12 @@ import { useAppData } from '../context/AppDataContext';
 import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
 import { getProgramCategoryKey, getRequiredSubjectsForTargetProgram } from '../lib/netPrograms';
 import { useSubscription, formatCountdown } from '../context/SubscriptionContext';
+import { daysUntil, useNustNetCycle } from '../lib/nustNetCycle';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 
 interface DashboardProps {
   onNavigate: (section: string) => void;
 }
-
-const TEST_DATE = new Date('2026-06-30T00:00:00');
 
 const SUBJECT_STYLE_FALLBACKS = [
   { badge: 'from-violet-500 to-violet-400', bar: 'bg-violet-500' },
@@ -97,14 +96,15 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   const { surface } = useSubscription();
   const dashboardSubjects = useMemo(() => buildDashboardSubjects(profile.targetProgram), [profile.targetProgram]);
   const showWebNustUpdates = useMemo(() => !isNativeRuntime(), []);
+  const netCycle = useNustNetCycle();
 
   const daysUntilNET = useMemo(() => {
-    const userTestDate = profile.testDate ? new Date(profile.testDate) : TEST_DATE;
-    const targetDate = Number.isNaN(userTestDate.getTime()) ? TEST_DATE : userTestDate;
-    const now = new Date();
-    const diffMs = targetDate.getTime() - now.getTime();
-    return Math.max(0, Math.ceil(diffMs / (1000 * 60 * 60 * 24)));
-  }, [profile.testDate]);
+    const userTestDate = profile.testDate ? new Date(profile.testDate) : null;
+    const targetDate = userTestDate && !Number.isNaN(userTestDate.getTime()) ? userTestDate : netCycle.countdownDate;
+    if (!targetDate) return null;
+    return daysUntil(targetDate);
+  }, [profile.testDate, netCycle.countdownDate]);
+  const netCountdownLabel = netCycle.year ? `NET ${netCycle.year} Countdown` : 'NET Countdown';
 
   const firstName = profile.firstName?.trim() || 'Student';
 
@@ -270,15 +270,15 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             <div className="relative flex flex-col items-start gap-4 sm:flex-row sm:items-center">
               <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-full border-4 border-white/80 bg-gradient-to-br from-white/20 to-white/5 text-center shadow-[inset_0_0_30px_rgba(255,255,255,0.2)] sm:h-24 sm:w-24">
                 <div>
-                  <p className="text-2xl font-semibold leading-none sm:text-3xl">{daysUntilNET}</p>
+                  <p className="text-2xl font-semibold leading-none sm:text-3xl">{daysUntilNET ?? '—'}</p>
                   <p className="text-sm text-blue-100">Days</p>
                 </div>
               </div>
               <div>
                 <p className="mb-1 inline-flex items-center gap-2 rounded-full border border-white/30 bg-white/10 px-2 py-1 text-xs">
-                  <Calendar className="w-3.5 h-3.5" /> NET 2026 Countdown
+                  <Calendar className="w-3.5 h-3.5" /> {netCountdownLabel}
                 </p>
-                <p className="text-2xl leading-tight sm:text-3xl">{daysUntilNET} Days</p>
+                <p className="text-2xl leading-tight sm:text-3xl">{daysUntilNET == null ? '—' : `${daysUntilNET} Days`}</p>
                 <p className="text-sm text-indigo-100">Stay focused and keep practicing!</p>
               </div>
             </div>

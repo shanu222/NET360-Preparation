@@ -2,22 +2,22 @@ export const NET360_SOCIAL_LINKS = [
   {
     id: 'youtube',
     label: 'YouTube',
-    href: 'https://www.youtube.com/@netprepare',
+    href: 'https://youtube.com/@nustnetpreparation?si=Y2yBmyeZVIfrpYOB',
   },
   {
     id: 'instagram',
     label: 'Instagram',
-    href: 'https://www.instagram.com/netprepare/',
+    href: 'https://www.instagram.com/net360prep?stkn=MTdyNGdsOXltYXBlZQ%3D%3D&utm_source=qr',
   },
   {
     id: 'facebook',
     label: 'Facebook',
-    href: 'https://www.facebook.com/netprepare',
+    href: 'https://www.facebook.com/share/1YbpZZHbTg/?mibextid=wwXIfr',
   },
   {
     id: 'website',
     label: 'Website',
-    href: 'https://www.net360preparation.com',
+    href: 'https://www.net360preparation.com/',
   },
 ] as const;
 

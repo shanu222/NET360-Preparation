@@ -117,7 +117,7 @@ export function DemoModeButton() {
       <Button
         type="button"
         variant="outline"
-        className="relative min-h-10 touch-manipulation rounded-xl border-amber-300 bg-amber-50 px-2.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 hover:text-amber-900 dark:border-amber-500/50 dark:bg-amber-950/40 dark:text-amber-200 dark:hover:bg-amber-900/50 sm:min-h-9"
+        className="net360-demo-entry relative min-h-10 touch-manipulation rounded-xl border-amber-300 bg-amber-50 px-2.5 text-xs font-semibold text-amber-800 hover:bg-amber-100 hover:text-amber-900 dark:border-amber-400 dark:bg-amber-950 dark:text-amber-100 dark:hover:bg-amber-900 sm:min-h-9"
         onClick={() => setOpen(true)}
         aria-label="Open Demo Mode"
       >
@@ -127,7 +127,7 @@ export function DemoModeButton() {
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md overflow-hidden rounded-3xl border-indigo-100 bg-white p-0 shadow-[0_30px_70px_rgba(59,67,146,0.28)] dark:border-slate-700 dark:bg-slate-900 sm:max-w-md md:max-w-md">
+        <DialogContent className="net360-demo-dialog max-w-md overflow-hidden rounded-3xl border-indigo-100 bg-white p-0 shadow-[0_30px_70px_rgba(59,67,146,0.28)] dark:border-slate-600 dark:bg-slate-900 sm:max-w-md md:max-w-md">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(129,140,248,0.28),transparent_55%),radial-gradient(circle_at_bottom_right,rgba(251,191,36,0.2),transparent_50%)]" />
           <div className="relative space-y-5 p-6">
             <DialogHeader className="space-y-1 text-left">
@@ -148,7 +148,7 @@ export function DemoModeButton() {
                 return (
                   <li
                     key={option.service}
-                    className="flex items-center gap-3 rounded-2xl border border-indigo-100 bg-white p-3 shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700"
+                    className="net360-demo-option flex items-center gap-3 rounded-2xl border border-indigo-200 bg-white p-3 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50 dark:border-indigo-400/70 dark:bg-slate-800 dark:hover:bg-slate-700"
                   >
                     <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-2xl shadow-inner dark:bg-slate-900" aria-hidden="true">
                       {option.emoji}

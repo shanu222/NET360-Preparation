@@ -1969,3 +1969,45 @@ html.dark.native-android [data-slot='select-item'] {
     min-height: 44px;
   }
 }
+
+html:not(.dark) .net360-demo-entry {
+  background: #fffbeb !important;
+  color: #78350f !important;
+  border-color: #d97706 !important;
+}
+
+html:not(.dark) .net360-demo-entry svg {
+  color: #b45309 !important;
+}
+
+html.dark .net360-demo-entry {
+  background: #422006 !important;
+  color: #fef3c7 !important;
+  border-color: #fbbf24 !important;
+}
+
+html.dark .net360-demo-entry svg {
+  color: #fde68a !important;
+}
+
+html.dark .net360-demo-dialog {
+  background: #0f172a !important;
+  color: #f8fafc !important;
+  border-color: #64748b !important;
+}
+
+html.dark .net360-demo-option {
+  background: #1e293b !important;
+  color: #f8fafc !important;
+  border-color: #818cf8 !important;
+}
+
+html.dark .net360-demo-option span {
+  color: #f8fafc !important;
+}
+
+html:not(.dark) .net360-demo-option {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #c7d2fe !important;
+}
