@@ -76,6 +76,7 @@ import { showSuccessToast, showErrorToast, showInfoToast, showWarningToast, show
 import { COMPUTER_SCIENCE_SYLLABUS, FLAT_TOPIC_TABS, INTELLIGENCE_SYLLABUS, SYLLABUS } from '../app/components/Preparation';
 import { AdminVideos } from './AdminVideos';
 import { AdminSitePromoImages } from './AdminSitePromoImages';
+import { AdminSubscriptionPlans } from './AdminSubscriptionPlans';
 import type { SubjectKey } from '../app/lib/mcq';
 import {
   downloadBlobFile,
@@ -8345,6 +8346,7 @@ export default function AdminApp() {
 
         <TabsContent value="system-config" className="space-y-4">
           <AdminSitePromoImages />
+          <AdminSubscriptionPlans />
           <Card>
             <CardHeader>
               <div className="flex flex-wrap items-center justify-between gap-2">

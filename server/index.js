@@ -109,6 +109,7 @@ import {
 import { createUploadRouter } from './routes/upload.js';
 import { createVideosRouter } from './routes/videos.js';
 import { createSitePromoImagesRouter } from './routes/sitePromoImages.js';
+import { createSubscriptionPlansRouter } from './routes/subscriptionPlans.js';
 import { ensureR2Cors } from './lib/r2.js';
 import { buildMcqContentFingerprint } from './lib/mcqIdentity.js';
 import { encryptSecurityAnswerPlaintext, decryptSecurityAnswerCiphertext } from './lib/securityAnswerCrypto.js';
@@ -8766,9 +8767,7 @@ const studentPremiumSurface = [
 
 app.use('/api', createVideosRouter({ authMiddleware, requireAdmin, studentPremiumSurface }));
 
-app.use('/api', createSitePromoImagesRouter({
-  authMiddleware,
-  requireAdmin,
+const siteContentConfigAccess = {
   readConfigValue: (key) => (CONFIG_CRYPTO_KEY ? getRuntimeConfigValue(key, '') : Promise.resolve('')),
   writeConfigValue: async (key, value, { description = '', updatedByEmail = '' } = {}) => {
     if (!CONFIG_CRYPTO_KEY) {
@@ -8795,7 +8794,10 @@ app.use('/api', createSitePromoImagesRouter({
     await RuntimeConfigModel.deleteOne({ key });
     clearRuntimeConfigCache();
   },
-}));
+};
+
+app.use('/api', createSitePromoImagesRouter({ authMiddleware, requireAdmin, ...siteContentConfigAccess }));
+app.use('/api', createSubscriptionPlansRouter({ authMiddleware, requireAdmin, ...siteContentConfigAccess }));
 
 /** Legacy token-based signup, admin premium proof queues, and recovery lists â€” fully retired (410). */
 function respondLegacyAdminWorkflowGone(_req, res) {

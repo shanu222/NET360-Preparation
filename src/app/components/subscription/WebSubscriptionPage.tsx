@@ -1,46 +1,19 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { BookOpen, Brain, Check, FileText, MessageCircle, PlayCircle, Sparkles, Users } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useSubscription } from '../../context/SubscriptionContext';
 import { NET360_ADMIN_WHATSAPP, PAYMENT_METHODS } from '../../lib/paymentMethods';
+import { isVideosOfferActive, useSubscriptionPlans, type StandardPlanKey } from '../../lib/subscriptionPlans';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 
-type ServiceKey = 'tests' | 'preparation' | 'community' | 'videos';
+type ServiceKey = StandardPlanKey | 'videos' | 'mentor';
 
-const VIDEOS_REGULAR_PRICE = 6000;
-const VIDEOS_LAUNCH_PRICE = 3000;
-const VIDEOS_LAUNCH_ENDS = new Date('2026-12-01T00:00:00+05:00');
-
-const SERVICES: Array<{
-  key: ServiceKey;
-  label: string;
-  description: string;
-  icon: typeof FileText;
-  price: number;
-}> = [
-  {
-    key: 'tests',
-    label: 'Tests',
-    description: 'Full-length mocks, subject tests, and adaptive practice.',
-    icon: FileText,
-    price: 1000,
-  },
-  {
-    key: 'preparation',
-    label: 'Preparation Material',
-    description: 'Chapter-wise notes and topic tests across the NET syllabus.',
-    icon: BookOpen,
-    price: 1000,
-  },
-  {
-    key: 'community',
-    label: 'Community',
-    description: 'Study partners, quiz battles, discussion rooms, and messaging.',
-    icon: Users,
-    price: 1000,
-  },
+const STANDARD_SERVICES: Array<{ key: StandardPlanKey; icon: typeof FileText }> = [
+  { key: 'tests', icon: FileText },
+  { key: 'preparation', icon: BookOpen },
+  { key: 'community', icon: Users },
 ];
 
 function formatPkr(amount: number) {
@@ -54,34 +27,55 @@ function formatDate(value?: string | null) {
   return date.toLocaleDateString('en-PK', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
+function highlight(text: string, phrase: string) {
+  const needle = phrase.trim();
+  if (!needle || !text.includes(needle)) return text;
+  return text.split(needle).map((part, index) => (
+    <Fragment key={index}>
+      {index > 0 ? <span className="font-semibold text-violet-700 dark:text-violet-200">{needle}</span> : null}
+      {part}
+    </Fragment>
+  ));
+}
+
 export function WebSubscriptionPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { me } = useSubscription();
+  const plans = useSubscriptionPlans();
   const [selected, setSelected] = useState<ServiceKey[]>([]);
   const [showPayment, setShowPayment] = useState(false);
 
-  const videosLaunchOffer = Date.now() < VIDEOS_LAUNCH_ENDS.getTime();
-  const videosPrice = videosLaunchOffer ? VIDEOS_LAUNCH_PRICE : VIDEOS_REGULAR_PRICE;
+  const videos = plans.videos;
+  const mentor = plans.mentor;
+  const videosLaunchOffer = isVideosOfferActive(videos);
+  const videosPrice = videosLaunchOffer ? videos.offerPrice : videos.regularPrice;
 
   const priceByKey: Record<ServiceKey, number> = {
-    tests: 1000,
-    preparation: 1000,
-    community: 1000,
+    tests: plans.tests.price,
+    preparation: plans.preparation.price,
+    community: plans.community.price,
     videos: videosPrice,
+    mentor: mentor.price,
   };
   const labelByKey: Record<ServiceKey, string> = {
-    tests: 'Tests',
-    preparation: 'Preparation Material',
-    community: 'Community',
-    videos: 'Videos',
+    tests: plans.tests.title,
+    preparation: plans.preparation.title,
+    community: plans.community.title,
+    videos: videos.title,
+    mentor: mentor.title,
+  };
+  const durationByKey: Record<ServiceKey, string> = {
+    tests: plans.tests.duration,
+    preparation: plans.preparation.duration,
+    community: plans.community.duration,
+    videos: videos.duration,
+    mentor: mentor.duration,
   };
 
-  const total = useMemo(
-    () => selected.reduce((sum, key) => sum + priceByKey[key], 0),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selected, videosPrice],
-  );
+  const activeSelection = selected.filter((key) => key !== 'mentor' || mentor.available);
+
+  const total = activeSelection.reduce((sum, key) => sum + priceByKey[key], 0);
 
   const whatsappRaw = (
     me?.manualSubscriptionWhatsapp ||
@@ -115,8 +109,8 @@ export function WebSubscriptionPage() {
   const openWhatsapp = () => {
     const name = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
     const lines = [
-      'Assalam o Alaikum NET360, I want to subscribe (6 months):',
-      ...selected.map((key) => `• ${labelByKey[key]} — ${formatPkr(priceByKey[key])}`),
+      'Assalam o Alaikum NET360, I want to subscribe:',
+      ...activeSelection.map((key) => `• ${labelByKey[key]} (${durationByKey[key]}) — ${formatPkr(priceByKey[key])}`),
       `Total: ${formatPkr(total)}`,
       '',
       `Name: ${name || '-'}`,
@@ -147,20 +141,20 @@ export function WebSubscriptionPage() {
 
   const videosSelected = selected.includes('videos');
   const videosActive = activeUntil('videos');
+  const mentorSelected = mentor.available && selected.includes('mentor');
+  const mentorActive = activeUntil('mentor');
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-2 py-4">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">Subscription</h1>
-        <p className="text-sm text-slate-600 dark:text-slate-300">
-          Choose one or more services. Every plan gives you 6 months of access.
-        </p>
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-50">{plans.pageTitle}</h1>
+        {plans.pageSubtitle ? <p className="text-sm text-slate-600 dark:text-slate-300">{plans.pageSubtitle}</p> : null}
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle as="h2">Choose your services</CardTitle>
-          <CardDescription>Select the services you want. Your total updates automatically.</CardDescription>
+          <CardTitle as="h2">{plans.sectionTitle}</CardTitle>
+          {plans.sectionSubtitle ? <CardDescription>{plans.sectionSubtitle}</CardDescription> : null}
         </CardHeader>
         <CardContent className="space-y-3">
           <button
@@ -172,9 +166,9 @@ export function WebSubscriptionPage() {
               videosSelected ? '' : 'border-violet-300 dark:border-violet-500/50'
             } bg-gradient-to-br from-violet-50 via-white to-amber-50 dark:from-violet-950/40 dark:via-slate-900/60 dark:to-amber-950/20`}
           >
-            {videosLaunchOffer ? (
+            {videosLaunchOffer && videos.offerLabel ? (
               <span className="absolute right-0 top-0 rounded-bl-2xl bg-gradient-to-r from-amber-400 to-orange-500 px-3 py-1 text-xs font-bold uppercase tracking-wide text-white shadow">
-                50% OFF
+                {videos.offerLabel}
               </span>
             ) : null}
             <div className="flex items-start gap-3 pr-16">
@@ -184,35 +178,34 @@ export function WebSubscriptionPage() {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="flex flex-wrap items-center gap-2 text-base font-semibold text-slate-900 dark:text-slate-50">
-                  Videos
-                  <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200">
-                    <Sparkles className="h-3 w-3" />
-                    New lessons daily
-                  </span>
+                  {videos.title}
+                  {videos.badge ? (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200">
+                      <Sparkles className="h-3 w-3" />
+                      {videos.badge}
+                    </span>
+                  ) : null}
                 </p>
-                <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
-                  Syllabus-aligned video lectures for every NET subject.
-                </p>
+                {videos.description ? (
+                  <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">{videos.description}</p>
+                ) : null}
               </div>
             </div>
             <div className="flex flex-wrap items-baseline gap-2 pl-9">
               <span className="text-xl font-bold text-violet-700 dark:text-violet-200">{formatPkr(videosPrice)}</span>
-              <span className="text-sm text-slate-500 dark:text-slate-400">/ 6 months</span>
+              <span className="text-sm text-slate-500 dark:text-slate-400">/ {videos.duration}</span>
               {videosLaunchOffer ? (
-                <span className="text-sm text-slate-400 line-through dark:text-slate-500">{formatPkr(VIDEOS_REGULAR_PRICE)}</span>
+                <span className="text-sm text-slate-400 line-through dark:text-slate-500">{formatPkr(videos.regularPrice)}</span>
               ) : null}
             </div>
-            {videosLaunchOffer ? (
+            {videosLaunchOffer && (videos.promoText || videos.promoDetails) ? (
               <div className="space-y-2 rounded-xl border border-violet-200/80 bg-white/80 p-3 text-sm dark:border-violet-500/30 dark:bg-slate-900/70">
-                <p className="text-slate-700 dark:text-slate-200">
-                  Video lessons are being uploaded daily, with the complete video library scheduled to be available by 1 December 2026.
-                  Subscribe now and get <span className="font-semibold text-violet-700 dark:text-violet-200">50% OFF</span> the regular
-                  video subscription price.
-                </p>
-                <p className="font-medium text-slate-900 dark:text-slate-100">
-                  Subscribe before 1 December 2026 for PKR 3,000 for 6 months. From 1 December 2026, the regular price will be PKR 6,000
-                  for 6 months.
-                </p>
+                {videos.promoText ? (
+                  <p className="text-slate-700 dark:text-slate-200">{highlight(videos.promoText, videos.offerLabel)}</p>
+                ) : null}
+                {videos.promoDetails ? (
+                  <p className="font-medium text-slate-900 dark:text-slate-100">{videos.promoDetails}</p>
+                ) : null}
               </div>
             ) : null}
             {videosActive ? (
@@ -221,7 +214,8 @@ export function WebSubscriptionPage() {
           </button>
 
           <div className="grid gap-3 sm:grid-cols-3">
-            {SERVICES.map((service) => {
+            {STANDARD_SERVICES.map((service) => {
+              const plan = plans[service.key];
               const isSelected = selected.includes(service.key);
               const Icon = service.icon;
               const active = activeUntil(service.key);
@@ -241,12 +235,12 @@ export function WebSubscriptionPage() {
                     {checkMark(isSelected)}
                   </div>
                   <div>
-                    <p className="font-semibold text-slate-900 dark:text-slate-50">{service.label}</p>
-                    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{service.description}</p>
+                    <p className="font-semibold text-slate-900 dark:text-slate-50">{plan.title}</p>
+                    <p className="mt-1 text-xs text-slate-600 dark:text-slate-300">{plan.description}</p>
                   </div>
                   <p className="mt-auto">
-                    <span className="text-lg font-bold text-indigo-700 dark:text-indigo-200">{formatPkr(service.price)}</span>
-                    <span className="text-sm text-slate-500 dark:text-slate-400"> / 6 months</span>
+                    <span className="text-lg font-bold text-indigo-700 dark:text-indigo-200">{formatPkr(plan.price)}</span>
+                    <span className="text-sm text-slate-500 dark:text-slate-400"> / {plan.duration}</span>
                   </p>
                   {active ? (
                     <p className="text-xs font-semibold text-emerald-700 dark:text-emerald-300">Active until {active}</p>
@@ -256,21 +250,51 @@ export function WebSubscriptionPage() {
             })}
           </div>
 
-          <div
-            aria-disabled="true"
-            className="flex items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50/80 p-4 opacity-80 dark:border-slate-600 dark:bg-slate-900/40"
-          >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
-              <Brain className="h-5 w-5" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="font-semibold text-slate-700 dark:text-slate-200">AI Smart Study Mentor</p>
-              <p className="text-xs text-slate-500 dark:text-slate-400">Personal AI study guidance. Not available for purchase yet.</p>
+          {mentor.available ? (
+            <button
+              type="button"
+              role="checkbox"
+              aria-checked={mentorSelected}
+              onClick={() => toggle('mentor')}
+              className={`${serviceCardClass(mentorSelected)} sm:flex-row sm:items-center`}
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-3">
+                {checkMark(mentorSelected)}
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-indigo-600/10 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200">
+                  <Brain className="h-5 w-5" />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-slate-900 dark:text-slate-50">{mentor.title}</p>
+                  <p className="text-xs text-slate-600 dark:text-slate-300">{mentor.description}</p>
+                  {mentorActive ? (
+                    <p className="mt-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">Active until {mentorActive}</p>
+                  ) : null}
+                </div>
+              </div>
+              <p className="shrink-0 pl-9 sm:pl-0">
+                <span className="text-lg font-bold text-indigo-700 dark:text-indigo-200">{formatPkr(mentor.price)}</span>
+                <span className="text-sm text-slate-500 dark:text-slate-400"> / {mentor.duration}</span>
+              </p>
+            </button>
+          ) : (
+            <div
+              aria-disabled="true"
+              className="flex items-center gap-3 rounded-2xl border border-dashed border-slate-300 bg-slate-50/80 p-4 opacity-80 dark:border-slate-600 dark:bg-slate-900/40"
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-slate-200 text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                <Brain className="h-5 w-5" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="font-semibold text-slate-700 dark:text-slate-200">{mentor.title}</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">{mentor.description}</p>
+              </div>
+              {mentor.statusLabel ? (
+                <span className="shrink-0 rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  {mentor.statusLabel}
+                </span>
+              ) : null}
             </div>
-            <span className="shrink-0 rounded-full bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-600 dark:bg-slate-800 dark:text-slate-300">
-              Coming Soon
-            </span>
-          </div>
+          )}
         </CardContent>
       </Card>
 
@@ -278,16 +302,16 @@ export function WebSubscriptionPage() {
         <CardHeader>
           <CardTitle as="h2">Order summary</CardTitle>
           <CardDescription>
-            {selected.length ? 'Review your selected services before payment.' : 'No services selected yet. Choose at least one service above.'}
+            {activeSelection.length ? 'Review your selected services before payment.' : 'No services selected yet. Choose at least one service above.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          {selected.length ? (
+          {activeSelection.length ? (
             <ul className="divide-y divide-slate-200 rounded-xl border border-slate-200 dark:divide-slate-700 dark:border-slate-700">
-              {selected.map((key) => (
+              {activeSelection.map((key) => (
                 <li key={key} className="flex items-center justify-between gap-3 px-4 py-3 text-sm">
                   <span className="font-medium text-slate-800 dark:text-slate-100">
-                    {labelByKey[key]} <span className="font-normal text-slate-500 dark:text-slate-400">· 6 months</span>
+                    {labelByKey[key]} <span className="font-normal text-slate-500 dark:text-slate-400">· {durationByKey[key]}</span>
                   </span>
                   <span className="font-semibold text-slate-900 dark:text-slate-50">{formatPkr(priceByKey[key])}</span>
                 </li>
@@ -304,7 +328,7 @@ export function WebSubscriptionPage() {
             <Button
               type="button"
               className="w-full rounded-xl"
-              disabled={!selected.length}
+              disabled={!activeSelection.length}
               onClick={() => setShowPayment(true)}
             >
               Proceed to payment
