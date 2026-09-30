@@ -58,7 +58,6 @@ export function NotificationPreferencesPanel() {
     setNotificationPreferences((current) => ({ ...current, [key]: enabled }));
     try {
       const notificationPreferences: Record<string, boolean> = { [key]: enabled };
-      if (key === 'videoUploads') notificationPreferences.newVideos = enabled;
       if (key === 'nustUpdates') {
         notificationPreferences.nustNotices = enabled;
         notificationPreferences.netUpdates = enabled;

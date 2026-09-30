@@ -62,11 +62,6 @@ export const NOTIFICATION_PREFERENCE_SECTIONS = [
         label: 'NUST Notices / Schedule',
         description: 'Email when official NUST notices or schedules change.',
       },
-      {
-        key: 'videoUploads',
-        label: 'New Video Uploads',
-        description: 'Email when an admin publishes a new video.',
-      },
     ],
   },
   {
@@ -126,7 +121,6 @@ export function defaultNotificationPreferences(): NotificationPreferenceMap {
     achievementUnlocks: true,
     supportReplies: true,
     nustUpdates: true,
-    videoUploads: true,
   };
 }
 
@@ -137,7 +131,6 @@ export function resolveNotificationPreferences(stored: Partial<NotificationPrefe
   (Object.keys(defaults) as NotificationPreferenceKey[]).forEach((key) => {
     if (typeof source[key] === 'boolean') next[key] = source[key];
   });
-  if (typeof source.newVideos === 'boolean') next.videoUploads = source.newVideos;
   if (typeof source.nustNotices === 'boolean' || typeof source.netUpdates === 'boolean') {
     const notices = source.nustNotices !== false;
     const updates = typeof source.netUpdates === 'boolean' ? source.netUpdates : notices;
