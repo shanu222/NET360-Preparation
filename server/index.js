@@ -110,6 +110,7 @@ import { createUploadRouter } from './routes/upload.js';
 import { createVideosRouter } from './routes/videos.js';
 import { createSitePromoImagesRouter } from './routes/sitePromoImages.js';
 import { createSubscriptionPlansRouter } from './routes/subscriptionPlans.js';
+import { createOnlineClassesRouter } from './routes/onlineClasses.js';
 import { demoStatusPayload, startDemoMode } from './lib/demoMode.js';
 import { ensureR2Cors } from './lib/r2.js';
 import { buildMcqContentFingerprint } from './lib/mcqIdentity.js';
@@ -8799,6 +8800,7 @@ const siteContentConfigAccess = {
 
 app.use('/api', createSitePromoImagesRouter({ authMiddleware, requireAdmin, ...siteContentConfigAccess }));
 app.use('/api', createSubscriptionPlansRouter({ authMiddleware, requireAdmin, ...siteContentConfigAccess }));
+app.use('/api', createOnlineClassesRouter({ UserModel, authMiddleware, requireAdmin, ...siteContentConfigAccess }));
 
 /** Legacy token-based signup, admin premium proof queues, and recovery lists â€” fully retired (410). */
 function respondLegacyAdminWorkflowGone(_req, res) {

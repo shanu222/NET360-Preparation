@@ -155,6 +155,20 @@ const userSchema = new mongoose.Schema(
     subscription: { type: subscriptionSchema, default: () => ({}) },
     accessControls: { type: accessControlsSchema, default: () => ({}) },
     paidServices: { type: paidServicesSchema, default: () => ({}) },
+    /** Shared Online Classes registration (web + Android); see server/routes/onlineClasses.js. */
+    onlineClassesRegistration: {
+      type: {
+        registeredAt: { type: Date, default: null },
+        fullName: { type: String, default: '' },
+        phone: { type: String, default: '' },
+        city: { type: String, default: '' },
+        targetProgram: { type: String, default: '' },
+        note: { type: String, default: '' },
+        platform: { type: String, default: '' },
+      },
+      default: undefined,
+      _id: false,
+    },
     /** Web Demo Mode usage (one-time per account); see server/lib/demoMode.js. */
     demoMode: {
       type: {
@@ -186,5 +200,6 @@ const userSchema = new mongoose.Schema(
 
 userSchema.index({ role: 1, createdAt: -1 });
 userSchema.index({ role: 1, updatedAt: -1 });
+userSchema.index({ 'onlineClassesRegistration.registeredAt': -1 });
 
 export const UserModel = mongoose.models.User || mongoose.model('User', userSchema);

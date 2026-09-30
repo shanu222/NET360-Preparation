@@ -1,6 +1,7 @@
 import { type ComponentType, useMemo } from 'react';
 import { isNativeRuntime } from '../lib/nativeDiagnostics';
 import { NustUpdatesCard } from './dashboard/NustUpdatesCard';
+import { OnlineClassesCard } from './dashboard/OnlineClassesCard';
 import {
   Calendar,
   Flame,
@@ -290,6 +291,8 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           </div>
         </div>
       </section>
+
+      <OnlineClassesCard onOpen={() => onNavigate('online-classes')} />
 
       <section className="grid gap-3 lg:grid-cols-3">
         {subjectStats.map((subject) => (
