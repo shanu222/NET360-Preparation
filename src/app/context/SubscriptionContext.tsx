@@ -113,6 +113,15 @@ export interface SubscriptionMePayload {
     reason?: string;
   };
   activationRequest?: unknown;
+  demoMode?: DemoModeState;
+}
+
+export interface DemoModeState {
+  started: boolean;
+  startedAt: string | null;
+  tests: { used: boolean; usedAt: string | null };
+  preparation: { used: boolean; usedAt: string | null };
+  community: { active: boolean; endsAt: string | null; msRemaining: number };
 }
 
 const emptySurface: PremiumSurfaceState = {

@@ -22,6 +22,9 @@ import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import { PremiumLockScreen } from './subscription/PremiumLockScreen';
 import { isNativeRuntime } from '../lib/nativeDiagnostics';
+import { isDemoLimitError, useDemoMode } from '../lib/demoMode';
+import { DemoModeBanner } from './subscription/DemoModeButton';
+import { useNavigate } from 'react-router-dom';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { apiRequest, resolveLaunchAuthToken } from '../lib/api';
 import {
@@ -200,6 +203,13 @@ export function Tests({ onNavigate }: TestsProps) {
   const { token, user, loading: authLoading } = useAuth();
   const { surface, me, loading: subLoading } = useSubscription();
   const testsAccessAllowed = Boolean(me?.paidServices?.tests?.allowed);
+  const demo = useDemoMode();
+  const demoTests = !testsAccessAllowed && demo.started;
+  const navigate = useNavigate();
+  const redirectDemoTestUsed = () => {
+    showInfoToast('You have used your demo test. Subscribe to Tests to take more tests.');
+    navigate('/subscription');
+  };
 
   const authLoadingRef = useRef(authLoading);
   authLoadingRef.current = authLoading;
@@ -282,6 +292,12 @@ export function Tests({ onNavigate }: TestsProps) {
       return;
     }
 
+    if (demoTests && demo.testUsed) {
+      launchingRef.current = false;
+      redirectDemoTestUsed();
+      return;
+    }
+
     if (!authReady) {
       if (import.meta.env.DEV) {
         console.warn('Auth not ready yet');
@@ -361,11 +377,17 @@ export function Tests({ onNavigate }: TestsProps) {
         authTokenHint: authToken,
       });
 
+      if (demoTests) void demo.refresh();
       openExamWindow({ sessionId: session.id, testType: kind, token: authToken });
       showSuccessToast('Test launched.');
     } catch (error) {
       if (import.meta.env.DEV) {
         console.error('Test start error:', error);
+      }
+      if (isDemoLimitError(error)) {
+        void demo.refresh();
+        redirectDemoTestUsed();
+        return;
       }
       const msg = error instanceof Error ? error.message : '';
       if (/login|authentication|Missing authentication|sign in/i.test(msg)) {
@@ -381,6 +403,10 @@ export function Tests({ onNavigate }: TestsProps) {
   };
 
   const handleStartTestClick = (kind: TestKind) => {
+    if (demoTests && demo.testUsed) {
+      redirectDemoTestUsed();
+      return;
+    }
     if (launchingRef.current || !authReady) return;
     launchingRef.current = true;
     setSelectedTestKind(kind);
@@ -469,7 +495,7 @@ export function Tests({ onNavigate }: TestsProps) {
     );
   }
 
-  if (!testsAccessAllowed) {
+  if (!testsAccessAllowed && !demo.started) {
     return (
       <div className="min-w-0 space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -492,6 +518,15 @@ export function Tests({ onNavigate }: TestsProps) {
         <h1>Practice & Mock Tests</h1>
         <p className="text-muted-foreground">A step-based professional simulator for NUST NET preparation</p>
       </div>
+
+      {demoTests ? (
+        <DemoModeBanner
+          used={demo.testUsed}
+          message={demo.testUsed
+            ? 'You have used your free demo test. Subscribe to Tests to take more tests.'
+            : '1 free test remaining. Choose any NET type and test type.'}
+        />
+      ) : null}
 
       <Card className="rounded-2xl border-indigo-100 bg-white/90 shadow-[0_14px_30px_rgba(94,109,201,0.10)]">
         <CardContent className="pt-5">

@@ -110,6 +110,7 @@ import { createUploadRouter } from './routes/upload.js';
 import { createVideosRouter } from './routes/videos.js';
 import { createSitePromoImagesRouter } from './routes/sitePromoImages.js';
 import { createSubscriptionPlansRouter } from './routes/subscriptionPlans.js';
+import { demoStatusPayload, startDemoMode } from './lib/demoMode.js';
 import { ensureR2Cors } from './lib/r2.js';
 import { buildMcqContentFingerprint } from './lib/mcqIdentity.js';
 import { encryptSecurityAnswerPlaintext, decryptSecurityAnswerCiphertext } from './lib/securityAnswerCrypto.js';
@@ -14071,6 +14072,20 @@ async function handlePremiumStartTrial(req, res) {
 }
 
 app.post('/api/subscriptions/start-trial', authMiddleware, subscriptionExpiryRefresh(UserModel), handlePremiumStartTrial);
+
+app.post('/api/demo/start', authMiddleware, async (req, res) => {
+  if (req.user?.role === 'admin') {
+    res.status(400).json({ error: 'Demo Mode is for student accounts.' });
+    return;
+  }
+  try {
+    const updated = await startDemoMode(UserModel, req.user._id);
+    res.json({ ok: true, demoMode: demoStatusPayload(updated) });
+  } catch (error) {
+    console.error('[demo/start] failed', error?.message || error);
+    res.status(500).json({ error: 'Could not start Demo Mode. Please try again.' });
+  }
+});
 /** Shorter alias â€” identical behavior (some proxies cache or map paths inconsistently). */
 app.post('/api/trial/start', authMiddleware, subscriptionExpiryRefresh(UserModel), handlePremiumStartTrial);
 
@@ -14515,6 +14530,7 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
       tokenConsumed: usage?.tokenConsumed || 0,
       remainingToday: Math.max(0, (mentorPlan?.dailyAiLimit || 0) - ((usage?.chatCount || 0) + (usage?.solverCount || 0))),
     },
+    demoMode: demoStatusPayload(fresh || req.user, nowMs),
   });
   } catch (error) {
     logAuthDebug(req, {

@@ -56,6 +56,7 @@ import { Helmet } from 'react-helmet-async';
 import { brandLogoUrl } from './lib/publicMedia';
 import { fetchAndApplyPublicMediaConfig } from './lib/publicMediaRuntime';
 import { PremiumCountdownBadge } from './components/subscription/PremiumCountdownBadge';
+import { DemoModeButton } from './components/subscription/DemoModeButton';
 import { logNativeEvent } from './lib/nativeDiagnostics';
 import { isNativeAndroidRuntime } from './lib/nativeForeground';
 
@@ -1122,6 +1123,7 @@ export default function App() {
                 </div>
               </div>
               <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-2">
+                <DemoModeButton />
                 <Button
                   variant="ghost"
                   size="icon"

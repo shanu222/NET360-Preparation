@@ -5,6 +5,7 @@ import {
   trialIsActive,
 } from '../lib/subscriptionAccess.js';
 import { logAuthDebug, normalizeAuthDebugRoute } from '../lib/authDebug.js';
+import { applyDemoAllowance } from '../lib/demoMode.js';
 
 /**
  * After auth: sync trial/paid expiry in Mongo, then require tests/community/study-plan access.
@@ -41,7 +42,7 @@ export function requireTrialOrPremiumContent(UserModel, resolveEntitlements) {
         next();
         return;
       }
-      const fresh = await UserModel.findById(req.user._id).select('subscription accessControls paidServices role').lean();
+      const fresh = await UserModel.findById(req.user._id).select('subscription accessControls paidServices role demoMode').lean();
       const sub = mergedSubscription(fresh);
       const entitlementSnapshot = typeof resolveEntitlements === 'function'
         ? await resolveEntitlements(fresh || req.user)
@@ -65,8 +66,24 @@ export function requireTrialOrPremiumContent(UserModel, resolveEntitlements) {
       const preparationEntitlement = serviceType === 'preparation'
         ? entitlementSnapshot?.preparation
         : null;
-      const allowed = Boolean(serviceAccess?.allowed)
+      let allowed = Boolean(serviceAccess?.allowed)
         || Boolean(preparationEntitlement?.allowed && preparationEntitlement.source !== 'legacy');
+      if (!allowed && fresh?.demoMode?.startedAt) {
+        const demo = await applyDemoAllowance({ UserModel, req, res, user: fresh, serviceType, fullPath });
+        if (demo.limitReached) {
+          res.status(403).json({
+            code: 'DEMO_LIMIT_REACHED',
+            error: demo.slot === 'preparation'
+              ? 'You have used your demo preparation item. Subscribe to continue.'
+              : 'You have used your demo test. Subscribe to continue.',
+            serviceType,
+            demoSlot: demo.slot,
+          });
+          return;
+        }
+        allowed = demo.allowed;
+        if (allowed) req.demoAccess = demo.slot;
+      }
       if (!allowed) {
         logAuthDebug(req, {
           userId: String(req.user?._id || ''),

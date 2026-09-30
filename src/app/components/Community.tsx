@@ -19,6 +19,9 @@ import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl } from '../lib/authSession';
 import { App as CapacitorApp } from '@capacitor/app';
 import { isNativeRuntime, logNativeEvent } from '../lib/nativeDiagnostics';
+import { formatDemoTimeLeft, useDemoMode } from '../lib/demoMode';
+import { DemoModeBanner } from './subscription/DemoModeButton';
+import { useNavigate } from 'react-router-dom';
 import { consumeBriefNativeHide, markNativeDocumentHidden } from '../lib/nativeForeground';
 import {
   acquireRealtimeSocket,
@@ -584,7 +587,18 @@ function upsertCommunityMessage(list: MessageRow[], incoming: MessageRow): Messa
 function CommunityInner() {
   const { token, user } = useAuth();
   const { surface, me, loading: subLoading } = useSubscription();
-  const communityAccessAllowed = Boolean(me?.paidServices?.community?.allowed);
+  const communityPaidAllowed = Boolean(me?.paidServices?.community?.allowed);
+  const demo = useDemoMode();
+  const demoCommunity = !communityPaidAllowed && demo.communityActive;
+  const demoCommunityExpired = !communityPaidAllowed && demo.communityExpired;
+  const communityAccessAllowed = communityPaidAllowed || demoCommunity;
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (!demoCommunityExpired || subLoading) return;
+    showInfoToast('Your 24-hour demo Community access has ended. Subscribe to Community to continue.');
+    navigate('/subscription', { replace: true });
+  }, [demoCommunityExpired, navigate, subLoading]);
 
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -2323,6 +2337,9 @@ function CommunityInner() {
   return (
     <div className="community-page min-w-0 space-y-4">
       <h1 className="sr-only">Community — students, discussions, quiz battles, and messages</h1>
+      {demoCommunity ? (
+        <DemoModeBanner message={`Community access ends in ${formatDemoTimeLeft(demo.communityMsLeft)}.`} />
+      ) : null}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full space-y-4" aria-label="Community sections">
         <div className="net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1 [scrollbar-gutter:stable]">
           <TabsList className="inline-flex h-auto w-max min-w-max flex-nowrap gap-2 rounded-2xl border border-slate-200 bg-gradient-to-r from-sky-50 via-indigo-50 to-fuchsia-50 p-1.5 shadow-[0_10px_20px_rgba(99,102,241,0.12)]">

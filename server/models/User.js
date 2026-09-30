@@ -155,6 +155,19 @@ const userSchema = new mongoose.Schema(
     subscription: { type: subscriptionSchema, default: () => ({}) },
     accessControls: { type: accessControlsSchema, default: () => ({}) },
     paidServices: { type: paidServicesSchema, default: () => ({}) },
+    /** Web Demo Mode usage (one-time per account); see server/lib/demoMode.js. */
+    demoMode: {
+      type: {
+        startedAt: { type: Date, default: null },
+        communityEndsAt: { type: Date, default: null },
+        testsClaimedAt: { type: Date, default: null },
+        testsSessionId: { type: String, default: '' },
+        preparationClaimedAt: { type: Date, default: null },
+        preparationSessionId: { type: String, default: '' },
+      },
+      default: undefined,
+      _id: false,
+    },
     activeSession: { type: activeSessionSchema, default: null },
     refreshTokens: { type: [refreshTokenSchema], default: [] },
     resetPasswordTokenHash: { type: String, default: null },
