@@ -2,7 +2,6 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FlaskConical, Loader2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-import { useSubscription } from '../../context/SubscriptionContext';
 import { formatDemoTimeLeft, useDemoMode, type DemoService } from '../../lib/demoMode';
 import { isNativeRuntime } from '../../lib/nativeDiagnostics';
 import { handleApiError } from '../../lib/userToast';
@@ -51,13 +50,12 @@ type DemoOption = {
 export function DemoModeButton() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const { me } = useSubscription();
   const demo = useDemoMode();
   const [open, setOpen] = useState(false);
   const [openingService, setOpeningService] = useState<DemoService | null>(null);
 
   if (isNativeRuntime() || !user || !demo.enabled || !demo.loaded) return null;
-  const paid = me?.paidServices;
+  const paid = demo.paidServices;
 
   const options = ([
     {

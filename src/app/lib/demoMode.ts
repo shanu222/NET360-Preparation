@@ -1,6 +1,6 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { useSubscription, type DemoModeState } from '../context/SubscriptionContext';
+import { useSubscription, type DemoModeState, type PaidServicesState } from '../context/SubscriptionContext';
 import { apiRequest } from './api';
 import { COOKIE_SESSION_API_MARKER, isCookieSessionApiMarker, shouldPersistAuthTokens } from './authSession';
 import { isNativeRuntime } from './nativeDiagnostics';
@@ -30,13 +30,62 @@ export function isDemoLimitError(error: unknown) {
 
 export type DemoService = 'tests' | 'preparation' | 'community' | 'videos';
 
-/** Web-only Demo Mode state; always inactive inside the native app. */
+type DemoSnapshot = {
+  userId: string;
+  demoMode: DemoModeState | null;
+  paidServices: PaidServicesState | null;
+};
+
+const SNAPSHOT_KEY_PREFIX = 'net360-demo-snapshot-v1:';
+const snapshotMemory = new Map<string, DemoSnapshot>();
+
+function readSnapshot(userId: string): DemoSnapshot | null {
+  if (!userId) return null;
+  const cached = snapshotMemory.get(userId);
+  if (cached) return cached;
+  try {
+    const raw = localStorage.getItem(`${SNAPSHOT_KEY_PREFIX}${userId}`);
+    const parsed = raw ? (JSON.parse(raw) as DemoSnapshot) : null;
+    if (parsed?.userId !== userId) return null;
+    snapshotMemory.set(userId, parsed);
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function writeSnapshot(snapshot: DemoSnapshot) {
+  snapshotMemory.set(snapshot.userId, snapshot);
+  try {
+    localStorage.setItem(`${SNAPSHOT_KEY_PREFIX}${snapshot.userId}`, JSON.stringify(snapshot));
+  } catch {
+    // Ignore storage failures in private mode / quota limits.
+  }
+}
+
+/**
+ * Web-only Demo Mode state; always inactive inside the native app.
+ * The server's /api/subscriptions/me response is the source of truth. The last server response
+ * for this user is kept so demo visibility stays stable while a refresh is loading or has failed.
+ */
 export function useDemoMode() {
   const { token, user } = useAuth();
   const { me, refresh, serverOffsetMs } = useSubscription();
   const [starting, setStarting] = useState(false);
   const enabled = !isNativeRuntime() && Boolean(user) && user?.role !== 'admin';
-  const state: DemoModeState | null = enabled ? me?.demoMode || null : null;
+  const userId = String(user?.id || '').trim();
+
+  const live: DemoSnapshot | null = enabled && userId && me
+    ? { userId, demoMode: me.demoMode || null, paidServices: me.paidServices || null }
+    : null;
+  const liveKey = live ? JSON.stringify(live) : '';
+  useEffect(() => {
+    if (live) writeSnapshot(live);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveKey]);
+
+  const source = live || (enabled ? readSnapshot(userId) : null);
+  const state: DemoModeState | null = source?.demoMode || null;
   const started = Boolean(state?.started);
 
   const communityEndsMs = state?.community.endsAt ? new Date(state.community.endsAt).getTime() : 0;
@@ -65,7 +114,8 @@ export function useDemoMode() {
 
   return {
     enabled,
-    loaded: Boolean(me),
+    loaded: Boolean(source),
+    paidServices: source?.paidServices || null,
     started,
     starting,
     start,
