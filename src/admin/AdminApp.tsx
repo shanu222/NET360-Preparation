@@ -32,6 +32,7 @@ import {
 import { apiRequest, API_BASE, buildApiUrl, buildSseStreamUrl, buildUrl, ensureAdminBearerTokenFromRefresh } from '../app/lib/api';
 import { uploadRetiredMedia } from '../app/lib/uploadMedia';
 import { brandLogoUrl, getMediaUrl } from '../app/lib/publicMedia';
+import { syncNativeChrome } from '../app/lib/nativeMobile';
 import { fetchAndApplyPublicMediaConfig } from '../app/lib/publicMediaRuntime';
 import {
   clearPersistedAdminTokens,
@@ -2918,6 +2919,8 @@ export default function AdminApp() {
     root.classList.toggle('dark', themeMode === 'dark');
     root.style.colorScheme = themeMode;
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', themeMode === 'dark' ? '#0c1222' : '#f3f5fb');
+    void syncNativeChrome(themeMode);
   }, [themeMode]);
 
   const practiceBankVisibleQuestions = useMemo(() => {

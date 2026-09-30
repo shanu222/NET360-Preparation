@@ -8,15 +8,16 @@
   },
   "plugins": {
     "SplashScreen": {
-      "launchShowDuration": 900,
-      "launchAutoHide": true,
+      "launchShowDuration": 15000,
+      "launchAutoHide": false,
+      "launchFadeOutDuration": 180,
       "showSpinner": false,
-      "backgroundColor": "#0A1630"
+      "backgroundColor": "#0C1222"
     },
     "StatusBar": {
       "overlaysWebView": false,
       "style": "LIGHT",
-      "backgroundColor": "#0A1630"
+      "backgroundColor": "#0C1222"
     },
     "PushNotifications": {
       "presentationOptions": ["badge", "sound", "alert"],

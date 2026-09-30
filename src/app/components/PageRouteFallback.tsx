@@ -30,23 +30,30 @@ export function PageRouteFallback() {
   );
 }
 
-/** Minimal full-viewport fallback for exam / admin lazy chunks. */
+/** Shown while the first session is resolving. Not a progress animation — it stays only until auth is ready. */
 export function FullViewportRouteFallback() {
+  const dark = typeof document !== 'undefined' && document.documentElement.classList.contains('dark');
   return (
     <div
-      className="flex min-h-dvh w-full max-w-full items-center justify-center overflow-x-hidden bg-[#eef2f6] p-4 text-[#0d2c5a] dark:bg-[#0f172a] dark:text-slate-100"
       role="status"
       aria-live="polite"
       aria-busy="true"
+      style={{
+        minHeight: '100dvh',
+        width: '100%',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 14,
+        background: dark ? '#0c1222' : '#f3f5fb',
+        color: dark ? '#f8fafc' : '#0f172a',
+        fontFamily: '"Plus Jakarta Sans", system-ui, sans-serif',
+      }}
     >
-      <div className="w-full max-w-md space-y-4 rounded-2xl border border-[#2b5f9f]/30 bg-white/95 px-6 py-8 shadow-sm dark:border-slate-600/50 dark:bg-slate-900/90">
-        <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-[#2b5f9f] border-t-transparent dark:border-indigo-400" />
-        <p className="text-center text-sm font-medium text-[#0d2c5a] dark:text-slate-100">Loading…</p>
-        <div className="space-y-2">
-          <div className="h-3 animate-pulse rounded bg-slate-200 dark:bg-slate-700" />
-          <div className="h-3 w-4/5 animate-pulse rounded bg-slate-100 dark:bg-slate-800" />
-        </div>
-      </div>
+      <img src="/net360-logo.png" alt="" width={88} height={88} style={{ width: 88, height: 88, borderRadius: 22 }} />
+      <p style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: '-0.03em' }}>NET360</p>
+      <span style={{ color: dark ? '#cbd5e1' : '#64748b', fontSize: 13, fontWeight: 600 }}>NUST entry test preparation</span>
     </div>
   );
 }

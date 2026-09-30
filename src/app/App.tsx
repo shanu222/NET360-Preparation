@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { PageRouteFallback } from './components/PageRouteFallback';
+import { PageRouteFallback, FullViewportRouteFallback } from './components/PageRouteFallback';
 import { GlobalFreeAccessAnnouncement } from './components/GlobalFreeAccessAnnouncement';
 import { StudentPresenceHeartbeat } from './components/StudentPresenceHeartbeat';
 import { SubscriptionProvider } from './context/SubscriptionContext';
@@ -60,6 +60,7 @@ import { PremiumCountdownBadge } from './components/subscription/PremiumCountdow
 import { AndroidDemoModeButton } from './components/subscription/DemoModeButton';
 import { logNativeEvent } from './lib/nativeDiagnostics';
 import { isNativeAndroidRuntime } from './lib/nativeForeground';
+import { hideNativeSplashAfterPaint, syncNativeChrome } from './lib/nativeMobile';
 
 const SubscriptionPageLazy = lazyWithRetry(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
 const Dashboard = lazyWithRetry(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
@@ -98,10 +99,13 @@ function SessionReady({ children }: { children: ReactNode }) {
   if (!loading) {
     hasBeenReadyRef.current = true;
   }
+  useEffect(() => {
+    if (!loading) void hideNativeSplashAfterPaint();
+  }, [loading]);
   // After the first successful session, never replace the student tree with a
   // skeleton. Resume/focus restores must stay silent so Profile is not remounted.
   if (loading && !hasBeenReadyRef.current) {
-    return <PageRouteFallback />;
+    return <FullViewportRouteFallback />;
   }
   return <>{children}</>;
 }
@@ -626,6 +630,8 @@ export default function App() {
     root.classList.toggle('dark', isDark);
     root.style.colorScheme = themeMode;
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', isDark ? '#0c1222' : '#f3f5fb');
+    void syncNativeChrome(themeMode);
   }, [themeMode]);
 
   useEffect(() => {

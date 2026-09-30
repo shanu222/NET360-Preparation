@@ -56,36 +56,48 @@ export async function initializeNativeExperience() {
 }
 
 async function configureStatusBar() {
-  try {
-    await StatusBar.setOverlaysWebView({ overlay: false });
-    await StatusBar.setStyle({ style: Style.Light });
-    await StatusBar.setBackgroundColor({ color: '#0A1630' });
-  } catch (error) {
-    console.warn('StatusBar setup skipped:', error);
-  }
+  const dark = document.documentElement.classList.contains('dark');
+  await syncNativeChrome(dark ? 'dark' : 'light');
 }
 
 async function configureSplashScreen() {
+  // Safety only. The splash is hidden as soon as the real screen has painted.
+  window.setTimeout(() => {
+    void hideNativeSplashAfterPaint();
+  }, 20000);
+}
+
+let nativeSplashReleased = false;
+
+/** Dismiss the native splash after the app has painted. No extra delay. */
+export async function hideNativeSplashAfterPaint() {
+  if (nativeSplashReleased || !isNative()) return;
+  nativeSplashReleased = true;
   try {
-    // Avoid early hide white flash: wait for first frame and short settle.
-    const waitForFirstPaint = () =>
-      new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    const waitForLoadEvent = () =>
-      new Promise<void>((resolve) => {
-        if (document.readyState === 'complete') {
-          resolve();
-          return;
-        }
-        window.addEventListener('load', () => resolve(), { once: true });
-      });
-    await Promise.race([
-      Promise.all([waitForFirstPaint(), waitForLoadEvent()]),
-      new Promise<void>((resolve) => window.setTimeout(resolve, 900)),
-    ]);
+    const bridge = (window as Window & { NET360Startup?: { markReady?: () => void } }).NET360Startup;
+    bridge?.markReady?.();
     await SplashScreen.hide({ fadeOutDuration: 180 });
     logNativeEvent('runtime', 'splash-hidden');
   } catch (error) {
     console.warn('SplashScreen hide skipped:', error);
+  }
+}
+
+export async function syncNativeChrome(mode: 'light' | 'dark') {
+  if (!isNative()) return;
+  try {
+    const bridge = (window as Window & { NET360Startup?: { setTheme?: (mode: string) => void } }).NET360Startup;
+    bridge?.setTheme?.(mode);
+  } catch {
+    // The interface is only present inside the Android shell.
+  }
+  try {
+    const dark = mode === 'dark';
+    await StatusBar.setOverlaysWebView({ overlay: false });
+    await StatusBar.setStyle({ style: dark ? Style.Light : Style.Dark });
+    await StatusBar.setBackgroundColor({ color: dark ? '#0C1222' : '#F3F5FB' });
+  } catch (error) {
+    console.warn('StatusBar setup skipped:', error);
   }
 }
 

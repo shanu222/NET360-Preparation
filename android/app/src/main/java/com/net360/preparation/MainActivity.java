@@ -12,6 +12,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebView;
 
 import androidx.core.content.FileProvider;
+import androidx.core.splashscreen.SplashScreen;
 
 import java.io.File;
 
@@ -30,15 +31,21 @@ import ee.forgr.capacitor.social.login.SocialLoginPlugin;
  */
 public class MainActivity extends BridgeActivity implements ModifiedMainActivityForSocialLoginPlugin {
   private static final String TAG = "NET360MainActivity";
-  private static final String WEBVIEW_ASSET_TOKEN = "material-nav-13";
+  private static final String WEBVIEW_ASSET_TOKEN = "startup-boot-1";
+  private static volatile boolean startupReady = false;
 
   @Override
   public void onCreate(Bundle savedInstanceState) {
+    SharedPreferences startup = getSharedPreferences("net360_startup", MODE_PRIVATE);
+    boolean light = "light".equals(startup.getString("theme", "dark"));
+    setTheme(light ? R.style.AppTheme_NoActionBarLaunch_Light : R.style.AppTheme_NoActionBarLaunch);
+    SplashScreen.installSplashScreen(this).setKeepOnScreenCondition(() -> !startupReady);
     super.onCreate(savedInstanceState);
 
     WebView webView = this.bridge != null ? this.bridge.getWebView() : null;
     if (webView == null) return;
 
+    webView.setBackgroundColor(light ? 0xFFF3F5FB : 0xFF0C1222);
     refreshWebViewAssetsIfNeeded(webView);
 
     WebSettings settings = webView.getSettings();
@@ -61,6 +68,7 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     webView.setNestedScrollingEnabled(true);
     webView.setSaveEnabled(true);
     webView.addJavascriptInterface(new PdfBridge(), "NET360NativeFiles");
+    webView.addJavascriptInterface(new StartupBridge(), "NET360Startup");
   }
 
   /**
@@ -118,6 +126,21 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     @JavascriptInterface
     public void openOrShare(String absolutePath, boolean share) {
       runOnUiThread(() -> presentPdf(absolutePath, share));
+    }
+  }
+
+  private final class StartupBridge {
+    @JavascriptInterface
+    public void setTheme(String mode) {
+      getSharedPreferences("net360_startup", MODE_PRIVATE)
+          .edit()
+          .putString("theme", "light".equals(mode) ? "light" : "dark")
+          .apply();
+    }
+
+    @JavascriptInterface
+    public void markReady() {
+      startupReady = true;
     }
   }
 
