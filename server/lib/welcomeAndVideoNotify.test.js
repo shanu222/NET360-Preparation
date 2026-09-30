@@ -55,7 +55,7 @@ test('a new user receives exactly one welcome email', async () => {
   assert.match(buildWelcomeEmail().html, /Community/);
 });
 
-test('video notifications follow the saved preference and do not repeat', async () => {
+test('video publication writes in-app notices and never emails', async () => {
   assert.equal(wantsVideoNotification({ emailNotifications: true, contentUpdates: true }), true);
   assert.equal(wantsVideoNotification({ emailNotifications: true, contentUpdates: false }), false);
   assert.equal(wantsVideoNotification({ emailNotifications: true, notificationPreferences: { videoUploads: false } }), false);
@@ -86,23 +86,26 @@ test('video notifications follow the saved preference and do not repeat', async 
     { _id: 'web-off', email: 'web@example.com', firstName: 'Web', preferences: { emailNotifications: true, contentUpdates: false } },
   ];
   const sent = [];
+  const inbox = [];
   const receipts = memoryReceipts();
   await deliverVideoPublicationEmails(video, {
     users,
     receipts,
+    recordInbox: async (user) => { inbox.push(String(user._id)); },
     send: async (message) => { sent.push(message.to); },
   });
   await deliverVideoPublicationEmails(video, {
     users: users.filter((user) => user._id === 'on'),
     receipts,
+    recordInbox: async (user) => { inbox.push(String(user._id)); },
     send: async (message) => { sent.push(message.to); },
   });
-  assert.deepEqual(sent, ['on@example.com']);
-  assert.match(sent.length ? 'Limits and continuity' : '', /Limits/);
+  assert.deepEqual(sent, []);
+  assert.deepEqual(inbox, ['on', 'off', 'web-off', 'on']);
 });
 
-test('a video email includes the title and topic path', async () => {
-  const sent = [];
+test('a published video still records the title and topic path in the in-app notice', async () => {
+  const inbox = [];
   await deliverVideoPublicationEmails({
     _id: 'vid-2',
     title: 'Organic basics',
@@ -114,9 +117,9 @@ test('a video email includes the title and topic path', async () => {
   }, {
     users: [{ _id: 'u', email: 'u@example.com', firstName: 'Ali', preferences: { contentUpdates: true, notificationPreferences: { videoUploads: true } } }],
     receipts: memoryReceipts(),
-    send: async (message) => { sent.push(message); },
+    recordInbox: async (user, video, announcement) => { inbox.push({ userId: String(user._id), announcement }); },
+    send: async () => { throw new Error('video emails must not send'); },
   });
-  assert.equal(sent.length, 1);
-  assert.match(sent[0].subject, /Organic basics/);
-  assert.match(sent[0].text, /Chemistry → Part 1 → Hydrocarbons → Alkanes → Naming/);
+  assert.equal(inbox.length, 1);
+  assert.match(inbox[0].announcement, /Organic basics is now available in Chemistry → Part 1 → Hydrocarbons → Alkanes → Naming/);
 });

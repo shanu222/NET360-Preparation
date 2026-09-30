@@ -3,26 +3,6 @@ import { UserModel } from '../models/User.js';
 import { VideoModel } from '../models/Video.js';
 import { VideoEmailReceiptModel } from '../models/VideoEmailReceipt.js';
 import { UserNotificationModel } from '../models/UserNotification.js';
-import { notificationShell } from '../services/notificationEmail.js';
-import { isPermanentRecipientError, sendTransactionalEmail } from './outboundEmail.js';
-import { wantsVideoNotification } from './videoNotificationPreference.js';
-
-function normalizeEmail(value) {
-  return String(value || '').trim().toLowerCase();
-}
-
-function isValidEmail(value) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
-}
-
-function escapeHtml(value) {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
 
 function publicWebBase() {
   return String(process.env.NET360_PUBLIC_WEB_BASE || process.env.PUBLIC_WEB_BASE_URL || 'https://www.net360preparation.com')
@@ -46,7 +26,6 @@ export function videoInboxLink(video) {
 
 export async function recordVideoInboxNotification(user, video, announcement) {
   if (mongoose.connection.readyState !== 1) return;
-  if (!wantsVideoNotification(user?.preferences)) return;
   const userId = String(user?._id || '');
   const videoId = String(video?._id || '');
   if (!userId || !videoId) return;
@@ -149,11 +128,9 @@ function mongoReceipts() {
 export async function deliverVideoPublicationEmails(video, options = {}) {
   const title = String(video?.title || 'New lecture').trim() || 'New lecture';
   const pathLabel = locationPath(video) || 'Videos';
-  const subjectLine = `New Video Available — ${title}`;
   const announcement = `${title} is now available in ${pathLabel}.`;
-  const link = videoWatchLink(video);
-  const send = options.send || sendTransactionalEmail;
   const receipts = options.receipts || mongoReceipts();
+  const recordInbox = options.recordInbox || recordVideoInboxNotification;
   const users = options.users || UserModel.find({ role: { $ne: 'admin' } })
     .select('_id email firstName role preferences')
     .lean()
@@ -164,62 +141,21 @@ export async function deliverVideoPublicationEmails(video, options = {}) {
     const userId = String(user?._id || '');
     if (!userId || (user.role || 'student') === 'admin') continue;
     const eventId = `video-published:${video._id}:${userId}`;
+    await recordInbox(user, video, announcement).catch(() => undefined);
     const existing = await receipts.find(eventId);
     if (existing?.status === 'sent' || existing?.status === 'skipped') {
       summary.skipped += 1;
       continue;
     }
-    const wantsNotice = wantsVideoNotification(user.preferences);
-    if (wantsNotice) {
-      const recordInbox = options.recordInbox || recordVideoInboxNotification;
-      await recordInbox(user, video, announcement).catch(() => undefined);
-    }
-    const dest = normalizeEmail(user.email);
-    if (!dest || !isValidEmail(dest) || !wantsNotice) {
-      await receipts.save({ eventId, videoId: String(video._id), userId, status: 'skipped', provider: '', error: '' });
-      summary.skipped += 1;
-      continue;
-    }
-
-    const greeting = String(user.firstName || '').trim() || 'there';
-    try {
-      const result = await send({
-        to: dest,
-        subject: subjectLine,
-        text: `Hi ${greeting},\n\n${announcement}\n\nWatch it here:\n${link}\n`,
-        html: notificationShell({
-          title: escapeHtml(subjectLine),
-          greeting: escapeHtml(greeting),
-          paragraphs: [escapeHtml(announcement)],
-          ctaLabel: 'Watch lecture',
-          ctaUrl: escapeHtml(link),
-          footer: 'You received this because Video Notifications are enabled on your NET360 account. Only this new upload is included.',
-        }),
-      });
-      await receipts.save({
-        eventId,
-        videoId: String(video._id),
-        userId,
-        status: 'sent',
-        provider: String(result?.provider || ''),
-        error: '',
-      });
-      summary.sent += 1;
-    } catch (error) {
-      const permanent = isPermanentRecipientError(error);
-      const message = error instanceof Error ? error.message : 'unknown';
-      await receipts.save({
-        eventId,
-        videoId: String(video._id),
-        userId,
-        status: permanent ? 'skipped' : 'failed',
-        provider: '',
-        error: message.slice(0, 220),
-      });
-      if (permanent) summary.skipped += 1;
-      else summary.failed += 1;
-      console.warn('[videos] publication email failed:', userId, permanent ? 'invalid-recipient' : message);
-    }
+    await receipts.save({
+      eventId,
+      videoId: String(video._id),
+      userId,
+      status: 'skipped',
+      provider: '',
+      error: 'video-email-disabled',
+    });
+    summary.skipped += 1;
   }
   return summary;
 }

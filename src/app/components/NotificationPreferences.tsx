@@ -8,7 +8,6 @@ type PreferenceReader = {
   emailNotifications?: boolean;
   dailyReminders?: boolean;
   performanceReports?: boolean;
-  contentUpdates?: boolean;
   notificationPreferences?: Record<string, boolean>;
 };
 
@@ -19,7 +18,6 @@ type PreferenceControl = {
   read: (preferences: PreferenceReader) => boolean;
   patch: (next: boolean) => {
     emailNotifications?: boolean;
-    contentUpdates?: boolean;
     notificationPreferences?: Record<string, boolean>;
   };
 };
@@ -36,13 +34,6 @@ export const NOTIFICATION_CONTROLS: PreferenceControl[] = [
     description: 'Optional NET360 emails. Sign-in verification, password reset, and account deletion emails still send.',
     read: (preferences) => preferences.emailNotifications !== false,
     patch: (next) => ({ emailNotifications: next, notificationPreferences: { enabled: next } }),
-  },
-  {
-    id: 'contentUpdates',
-    label: 'Content Updates',
-    description: 'Email and in-app notice when a new lecture video is published.',
-    read: (preferences) => nestedFlag(preferences, 'newVideos', preferences.contentUpdates !== false),
-    patch: (next) => ({ contentUpdates: next, notificationPreferences: { newVideos: next, videoUploads: next } }),
   },
   {
     id: 'nustNotices',

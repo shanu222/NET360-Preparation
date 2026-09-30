@@ -1,8 +1,11 @@
 /**
- * Web Demo Mode: one test, one preparation item (topic/section test), one video, and 24 hours of Community.
+ * Demo Mode: one test, one preparation item (topic/section test), one video, and 24 hours of Community.
  * Each allowance is independent. State lives on the user document so it survives refreshes,
  * logouts, and new devices, and it never resets.
  */
+
+import { emitSocketSyncToStudentUser, emitSubscriptionRefresh } from '../services/socket.js';
+import { invalidateUserSubscriptionCache } from '../utils/cache.js';
 
 export const DEMO_COMMUNITY_MS = 24 * 60 * 60 * 1000;
 
@@ -20,6 +23,14 @@ function toMs(value) {
 function toIso(value) {
   const ms = toMs(value);
   return ms ? new Date(ms).toISOString() : null;
+}
+
+function broadcastDemoState(userId, reason) {
+  const uid = String(userId || '').trim();
+  if (!uid) return;
+  void invalidateUserSubscriptionCache(uid).catch(() => undefined);
+  emitSubscriptionRefresh(uid, { reason });
+  emitSocketSyncToStudentUser(uid, { type: 'subscription.refresh', reason });
 }
 
 export function demoStatusPayload(userLike, now = Date.now()) {
@@ -132,7 +143,9 @@ export async function applyDemoAllowance({ UserModel, req, res, user, serviceTyp
         { _id: user._id, 'demoMode.videosClaimedAt': claimedAt },
         { $unset: { 'demoMode.videoId': '', 'demoMode.videosClaimedAt': '' } },
       ),
-      onSuccess: () => null,
+      onSuccess: () => {
+        broadcastDemoState(user._id, 'demo_video_claimed');
+      },
     });
     return { allowed: true, slot: 'videos' };
   }
@@ -159,9 +172,12 @@ export async function applyDemoAllowance({ UserModel, req, res, user, serviceTyp
       release: () => UserModel.updateOne(claimFilter, { $unset: { [fields.claimedAt]: '' } }),
       onSuccess: (body) => {
         const sessionId = String(body?.session?.id || '');
-        return sessionId
+        const persist = sessionId
           ? UserModel.updateOne(claimFilter, { $set: { [fields.sessionId]: sessionId } })
           : UserModel.updateOne(claimFilter, { $unset: { [fields.claimedAt]: '' } });
+        return Promise.resolve(persist).then(() => {
+          if (sessionId) broadcastDemoState(user._id, `demo_${slot}_claimed`);
+        });
       },
     });
     return { allowed: true, slot };
