@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { PageRouteFallback } from './components/PageRouteFallback';
+import { PageRouteFallback, FullViewportRouteFallback } from './components/PageRouteFallback';
 import { StudentNotifications } from './components/StudentNotifications';
 import { GlobalFreeAccessAnnouncement } from './components/GlobalFreeAccessAnnouncement';
 import { StudentPresenceHeartbeat } from './components/StudentPresenceHeartbeat';
@@ -100,7 +100,7 @@ function SessionReady({ children }: { children: ReactNode }) {
   // After the first successful session, never replace the student tree with a
   // skeleton. Resume/focus restores must stay silent so Profile is not remounted.
   if (loading && !hasBeenReadyRef.current) {
-    return <PageRouteFallback />;
+    return <FullViewportRouteFallback />;
   }
   return <>{children}</>;
 }
@@ -604,6 +604,7 @@ export default function App() {
     root.classList.toggle('dark', isDark);
     root.style.colorScheme = themeMode;
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', isDark ? '#0f172a' : '#f4f6fb');
   }, [themeMode]);
 
   useEffect(() => {

@@ -2961,6 +2961,7 @@ export default function AdminApp() {
     root.classList.toggle('dark', themeMode === 'dark');
     root.style.colorScheme = themeMode;
     window.localStorage.setItem(THEME_STORAGE_KEY, themeMode);
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', themeMode === 'dark' ? '#0f172a' : '#f4f6fb');
   }, [themeMode]);
 
   const practiceBankVisibleQuestions = useMemo(() => {
