@@ -61,7 +61,6 @@ import { logNativeEvent } from './lib/nativeDiagnostics';
 import { isNativeAndroidRuntime } from './lib/nativeForeground';
 
 const SubscriptionPageLazy = lazyWithRetry(() => import('./components/SubscriptionPage').then((m) => ({ default: m.SubscriptionPage })));
-const OnlineClassesPageLazy = lazyWithRetry(() => import('./components/OnlineClasses').then((m) => ({ default: m.OnlineClassesPage })));
 const Dashboard = lazyWithRetry(() => import('./components/Dashboard').then((m) => ({ default: m.Dashboard })));
 const NUSTGuide = lazyWithRetry(() => import('./components/NUSTGuide').then((m) => ({ default: m.NUSTGuide })));
 const NUSTSchoolsCampuses = lazyWithRetry(() => import('./components/NUSTSchoolsCampuses').then((m) => ({ default: m.NUSTSchoolsCampuses })));
@@ -167,7 +166,6 @@ type SectionId =
   | 'community'
   | 'profile'
   | 'subscription'
-  | 'online-classes'
   | 'privacy-policy'
   | 'terms'
   | 'delete-account'
@@ -193,7 +191,6 @@ const PATH_BY_SECTION: Record<SectionId, string> = {
   community: '/community',
   profile: '/profile',
   subscription: '/subscription',
-  'online-classes': '/online-classes',
   'privacy-policy': '/privacy-policy',
   terms: '/terms',
   'delete-account': '/delete-account',
@@ -237,7 +234,6 @@ const STUDENT_NAVIGATION_ITEMS: Array<{ id: SectionId; label: string; icon: type
   { id: 'merit-calculator', label: 'Merit Calculator', icon: Calculator },
   { id: 'community', label: 'Community', icon: Users },
   { id: 'subscription', label: 'Subscription', icon: Crown },
-  { id: 'online-classes', label: 'Online Classes', icon: GraduationCap },
   { id: 'profile', label: 'Profile', icon: User },
   { id: 'delete-account', label: 'How To Delete Your Account', icon: FileText },
 ];
@@ -962,12 +958,6 @@ export default function App() {
         return (
           <div className="mt-0 net360-page net360-page-enter">
             <SubscriptionPageLazy />
-          </div>
-        );
-      case 'online-classes':
-        return (
-          <div className="mt-0 net360-page net360-page-enter">
-            <OnlineClassesPageLazy />
           </div>
         );
       case 'privacy-policy':

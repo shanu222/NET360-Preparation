@@ -8800,7 +8800,7 @@ const siteContentConfigAccess = {
 
 app.use('/api', createSitePromoImagesRouter({ authMiddleware, requireAdmin, ...siteContentConfigAccess }));
 app.use('/api', createSubscriptionPlansRouter({ authMiddleware, requireAdmin, ...siteContentConfigAccess }));
-app.use('/api', createOnlineClassesRouter({ UserModel, authMiddleware, requireAdmin, ...siteContentConfigAccess }));
+app.use('/api', createOnlineClassesRouter({ authMiddleware, requireAdmin, ...siteContentConfigAccess }));
 
 /** Legacy token-based signup, admin premium proof queues, and recovery lists â€” fully retired (410). */
 function respondLegacyAdminWorkflowGone(_req, res) {

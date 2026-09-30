@@ -292,7 +292,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         </div>
       </section>
 
-      <OnlineClassesCard onOpen={() => onNavigate('online-classes')} />
+      <OnlineClassesCard />
 
       <section className="grid gap-3 lg:grid-cols-3">
         {subjectStats.map((subject) => (
