@@ -53,7 +53,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
   login: (email: string, password: string, opts?: { forceLogoutOtherDevice?: boolean; forceLogin?: boolean }) => Promise<void>;
-  loginWithGoogle: (opts?: { forceLogoutOtherDevice?: boolean; forceLogin?: boolean }) => Promise<void>;
+  loginWithGoogle: (opts?: { forceLogoutOtherDevice?: boolean; forceLogin?: boolean; chooseAnotherAccount?: boolean }) => Promise<void>;
   registerWithToken: (params: {
     email: string;
     password: string;
@@ -231,6 +231,16 @@ function extractAuthErrorCode(error: unknown): string {
   const typed = error as Error & { code?: string; payload?: { code?: string } };
   return String(typed?.code || typed?.payload?.code || '').trim();
 }
+
+type PendingGoogleLogin = {
+  email: string;
+  firebaseIdToken: string;
+  firstName: string;
+  lastName: string;
+};
+
+/** Kept only for the in-progress Google attempt so a second step does not reopen Google. */
+let pendingGoogleLogin: PendingGoogleLogin | null = null;
 
 async function signInWithEmailPasswordRest(email: string, password: string): Promise<{ idToken: string }> {
   const apiKey = String((import.meta as ImportMeta & { env?: { VITE_FIREBASE_API_KEY?: string } }).env?.VITE_FIREBASE_API_KEY || '').trim();
@@ -975,14 +985,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!activeAuth) {
       throw new Error('Google Sign-In could not be completed. Please try again.');
     }
+    const chooseAnotherAccount = Boolean(opts?.chooseAnotherAccount);
+    const completeGoogleBackendLogin = async (session: PendingGoogleLogin) => {
+      pendingGoogleLogin = session;
+      try {
+        await upsertSocialAuthSession({
+          email: session.email,
+          firebaseIdToken: session.firebaseIdToken,
+          firstName: session.firstName,
+          lastName: session.lastName,
+          forceLogoutOtherDevice: opts?.forceLogoutOtherDevice,
+          forceLogin: opts?.forceLogin,
+        });
+        pendingGoogleLogin = null;
+      } catch (error) {
+        const sessionCode = extractAuthErrorCode(error).toUpperCase();
+        if (sessionCode !== 'ACTIVE_SESSION_ELSEWHERE' && sessionCode !== 'ACTIVE_SESSION_EXISTS' && sessionCode !== 'SESSION_DISABLED_TEMP') {
+          pendingGoogleLogin = null;
+        }
+        throw error;
+      }
+    };
+
+    if (chooseAnotherAccount) {
+      pendingGoogleLogin = null;
+      await signOut(activeAuth).catch(() => undefined);
+    } else if (pendingGoogleLogin) {
+      let session = pendingGoogleLogin;
+      const current = activeAuth.currentUser;
+      if (current && String(current.email || '').trim().toLowerCase() === session.email) {
+        session = { ...session, firebaseIdToken: await current.getIdToken(true) };
+      }
+      await completeGoogleBackendLogin(session);
+      if (isAndroidNative) {
+        logNativeEvent('auth', 'google-native-reused', { email: session.email });
+        showSuccessToast('Login successful.');
+      }
+      return;
+    }
+
     const provider = new GoogleAuthProvider();
     provider.addScope('profile');
     provider.addScope('email');
-    provider.setCustomParameters({ prompt: 'select_account' });
+    if (chooseAnotherAccount) {
+      provider.setCustomParameters({ prompt: 'select_account' });
+    }
     if (isAndroidNative) {
       try {
         showNeutralToast('Signing you in with Google…');
-        const { idToken } = await signInWithGoogleAndroidNative();
+        const { idToken } = await signInWithGoogleAndroidNative({ chooseAnotherAccount });
         /* Firebase Auth only requires the Google ID token. */
         const credential = GoogleAuthProvider.credential(idToken);
         let userCred;
@@ -1013,20 +1064,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!email) {
           throw new Error('Google login did not return an email address.');
         }
-        await upsertSocialAuthSession({
-          email,
-          firebaseIdToken,
-          firstName,
-          lastName,
-          forceLogoutOtherDevice: opts?.forceLogoutOtherDevice,
-          forceLogin: opts?.forceLogin,
-        });
+        await completeGoogleBackendLogin({ email, firebaseIdToken, firstName, lastName });
         logNativeEvent('auth', 'google-native-success', { email });
         showSuccessToast('Login successful.');
       } catch (error) {
         const code = String((error as { code?: string })?.code || '').trim();
+        const sessionCode = code.toUpperCase();
         if (code === 'USER_CANCELLED') {
           logNativeEvent('auth', 'google-native-cancelled', {});
+          throw error;
+        }
+        if (sessionCode === 'ACTIVE_SESSION_ELSEWHERE' || sessionCode === 'ACTIVE_SESSION_EXISTS' || sessionCode === 'SESSION_DISABLED_TEMP') {
           throw error;
         }
         const message = (error as Error)?.message || String(error);
@@ -1050,7 +1098,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
       return;
     }
-    const credential = await signInWithPopup(activeAuth, provider);
+    let credential;
+    try {
+      credential = await signInWithPopup(activeAuth, provider);
+    } catch (error) {
+      const code = String((error as { code?: string })?.code || '').trim();
+      if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') {
+        const cancelled = new Error('Sign-in was cancelled.') as Error & { code?: string };
+        cancelled.code = 'USER_CANCELLED';
+        throw cancelled;
+      }
+      if (code === 'auth/operation-not-supported-in-this-environment') {
+        await signInWithRedirect(activeAuth, provider);
+        return;
+      }
+      throw error;
+    }
     updateAuthDebug({ userAuthenticated: true });
     const firebaseIdToken = await credential.user.getIdToken();
     const tokenClaims = decodeJwtClaims(firebaseIdToken);
@@ -1070,14 +1133,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!email) {
       throw new Error('Google login did not return an email address.');
     }
-    await upsertSocialAuthSession({
-      email,
-      firebaseIdToken,
-      firstName,
-      lastName,
-      forceLogoutOtherDevice: opts?.forceLogoutOtherDevice,
-      forceLogin: opts?.forceLogin,
-    });
+    await completeGoogleBackendLogin({ email, firebaseIdToken, firstName, lastName });
     logNativeEvent('auth', 'google-popup-success');
   }, [ensureNativeAuthBootstrap, isAndroidNative, isNativeRuntime, upsertSocialAuthSession]);
 
@@ -1103,7 +1159,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (!email) {
           throw new Error('Google login did not return an email address.');
         }
+        pendingGoogleLogin = { email, firebaseIdToken, firstName, lastName };
         await upsertSocialAuthSession({ email, firebaseIdToken, firstName, lastName });
+        pendingGoogleLogin = null;
         logNativeEvent('auth', 'google-redirect-complete', { email });
         showSuccessToast('Signed in with Google.');
       } catch (error) {
@@ -1239,6 +1297,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(() => {
+    pendingGoogleLogin = null;
     const rt = shouldPersistAuthTokens() ? refreshToken : null;
     void apiRequest('/api/auth/logout', {
       method: 'POST',

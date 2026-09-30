@@ -187,6 +187,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const [forgotCooldownSeconds, setForgotCooldownSeconds] = useState(0);
   const [registerConflictBanner, setRegisterConflictBanner] = useState('');
   const [authActionState, setAuthActionState] = useState<AuthActionState>('idle');
+  const authInFlightRef = useRef(false);
   const [otherDeviceDialogOpen, setOtherDeviceDialogOpen] = useState(false);
   const [pendingAuthMethod, setPendingAuthMethod] = useState<'password' | 'google' | null>(null);
   const [sessionConflictInfo, setSessionConflictInfo] = useState<SessionConflictInfo | null>(null);
@@ -314,7 +315,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   };
 
   const handleAuthSubmit = async () => {
-    if (isAuthBusy) return;
+    if (isAuthBusy || authInFlightRef.current) return;
+    authInFlightRef.current = true;
 
     try {
       if (isRegisterMode) {
@@ -388,6 +390,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         setRegisterConflictBanner(friendly);
       }
       showErrorToast(friendly);
+    } finally {
+      authInFlightRef.current = false;
     }
   };
 
@@ -443,7 +447,10 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   };
 
   const confirmContinueOnOtherDevice = async () => {
+    if (authInFlightRef.current) return;
     const method = pendingAuthMethod;
+    authInFlightRef.current = true;
+    try {
     if (method === 'password') {
       setAuthActionState('loggingIn');
       try {
@@ -481,13 +488,17 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         setAuthActionState('idle');
       }
     }
+    } finally {
+      authInFlightRef.current = false;
+    }
   };
 
-  const handleSocialAuth = async () => {
-    if (isAuthBusy) return;
+  const handleSocialAuth = async (options?: { chooseAnotherAccount?: boolean }) => {
+    if (isAuthBusy || authInFlightRef.current) return;
+    authInFlightRef.current = true;
     try {
       setAuthActionState('loggingIn');
-      await loginWithGoogle();
+      await loginWithGoogle({ chooseAnotherAccount: Boolean(options?.chooseAnotherAccount) });
       setAuthActionState('idle');
       if (!isNativeRuntimePlatform()) {
         showSuccessToast('Login successful.');
@@ -506,6 +517,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         return;
       }
       showErrorToast(loginFriendlyAuthError(error, 'Google Sign-In could not be completed. Please try again.'));
+    } finally {
+      authInFlightRef.current = false;
     }
   };
 
@@ -757,7 +770,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   if (!user) {
     return (
       <>
-        <div className="space-y-5">
+        <div className="net360-auth-screen space-y-3">
         <h1>Account Access</h1>
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1.5fr] xl:grid-cols-[1fr_1.65fr]">
@@ -890,6 +903,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 className="relative h-11 w-full rounded-xl bg-gradient-to-r from-indigo-700 to-violet-600 !text-white font-semibold shadow-sm hover:from-indigo-800 hover:to-violet-700 disabled:cursor-not-allowed disabled:opacity-90"
                 onClick={handleAuthSubmit}
                 disabled={isAuthBusy}
+                aria-busy={isAuthBusy}
               >
                 {isAuthBusy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                 {authActionState === 'loggingIn'
@@ -994,18 +1008,26 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                     <button
                       type="button"
                       disabled={isAuthBusy}
+                      aria-busy={isAuthBusy}
                       onClick={() => void handleSocialAuth()}
-                      className="flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-[#dadce0] bg-white px-4 text-[15px] font-medium text-[#202124] shadow-sm transition-all duration-150 hover:bg-[#f8f9fa] hover:shadow-md active:scale-[0.98] active:bg-[#f1f3f4] disabled:cursor-not-allowed disabled:opacity-70 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4285F4] focus-visible:ring-offset-2 dark:!border-[#dadce0] dark:!bg-white dark:!text-[#202124] dark:hover:!bg-[#f8f9fa] dark:active:!bg-[#f1f3f4]"
-                      style={{ color: '#202124', backgroundColor: '#ffffff' }}
+                      className="net360-google-btn flex h-12 w-full items-center justify-center gap-3 rounded-xl border border-[#dadce0] bg-white px-4 text-[15px] font-medium text-[#202124] shadow-sm transition-all duration-150 hover:bg-[#f8f9fa] hover:shadow-md active:scale-[0.98] active:bg-[#f1f3f4] disabled:cursor-not-allowed disabled:opacity-70 disabled:active:scale-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#4285F4] focus-visible:ring-offset-2 dark:!border-[#dadce0] dark:!bg-white dark:!text-[#202124] dark:hover:!bg-[#f8f9fa] dark:active:!bg-[#f1f3f4]"
                     >
                       {authActionState === 'loggingIn' ? (
                         <Loader2 className="h-5 w-5 shrink-0 animate-spin text-[#4285F4]" />
                       ) : (
                         <GoogleLogo className="h-5 w-5 shrink-0" />
                       )}
-                      <span className="font-medium !text-[#202124]" style={{ color: '#202124' }}>
+                      <span className="net360-google-btn-label font-medium">
                         {authActionState === 'loggingIn' ? 'Signing in…' : 'Continue with Google'}
                       </span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isAuthBusy}
+                      onClick={() => void handleSocialAuth({ chooseAnotherAccount: true })}
+                      className="net360-google-switch mx-auto block px-2 py-1 text-sm font-semibold underline-offset-2"
+                    >
+                      Use another account
                     </button>
                     {isNativeRuntimePlatform() ? (
                       <p className="text-xs text-slate-500">
