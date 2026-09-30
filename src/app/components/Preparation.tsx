@@ -21,6 +21,7 @@ import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import { PremiumLockScreen } from './subscription/PremiumLockScreen';
+import { isNativeRuntime as isNativePlatformRuntime } from '../lib/nativeDiagnostics';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import {
   FLAT_TOPIC_TABS as SHARED_FLAT_TOPIC_TABS,
@@ -686,7 +687,9 @@ export function Preparation({ showStartTestButton = true, onSelectSection, onSel
         </div>
         <PremiumLockScreen
           title="Unlock preparation tools"
-          description="Your free plan includes MCQs on the practice board. Preparation materials and topic tests require an active trial or premium subscription."
+          description={isNativePlatformRuntime()
+            ? 'Your free plan includes MCQs on the practice board. Preparation materials and topic tests require an active trial or premium subscription.'
+            : 'Your free plan includes MCQs on the practice board. Subscribe to Preparation Material to unlock preparation materials and topic tests.'}
         />
       </div>
     );

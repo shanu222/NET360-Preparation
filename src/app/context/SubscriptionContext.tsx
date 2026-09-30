@@ -79,6 +79,7 @@ export interface PaidServicesState {
   tests: AccessState;
   preparation: AccessState;
   community: AccessState;
+  videos?: AccessState;
   mentor?: AccessState;
 }
 

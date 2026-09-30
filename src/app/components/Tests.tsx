@@ -21,6 +21,7 @@ import { useAppData } from '../context/AppDataContext';
 import { useAuth } from '../context/AuthContext';
 import { useSubscription } from '../context/SubscriptionContext';
 import { PremiumLockScreen } from './subscription/PremiumLockScreen';
+import { isNativeRuntime } from '../lib/nativeDiagnostics';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { apiRequest, resolveLaunchAuthToken } from '../lib/api';
 import {
@@ -477,7 +478,9 @@ export function Tests({ onNavigate }: TestsProps) {
         </div>
         <PremiumLockScreen
           title="Unlock tests"
-          description="Start your one-time 7-day trial or subscribe with Easypaisa / JazzCash to access full mock and subject tests."
+          description={isNativeRuntime()
+            ? 'Start your one-time 7-day trial or subscribe with Easypaisa / JazzCash to access full mock and subject tests.'
+            : 'Subscribe to Tests to access full mock and subject tests.'}
         />
       </div>
     );

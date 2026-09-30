@@ -16,6 +16,8 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
+import { WebSubscriptionPage } from './subscription/WebSubscriptionPage';
+import { isNativeRuntime } from '../lib/nativeDiagnostics';
 
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 
@@ -28,6 +30,10 @@ function bearerForApi(): string | undefined {
 }
 
 export const SubscriptionPage = memo(function SubscriptionPage() {
+  return isNativeRuntime() ? <NativeSubscriptionPage /> : <WebSubscriptionPage />;
+});
+
+function NativeSubscriptionPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { surface, me, refresh, loading } = useSubscription();
@@ -472,4 +478,4 @@ export const SubscriptionPage = memo(function SubscriptionPage() {
       </Card>
     </div>
   );
-});
+}

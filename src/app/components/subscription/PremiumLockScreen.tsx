@@ -17,6 +17,7 @@ import {
   shouldMarkTrialPendingAfterError,
 } from '../../lib/startTrialRequest';
 import { audienceFriendlyError, showErrorToast, showSuccessToast } from '../../lib/userToast';
+import { isNativeRuntime } from '../../lib/nativeDiagnostics';
 
 const TOKEN_STORAGE_KEY = 'net360-auth-token';
 
@@ -38,7 +39,8 @@ export function PremiumLockScreen({
   const navigate = useNavigate();
   const { surface, me, refresh } = useSubscription();
   const { token: authToken, user } = useAuth();
-  const needsTrial = !me?.subscription?.hasUsedTrial;
+  const nativeApp = isNativeRuntime();
+  const needsTrial = nativeApp && !me?.subscription?.hasUsedTrial;
   const [startingTrial, setStartingTrial] = useState(false);
 
   async function startTrial() {
@@ -112,7 +114,7 @@ export function PremiumLockScreen({
             View plans &amp; pay
           </Button>
         </div>
-        {!surface.allowed && me?.subscription?.hasUsedTrial ? (
+        {nativeApp && !surface.allowed && me?.subscription?.hasUsedTrial ? (
           <p className="text-xs text-muted-foreground">Your trial has ended. Upgrade to keep premium access.</p>
         ) : null}
       </div>

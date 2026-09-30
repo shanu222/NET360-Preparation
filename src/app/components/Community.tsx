@@ -18,7 +18,7 @@ import { navigateToExamSameTab } from '../lib/examWindowLaunch';
 import { getMediaUrl } from '../lib/publicMedia';
 import { bearerForLaunchUrl } from '../lib/authSession';
 import { App as CapacitorApp } from '@capacitor/app';
-import { logNativeEvent } from '../lib/nativeDiagnostics';
+import { isNativeRuntime, logNativeEvent } from '../lib/nativeDiagnostics';
 import { consumeBriefNativeHide, markNativeDocumentHidden } from '../lib/nativeForeground';
 import {
   acquireRealtimeSocket,
@@ -2307,7 +2307,9 @@ function CommunityInner() {
         </div>
         <PremiumLockScreen
           title="Unlock community"
-          description="Connect with students, join quiz battles, and use discussion rooms with an active trial or premium subscription."
+          description={isNativeRuntime()
+            ? 'Connect with students, join quiz battles, and use discussion rooms with an active trial or premium subscription.'
+            : 'Subscribe to Community to connect with students, join quiz battles, and use discussion rooms.'}
         />
       </div>
     );
