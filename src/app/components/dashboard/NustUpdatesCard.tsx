@@ -400,7 +400,7 @@ function NustUpdatesCarousel({
         <div className="mt-3 flex items-center justify-center gap-2">
           <button
             type="button"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-indigo-200/80 bg-white/80 text-indigo-950 transition hover:bg-indigo-50"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-indigo-200 bg-white text-indigo-950 transition hover:bg-indigo-50"
             aria-label="Previous NUST update"
             onClick={() => embla?.scrollPrev()}
           >
@@ -423,7 +423,7 @@ function NustUpdatesCarousel({
           </div>
           <button
             type="button"
-            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-indigo-200/80 bg-white/80 text-indigo-950 transition hover:bg-indigo-50"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-indigo-200 bg-white text-indigo-950 transition hover:bg-indigo-50"
             aria-label="Next NUST update"
             onClick={() => embla?.scrollNext()}
           >
@@ -444,7 +444,7 @@ function NustUpdatesCardBody({ onOpenGuide }: NustUpdatesCardProps) {
 
   return (
     <section
-      className="relative overflow-hidden rounded-2xl border border-indigo-100 bg-white/90 shadow-[0_10px_25px_rgba(98,113,202,0.11)]"
+      className="relative overflow-hidden rounded-2xl border border-indigo-100 bg-white shadow-[0_10px_25px_rgba(98,113,202,0.11)]"
       aria-roledescription="carousel"
       aria-label="Live NUST updates"
       data-testid="nust-updates-card"
@@ -523,7 +523,7 @@ class NustUpdatesBoundary extends Component<BoundaryProps, BoundaryState> {
   render() {
     if (this.state.failed) {
       return (
-        <section className="overflow-hidden rounded-2xl border border-indigo-100 bg-white/90 p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]" aria-label="Live NUST updates">
+        <section className="overflow-hidden rounded-2xl border border-indigo-100 bg-white p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]" aria-label="Live NUST updates">
           <h2 className="text-base font-semibold text-indigo-950">NUST Updates</h2>
           <MessageState
             title="NUST updates are temporarily unavailable."

@@ -801,7 +801,7 @@ export function SupportChatWidget() {
     <>
       {open ? (
         <Card
-          className="fixed z-[60] w-full max-w-full overflow-hidden border-emerald-200 bg-white/95 text-slate-900 shadow-[0_16px_44px_rgba(15,118,110,0.24)] transition-all duration-200 dark:border-emerald-500/40 dark:bg-slate-900/96 dark:text-emerald-50 dark:shadow-[0_18px_44px_rgba(3,8,24,0.7)]"
+          className="fixed z-[60] w-full max-w-full overflow-hidden border-emerald-200 bg-white text-slate-900 shadow-[0_16px_44px_rgba(15,118,110,0.24)] transition-all duration-200 dark:border-emerald-500/40 dark:bg-slate-900 dark:text-emerald-50 dark:shadow-[0_18px_44px_rgba(3,8,24,0.7)]"
           style={panelStyle}
         >
           <CardHeader className="pb-2">
@@ -811,7 +811,7 @@ export function SupportChatWidget() {
                 <X className="h-4 w-4" />
               </Button>
             </div>
-            <p className="text-xs text-slate-500 dark:text-slate-300">Reach NET360 admin directly. Replies appear here in real time.</p>
+            <p className="text-xs text-slate-600 dark:text-slate-300">Reach NET360 admin directly. Replies appear here in real time.</p>
             <div className="mt-1 flex items-center justify-end gap-2">
               {canUseChat ? (
                 realtimeStatus === 'connected' ? (

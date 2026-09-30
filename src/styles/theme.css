@@ -1390,6 +1390,79 @@ html:not(.native-android) .net360-header {
   overflow: visible;
 }
 
+/* Web readability: keep the current layout, make surfaces and type fully opaque. */
+html:not(.native-android) {
+  --muted-foreground: #475569;
+  --net360-text-secondary: #334155;
+  --net360-surface-1: #ffffff;
+  --net360-surface-2: #f8faff;
+}
+
+html:not(.native-android) .net360-page [data-slot='card'] {
+  background-color: #ffffff;
+}
+
+html:not(.native-android) .net360-page .border.rounded-lg,
+html:not(.native-android) .net360-page .border.rounded-xl {
+  background-color: #ffffff;
+}
+
+html:not(.native-android) .net360-page input,
+html:not(.native-android) .net360-page textarea,
+html:not(.native-android) .net360-page select {
+  background-color: #ffffff;
+}
+
+html:not(.native-android) .net360-page [data-slot='tabs-list'] {
+  background-color: #eef2ff;
+}
+
+html:not(.native-android) [data-slot='popover-content'] {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+html:not(.native-android).dark {
+  --muted-foreground: #cbd5e1;
+  --net360-text-secondary: #d4ddff;
+  --net360-surface-1: #182249;
+  --net360-surface-2: #121936;
+}
+
+html:not(.native-android).dark .net360-shell {
+  background-color: #111831;
+  border-color: rgba(125, 145, 255, 0.35);
+}
+
+html:not(.native-android).dark .net360-shell > section {
+  background-color: #121936;
+}
+
+html:not(.native-android).dark .net360-shell header {
+  background-color: #131b3a;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='card'] {
+  background-color: #1b264a;
+}
+
+html:not(.native-android).dark .net360-page .border.rounded-lg,
+html:not(.native-android).dark .net360-page .border.rounded-xl {
+  background-color: #1b264a;
+}
+
+html:not(.native-android).dark .net360-page input,
+html:not(.native-android).dark .net360-page textarea,
+html:not(.native-android).dark .net360-page select {
+  background-color: #172044;
+  color: #e5ebff;
+}
+
+html:not(.native-android).dark [data-slot='popover-content'] {
+  background-color: #0f172a !important;
+  color: #f8fafc !important;
+}
+
 .native-android .net360-main {
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;

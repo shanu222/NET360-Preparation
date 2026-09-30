@@ -296,7 +296,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
 
       <section className="grid gap-3 lg:grid-cols-3">
         {subjectStats.map((subject) => (
-          <article key={subject.key} className="rounded-2xl border border-indigo-100 bg-white/90 p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
+          <article key={subject.key} className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
             <div className={`mb-3 flex items-center justify-between rounded-xl bg-gradient-to-r px-3 py-2 text-white ${subject.badge}`}>
               <p className="font-medium">{subject.label}</p>
               <span className="rounded-full bg-white/25 px-2 py-0.5 text-xs">{subject.progress}%</span>
@@ -319,7 +319,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         ))}
       </section>
 
-      <section className="rounded-2xl border border-indigo-100 bg-white/90 p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
+      <section className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
         <div className="mb-2 flex items-center justify-between gap-3">
           <p className="inline-flex items-center gap-2 font-medium text-indigo-950"><Trophy className="h-4 w-4" /> Great progress! Keep it up!</p>
           <span className="text-sm font-semibold text-indigo-950">{metrics.overallProgress}%</span>
@@ -362,7 +362,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             <QuickActionCard icon={Calculator} title="Merit Predictor" tone="from-amber-100 to-white" onClick={() => onNavigate('merit-calculator')} />
           </div>
 
-          <div className="rounded-2xl border border-indigo-100 bg-white/90 p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
+          <div className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="text-base text-indigo-950">This Week Performance</h3>
               <span className="rounded-full bg-indigo-50 px-2 py-1 text-xs text-indigo-700">7D</span>
@@ -418,12 +418,12 @@ function MetricCard({
   value: string;
 }) {
   return (
-    <div className="rounded-xl border border-white/35 bg-white/80 p-3 text-slate-800 shadow-sm">
+    <div className="rounded-xl border border-white/60 bg-white p-3 text-slate-900 shadow-sm">
       <div className="net360-icon-circle mb-1 inline-flex h-7 w-7 items-center justify-center rounded-full">
         <Icon className="h-4 w-4" />
       </div>
       <p className="text-lg font-semibold leading-none">{value}</p>
-      <p className="mt-1 text-[11px] text-slate-500">{label}</p>
+      <p className="mt-1 text-[11px] text-slate-600">{label}</p>
     </div>
   );
 }

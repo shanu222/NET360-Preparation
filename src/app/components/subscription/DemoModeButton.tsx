@@ -127,7 +127,7 @@ export function DemoModeButton() {
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md overflow-hidden rounded-3xl border-white/50 bg-white/65 p-0 shadow-[0_30px_70px_rgba(59,67,146,0.28)] backdrop-blur-2xl dark:border-white/10 dark:bg-slate-900/65 sm:max-w-md md:max-w-md">
+        <DialogContent className="max-w-md overflow-hidden rounded-3xl border-indigo-100 bg-white p-0 shadow-[0_30px_70px_rgba(59,67,146,0.28)] dark:border-slate-700 dark:bg-slate-900 sm:max-w-md md:max-w-md">
           <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(129,140,248,0.28),transparent_55%),radial-gradient(circle_at_bottom_right,rgba(251,191,36,0.2),transparent_50%)]" />
           <div className="relative space-y-5 p-6">
             <DialogHeader className="space-y-1 text-left">
@@ -148,9 +148,9 @@ export function DemoModeButton() {
                 return (
                   <li
                     key={option.service}
-                    className="flex items-center gap-3 rounded-2xl border border-white/70 bg-white/55 p-3 shadow-sm backdrop-blur-md transition hover:border-indigo-200 hover:bg-white/75 dark:border-white/10 dark:bg-slate-800/50 dark:hover:bg-slate-800/70"
+                    className="flex items-center gap-3 rounded-2xl border border-indigo-100 bg-white p-3 shadow-sm transition hover:border-indigo-200 hover:bg-indigo-50 dark:border-slate-600 dark:bg-slate-800 dark:hover:bg-slate-700"
                   >
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/80 text-2xl shadow-inner dark:bg-slate-900/60" aria-hidden="true">
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-indigo-50 text-2xl shadow-inner dark:bg-slate-900" aria-hidden="true">
                       {option.emoji}
                     </span>
                     <span className="min-w-0 flex-1">

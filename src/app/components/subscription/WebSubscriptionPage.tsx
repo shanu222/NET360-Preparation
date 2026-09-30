@@ -86,7 +86,7 @@ export function WebSubscriptionPage() {
 
   if (!user) {
     return (
-      <div className="mx-auto max-w-lg rounded-2xl border border-indigo-100 bg-white/80 p-6 text-center dark:border-white/10 dark:bg-slate-900/60">
+      <div className="mx-auto max-w-lg rounded-2xl border border-indigo-100 bg-white p-6 text-center dark:border-slate-600 dark:bg-slate-900">
         <p className="text-slate-700 dark:text-slate-200">Sign in to manage your subscription.</p>
         <Button className="mt-4 rounded-xl" type="button" onClick={() => navigate('/profile')}>
           Go to profile
@@ -199,7 +199,7 @@ export function WebSubscriptionPage() {
               ) : null}
             </div>
             {videosLaunchOffer && (videos.promoText || videos.promoDetails) ? (
-              <div className="space-y-2 rounded-xl border border-violet-200/80 bg-white/80 p-3 text-sm dark:border-violet-500/30 dark:bg-slate-900/70">
+              <div className="space-y-2 rounded-xl border border-violet-200 bg-white p-3 text-sm dark:border-violet-500/40 dark:bg-slate-900">
                 {videos.promoText ? (
                   <p className="text-slate-700 dark:text-slate-200">{highlight(videos.promoText, videos.offerLabel)}</p>
                 ) : null}

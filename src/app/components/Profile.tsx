@@ -709,7 +709,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
         <h1>Account Access</h1>
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_1.5fr] xl:grid-cols-[1fr_1.65fr]">
-          <Card className="rounded-2xl border-indigo-100 bg-white/92 shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
+          <Card className="rounded-2xl border-indigo-100 bg-white shadow-[0_14px_32px_rgba(98,113,202,0.12)]">
             <CardHeader className="pb-3">
               <CardTitle className="text-slate-800">
                 {isRecoveryMode ? 'Recover Password' : isRegisterMode ? 'Create Account' : 'Login'}
@@ -1020,7 +1020,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                 <CardDescription className="text-slate-600">Latest update and announcements for NET360 students.</CardDescription>
               </CardHeader>
               <CardContent className="relative pb-7">
-                <div className="mx-auto mt-4 flex w-full max-w-[min(100%,680px)] justify-center rounded-2xl border border-indigo-100/80 bg-white/70 p-2 shadow-[0_18px_34px_rgba(79,70,229,0.14)] backdrop-blur-sm">
+                <div className="mx-auto mt-4 flex w-full max-w-[min(100%,680px)] justify-center rounded-2xl border border-indigo-100 bg-white p-2 shadow-[0_18px_34px_rgba(79,70,229,0.14)]">
                   <ImageWithFallback
                     src={sitePromoImages.featuredAd || '/images/app-promo.png'}
                     {...(sitePromoImages.featuredAd ? { fallbackSrc: '/images/app-promo.png' } : {})}

@@ -2641,13 +2641,13 @@ function CommunityInner() {
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
-                <div className="flex items-center gap-3 rounded-lg border border-slate-200/80 bg-white/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-600 dark:bg-slate-800">
                   <Switch checked={hideOnlineStatus} onCheckedChange={setHideOnlineStatus} id="hide-online" />
                   <Label htmlFor="hide-online" className="cursor-pointer text-sm leading-snug">
                     Hide my online status
                   </Label>
                 </div>
-                <div className="flex items-center gap-3 rounded-lg border border-slate-200/80 bg-white/60 p-3 dark:border-slate-700 dark:bg-slate-900/40">
+                <div className="flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-600 dark:bg-slate-800">
                   <Switch checked={doNotDisturb} onCheckedChange={setDoNotDisturb} id="dnd-mode" />
                   <Label htmlFor="dnd-mode" className="cursor-pointer text-sm leading-snug">
                     Do not disturb
