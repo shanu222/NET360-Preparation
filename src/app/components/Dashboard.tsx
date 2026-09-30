@@ -275,7 +275,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <p className="text-xs text-slate-500 dark:text-slate-300">Progress</p>
             </article>
           </div>
-          <OnlineClassesCard onOpen={() => onNavigate('online-classes')} />
+          <OnlineClassesCard />
         </section>
       ) : null}
       {showHome && !androidApp ? (
@@ -350,7 +350,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       ) : null}
 
       {showHome && !androidApp ? (
-        <OnlineClassesCard onOpen={() => onNavigate('online-classes')} />
+        <OnlineClassesCard />
       ) : null}
 
       {androidApp && !androidHomeScreen ? (
