@@ -708,7 +708,7 @@ function CommunityInner() {
   const [presenceLoading, setPresenceLoading] = useState(false);
   const [presenceResolved, setPresenceResolved] = useState(false);
   const [remoteTyping, setRemoteTyping] = useState(false);
-  const [studyingSubjectPing, setStudyingSubjectPing] = useState('');
+  const [studyingSubjectPing] = useState('');
   /** True while the shared realtime socket is not connected (drives the "Reconnecting…" badge + faster fallback polling). */
   const [realtimeDown, setRealtimeDown] = useState(() => !isRealtimeConnected('student'));
 
@@ -2494,14 +2494,12 @@ function CommunityInner() {
               <CardDescription>Students currently online.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="min-w-0 space-y-1.5">
-                <Label>Currently studying</Label>
-                <Input
-                  value={studyingSubjectPing}
-                  onChange={(e) => setStudyingSubjectPing(e.target.value)}
-                  placeholder="e.g. Integration techniques"
-                />
-              </div>
+              {!presenceResolved && onlineStudents.length === 0 ? (
+                <div className="flex justify-center py-8" role="status" aria-live="polite">
+                  <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600 dark:border-indigo-900 dark:border-t-indigo-300" />
+                  <span className="sr-only">Loading online students</span>
+                </div>
+              ) : null}
 
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                 {onlineStudents.map((s) => {
@@ -2539,12 +2537,6 @@ function CommunityInner() {
                       {s.activity ? (
                         <p className="mt-3 text-xs font-medium text-slate-700 dark:text-slate-200">
                           {s.activity}
-                        </p>
-                      ) : null}
-                      {s.studyingSubject ? (
-                        <p className={`${s.activity ? 'mt-1' : 'mt-3'} rounded-lg border border-slate-200/80 bg-slate-50 px-2.5 py-1.5 text-xs text-slate-800 dark:border-slate-600 dark:bg-slate-800/80 dark:text-slate-100`}>
-                          <span className="text-muted-foreground">Currently studying: </span>
-                          <span className="font-medium">{s.studyingSubject}</span>
                         </p>
                       ) : null}
                       {s.lastSeenAt ? (

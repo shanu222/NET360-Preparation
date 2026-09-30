@@ -2618,10 +2618,16 @@ html.native-android .net360-header-mark {
 }
 
 html.native-android .net360-header-title {
-  font-size: 1.35rem !important;
+  display: -webkit-box !important;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal !important;
+  text-overflow: unset !important;
+  overflow: hidden !important;
+  font-size: clamp(1.02rem, 3.5vw, 1.28rem) !important;
   font-weight: 700;
   letter-spacing: -0.03em;
-  line-height: 1.2 !important;
+  line-height: 1.15 !important;
   color: #1e1b4b;
 }
 
@@ -2775,6 +2781,43 @@ html.dark.native-android .net360-page .net360-android-picker select {
   background-position: calc(100% - 1.15rem) 1.35rem, calc(100% - 0.8rem) 1.35rem !important;
   background-size: 6px 6px, 6px 6px !important;
   background-repeat: no-repeat !important;
+}
+
+html.native-android .net360-android-picker-toggle,
+html.native-android .net360-android-picker-menu button {
+  width: 100%;
+  min-height: 3.25rem;
+  border-radius: 14px;
+  border: 1.5px solid #818cf8;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 1rem;
+  font-weight: 700;
+  text-align: left;
+  padding: 0.7rem 0.95rem;
+}
+
+html.dark.native-android .net360-android-picker-toggle,
+html.dark.native-android .net360-android-picker-menu button {
+  background: #1a2238 !important;
+  color: #f8fafc !important;
+  border-color: #818cf8 !important;
+}
+
+html.native-android .net360-android-picker-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+html.native-android .net360-android-picker-menu button.is-selected {
+  background: #4f46e5;
+  color: #ffffff;
+}
+
+html.dark.native-android .net360-android-picker-menu button.is-selected {
+  background: #312e81 !important;
+  color: #ffffff !important;
 }
 
 html.native-android .net360-page section[class*='bg-gradient-to-r'][class*='text-white'] {
@@ -3766,42 +3809,64 @@ html.dark.native-android .net360-tabbar button.is-selected.net360-pressed {
   box-shadow: inset 0 0 0 999px rgba(79, 70, 229, 0.18) !important;
 }
 
-/* Android page scroll, pinned footer, stable press, and theme surfaces.
-   Scoped to the native shell so the web app is unchanged. */
+/* Android: the shell stays full-screen. Long pages scroll in .net360-main,
+   under a fixed header and tab bar. Exam screens have no shell, so the document scrolls. */
 html.native-android {
-  --net360-tab-offset: calc(3.95rem + env(safe-area-inset-bottom, 0px));
+  --net360-tab-offset: calc(4.1rem + env(safe-area-inset-bottom, 0px));
 }
 
-html.native-android:not(:has(.net360-msg-screen[data-state='active'])),
-html.native-android:not(:has(.net360-msg-screen[data-state='active'])) body,
-html.native-android:not(:has(.net360-msg-screen[data-state='active'])) #root {
+html.native-android:has(.net360-viewport),
+html.native-android:has(.net360-viewport) body,
+html.native-android:has(.net360-viewport) #root {
+  height: 100% !important;
+  max-height: 100% !important;
+  overflow: hidden !important;
+}
+
+html.native-android:not(:has(.net360-viewport)),
+html.native-android:not(:has(.net360-viewport)) body,
+html.native-android:not(:has(.net360-viewport)) #root {
   height: auto !important;
   min-height: 100%;
   max-height: none !important;
   overflow-x: hidden !important;
   overflow-y: auto !important;
-  overscroll-behavior-y: none;
+  -webkit-overflow-scrolling: touch;
 }
 
-html.native-android:not(:has(.net360-msg-screen[data-state='active'])) .net360-viewport,
-html.native-android:not(:has(.net360-msg-screen[data-state='active'])) .net360-shell,
-html.native-android:not(:has(.net360-msg-screen[data-state='active'])) .net360-shell > section {
-  height: auto !important;
-  max-height: none !important;
-  min-height: 100dvh;
-  overflow: visible !important;
+html.native-android:not(:has(.net360-viewport)) body {
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: max(4.5rem, env(safe-area-inset-bottom, 0px));
 }
 
-html.native-android:not(:has(.net360-msg-screen[data-state='active'])) .net360-main {
-  flex: none !important;
-  height: auto !important;
-  max-height: none !important;
-  overflow: visible !important;
+html.native-android .net360-viewport,
+html.native-android .net360-shell,
+html.native-android .net360-shell > section {
+  height: 100% !important;
+  max-height: 100% !important;
+  min-height: 0 !important;
+  overflow: hidden !important;
+}
+
+html.native-android .net360-main {
+  flex: 1 1 0% !important;
+  min-height: 0 !important;
+  overflow-x: hidden !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-y: contain;
+  touch-action: manipulation;
+}
+
+html.native-android .net360-main:has(.net360-msg-screen[data-state='active']) {
+  overflow: hidden !important;
+  touch-action: manipulation;
 }
 
 html.native-android .net360-header {
-  position: sticky !important;
-  top: 0 !important;
+  position: relative !important;
+  top: auto !important;
+  flex: 0 0 auto;
 }
 
 html.native-android .net360-tabbar {
@@ -3810,6 +3875,8 @@ html.native-android .net360-tabbar {
   right: 0 !important;
   bottom: 0 !important;
   width: 100% !important;
+  height: var(--net360-tab-offset);
+  min-height: var(--net360-tab-offset);
   z-index: 50;
   box-sizing: border-box;
 }
@@ -3818,8 +3885,19 @@ html.native-android .net360-has-tabbar .net360-main {
   padding-bottom: calc(var(--net360-tab-offset) + var(--net360-keyboard-offset, 0px)) !important;
 }
 
-html.native-android:has(.net360-msg-screen[data-state='active']) .net360-has-tabbar .net360-main {
+html.native-android .net360-has-tabbar .net360-main:has(.net360-msg-screen[data-state='active']) {
   padding-bottom: 0.35rem !important;
+}
+
+html.dark.native-android {
+  color-scheme: dark;
+}
+
+html.dark.native-android select,
+html.dark.native-android option {
+  color-scheme: dark;
+  background-color: #1a2238;
+  color: #f8fafc;
 }
 
 @media (orientation: landscape) and (max-height: 520px) {

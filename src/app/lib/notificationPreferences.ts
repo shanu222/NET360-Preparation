@@ -80,16 +80,6 @@ export type NotificationPreferenceKey = (typeof NOTIFICATION_PREFERENCE_SECTIONS
 
 export const DELIVERY_PREFERENCE_SECTIONS = [
   {
-    id: 'Email',
-    items: [
-      {
-        key: 'emailNotifications',
-        label: 'Email notifications',
-        description: 'Send optional NET360 emails. When this is off, no optional email is sent.',
-      },
-    ],
-  },
-  {
     id: 'Reminders',
     items: [
       {

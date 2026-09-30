@@ -73,11 +73,9 @@ export function NotificationPreferencesPanel() {
     const previous = deliveryPreferences[key];
     setDeliveryPreferences((current) => ({ ...current, [key]: enabled }));
     try {
-      const notificationPreferences = key === 'emailNotifications'
-        ? { enabled }
-        : key === 'dailyReminders'
-          ? { dailyReminders: enabled }
-          : { performanceReports: enabled };
+      const notificationPreferences = key === 'dailyReminders'
+        ? { dailyReminders: enabled }
+        : { performanceReports: enabled };
       await savePreferences({ [key]: enabled, notificationPreferences });
     } catch (error) {
       setDeliveryPreferences((current) => ({ ...current, [key]: previous }));

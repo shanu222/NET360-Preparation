@@ -603,7 +603,12 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     const previous = notificationPreferences[key];
     setNotificationPreferences((current) => ({ ...current, [key]: enabled }));
     try {
-      await savePreferences({ notificationPreferences: { [key]: enabled } });
+      const notificationPreferences: Record<string, boolean> = { [key]: enabled };
+      if (key === 'nustUpdates') {
+        notificationPreferences.nustNotices = enabled;
+        notificationPreferences.netUpdates = enabled;
+      }
+      await savePreferences({ notificationPreferences });
     } catch (error) {
       setNotificationPreferences((current) => ({ ...current, [key]: previous }));
       handleApiError(error, 'Could not save notification preference.');
@@ -614,7 +619,12 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     const previous = deliveryPreferences[key];
     setDeliveryPreferences((current) => ({ ...current, [key]: enabled }));
     try {
-      await savePreferences({ [key]: enabled });
+      const notificationPreferences = key === 'dailyReminders'
+        ? { dailyReminders: enabled }
+        : key === 'performanceReports'
+          ? { performanceReports: enabled }
+          : { enabled };
+      await savePreferences({ [key]: enabled, notificationPreferences });
     } catch (error) {
       setDeliveryPreferences((current) => ({ ...current, [key]: previous }));
       handleApiError(error, 'Could not save notification preference.');
@@ -1566,15 +1576,6 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               })}
             </div>
           ))}
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-900">
-            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-50">Required account emails</h4>
-            <p className="mt-1 text-xs text-slate-500 dark:text-slate-300">These keep your account secure and cannot be turned off.</p>
-            <ul className="mt-2 space-y-1 text-sm text-slate-700 dark:text-slate-200">
-              <li>Email verification</li>
-              <li>Password reset</li>
-              <li>Account deletion confirmation</li>
-            </ul>
-          </div>
         </CardContent>
       </Card>
 

@@ -144,14 +144,14 @@ const THEME_STORAGE_KEY = 'net360-theme-mode';
 type ThemeMode = 'light' | 'dark';
 
 function resolveInitialThemeMode(): ThemeMode {
-  if (typeof window === 'undefined') return 'dark';
+  if (typeof window === 'undefined') return 'light';
 
   const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY);
   if (storedTheme === 'light' || storedTheme === 'dark') {
     return storedTheme;
   }
 
-  return 'dark';
+  return 'light';
 }
 
 type SectionId =
