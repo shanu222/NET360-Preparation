@@ -15,15 +15,18 @@ type StudentNotice = {
   createdAt: string;
 };
 
+type PanelPos = { top: number; right: number; maxHeight: number };
+
 export function StudentNotifications() {
   const { user, token } = useAuth();
   const navigate = useNavigate();
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<StudentNotice[]>([]);
   const [loading, setLoading] = useState(false);
-  const [panelPos, setPanelPos] = useState<{ top: number; right: number } | null>(null);
+  const [panelPos, setPanelPos] = useState<PanelPos | null>(null);
 
   const unread = useMemo(() => items.filter((item) => !item.readAt).length, [items]);
 
@@ -43,9 +46,12 @@ export function StudentNotifications() {
   const recomputePosition = useCallback(() => {
     const rect = buttonRef.current?.getBoundingClientRect();
     if (!rect) return;
+    const top = rect.bottom + 8;
+    const maxHeight = Math.max(160, Math.min(448, window.innerHeight - top - 8));
     setPanelPos({
-      top: rect.bottom + 8,
+      top,
       right: Math.max(8, window.innerWidth - rect.right),
+      maxHeight,
     });
   }, []);
 
@@ -60,40 +66,55 @@ export function StudentNotifications() {
 
   useEffect(() => {
     if (!open) return undefined;
+
+    const pathIncludes = (event: Event, node: Node | null) => {
+      if (!node) return false;
+      const path = typeof event.composedPath === 'function' ? event.composedPath() : [];
+      return path.includes(node);
+    };
+
     const onPointerDown = (event: PointerEvent) => {
-      const target = event.target as Node;
-      if (buttonRef.current?.contains(target)) return;
-      if (panelRef.current?.contains(target)) return;
+      if (pathIncludes(event, buttonRef.current) || pathIncludes(event, panelRef.current)) return;
       setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setOpen(false);
     };
-    const onViewportChange = () => setOpen(false);
+    const onWindowScroll = (event: Event) => {
+      if (pathIncludes(event, panelRef.current) || pathIncludes(event, listRef.current)) return;
+      recomputePosition();
+    };
+
     document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
-    window.addEventListener('resize', onViewportChange);
-    window.addEventListener('scroll', onViewportChange, true);
+    window.addEventListener('resize', recomputePosition);
+    window.addEventListener('scroll', onWindowScroll, true);
     return () => {
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('resize', onViewportChange);
-      window.removeEventListener('scroll', onViewportChange, true);
+      window.removeEventListener('resize', recomputePosition);
+      window.removeEventListener('scroll', onWindowScroll, true);
     };
-  }, [open]);
+  }, [open, recomputePosition]);
 
   const panel = open && panelPos ? (
     <div
       ref={panelRef}
-      className="fixed z-[1000] w-[min(22rem,calc(100vw-1.5rem))] overflow-hidden rounded-2xl border border-indigo-200 bg-white text-slate-900 shadow-[0_18px_40px_rgba(15,23,42,0.22)] dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50"
-      style={{ top: panelPos.top, right: panelPos.right }}
+      className="net360-web-notice-panel fixed z-[1000] flex w-[min(22rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-indigo-200 bg-white text-slate-900 shadow-[0_18px_40px_rgba(15,23,42,0.22)] dark:border-slate-600 dark:bg-slate-900 dark:text-slate-50"
+      style={{ top: panelPos.top, right: panelPos.right, maxHeight: panelPos.maxHeight }}
       role="dialog"
       aria-label="Notifications"
+      onWheel={(event) => event.stopPropagation()}
     >
-      <div className="border-b border-indigo-100 bg-white px-3 py-2 text-sm font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50">
+      <div className="shrink-0 border-b border-indigo-100 bg-white px-3 py-2 text-sm font-semibold text-slate-900 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-50">
         Notifications
       </div>
-      <div className="max-h-[min(70vh,28rem)] overflow-y-auto bg-white dark:bg-slate-900">
+      <div
+        ref={listRef}
+        className="net360-web-notice-list min-h-0 flex-1 overflow-y-auto overflow-x-hidden bg-white dark:bg-slate-900"
+        onWheel={(event) => event.stopPropagation()}
+        onScroll={(event) => event.stopPropagation()}
+      >
         {!user ? (
           <p className="px-3 py-4 text-sm text-slate-600 dark:text-slate-300">Log in to view notifications.</p>
         ) : loading && items.length === 0 ? (
@@ -105,7 +126,7 @@ export function StudentNotifications() {
             <button
               key={item.id}
               type="button"
-              className={`block w-full border-b border-indigo-50 px-3 py-3 text-left text-sm last:border-b-0 transition hover:bg-indigo-50 dark:border-slate-800 dark:hover:bg-slate-800 ${item.readAt ? '' : 'bg-indigo-50/70 dark:bg-indigo-950/40'}`}
+              className={`block w-full border-b border-indigo-100 px-3 py-3 text-left text-sm last:border-b-0 transition hover:bg-indigo-50 dark:border-slate-700 dark:hover:bg-slate-800 ${item.readAt ? 'bg-white dark:bg-slate-900' : 'bg-indigo-50 dark:bg-indigo-950'}`}
               onClick={() => {
                 if (!item.readAt) {
                   void apiRequest(`/api/notifications/${item.id}/read`, { method: 'PATCH' }, token).catch(() => undefined);

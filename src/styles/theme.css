@@ -1402,8 +1402,8 @@ html:not(.native-android) .net360-page [data-slot='card'] {
   background-color: #ffffff;
 }
 
-html:not(.native-android) .net360-page .border.rounded-lg,
-html:not(.native-android) .net360-page .border.rounded-xl {
+html:not(.native-android) .net360-page .border.rounded-lg:not([data-slot='button']):not([data-slot='tabs-trigger']),
+html:not(.native-android) .net360-page .border.rounded-xl:not([data-slot='button']):not([data-slot='tabs-trigger']) {
   background-color: #ffffff;
 }
 
@@ -1411,15 +1411,49 @@ html:not(.native-android) .net360-page input,
 html:not(.native-android) .net360-page textarea,
 html:not(.native-android) .net360-page select {
   background-color: #ffffff;
+  color: #0f172a;
 }
 
 html:not(.native-android) .net360-page [data-slot='tabs-list'] {
   background-color: #eef2ff;
 }
 
-html:not(.native-android) [data-slot='popover-content'] {
+html:not(.native-android) [data-slot='popover-content'],
+html:not(.native-android) [data-slot='select-content'],
+html:not(.native-android) [data-slot='dropdown-menu-content'] {
   background-color: #ffffff !important;
   color: #0f172a !important;
+}
+
+html:not(.native-android) .net360-web-notice-panel {
+  background-color: #ffffff;
+  color: #0f172a;
+}
+
+html:not(.native-android) .net360-web-notice-list {
+  overscroll-behavior: contain;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+  overflow-y: auto;
+  min-height: 0;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: #6366f1 #eef2ff;
+}
+
+html:not(.native-android) .net360-web-notice-list::-webkit-scrollbar {
+  width: 10px;
+}
+
+html:not(.native-android) .net360-web-notice-list::-webkit-scrollbar-track {
+  background: #eef2ff;
+}
+
+html:not(.native-android) .net360-web-notice-list::-webkit-scrollbar-thumb {
+  background: #6366f1;
+  border-radius: 999px;
+  border: 2px solid #eef2ff;
 }
 
 html:not(.native-android).dark {
@@ -1446,8 +1480,8 @@ html:not(.native-android).dark .net360-page [data-slot='card'] {
   background-color: #1b264a;
 }
 
-html:not(.native-android).dark .net360-page .border.rounded-lg,
-html:not(.native-android).dark .net360-page .border.rounded-xl {
+html:not(.native-android).dark .net360-page .border.rounded-lg:not([data-slot='button']):not([data-slot='tabs-trigger']),
+html:not(.native-android).dark .net360-page .border.rounded-xl:not([data-slot='button']):not([data-slot='tabs-trigger']) {
   background-color: #1b264a;
 }
 
@@ -1458,9 +1492,75 @@ html:not(.native-android).dark .net360-page select {
   color: #e5ebff;
 }
 
-html:not(.native-android).dark [data-slot='popover-content'] {
+html:not(.native-android).dark .net360-page [data-slot='tabs-list'] {
+  background-color: #243056;
+  background-image: none;
+}
+
+html:not(.native-android).dark [data-slot='popover-content'],
+html:not(.native-android).dark [data-slot='select-content'],
+html:not(.native-android).dark [data-slot='dropdown-menu-content'] {
   background-color: #0f172a !important;
   color: #f8fafc !important;
+}
+
+html:not(.native-android).dark .net360-web-notice-panel,
+html:not(.native-android).dark .net360-web-notice-list {
+  background-color: #0f172a;
+  color: #f8fafc;
+}
+
+html:not(.native-android).dark .net360-web-notice-list {
+  scrollbar-color: #818cf8 #1e293b;
+}
+
+html:not(.native-android).dark .net360-web-notice-list::-webkit-scrollbar-track {
+  background: #1e293b;
+}
+
+html:not(.native-android).dark .net360-web-notice-list::-webkit-scrollbar-thumb {
+  background: #818cf8;
+  border-color: #1e293b;
+}
+
+html:not(.native-android).dark .net360-page .bg-white,
+html:not(.native-android).dark .net360-page .bg-white\/70,
+html:not(.native-android).dark .net360-page .bg-white\/80,
+html:not(.native-android).dark .net360-page .bg-white\/88,
+html:not(.native-android).dark .net360-page .bg-white\/90,
+html:not(.native-android).dark .net360-page .bg-white\/95,
+html:not(.native-android).dark .net360-page .bg-slate-50,
+html:not(.native-android).dark .net360-page .bg-indigo-50,
+html:not(.native-android).dark .net360-page .bg-indigo-50\/40,
+html:not(.native-android).dark .net360-page .bg-indigo-50\/50 {
+  background-color: #1b264a;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='button'][class*='bg-white'] {
+  background-color: #243056;
+  color: #e5ebff;
+}
+
+html:not(.native-android).dark .net360-page [class*='bg-gradient-to-'][class*='via-white'],
+html:not(.native-android).dark .net360-page [class*='bg-gradient-to-'][class*='from-white'],
+html:not(.native-android).dark .net360-page [class*='bg-gradient-to-'][class*='to-white'],
+html:not(.native-android).dark .net360-page [class*='bg-gradient-to-'][class*='from-amber-50'],
+html:not(.native-android).dark .net360-page [class*='bg-gradient-to-'][class*='from-amber-100'],
+html:not(.native-android).dark .net360-page [class*='bg-gradient-to-'][class*='from-cyan-100'],
+html:not(.native-android).dark .net360-page [class*='bg-gradient-to-'][class*='from-indigo-100'],
+html:not(.native-android).dark .net360-page [class*='bg-gradient-to-'][class*='from-violet-100'],
+html:not(.native-android).dark .net360-page [class*='bg-gradient-to-'][class*='from-sky-100'],
+html:not(.native-android).dark .net360-page [class*='bg-gradient-to-'][class*='to-indigo-50'] {
+  background-image: linear-gradient(180deg, #243056, #1b264a);
+  background-color: #1b264a;
+}
+
+html:not(.native-android).dark .net360-shell header p {
+  color: #d7e0ff;
+}
+
+html:not(.native-android).dark .net360-shell header [class*='bg-amber'] {
+  color: #fde68a !important;
 }
 
 .native-android .net360-main {
