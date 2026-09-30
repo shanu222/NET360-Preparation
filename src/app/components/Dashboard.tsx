@@ -2,6 +2,7 @@ import { type ComponentType, useMemo } from 'react';
 import { isNativeRuntime } from '../lib/nativeDiagnostics';
 import { NustUpdatesCard } from './dashboard/NustUpdatesCard';
 import { OnlineClassesCard } from './dashboard/OnlineClassesCard';
+import { WebSocialLinksCards } from './dashboard/SocialLinksCards';
 import {
   Calendar,
   Flame,
@@ -294,6 +295,10 @@ export function Dashboard({ onNavigate }: DashboardProps) {
 
       <OnlineClassesCard />
 
+      {showWebNustUpdates ? <NustUpdatesCard onOpenGuide={() => onNavigate('guide')} /> : null}
+
+      <WebSocialLinksCards />
+
       <section className="grid gap-3 lg:grid-cols-3">
         {subjectStats.map((subject) => (
           <article key={subject.key} className="rounded-2xl border border-indigo-100 bg-white p-4 shadow-[0_10px_25px_rgba(98,113,202,0.11)]">
@@ -330,8 +335,6 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           className="h-2 bg-slate-200 [&>[data-slot=progress-indicator]]:bg-indigo-700"
         />
       </section>
-
-      {showWebNustUpdates ? <NustUpdatesCard onOpenGuide={() => onNavigate('guide')} /> : null}
 
       <section className="space-y-3">
         <div className="space-y-3">
