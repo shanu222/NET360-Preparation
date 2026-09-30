@@ -32,21 +32,21 @@ export function DemoModeBanner({ message, used }: { message: string; used?: bool
   );
 }
 
-type DemoState = 'new' | 'active' | 'used';
-
 type DemoOption = {
   service: DemoService;
   emoji: string;
   title: string;
   allowance: string;
   path: string;
-  state: DemoState;
+  eligible: boolean;
+  inProgress?: boolean;
   note?: string;
 };
 
 /**
  * Web-only header entry point for Demo Mode; shown to signed-in students.
- * Only services without active paid access are offered; each demo allowance is independent.
+ * A service is offered only while the user has no paid access to it and has not used its demo.
+ * Each service is independent; the button disappears once no service is eligible.
  */
 export function DemoModeButton() {
   const navigate = useNavigate();
@@ -59,54 +59,47 @@ export function DemoModeButton() {
   if (isNativeRuntime() || !user || !demo.enabled || !demo.loaded) return null;
   const paid = me?.paidServices;
 
-  const usageState = (used: boolean): DemoState => (used ? 'used' : 'new');
-  const options: DemoOption[] = [
-    !paid?.tests?.allowed && {
-      service: 'tests' as const,
+  const options = ([
+    {
+      service: 'tests',
       emoji: '📝',
       title: 'Tests',
       allowance: 'Try 1 test',
       path: '/tests',
-      state: usageState(demo.testUsed),
+      eligible: !paid?.tests?.allowed && !demo.testUsed,
     },
-    !paid?.preparation?.allowed && {
-      service: 'preparation' as const,
+    {
+      service: 'preparation',
       emoji: '📚',
       title: 'Preparation Material',
       allowance: 'Try 1 item',
       path: '/preparation',
-      state: usageState(demo.preparationUsed),
+      eligible: !paid?.preparation?.allowed && !demo.preparationUsed,
     },
-    !paid?.videos?.allowed && {
-      service: 'videos' as const,
+    {
+      service: 'videos',
       emoji: '🎥',
       title: 'Videos',
       allowance: 'Try 1 video',
       path: '/videos',
-      state: usageState(demo.videoUsed),
+      eligible: !paid?.videos?.allowed && !demo.videoUsed,
     },
-    !paid?.community?.allowed && {
-      service: 'community' as const,
+    {
+      service: 'community',
       emoji: '👥',
       title: 'Community',
       allowance: 'Try 1 day',
       path: '/community',
-      state: demo.communityActive ? 'active' as const : demo.communityExpired ? 'used' as const : 'new' as const,
+      eligible: !paid?.community?.allowed && !demo.communityExpired,
+      inProgress: demo.communityActive,
       note: demo.communityActive ? `${formatDemoTimeLeft(demo.communityMsLeft)} left` : undefined,
     },
-  ].filter(Boolean) as DemoOption[];
+  ] satisfies DemoOption[]).filter((option) => option.eligible);
 
   if (!options.length) return null;
 
-  const anyRemaining = options.some((option) => option.state !== 'used');
-
   const openOption = async (option: DemoOption) => {
     if (openingService) return;
-    if (option.state === 'used') {
-      setOpen(false);
-      navigate('/subscription');
-      return;
-    }
     setOpeningService(option.service);
     try {
       await demo.ensureStarted(option.service);
@@ -119,7 +112,7 @@ export function DemoModeButton() {
     }
   };
 
-  const actionLabel = (state: DemoState) => (state === 'used' ? 'Subscribe' : state === 'active' ? 'Continue' : 'Try Demo');
+  const actionLabel = (option: DemoOption) => (option.inProgress ? 'Continue' : 'Try Demo');
 
   return (
     <>
@@ -132,9 +125,7 @@ export function DemoModeButton() {
       >
         <FlaskConical className="h-4 w-4 sm:mr-1.5" />
         <span className="hidden sm:inline">Demo Mode</span>
-        {anyRemaining ? (
-          <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-900" aria-hidden="true" />
-        ) : null}
+        <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-900" aria-hidden="true" />
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
@@ -156,37 +147,27 @@ export function DemoModeButton() {
             <ul className="space-y-2.5">
               {options.map((option) => {
                 const busy = openingService === option.service;
-                const used = option.state === 'used';
                 return (
                   <li
                     key={option.service}
-                    className={`flex items-center gap-3 rounded-2xl border p-3 shadow-sm backdrop-blur-md transition ${
-                      used
-                        ? 'border-white/40 bg-white/35 dark:border-white/5 dark:bg-slate-800/30'
-                        : 'border-white/70 bg-white/55 hover:border-indigo-200 hover:bg-white/75 dark:border-white/10 dark:bg-slate-800/50 dark:hover:bg-slate-800/70'
-                    }`}
+                    className="flex items-center gap-3 rounded-2xl border border-white/70 bg-white/55 p-3 shadow-sm backdrop-blur-md transition hover:border-indigo-200 hover:bg-white/75 dark:border-white/10 dark:bg-slate-800/50 dark:hover:bg-slate-800/70"
                   >
                     <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/80 text-2xl shadow-inner dark:bg-slate-900/60" aria-hidden="true">
                       {option.emoji}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className={`block text-sm font-semibold ${used ? 'text-slate-500 dark:text-slate-400' : 'text-slate-900 dark:text-slate-50'}`}>
-                        {option.title}
-                      </span>
-                      <span className="block text-xs text-slate-500 dark:text-slate-400">
-                        {used ? 'Demo used' : option.note || option.allowance}
-                      </span>
+                      <span className="block text-sm font-semibold text-slate-900 dark:text-slate-50">{option.title}</span>
+                      <span className="block text-xs text-slate-500 dark:text-slate-400">{option.note || option.allowance}</span>
                     </span>
                     <Button
                       type="button"
                       size="sm"
-                      variant={used ? 'outline' : 'default'}
                       disabled={Boolean(openingService)}
-                      className={`shrink-0 rounded-xl ${used ? 'bg-white/60 dark:bg-slate-900/40' : 'bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-[0_8px_18px_rgba(79,70,229,0.28)] hover:from-indigo-700 hover:to-violet-600'}`}
+                      className="shrink-0 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-[0_8px_18px_rgba(79,70,229,0.28)] hover:from-indigo-700 hover:to-violet-600"
                       onClick={() => void openOption(option)}
-                      aria-label={`${actionLabel(option.state)}: ${option.title}`}
+                      aria-label={`${actionLabel(option)}: ${option.title}`}
                     >
-                      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : actionLabel(option.state)}
+                      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : actionLabel(option)}
                     </Button>
                   </li>
                 );
