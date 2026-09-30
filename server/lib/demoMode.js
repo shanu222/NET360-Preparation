@@ -1,7 +1,7 @@
 /**
  * Web Demo Mode: one test, one preparation item (topic/section test), one video, and 24 hours of Community.
- * State lives on the user document so it survives refreshes, logouts, and new devices.
- * Demo Mode can be started once per account and never resets.
+ * Each allowance is independent. State lives on the user document so it survives refreshes,
+ * logouts, and new devices, and it never resets.
  */
 
 export const DEMO_COMMUNITY_MS = 24 * 60 * 60 * 1000;
@@ -33,6 +33,7 @@ export function demoStatusPayload(userLike, now = Date.now()) {
     preparation: { used: Boolean(toMs(demo.preparationClaimedAt)), usedAt: toIso(demo.preparationClaimedAt) },
     videos: { used: Boolean(demo.videoId), videoId: String(demo.videoId || '') || null },
     community: {
+      started: Boolean(communityEndsMs),
       active: Boolean(startedAtMs && communityEndsMs > now),
       endsAt: toIso(demo.communityEndsAt),
       msRemaining: Math.max(0, communityEndsMs - now),
@@ -47,16 +48,21 @@ export function isPreparationDemoStart(body) {
   return mode === 'topic' && !testType;
 }
 
-export async function startDemoMode(UserModel, userId, now = new Date()) {
+/**
+ * Turns on Demo Mode (once per account). Each service's allowance is independent:
+ * the Community day only starts when the user starts the Community demo.
+ */
+export async function startDemoMode(UserModel, userId, { service = '', now = new Date() } = {}) {
   await UserModel.updateOne(
     { _id: userId, $or: [{ 'demoMode.startedAt': null }, { 'demoMode.startedAt': { $exists: false } }] },
-    {
-      $set: {
-        'demoMode.startedAt': now,
-        'demoMode.communityEndsAt': new Date(now.getTime() + DEMO_COMMUNITY_MS),
-      },
-    },
+    { $set: { 'demoMode.startedAt': now } },
   );
+  if (service === 'community') {
+    await UserModel.updateOne(
+      { _id: userId, $or: [{ 'demoMode.communityEndsAt': null }, { 'demoMode.communityEndsAt': { $exists: false } }] },
+      { $set: { 'demoMode.communityEndsAt': new Date(now.getTime() + DEMO_COMMUNITY_MS) } },
+    );
+  }
   return UserModel.findById(userId).select('demoMode').lean();
 }
 

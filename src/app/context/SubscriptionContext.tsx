@@ -122,7 +122,7 @@ export interface DemoModeState {
   tests: { used: boolean; usedAt: string | null };
   preparation: { used: boolean; usedAt: string | null };
   videos?: { used: boolean; videoId: string | null };
-  community: { active: boolean; endsAt: string | null; msRemaining: number };
+  community: { started?: boolean; active: boolean; endsAt: string | null; msRemaining: number };
 }
 
 const emptySurface: PremiumSurfaceState = {

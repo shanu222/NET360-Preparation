@@ -28,6 +28,8 @@ export function isDemoLimitError(error: unknown) {
   return (error as { code?: string } | null)?.code === 'DEMO_LIMIT_REACHED';
 }
 
+export type DemoService = 'tests' | 'preparation' | 'community' | 'videos';
+
 /** Web-only Demo Mode state; always inactive inside the native app. */
 export function useDemoMode() {
   const { token, user } = useAuth();
@@ -40,19 +42,26 @@ export function useDemoMode() {
   const communityEndsMs = state?.community.endsAt ? new Date(state.community.endsAt).getTime() : 0;
   const communityMsLeft = Math.max(0, communityEndsMs - (Date.now() + serverOffsetMs));
 
-  const start = useCallback(async () => {
+  const communityStarted = Boolean(communityEndsMs);
+
+  /** Starts the demo for one service; other services' allowances are not touched. */
+  const start = useCallback(async (service?: DemoService) => {
     setStarting(true);
     try {
-      await apiRequest('/api/demo/start', { method: 'POST', retryCount: 0 }, resolveSessionMarker(token));
+      await apiRequest(
+        '/api/demo/start',
+        { method: 'POST', retryCount: 0, body: JSON.stringify({ service: service || '' }) },
+        resolveSessionMarker(token),
+      );
       await refresh();
     } finally {
       setStarting(false);
     }
   }, [refresh, token]);
 
-  const ensureStarted = useCallback(async () => {
-    if (!started) await start();
-  }, [start, started]);
+  const ensureStarted = useCallback(async (service?: DemoService) => {
+    if (!started || (service === 'community' && !communityStarted)) await start(service);
+  }, [communityStarted, start, started]);
 
   return {
     enabled,
@@ -69,8 +78,9 @@ export function useDemoMode() {
     videoAvailable: started && !state?.videos?.used,
     videoUsed: started && Boolean(state?.videos?.used),
     demoVideoId: state?.videos?.videoId || null,
+    communityStarted: started && communityStarted,
     communityActive: started && communityMsLeft > 0,
-    communityExpired: started && communityMsLeft <= 0,
+    communityExpired: started && communityStarted && communityMsLeft <= 0,
     communityMsLeft,
   };
 }

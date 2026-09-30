@@ -14079,7 +14079,8 @@ app.post('/api/demo/start', authMiddleware, async (req, res) => {
     return;
   }
   try {
-    const updated = await startDemoMode(UserModel, req.user._id);
+    const service = String(req.body?.service || '').trim().toLowerCase();
+    const updated = await startDemoMode(UserModel, req.user._id, { service });
     res.json({ ok: true, demoMode: demoStatusPayload(updated) });
   } catch (error) {
     console.error('[demo/start] failed', error?.message || error);

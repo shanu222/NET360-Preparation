@@ -1,21 +1,13 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { BookOpen, ChevronRight, FileText, FlaskConical, Loader2, PlayCircle, Users } from 'lucide-react';
+import { FlaskConical, Loader2 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 import { useSubscription } from '../../context/SubscriptionContext';
-import { formatDemoTimeLeft, useDemoMode } from '../../lib/demoMode';
+import { formatDemoTimeLeft, useDemoMode, type DemoService } from '../../lib/demoMode';
 import { isNativeRuntime } from '../../lib/nativeDiagnostics';
 import { handleApiError } from '../../lib/userToast';
 import { Button } from '../ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog';
-
-type RowTone = 'ready' | 'used' | 'idle';
-
-const TONE_CLASS: Record<RowTone, string> = {
-  ready: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/50 dark:text-emerald-200',
-  used: 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
-  idle: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/50 dark:text-indigo-200',
-};
 
 export function DemoModeBanner({ message, used }: { message: string; used?: boolean }) {
   const navigate = useNavigate();
@@ -40,81 +32,94 @@ export function DemoModeBanner({ message, used }: { message: string; used?: bool
   );
 }
 
-/** Web-only header entry point for Demo Mode; shown to signed-in students only. */
+type DemoState = 'new' | 'active' | 'used';
+
+type DemoOption = {
+  service: DemoService;
+  emoji: string;
+  title: string;
+  allowance: string;
+  path: string;
+  state: DemoState;
+  note?: string;
+};
+
+/**
+ * Web-only header entry point for Demo Mode; shown to signed-in students.
+ * Only services without active paid access are offered; each demo allowance is independent.
+ */
 export function DemoModeButton() {
   const navigate = useNavigate();
   const { user } = useAuth();
   const { me } = useSubscription();
   const demo = useDemoMode();
   const [open, setOpen] = useState(false);
-  const [openingPath, setOpeningPath] = useState<string | null>(null);
+  const [openingService, setOpeningService] = useState<DemoService | null>(null);
 
   if (isNativeRuntime() || !user || !demo.enabled || !demo.loaded) return null;
   const paid = me?.paidServices;
-  if (paid?.tests?.allowed && paid?.preparation?.allowed && paid?.community?.allowed && paid?.videos?.allowed) return null;
 
-  const anyRemaining = demo.testAvailable || demo.preparationAvailable || demo.videoAvailable || demo.communityActive;
-
-  const usageStatus = (subscribed: boolean, available: boolean): { label: string; tone: RowTone } => {
-    if (subscribed) return { label: 'Subscribed', tone: 'ready' };
-    if (!demo.started) return { label: 'Included', tone: 'idle' };
-    return available ? { label: 'Available', tone: 'ready' } : { label: 'Used', tone: 'used' };
-  };
-
-  const rows = [
-    {
-      key: 'tests',
-      icon: FileText,
+  const usageState = (used: boolean): DemoState => (used ? 'used' : 'new');
+  const options: DemoOption[] = [
+    !paid?.tests?.allowed && {
+      service: 'tests' as const,
+      emoji: '📝',
       title: 'Tests',
-      detail: '1 test from any NET type',
-      status: usageStatus(Boolean(paid?.tests?.allowed), demo.testAvailable),
+      allowance: 'Try 1 test',
       path: '/tests',
+      state: usageState(demo.testUsed),
     },
-    {
-      key: 'preparation',
-      icon: BookOpen,
+    !paid?.preparation?.allowed && {
+      service: 'preparation' as const,
+      emoji: '📚',
       title: 'Preparation Material',
-      detail: '1 item from any subject',
-      status: usageStatus(Boolean(paid?.preparation?.allowed), demo.preparationAvailable),
+      allowance: 'Try 1 item',
       path: '/preparation',
+      state: usageState(demo.preparationUsed),
     },
-    {
-      key: 'community',
-      icon: Users,
-      title: 'Community',
-      detail: '1 day of access',
-      status: paid?.community?.allowed
-        ? { label: 'Subscribed', tone: 'ready' as const }
-        : !demo.started
-          ? { label: 'Included', tone: 'idle' as const }
-          : demo.communityActive
-            ? { label: `${formatDemoTimeLeft(demo.communityMsLeft)} left`, tone: 'ready' as const }
-            : { label: 'Expired', tone: 'used' as const },
-      path: '/community',
-    },
-    {
-      key: 'videos',
-      icon: PlayCircle,
+    !paid?.videos?.allowed && {
+      service: 'videos' as const,
+      emoji: '🎥',
       title: 'Videos',
-      detail: '1 video lecture',
-      status: usageStatus(Boolean(paid?.videos?.allowed), demo.videoAvailable),
+      allowance: 'Try 1 video',
       path: '/videos',
+      state: usageState(demo.videoUsed),
     },
-  ];
+    !paid?.community?.allowed && {
+      service: 'community' as const,
+      emoji: '👥',
+      title: 'Community',
+      allowance: 'Try 1 day',
+      path: '/community',
+      state: demo.communityActive ? 'active' as const : demo.communityExpired ? 'used' as const : 'new' as const,
+      note: demo.communityActive ? `${formatDemoTimeLeft(demo.communityMsLeft)} left` : undefined,
+    },
+  ].filter(Boolean) as DemoOption[];
 
-  const openService = async (path: string) => {
-    if (openingPath) return;
-    setOpeningPath(path);
-    try {
-      await demo.ensureStarted();
+  if (!options.length) return null;
+
+  const anyRemaining = options.some((option) => option.state !== 'used');
+
+  const openOption = async (option: DemoOption) => {
+    if (openingService) return;
+    if (option.state === 'used') {
       setOpen(false);
-      navigate(path);
+      navigate('/subscription');
+      return;
+    }
+    setOpeningService(option.service);
+    try {
+      await demo.ensureStarted(option.service);
+      setOpen(false);
+      navigate(option.path);
     } catch (error) {
-      handleApiError(error, 'Could not start Demo Mode.');
+      handleApiError(error, 'Could not start the demo.');
     } finally {
-      setOpeningPath(null);
+      setOpeningService(null);
     }
   };
+
+  const actionLabel = (state: DemoState) => (state === 'used' ? 'Subscribe' : state === 'active' ? 'Continue' : 'Try Demo');
 
   return (
     <>
@@ -127,71 +132,71 @@ export function DemoModeButton() {
       >
         <FlaskConical className="h-4 w-4 sm:mr-1.5" />
         <span className="hidden sm:inline">Demo Mode</span>
-        {demo.started && anyRemaining ? (
+        {anyRemaining ? (
           <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-900" aria-hidden="true" />
         ) : null}
       </Button>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <FlaskConical className="h-5 w-5 text-amber-600" />
-              Demo Mode
-            </DialogTitle>
-            <DialogDescription>
-              {demo.started
-                ? anyRemaining
-                  ? 'Choose a service to continue your demo. Your demo usage is saved to your account.'
-                  : 'You have used all of your demo access. Subscribe to keep going.'
-                : 'Choose a service to try it free. Demo Mode can be used once per account, and Community access lasts 1 day from when you start.'}
-            </DialogDescription>
-          </DialogHeader>
+        <DialogContent className="max-w-md overflow-hidden rounded-3xl border-white/50 bg-white/65 p-0 shadow-[0_30px_70px_rgba(59,67,146,0.28)] backdrop-blur-2xl dark:border-white/10 dark:bg-slate-900/65 sm:max-w-md md:max-w-md">
+          <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(129,140,248,0.28),transparent_55%),radial-gradient(circle_at_bottom_right,rgba(251,191,36,0.2),transparent_50%)]" />
+          <div className="relative space-y-5 p-6">
+            <DialogHeader className="space-y-1 text-left">
+              <DialogTitle className="flex items-center gap-2 text-xl text-indigo-950 dark:text-white">
+                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-br from-amber-300 to-orange-400 text-white shadow-md">
+                  <FlaskConical className="h-5 w-5" />
+                </span>
+                Try Demo
+              </DialogTitle>
+              <DialogDescription className="text-slate-600 dark:text-slate-300">
+                Experience NET360 before subscribing
+              </DialogDescription>
+            </DialogHeader>
 
-          <ul className="space-y-2">
-            {rows.map((row) => {
-              const Icon = row.icon;
-              const busy = openingPath === row.path;
-              return (
-                <li key={row.key}>
-                  <button
-                    type="button"
-                    disabled={Boolean(openingPath)}
-                    onClick={() => void openService(row.path)}
-                    className="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-3 text-left transition hover:border-indigo-300 hover:bg-indigo-50/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:opacity-70 dark:border-slate-700 dark:hover:border-indigo-500/60 dark:hover:bg-indigo-950/30"
+            <ul className="space-y-2.5">
+              {options.map((option) => {
+                const busy = openingService === option.service;
+                const used = option.state === 'used';
+                return (
+                  <li
+                    key={option.service}
+                    className={`flex items-center gap-3 rounded-2xl border p-3 shadow-sm backdrop-blur-md transition ${
+                      used
+                        ? 'border-white/40 bg-white/35 dark:border-white/5 dark:bg-slate-800/30'
+                        : 'border-white/70 bg-white/55 hover:border-indigo-200 hover:bg-white/75 dark:border-white/10 dark:bg-slate-800/50 dark:hover:bg-slate-800/70'
+                    }`}
                   >
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-indigo-600/10 text-indigo-700 dark:bg-indigo-500/20 dark:text-indigo-200">
-                      <Icon className="h-4 w-4" />
+                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/80 text-2xl shadow-inner dark:bg-slate-900/60" aria-hidden="true">
+                      {option.emoji}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block text-sm font-semibold text-slate-900 dark:text-slate-50">{row.title}</span>
-                      <span className="block text-xs text-slate-500 dark:text-slate-400">{row.detail}</span>
+                      <span className={`block text-sm font-semibold ${used ? 'text-slate-500 dark:text-slate-400' : 'text-slate-900 dark:text-slate-50'}`}>
+                        {option.title}
+                      </span>
+                      <span className="block text-xs text-slate-500 dark:text-slate-400">
+                        {used ? 'Demo used' : option.note || option.allowance}
+                      </span>
                     </span>
-                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold ${TONE_CLASS[row.status.tone]}`}>
-                      {row.status.label}
-                    </span>
-                    {busy ? (
-                      <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate-400" />
-                    ) : (
-                      <ChevronRight className="h-4 w-4 shrink-0 text-slate-400" />
-                    )}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={used ? 'outline' : 'default'}
+                      disabled={Boolean(openingService)}
+                      className={`shrink-0 rounded-xl ${used ? 'bg-white/60 dark:bg-slate-900/40' : 'bg-gradient-to-r from-indigo-600 to-violet-500 text-white shadow-[0_8px_18px_rgba(79,70,229,0.28)] hover:from-indigo-700 hover:to-violet-600'}`}
+                      onClick={() => void openOption(option)}
+                      aria-label={`${actionLabel(option.state)}: ${option.title}`}
+                    >
+                      {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : actionLabel(option.state)}
+                    </Button>
+                  </li>
+                );
+              })}
+            </ul>
 
-          <Button
-            type="button"
-            variant="outline"
-            className="w-full rounded-xl"
-            onClick={() => {
-              setOpen(false);
-              navigate('/subscription');
-            }}
-          >
-            View subscription plans
-          </Button>
+            <p className="text-center text-xs text-slate-500 dark:text-slate-400">
+              Each demo is separate and can be used once. Community lasts 1 day from when you start it.
+            </p>
+          </div>
         </DialogContent>
       </Dialog>
     </>
