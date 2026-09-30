@@ -862,6 +862,8 @@ function emitStudentPresenceEvent(action, userId, record = null) {
     data.status = record.status;
     data.activity = record.activity;
     data.studyingSubject = record.studyingSubject;
+    data.displayName = String(record.displayName || '');
+    data.username = String(record.username || '');
     data.lastSeenAt = new Date(record.lastSeen).toISOString();
   }
   broadcastSyncEvent({ role: 'student', event: 'sync', data });
@@ -888,11 +890,12 @@ async function loadPresenceIdentity(userId) {
   try {
     const [u, p] = await Promise.all([
       UserModel.findById(uid).select('firstName lastName').lean(),
-      CommunityProfileModel.findOne({ userId: uid }).select('username').lean(),
+      CommunityProfileModel.findOne({ userId: uid }).select('username hideOnlineStatus').lean(),
     ]);
     const identity = {
       displayName: [u?.firstName, u?.lastName].filter(Boolean).join(' ').trim(),
       username: String(p?.username || ''),
+      hideOnlineStatus: Boolean(p?.hideOnlineStatus),
     };
     studentPresenceIdentityByUser.set(uid, identity);
     return identity;
@@ -905,15 +908,23 @@ async function touchStudentPresence(userId, patch = {}) {
   const uid = String(userId || '').trim();
   if (!uid) return null;
   try {
-    const identity = patch.displayName || patch.username ? {} : await loadPresenceIdentity(uid);
-    const { record, previous } = await upsertPresence(uid, { ...identity, ...patch });
+    const identity = patch.displayName || patch.username ? (studentPresenceIdentityByUser.get(uid) || {}) : await loadPresenceIdentity(uid);
+    const { record, previous } = await upsertPresence(uid, {
+      displayName: identity.displayName,
+      username: identity.username,
+      ...patch,
+    });
     persistStudentLastSeen(uid);
+    // Students who hide online status stay in Redis for their own session, but are not announced.
+    if (identity.hideOnlineStatus) return record;
     if (!previous) {
       emitStudentPresenceEvent('online', uid, record);
     } else if (
       previous.status !== record.status
       || previous.activity !== record.activity
       || previous.studyingSubject !== record.studyingSubject
+      || previous.displayName !== record.displayName
+      || previous.username !== record.username
     ) {
       emitStudentPresenceEvent('update', uid, record);
     }
@@ -2385,7 +2396,19 @@ function sanitizeSupportClientMessageId(value) {
  * sync; neither is wanted per chat message.
  * @param {'support.message'|'support.message.updated'} type
  */
-function emitSupportChatEvent(type, message, { clientMessageId = '' } = {}) {
+function supportConversationIdentity(user) {
+  if (!user) return {};
+  const userName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+  const identity = {};
+  if (userName) identity.userName = userName;
+  const email = String(user.email || '').trim();
+  const mobileNumber = String(user.phone || '').trim();
+  if (email) identity.email = email;
+  if (mobileNumber) identity.mobileNumber = mobileNumber;
+  return identity;
+}
+
+function emitSupportChatEvent(type, message, { clientMessageId = '', identity = null } = {}) {
   const conversationId = String(message.userId || '');
   const data = {
     type,
@@ -2396,6 +2419,9 @@ function emitSupportChatEvent(type, message, { clientMessageId = '' } = {}) {
     senderRole: String(message.senderRole || 'user'),
     message,
     ...(clientMessageId ? { clientMessageId } : {}),
+    ...(identity?.userName ? { userName: String(identity.userName) } : {}),
+    ...(identity?.email ? { email: String(identity.email) } : {}),
+    ...(identity?.mobileNumber ? { mobileNumber: String(identity.mobileNumber) } : {}),
   };
   try {
     if (data.userId) emitSocketSyncToStudentUser(data.userId, data);
@@ -10861,6 +10887,7 @@ app.put('/api/community/profile', ...studentPremiumSurface, async (req, res) => 
   if (Object.prototype.hasOwnProperty.call(req.body || {}, 'bio')) {
     profile.bio = String(req.body?.bio || '').trim().slice(0, 280);
   }
+  const wasHiddenFromRoster = Boolean(profile.hideOnlineStatus);
   if (Object.prototype.hasOwnProperty.call(req.body || {}, 'hideOnlineStatus')) {
     profile.hideOnlineStatus = Boolean(req.body?.hideOnlineStatus);
   }
@@ -10872,6 +10899,16 @@ app.put('/api/community/profile', ...studentPremiumSurface, async (req, res) => 
   }
 
   await profile.save();
+  const rosterUserId = String(req.user._id);
+  studentPresenceIdentityByUser.delete(rosterUserId);
+  if (Boolean(profile.hideOnlineStatus) !== wasHiddenFromRoster) {
+    if (profile.hideOnlineStatus) {
+      emitStudentPresenceEvent('offline', rosterUserId);
+    } else {
+      const live = (await listPresence()).find((row) => String(row.userId) === rosterUserId);
+      if (live) emitStudentPresenceEvent('online', rosterUserId, live);
+    }
+  }
   res.json({ profile: serializeCommunityUser({ user: req.user, profile, includePrivatePicture: true }) });
 });
 
@@ -10960,6 +10997,12 @@ app.post('/api/community/presence/ping', ...studentPremiumSurface, async (req, r
 app.get('/api/community/users/search', ...studentPremiumSurface, async (req, res) => {
   if (await communityGuard(req, res)) return;
   const q = String(req.query.q || '').trim().toLowerCase();
+  const roster = String(req.query.roster || '') === '1';
+  // Discover Students must pass a query. An empty lookup is only the quiz-opponent roster.
+  if (!q && !roster) {
+    res.json({ users: [] });
+    return;
+  }
   const me = String(req.user._id);
 
   const queryRegex = q ? containsRegex(q, 50) : null;
@@ -13025,7 +13068,10 @@ app.post('/api/support-chat/messages', authMiddleware, async (req, res) => {
   });
 
   const serialized = serializeSupportMessage(created);
-  emitSupportChatEvent('support.message', serializeSupportMessageForEvent(created), { clientMessageId });
+  emitSupportChatEvent('support.message', serializeSupportMessageForEvent(created), {
+    clientMessageId,
+    identity: supportConversationIdentity(req.user),
+  });
   void notifyAdminsOfSupportMessage(req.user, serialized);
 
   res.status(201).json({

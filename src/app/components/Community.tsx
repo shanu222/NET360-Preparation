@@ -512,6 +512,29 @@ function displayName(user: CommunityUser) {
   return full || user.username || 'Student';
 }
 
+function onlineRowFromPresenceEvent(uid: string, parsed: {
+  status?: string;
+  activity?: string;
+  studyingSubject?: string;
+  displayName?: string;
+  username?: string;
+  lastSeenAt?: string;
+}): OnlineStudentRow {
+  const parts = String(parsed.displayName || '').trim().split(/\s+/).filter(Boolean);
+  return {
+    id: uid,
+    userId: uid,
+    firstName: parts[0] || '',
+    lastName: parts.slice(1).join(' '),
+    username: String(parsed.username || ''),
+    presenceStatus: parsed.status === 'away' ? 'away' : 'online',
+    activity: parsed.activity !== undefined ? String(parsed.activity) : '',
+    studyingSubject: parsed.studyingSubject !== undefined ? String(parsed.studyingSubject) : '',
+    lastSeenAt: parsed.lastSeenAt || null,
+    connectionStatus: 'none',
+  };
+}
+
 function canSendConnectionRequest(status?: string) {
   return !status || status === 'none';
 }
@@ -602,6 +625,7 @@ function CommunityInner() {
 
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+  const [discoverSearched, setDiscoverSearched] = useState(false);
   const [activeTab, setActiveTab] = useState('discover-students');
   const [leaderboardPeriod, setLeaderboardPeriod] = useState<'weekly' | 'monthly'>('weekly');
 
@@ -635,6 +659,7 @@ function CommunityInner() {
   const [interestsInput, setInterestsInput] = useState('');
   const [onlineStudents, setOnlineStudents] = useState<OnlineStudentRow[]>([]);
   const [presenceLoading, setPresenceLoading] = useState(false);
+  const [presenceResolved, setPresenceResolved] = useState(false);
   const [remoteTyping, setRemoteTyping] = useState(false);
   const [studyingSubjectPing, setStudyingSubjectPing] = useState('');
   /** True while the shared realtime socket is not connected (drives the "Reconnecting…" badge + faster fallback polling). */
@@ -725,7 +750,8 @@ function CommunityInner() {
   const inFlightGetRef = useRef<Map<string, Promise<unknown>>>(new Map());
   const refreshInFlightRef = useRef<Promise<void> | null>(null);
   const refreshQueuedRef = useRef(false);
-  const searchDebounceRef = useRef<number | null>(null);
+  const submittedDiscoverQueryRef = useRef('');
+  const quizRosterLoadedRef = useRef(false);
   const messageFileInputRef = useRef<HTMLInputElement | null>(null);
   const voiceRecorderRef = useRef<MediaRecorder | null>(null);
   const voiceStreamRef = useRef<MediaStream | null>(null);
@@ -922,6 +948,7 @@ function CommunityInner() {
       const selfId = String(user?.id || '');
       const others = (payload.online || []).filter((row) => !isOwnCommunityRow(row, selfId));
       setOnlineStudents((prev) => mergePresenceRoster(prev, others));
+      setPresenceResolved(true);
     } catch {
       // Keep the last known roster; a transient failure must not blank the list.
     } finally {
@@ -1412,6 +1439,8 @@ function CommunityInner() {
       status?: string;
       activity?: string;
       studyingSubject?: string;
+      displayName?: string;
+      username?: string;
       lastSeenAt?: string;
       message?: MessageRow;
     }) => {
@@ -1444,17 +1473,32 @@ function CommunityInner() {
           return;
         }
         if (parsed.action === 'update' && uid) {
-          setOnlineStudents((prev) => prev.map((row) => {
-            if (String(row.id) !== uid && String(row.userId) !== uid) return row;
-            return {
-              ...row,
-              presenceStatus: parsed.status === 'away' ? 'away' : 'online',
-              activity: parsed.activity !== undefined ? String(parsed.activity) : row.activity,
-              studyingSubject: parsed.studyingSubject !== undefined ? String(parsed.studyingSubject) : row.studyingSubject,
-              lastSeenAt: parsed.lastSeenAt || row.lastSeenAt,
-            };
-          }));
+          let known = false;
+          setOnlineStudents((prev) => {
+            known = prev.some((row) => String(row.id) === uid || String(row.userId) === uid);
+            if (!known) return prev;
+            return prev.map((row) => {
+              if (String(row.id) !== uid && String(row.userId) !== uid) return row;
+              const named = parsed.displayName ? onlineRowFromPresenceEvent(uid, parsed) : null;
+              return {
+                ...row,
+                ...(named ? { firstName: named.firstName || row.firstName, lastName: named.lastName || row.lastName, username: named.username || row.username } : {}),
+                presenceStatus: parsed.status === 'away' ? 'away' : 'online',
+                activity: parsed.activity !== undefined ? String(parsed.activity) : row.activity,
+                studyingSubject: parsed.studyingSubject !== undefined ? String(parsed.studyingSubject) : row.studyingSubject,
+                lastSeenAt: parsed.lastSeenAt || row.lastSeenAt,
+              };
+            });
+          });
+          if (!known) schedulePresenceReconcile(0);
           return;
+        }
+        if (parsed.action === 'online' && uid) {
+          setOnlineStudents((prev) => (
+            prev.some((row) => String(row.id) === uid || String(row.userId) === uid)
+              ? prev
+              : [onlineRowFromPresenceEvent(uid, parsed), ...prev]
+          ));
         }
         schedulePresenceReconcile(0);
         return;
@@ -1714,17 +1758,17 @@ function CommunityInner() {
 
   const searchUsers = useCallback(async (query = searchQuery, force = false, silent = false) => {
     if (!token) return;
+    const trimmed = String(query || '').trim();
+    if (!trimmed) return;
+    submittedDiscoverQueryRef.current = trimmed;
     setSearchLoading(true);
     try {
-      const trimmed = String(query || '').trim();
       const payload = await requestCached<{ users: Array<CommunityUser & { connectionStatus?: string }> }>(
         `/api/community/users/search?q=${encodeURIComponent(trimmed)}`,
         { force, ttlMs: 30_000 },
       );
       setSearchResults(payload.users || []);
-      if (!trimmed) {
-        setAllCommunityUsers(payload.users || []);
-      }
+      setDiscoverSearched(true);
     } catch (error) {
       if (!silent) {
         handleApiError(error, 'Could not search users.');
@@ -1735,19 +1779,20 @@ function CommunityInner() {
   }, [token, requestCached, searchQuery]);
 
   useEffect(() => {
-    if (!token) return;
-    if (searchDebounceRef.current) {
-      window.clearTimeout(searchDebounceRef.current);
-    }
-    searchDebounceRef.current = window.setTimeout(() => {
-      void searchUsers(searchQuery, false, true);
-    }, 320);
+    if (!token || activeTab !== 'quiz-battles' || quizRosterLoadedRef.current) return;
+    let cancelled = false;
+    void requestCached<{ users: Array<CommunityUser & { connectionStatus?: string }> }>(
+      '/api/community/users/search?roster=1',
+      { ttlMs: 60_000 },
+    ).then((payload) => {
+      if (cancelled) return;
+      quizRosterLoadedRef.current = true;
+      setAllCommunityUsers(payload.users || []);
+    }).catch(() => undefined);
     return () => {
-      if (searchDebounceRef.current) {
-        window.clearTimeout(searchDebounceRef.current);
-      }
+      cancelled = true;
     };
-  }, [token, searchQuery, searchUsers]);
+  }, [token, activeTab, requestCached]);
 
   const connectingUserIdsRef = useRef<Set<string>>(new Set());
   const sendConnectionRequest = async (toUserId: string) => {
@@ -1778,7 +1823,11 @@ function CommunityInner() {
         row.id === toUserId ? { ...row, connectionStatus: 'pending-sent' } : row
       )));
       invalidateCommunityCache('/api/community');
-      await Promise.all([refreshCommunity(true), searchUsers(searchQuery, true, true)]);
+      const submittedQuery = submittedDiscoverQueryRef.current;
+      await Promise.all([
+        refreshCommunity(true),
+        submittedQuery ? searchUsers(submittedQuery, true, true) : Promise.resolve(),
+      ]);
     } catch (error) {
       handleApiError(error, 'Could not send request.');
     } finally {
@@ -2481,7 +2530,7 @@ function CommunityInner() {
                   );
                 })}
               </div>
-              {!onlineStudents.some((s) => !isOwnCommunityRow(s, String(user.id))) && !presenceLoading ? (
+              {presenceResolved && !onlineStudents.some((s) => !isOwnCommunityRow(s, String(user.id))) && !presenceLoading ? (
                 <div className="rounded-xl border border-dashed p-8 text-center">
                   <p className="text-sm font-medium text-slate-800 dark:text-slate-100">No other students are currently online.</p>
                 </div>
@@ -2683,18 +2732,28 @@ function CommunityInner() {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex flex-col gap-2 sm:flex-row">
-                  <Input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search by name, username, email, city" />
-                  <Button variant="outline" className="w-full sm:w-auto" onClick={() => void searchUsers(searchQuery, true)}>
-                    {searchLoading ? 'Searching...' : 'Search'}
+                  <Input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search by name, username, email, city"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        void searchUsers(searchQuery, true);
+                      }
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full sm:w-auto"
+                    disabled={searchLoading || !searchQuery.trim()}
+                    onClick={() => void searchUsers(searchQuery, true)}
+                  >
+                    Search
                   </Button>
                 </div>
                 <div className="space-y-2 max-h-[320px] overflow-auto">
-                  {searchLoading && !searchResults.length ? (
-                    <p className="py-3 text-center text-xs text-muted-foreground">Searching…</p>
-                  ) : null}
-                  {searchLoading && searchResults.length ? (
-                    <p className="py-1 text-center text-[11px] text-muted-foreground">Updating results…</p>
-                  ) : null}
                   {searchResults.map((result) => (
                     <div key={result.id} className="rounded-lg border p-3">
                       <div className="flex items-start gap-2">
@@ -2738,7 +2797,9 @@ function CommunityInner() {
                       </div>
                     </div>
                   ))}
-                  {!searchLoading && !searchResults.length ? (
+                  {!discoverSearched ? (
+                    <p className="text-xs text-muted-foreground">Enter a name or letter, then click Search.</p>
+                  ) : !searchLoading && !searchResults.length ? (
                     <p className="text-xs text-muted-foreground">No students found.</p>
                   ) : null}
                 </div>

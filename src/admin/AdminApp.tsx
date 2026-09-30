@@ -1368,6 +1368,9 @@ interface AdminSupportRealtimeEvent {
   senderRole?: string;
   message?: AdminSupportMessage;
   clientMessageId?: string;
+  userName?: string;
+  email?: string;
+  mobileNumber?: string;
   /** support.typing */
   from?: 'user' | 'admin' | string;
   typing?: boolean;
@@ -1449,6 +1452,36 @@ function touchSupportConversation(
   };
   const without = index >= 0 ? [...list.slice(0, index), ...list.slice(index + 1)] : list;
   return [updated, ...without];
+}
+
+/** Keep a conversation preview that arrived over the socket if a list fetch is slightly older. */
+function mergeSupportConversationSnapshots(
+  previous: AdminSupportConversation[],
+  incoming: AdminSupportConversation[],
+): AdminSupportConversation[] {
+  const byId = new Map(incoming.map((row) => [row.userId, row]));
+  const now = Date.now();
+  for (const row of previous) {
+    const remote = byId.get(row.userId);
+    const localTs = new Date(row.lastMessageAt || 0).getTime();
+    if (!remote) {
+      if (localTs && now - localTs < 20_000) byId.set(row.userId, row);
+      continue;
+    }
+    const remoteTs = new Date(remote.lastMessageAt || 0).getTime();
+    if (localTs > remoteTs) {
+      byId.set(row.userId, {
+        ...remote,
+        lastMessageText: row.lastMessageText || remote.lastMessageText,
+        lastMessageAt: row.lastMessageAt,
+        unreadForAdmin: Math.max(Number(row.unreadForAdmin || 0), Number(remote.unreadForAdmin || 0)),
+        userName: remote.userName && remote.userName !== 'Student' ? remote.userName : (row.userName || remote.userName),
+      });
+    }
+  }
+  return Array.from(byId.values()).sort((a, b) => (
+    new Date(b.lastMessageAt || 0).getTime() - new Date(a.lastMessageAt || 0).getTime()
+  ));
 }
 
 interface LoginUser {
@@ -4591,7 +4624,18 @@ export default function AdminApp() {
       // The admin may have switched threads while this request was in flight.
       if (selectedSupportUserIdRef.current !== userId) return;
       setActiveSupportUser(payload.user || null);
-      setSupportMessages(sortAdminSupportMessages(payload.messages || []));
+      setSupportMessages((prev) => {
+        const incoming = payload.messages || [];
+        const ids = new Set(incoming.map((row) => String(row.id || '')));
+        const now = Date.now();
+        const extras = prev.filter((row) => {
+          const id = String(row.id || '');
+          if (!id || ids.has(id)) return false;
+          const ts = new Date(row.createdAt || 0).getTime();
+          return ts > 0 && now - ts < 20_000;
+        });
+        return sortAdminSupportMessages([...incoming, ...extras]);
+      });
       supportThreadLoadedForRef.current = userId;
       setSupportConversations((prev) => prev.map((row) => (
         row.userId === userId
@@ -4610,7 +4654,7 @@ export default function AdminApp() {
     try {
       const payload = await apiRequest<{ conversations: AdminSupportConversation[] }>('/api/admin/support-chat/conversations', {}, activeToken);
       if (Array.isArray(payload.conversations)) {
-        setSupportConversations(payload.conversations);
+        setSupportConversations((prev) => mergeSupportConversationSnapshots(prev, payload.conversations));
       }
     } catch (error) {
       const status = Number((error as { status?: number } | null)?.status || 0);
@@ -4902,8 +4946,9 @@ export default function AdminApp() {
   // Realtime support chat: ONE shared Socket.IO connection for the admin panel
   // (lib/realtimeSocket.ts). The API emits `support.message` / `support.message.updated`
   // `sync` events to every connected admin; the list and the open thread update in place.
+  // Connect as soon as the admin token exists — do not wait for the rest of the panel bootstrap.
   useEffect(() => {
-    if (!authToken || !ready) return;
+    if (!authToken) return;
 
     let closed = false;
     const socket = acquireRealtimeSocket('admin');
@@ -4948,11 +4993,17 @@ export default function AdminApp() {
       if (type === 'support.message') {
         const fromStudent = String(message.senderRole || event.senderRole || '') === 'user';
         const known = supportConversationsRef.current.some((row) => row.userId === userId);
+        const identity: Partial<AdminSupportConversation> = {
+          ...(event.userName ? { userName: String(event.userName) } : {}),
+          ...(event.email ? { email: String(event.email) } : {}),
+          ...(event.mobileNumber ? { mobileNumber: String(event.mobileNumber) } : {}),
+        };
         setSupportConversations((prev) => touchSupportConversation(
           prev,
           userId,
           message,
           fromStudent && !isSelectedThread ? 1 : 0,
+          identity,
         ));
         if (!known) scheduleSupportResync(0);
       }
@@ -5012,7 +5063,7 @@ export default function AdminApp() {
       setSupportTypingUserId('');
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authToken, ready]);
+  }, [authToken]);
 
   // Bounded fallback reconcile: 20s while the realtime channel is down, otherwise a quiet
   // once-a-minute list refresh (replaces the previous unconditional 5s list + thread polling).

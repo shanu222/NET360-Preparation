@@ -2816,6 +2816,10 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
   if (url.pathname === '/api/community/users/search' && method === 'GET') {
     const { db, user } = requireAuth(token);
     const q = String(url.searchParams.get('q') || '').toLowerCase().trim();
+    const roster = url.searchParams.get('roster') === '1';
+    if (!q && !roster) {
+      return { users: [] } as T;
+    }
     const me = user.id;
 
     const rows = db.users
