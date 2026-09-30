@@ -19,6 +19,7 @@ import { getProgramCategoryKey, getRequiredSubjectsForTargetProgram } from '../l
 import { useSubscription, formatCountdown } from '../context/SubscriptionContext';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { OnlineClassesCard } from './dashboard/OnlineClassesCard';
+import { NustUpdatesCard } from './dashboard/NustUpdatesCard';
 import { AndroidSocialLinksCards } from './dashboard/SocialLinksCards';
 import { isNativeAndroidRuntime } from '../lib/nativeForeground';
 import { useAndroidNestedScreen } from '../lib/androidNestedScreen';
@@ -259,24 +260,25 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             <PremiumCountdownBadge />
           </div>
           <div className="grid grid-cols-2 gap-2">
-            <article className="rounded-2xl bg-white p-3 shadow-sm dark:bg-[#1a2238]">
-              <p className="text-2xl font-semibold text-slate-900 dark:text-slate-50">{metrics.attemptedQuestions.toLocaleString()}</p>
-              <p className="text-xs text-slate-500 dark:text-slate-300">Questions</p>
+            <article className="net360-home-stat rounded-2xl p-3">
+              <p className="text-2xl font-semibold">{metrics.attemptedQuestions.toLocaleString()}</p>
+              <p className="text-xs">Questions</p>
             </article>
-            <article className="rounded-2xl bg-white p-3 shadow-sm dark:bg-[#1a2238]">
-              <p className="text-2xl font-semibold text-slate-900 dark:text-slate-50">{metrics.accuracy}%</p>
-              <p className="text-xs text-slate-500 dark:text-slate-300">Accuracy</p>
+            <article className="net360-home-stat rounded-2xl p-3">
+              <p className="text-2xl font-semibold">{metrics.accuracy}%</p>
+              <p className="text-xs">Accuracy</p>
             </article>
-            <article className="rounded-2xl bg-white p-3 shadow-sm dark:bg-[#1a2238]">
-              <p className="text-2xl font-semibold text-slate-900 dark:text-slate-50">{metrics.streakDays}</p>
-              <p className="text-xs text-slate-500 dark:text-slate-300">Day streak</p>
+            <article className="net360-home-stat rounded-2xl p-3">
+              <p className="text-2xl font-semibold">{metrics.streakDays}</p>
+              <p className="text-xs">Day streak</p>
             </article>
-            <article className="rounded-2xl bg-white p-3 shadow-sm dark:bg-[#1a2238]">
-              <p className="text-2xl font-semibold text-slate-900 dark:text-slate-50">{metrics.overallProgress}%</p>
-              <p className="text-xs text-slate-500 dark:text-slate-300">Progress</p>
+            <article className="net360-home-stat rounded-2xl p-3">
+              <p className="text-2xl font-semibold">{metrics.overallProgress}%</p>
+              <p className="text-xs">Progress</p>
             </article>
           </div>
           <OnlineClassesCard />
+          <NustUpdatesCard onOpenGuide={() => onNavigate('guide')} />
           <AndroidSocialLinksCards />
         </section>
       ) : null}
@@ -389,7 +391,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       </section>
       ) : null}
 
-      {showHome ? (
+      {showHome && !androidApp ? (
       <section className="space-y-3">
         <div className="space-y-3">
           <h3 className="px-1 text-xl text-indigo-950">Quick Actions</h3>

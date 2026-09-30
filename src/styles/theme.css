@@ -2299,10 +2299,10 @@ html.dark.native-android .net360-header-actions {
 html.native-android:not(.dark) .net360-page [data-slot='card']:not(:has(.rounded-xl)):not(:has(.rounded-2xl)),
 html.native-android:not(.dark) .net360-page [class*='from-white'].rounded-xl {
   border-radius: 16px !important;
-  border: 1px solid #e6eaf2 !important;
+  border: 1.5px solid #818cf8 !important;
   background: #ffffff !important;
   background-image: none !important;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 20px rgba(15, 23, 42, 0.05) !important;
+  box-shadow: 0 8px 20px rgba(79, 70, 229, 0.1) !important;
 }
 
 html.native-android .net360-page [data-slot='button']:not(.border):not([class*='hover:bg-accent']):not([class*='underline']):not([class*='destructive']):not([class*='emerald']):not([class*='rose']):not([class*='amber']) {
@@ -2396,7 +2396,7 @@ html.dark.native-android .net360-page [class*='bg-rose-50'],
 html.dark.native-android .net360-page [class*='bg-violet-50'] {
   background-color: #1a2238 !important;
   background-image: none !important;
-  border-color: rgba(148, 163, 184, 0.24) !important;
+  border-color: #818cf8 !important;
   color: #f8fafc !important;
 }
 
@@ -2518,7 +2518,7 @@ html.native-android .net360-hub-card,
 html.native-android .net360-screen-back {
   min-height: 4.5rem;
   border-radius: 16px;
-  border: 1px solid #e6eaf2;
+  border: 1.5px solid #818cf8;
   background: #ffffff;
   color: #0f172a;
   padding: 0.9rem;
@@ -2526,7 +2526,7 @@ html.native-android .net360-screen-back {
   font-size: 0.95rem;
   font-weight: 700;
   line-height: 1.25;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 8px 20px rgba(79, 70, 229, 0.1);
 }
 
 html.native-android .net360-screen-back {
@@ -2545,7 +2545,7 @@ html.dark.native-android .net360-hub-card,
 html.dark.native-android .net360-screen-back {
   background: #1a2238 !important;
   color: #f8fafc !important;
-  border-color: rgba(148, 163, 184, 0.28);
+  border-color: #818cf8;
 }
 
 html.native-android .net360-hub-card:active,
@@ -2988,15 +2988,16 @@ html.native-android .community-page .max-h-\[320px\] {
 html.native-android .net360-android-plan-card,
 html.native-android .net360-android-outline-card {
   background-color: #ffffff;
-  border: 1.5px solid #c7d2fe;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  border: 1.5px solid #818cf8;
+  border-radius: 16px !important;
+  box-shadow: 0 8px 20px rgba(79, 70, 229, 0.1);
 }
 
 html.dark.native-android .net360-android-plan-card,
 html.dark.native-android .net360-android-outline-card {
   background-color: #1a2238 !important;
-  border-color: rgba(165, 180, 252, 0.45);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
+  border-color: #818cf8;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
 }
 
 html.native-android .net360-android-plan-row-selected {
@@ -3337,4 +3338,179 @@ html.dark.native-android [data-slot='sheet-content'] {
 html.dark.native-android .net360-page [class*='!text-[#202124]'],
 html.dark.native-android .net360-page [class*='!text-[#202124]'] * {
   color: #202124 !important;
+}
+
+/* Android cards stay opaque, with a colorful outline in both themes. */
+html.native-android .net360-page [data-slot='card'],
+html.native-android .net360-page article.rounded-2xl,
+html.native-android .net360-page article.rounded-3xl,
+html.native-android .net360-page section.rounded-2xl {
+  border: 1.5px solid #818cf8 !important;
+  border-radius: 16px !important;
+  background-color: #ffffff !important;
+  background-image: none !important;
+  box-shadow: 0 8px 20px rgba(79, 70, 229, 0.1) !important;
+}
+
+html.dark.native-android .net360-page [data-slot='card'],
+html.dark.native-android .net360-page article.rounded-2xl,
+html.dark.native-android .net360-page article.rounded-3xl,
+html.dark.native-android .net360-page section.rounded-2xl {
+  background-color: #1a2238 !important;
+  border-color: #818cf8 !important;
+  color: #f8fafc !important;
+}
+
+html.native-android .net360-social {
+  background: #ffffff;
+  border: 1.5px solid #818cf8;
+  border-radius: 18px;
+  padding: 0.85rem 0.7rem 0.75rem;
+  box-shadow: 0 8px 20px rgba(79, 70, 229, 0.1);
+}
+
+html.dark.native-android .net360-social {
+  background: #1a2238;
+  border-color: #818cf8;
+}
+
+html.native-android .net360-social-title {
+  margin: 0 0 0.7rem;
+  color: #4338ca;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+html.dark.native-android .net360-page .net360-social-title {
+  color: #c7d2fe !important;
+}
+
+html.native-android .net360-social-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+html.native-android .net360-social-link {
+  display: flex;
+  min-height: 5.1rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: 14px;
+  border: 1.5px solid #c7d2fe;
+  background: #ffffff;
+  color: #0f172a;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+html.native-android .net360-social-youtube .net360-social-link,
+html.native-android .net360-social-link.net360-social-youtube {
+  border-color: #ff4d4d;
+}
+
+html.native-android .net360-social-instagram .net360-social-link,
+html.native-android .net360-social-link.net360-social-instagram {
+  border-color: #e1306c;
+}
+
+html.native-android .net360-social-facebook .net360-social-link,
+html.native-android .net360-social-link.net360-social-facebook {
+  border-color: #1877f2;
+}
+
+html.native-android .net360-social-website .net360-social-link,
+html.native-android .net360-social-link.net360-social-website {
+  border-color: #4f46e5;
+}
+
+html.native-android .net360-social-link:active {
+  transform: scale(0.98);
+}
+
+html.dark.native-android .net360-page .net360-social-link {
+  background: #12182b;
+  color: #f8fafc !important;
+}
+
+html.native-android .net360-social-icon {
+  display: inline-flex;
+  width: 2.15rem;
+  height: 2.15rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  color: #ffffff !important;
+}
+
+html.native-android .net360-social-icon svg {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+html.dark.native-android .net360-page .net360-social-icon,
+html.dark.native-android .net360-page .net360-social-icon svg {
+  color: #ffffff !important;
+}
+
+html.native-android .net360-social-instagram .net360-social-icon {
+  background: linear-gradient(135deg, #f9ce34, #ee2a7b 55%, #6228d7);
+}
+
+html.native-android .net360-social-facebook .net360-social-icon {
+  background: #1877f2;
+}
+
+html.native-android .net360-social-website .net360-social-icon {
+  background: #4f46e5;
+}
+
+html.native-android .net360-social-youtube .net360-social-icon {
+  background: #ff0000;
+}
+
+@media (max-width: 360px) {
+  html.native-android .net360-social-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+html.dark.native-android .net360-page .net360-android-plan-icon,
+html.dark.native-android .net360-page .net360-android-plan-icon * {
+  color: #c7d2fe !important;
+}
+
+html.dark.native-android .net360-page .net360-android-classes-icon,
+html.dark.native-android .net360-page .net360-android-classes-icon * {
+  color: #fde68a !important;
+}
+
+html.dark.native-android .net360-page .net360-android-demo-chip,
+html.dark.native-android .net360-page .net360-android-demo-chip * {
+  color: #fde68a !important;
+}
+
+html.native-android .net360-home-stat {
+  color: #0f172a;
+}
+
+html.native-android .net360-home-stat p:last-child {
+  margin-top: 0.15rem;
+  color: #475569;
+  font-weight: 600;
+}
+
+html.dark.native-android .net360-page .net360-home-stat,
+html.dark.native-android .net360-page .net360-home-stat p {
+  color: #f8fafc !important;
+}
+
+html.dark.native-android .net360-page .net360-home-stat p:last-child {
+  color: #cbd5e1 !important;
 }
