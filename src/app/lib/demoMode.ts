@@ -50,17 +50,25 @@ export function useDemoMode() {
     }
   }, [refresh, token]);
 
+  const ensureStarted = useCallback(async () => {
+    if (!started) await start();
+  }, [start, started]);
+
   return {
     enabled,
     loaded: Boolean(me),
     started,
     starting,
     start,
+    ensureStarted,
     refresh,
     testAvailable: started && !state?.tests.used,
     testUsed: started && Boolean(state?.tests.used),
     preparationAvailable: started && !state?.preparation.used,
     preparationUsed: started && Boolean(state?.preparation.used),
+    videoAvailable: started && !state?.videos?.used,
+    videoUsed: started && Boolean(state?.videos?.used),
+    demoVideoId: state?.videos?.videoId || null,
     communityActive: started && communityMsLeft > 0,
     communityExpired: started && communityMsLeft <= 0,
     communityMsLeft,

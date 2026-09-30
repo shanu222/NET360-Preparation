@@ -1230,7 +1230,7 @@ interface AdminSubscriptionManagementUsersPayload {
 }
 
 interface AdminManagedServiceDetail {
-  key: 'tests' | 'preparation' | 'community' | 'mentor';
+  key: 'tests' | 'preparation' | 'community' | 'videos' | 'mentor';
   label: string;
   active: boolean;
   status: SubscriptionBadgeStatus;
@@ -1280,6 +1280,7 @@ interface AdminSubscriptionManagementUserDetailPayload {
     tests: AdminManagedServiceDetail;
     preparation: AdminManagedServiceDetail;
     community: AdminManagedServiceDetail;
+    videos?: AdminManagedServiceDetail;
     mentor: AdminManagedServiceDetail & {
       subscriptionStatus: string;
       planId: string;
@@ -7307,7 +7308,7 @@ export default function AdminApp() {
   const applyServiceAccessUpdate = async (
     userId: string,
     mode: 'activate' | 'extend' | 'deactivate',
-    serviceKey: 'tests' | 'preparation' | 'community',
+    serviceKey: 'tests' | 'preparation' | 'community' | 'videos',
   ) => {
     if (!authToken || isUpdatingSubscriptionManagement) return;
     try {
@@ -7327,6 +7328,7 @@ export default function AdminApp() {
                 tests: serviceKey === 'tests',
                 preparation: serviceKey === 'preparation',
                 community: serviceKey === 'community',
+                videos: serviceKey === 'videos',
               },
               durationValue,
               durationUnit: serviceDurationUnit,
@@ -7347,6 +7349,7 @@ export default function AdminApp() {
                 tests: serviceKey === 'tests',
                 preparation: serviceKey === 'preparation',
                 community: serviceKey === 'community',
+                videos: serviceKey === 'videos',
               },
             }),
           },
@@ -11541,8 +11544,9 @@ export default function AdminApp() {
                     </div>
                   </div>
 
-                  {(['tests', 'preparation', 'community'] as const).map((serviceKey) => {
+                  {(['tests', 'preparation', 'community', 'videos'] as const).map((serviceKey) => {
                     const service = selectedSubscriptionUserDetail.services[serviceKey];
+                    if (!service) return null;
                     return (
                       <div key={service.key} className="rounded-lg border p-4 space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -11554,7 +11558,6 @@ export default function AdminApp() {
                           </div>
                         </div>
                         <div className="grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
-                          <p>Free 7-day active: {service.freeTrialActive ? 'Yes' : 'No'} | Used: {service.freeTrialUsed ? 'Yes' : 'No'}</p>
                           <p>Paid active: {service.paidPlanActive ? 'Yes' : 'No'}</p>
                           <p>Started: {formatNullableDate(service.startedAt)}</p>
                           <p>Expiry: {formatNullableDate(service.expiresAt)} | Remaining: {service.remainingDays} day(s)</p>

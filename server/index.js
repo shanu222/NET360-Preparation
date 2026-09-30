@@ -17350,6 +17350,7 @@ app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, req
   const testsAccess = accessStatusPayload(paidServices?.tests);
   const prepAccess = accessStatusPayload(paidServices?.preparation);
   const communityAccess = accessStatusPayload(paidServices?.community);
+  const videosAccess = accessStatusPayload(paidServices?.videos);
   const activeSession = freshUser?.activeSession || null;
   const activeUserAgent = String(activeSession?.userAgent || '').toLowerCase();
 
@@ -17375,6 +17376,14 @@ app.get('/api/admin/subscriptions/management/users/:userId', authMiddleware, req
       label: 'Community Access',
       access: communityAccess,
       manualGrant: normalizeManualGrant(freshUser?.paidServices?.community),
+      subscription: sub,
+      nowMs,
+    }),
+    videos: buildManagedServiceDetail({
+      key: PAID_SERVICE_TYPES.videos,
+      label: 'Videos Access',
+      access: videosAccess,
+      manualGrant: normalizeManualGrant(freshUser?.paidServices?.videos),
       subscription: sub,
       nowMs,
     }),

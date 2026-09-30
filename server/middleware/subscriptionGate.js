@@ -75,7 +75,9 @@ export function requireTrialOrPremiumContent(UserModel, resolveEntitlements) {
             code: 'DEMO_LIMIT_REACHED',
             error: demo.slot === 'preparation'
               ? 'You have used your demo preparation item. Subscribe to continue.'
-              : 'You have used your demo test. Subscribe to continue.',
+              : demo.slot === 'videos'
+                ? 'You have used your demo video. Subscribe to continue.'
+                : 'You have used your demo test. Subscribe to continue.',
             serviceType,
             demoSlot: demo.slot,
           });

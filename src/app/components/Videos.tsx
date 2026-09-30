@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronRight, Loader2, Play } from 'lucide-react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import { isDemoLimitError, useDemoMode } from '../lib/demoMode';
+import { showInfoToast } from '../lib/userToast';
+import { isNativeRuntime } from '../lib/nativeDiagnostics';
+import { DemoModeBanner } from './subscription/DemoModeButton';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { BusyButton } from './BusyButton';
@@ -147,10 +151,18 @@ export function Videos() {
   const { user } = useAuth();
   const { surface, me, loading: subLoading } = useSubscription();
   const videosAccessAllowed = Boolean(
-    me?.paidServices?.preparation?.allowed
+    (!isNativeRuntime() && me?.paidServices?.videos?.allowed)
+    || me?.paidServices?.preparation?.allowed
     || (me?.preparationAccess?.allowed && me?.preparationAccess?.source !== 'legacy')
     || (surface?.allowed && (surface?.source === 'global' || surface?.source === 'manual')),
   );
+  const demo = useDemoMode();
+  const demoVideos = !videosAccessAllowed && demo.started;
+  const navigate = useNavigate();
+  const redirectDemoVideoUsed = () => {
+    showInfoToast('You have used your demo video. Subscribe to Videos to watch more lectures.');
+    navigate('/subscription');
+  };
 
   const [selectedSubject, setSelectedSubject] = useState<TabKey>('mathematics');
   const [selectedPartBySubject, setSelectedPartBySubject] = useState<Record<PartStructuredSubjectKey, AcademicPart | null>>(() => (
@@ -255,6 +267,10 @@ export function Videos() {
   }, [activeSectionId, videosLoading, videos.length, videosError]);
 
   const playVideo = async (videoId: string) => {
+    if (demoVideos && demo.videoUsed && demo.demoVideoId !== videoId) {
+      redirectDemoVideoUsed();
+      return;
+    }
     setPlayingId(videoId);
     setPlaybackError('');
     setPlaybackLoading(true);
@@ -266,7 +282,14 @@ export function Videos() {
       if (activeSectionId) next.set('sectionId', activeSectionId);
       next.set('videoId', videoId);
       setSearchParams(next, { replace: true });
-    } catch {
+      if (demoVideos && !demo.videoUsed) void demo.refresh();
+    } catch (error) {
+      if (isDemoLimitError(error)) {
+        setPlayingId(null);
+        void demo.refresh();
+        redirectDemoVideoUsed();
+        return;
+      }
       setPlaybackError('Unable to prepare this video. Try again.');
     } finally {
       setPlaybackLoading(false);
@@ -313,7 +336,7 @@ export function Videos() {
     );
   }
 
-  if (!videosAccessAllowed) {
+  if (!videosAccessAllowed && !demo.started) {
     return (
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -504,6 +527,15 @@ export function Videos() {
         <h1>Videos</h1>
         <p className="text-muted-foreground">Same syllabus as Preparation Materials — browse lectures by section.</p>
       </div>
+
+      {demoVideos ? (
+        <DemoModeBanner
+          used={demo.videoUsed}
+          message={demo.videoUsed
+            ? 'You have used your free demo video. You can rewatch it; subscribe to Videos to watch more lectures.'
+            : '1 free video remaining. Pick any lecture to watch.'}
+        />
+      ) : null}
 
       <Tabs value={selectedSubject} onValueChange={(value) => setSelectedSubject(value as TabKey)}>
         <div className="net360-horizontal-scroll net360-swipe-row -mx-1 px-1 pb-1">

@@ -164,6 +164,8 @@ const userSchema = new mongoose.Schema(
         testsSessionId: { type: String, default: '' },
         preparationClaimedAt: { type: Date, default: null },
         preparationSessionId: { type: String, default: '' },
+        videosClaimedAt: { type: Date, default: null },
+        videoId: { type: String, default: '' },
       },
       default: undefined,
       _id: false,
