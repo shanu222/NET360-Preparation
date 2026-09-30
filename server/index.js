@@ -108,6 +108,7 @@ import {
 } from './services/payfastClient.js';
 import { createUploadRouter } from './routes/upload.js';
 import { createVideosRouter } from './routes/videos.js';
+import { createSitePromoImagesRouter } from './routes/sitePromoImages.js';
 import { ensureR2Cors } from './lib/r2.js';
 import { buildMcqContentFingerprint } from './lib/mcqIdentity.js';
 import { encryptSecurityAnswerPlaintext, decryptSecurityAnswerCiphertext } from './lib/securityAnswerCrypto.js';
@@ -8764,6 +8765,37 @@ const studentPremiumSurface = [
 ];
 
 app.use('/api', createVideosRouter({ authMiddleware, requireAdmin, studentPremiumSurface }));
+
+app.use('/api', createSitePromoImagesRouter({
+  authMiddleware,
+  requireAdmin,
+  readConfigValue: (key) => (CONFIG_CRYPTO_KEY ? getRuntimeConfigValue(key, '') : Promise.resolve('')),
+  writeConfigValue: async (key, value, { description = '', updatedByEmail = '' } = {}) => {
+    if (!CONFIG_CRYPTO_KEY) {
+      const error = new Error('Secure config service is unavailable because CONFIG_ENCRYPTION_KEY is missing.');
+      error.statusCode = 503;
+      throw error;
+    }
+    await RuntimeConfigModel.findOneAndUpdate(
+      { key },
+      {
+        $set: {
+          key,
+          encryptedValue: encryptConfigValue(value),
+          isSecret: false,
+          description,
+          updatedByEmail,
+        },
+      },
+      { upsert: true, setDefaultsOnInsert: true },
+    );
+    clearRuntimeConfigCache();
+  },
+  deleteConfigValue: async (key) => {
+    await RuntimeConfigModel.deleteOne({ key });
+    clearRuntimeConfigCache();
+  },
+}));
 
 /** Legacy token-based signup, admin premium proof queues, and recovery lists â€” fully retired (410). */
 function respondLegacyAdminWorkflowGone(_req, res) {

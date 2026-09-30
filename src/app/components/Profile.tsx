@@ -20,6 +20,7 @@ import { NET360_ADMIN_WHATSAPP, NET360_ADMIN_WHATSAPP_LINK } from '../lib/paymen
 import { NET_TARGET_PROGRAM_OPTIONS } from '../lib/netPrograms';
 import { canonicalSeriesKey, useLiveNustSeries } from '../lib/nustLiveSchedule';
 import { getMediaUrl, loginBannerImageUrl, shouldUseLocalMediaFallback } from '../lib/publicMedia';
+import { useSitePromoImages } from '../lib/sitePromoImages';
 import { Net360UserGuideVideoSection } from './Net360UserGuideVideo';
 import { NotificationPreferencesList } from './NotificationPreferences';
 import { ImageWithFallback } from './figma/ImageWithFallback';
@@ -158,6 +159,7 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const { surface } = useSubscription();
   const { profile, attempts, saveProfile } = useAppData();
   const { status: seriesStatus, series: liveSeries } = useLiveNustSeries();
+  const sitePromoImages = useSitePromoImages();
   const [localProfile, setLocalProfile] = useState(profile);
   const selectedSeries = useMemo(
     () => liveSeries.find((item) => item.key === canonicalSeriesKey(localProfile.testSeries)) || null,
@@ -989,8 +991,10 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
 
                   <div className="mt-6 flex justify-center px-1 sm:mt-8">
                     <ImageWithFallback
-                      src={loginBannerImageUrl()}
-                      {...(shouldUseLocalMediaFallback() ? { fallbackSrc: '/images/login-banner.png' } : {})}
+                      src={sitePromoImages.loginBanner || loginBannerImageUrl()}
+                      {...(sitePromoImages.loginBanner
+                        ? { fallbackSrc: loginBannerImageUrl() }
+                        : shouldUseLocalMediaFallback() ? { fallbackSrc: '/images/login-banner.png' } : {})}
                       alt="NET360 login"
                       width={500}
                       height={300}
@@ -1018,7 +1022,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
               <CardContent className="relative pb-7">
                 <div className="mx-auto mt-4 flex w-full max-w-[min(100%,680px)] justify-center rounded-2xl border border-indigo-100/80 bg-white/70 p-2 shadow-[0_18px_34px_rgba(79,70,229,0.14)] backdrop-blur-sm">
                   <ImageWithFallback
-                    src="/images/app-promo.png"
+                    src={sitePromoImages.featuredAd || '/images/app-promo.png'}
+                    {...(sitePromoImages.featuredAd ? { fallbackSrc: '/images/app-promo.png' } : {})}
                     alt="NET360 advertisement"
                     width={680}
                     height={383}
