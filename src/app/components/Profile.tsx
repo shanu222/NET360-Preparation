@@ -469,11 +469,11 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     }
   };
 
-  const handleSocialAuth = async () => {
+  const handleSocialAuth = async (options?: { chooseAnotherAccount?: boolean }) => {
     if (isAuthBusy) return;
     try {
       setAuthActionState('loggingIn');
-      await loginWithGoogle();
+      await loginWithGoogle({ chooseAnotherAccount: Boolean(options?.chooseAnotherAccount) });
       setAuthActionState('idle');
       if (!isNativeRuntimePlatform()) {
         showSuccessToast('Login successful.');
@@ -954,6 +954,14 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                       <span className="font-medium !text-[#202124]" style={{ color: '#202124' }}>
                         {authActionState === 'loggingIn' ? 'Signing in…' : 'Continue with Google'}
                       </span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isAuthBusy}
+                      onClick={() => void handleSocialAuth({ chooseAnotherAccount: true })}
+                      className="mx-auto block px-2 py-1 text-sm font-semibold text-indigo-700 underline-offset-2 hover:underline disabled:opacity-60 dark:text-indigo-200"
+                    >
+                      Use another account
                     </button>
                     {isNativeRuntimePlatform() ? (
                       <p className="text-xs text-slate-500">

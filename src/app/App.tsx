@@ -1052,8 +1052,8 @@ export default function App() {
         <div className="net360-shell mx-auto flex w-full min-w-0 max-w-[min(100%,1600px)] flex-col gap-2 rounded-[20px] border border-indigo-100 bg-white p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] sm:gap-3 sm:rounded-[24px] sm:p-2 xl:rounded-[28px]">
           <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-hidden rounded-2xl border border-indigo-50 bg-gradient-to-br from-white to-[#f2f4ff] sm:rounded-3xl">
             {/* Header */}
-            <header className="net360-header sticky top-0 z-40 flex min-h-14 items-center gap-1 overflow-hidden rounded-t-2xl border-b border-indigo-100 bg-white px-2 py-1.5 sm:min-h-16 sm:gap-2 sm:px-5 sm:py-0 sm:rounded-t-3xl">
-              <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:gap-3">
+            <header className="net360-header sticky top-0 z-40 flex min-h-14 flex-wrap items-center gap-1 overflow-hidden rounded-t-2xl border-b border-indigo-100 bg-white px-2 py-1.5 sm:min-h-16 sm:gap-2 sm:px-5 sm:py-0 sm:rounded-t-3xl">
+              <div className="order-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:gap-3">
                 <Sheet open={sidebarMenuOpen} onOpenChange={setSidebarMenuOpen}>
                   <SheetTrigger asChild>
                     <Button variant="ghost" size="icon" className="touch-manipulation shrink-0 rounded-xl min-h-10 min-w-10 sm:min-h-11 sm:min-w-11" aria-label="Open navigation menu">
@@ -1123,7 +1123,20 @@ export default function App() {
                   </div>
                 </div>
               </div>
-              <div className="ml-auto flex shrink-0 items-center gap-0.5 sm:gap-2">
+              {!isNativeRuntime ? (
+                <a
+                  href="https://play.google.com/store/apps/details?id=com.net360prep.app&pcampaignid=web_share"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="net360-play-cta order-3 mt-1 inline-flex w-full min-w-0 items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-center text-[12px] font-semibold leading-tight text-indigo-950 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-100 dark:border-indigo-400/70 dark:bg-indigo-950 dark:text-indigo-50 dark:hover:bg-indigo-900 sm:order-2 sm:mt-0 sm:w-auto sm:justify-start sm:px-3 sm:py-1.5 sm:text-left sm:text-xs"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4 shrink-0 fill-current">
+                    <path d="M3.5 2.8c-.3.3-.5.8-.5 1.4v15.6c0 .6.2 1.1.5 1.4l.1.1 8.7-8.7v-.2L3.6 2.7l-.1.1zm10.2 10.2 2.4 2.4-8.2 4.7c-.5.3-1 .3-1.4.1l7.2-7.2zm2.4-2.4 2.7 1.5c.8.4.8 1.1 0 1.6l-2.7 1.5-2.6-2.6 2.6-2zm-11.6-7.4c.4-.2.9-.2 1.4.1l8.2 4.7-2.4 2.4-7.2-7.2z" />
+                  </svg>
+                  <span>Download the NET360 App on Google Play</span>
+                </a>
+              ) : null}
+              <div className="order-2 ml-auto flex shrink-0 items-center gap-0.5 sm:order-3 sm:gap-2">
                 <DemoModeButton />
                 <Button
                   variant="ghost"

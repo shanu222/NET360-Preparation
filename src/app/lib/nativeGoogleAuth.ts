@@ -77,7 +77,7 @@ export type NativeGoogleSignInResult = {
  * Android-only: native Google account picker (Credential Manager / Play services), not WebView OAuth.
  * Returns a Firebase-compatible Google ID token (and access token when present).
  */
-export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignInResult> {
+export async function signInWithGoogleAndroidNative(options?: { chooseAnotherAccount?: boolean }): Promise<NativeGoogleSignInResult> {
   if (Capacitor.getPlatform() !== 'android' || !Capacitor.isNativePlatform()) {
     throw new Error('Native Google sign-in is only available on Android.');
   }
@@ -121,7 +121,19 @@ export async function signInWithGoogleAndroidNative(): Promise<NativeGoogleSignI
      * unless MainActivity implements ModifiedMainActivityForSocialLoginPlugin (OAuth consent activity).
      * Defaults already include userinfo email/profile + openid.
      */
-    androidNativeLog('social-login-login-call', { style: 'standard', scopesOmitted: true });
+    if (options?.chooseAnotherAccount) {
+      try {
+        await SocialLogin.logout({ provider: 'google' });
+        androidNativeLog('social-login-logout-for-account-switch', {});
+      } catch (logoutError) {
+        androidNativeLog('social-login-logout-for-account-switch-failed', { error: serializeNativeError(logoutError) });
+      }
+    }
+    androidNativeLog('social-login-login-call', {
+      style: 'standard',
+      scopesOmitted: true,
+      chooseAnotherAccount: Boolean(options?.chooseAnotherAccount),
+    });
     res = await SocialLogin.login({
       provider: 'google',
       options: {
