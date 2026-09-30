@@ -18,6 +18,8 @@ type PreferenceControl = {
   read: (preferences: PreferenceReader) => boolean;
   patch: (next: boolean) => {
     emailNotifications?: boolean;
+    dailyReminders?: boolean;
+    performanceReports?: boolean;
     notificationPreferences?: Record<string, boolean>;
   };
 };
@@ -29,11 +31,24 @@ function nestedFlag(preferences: PreferenceReader, key: string, fallback = true)
 
 export const NOTIFICATION_CONTROLS: PreferenceControl[] = [
   {
-    id: 'emailNotifications',
-    label: 'Email Notifications',
-    description: 'Optional NET360 emails. Sign-in verification, password reset, and account deletion emails still send.',
-    read: (preferences) => preferences.emailNotifications !== false,
-    patch: (next) => ({ emailNotifications: next, notificationPreferences: { enabled: next } }),
+    id: 'dailyReminders',
+    label: 'Daily practice reminders',
+    description: 'A reminder to keep your daily practice streak going.',
+    read: (preferences) => preferences.dailyReminders !== false,
+    patch: (next) => ({
+      dailyReminders: next,
+      notificationPreferences: { dailyReminders: next },
+    }),
+  },
+  {
+    id: 'performanceReports',
+    label: 'Weekly performance reports',
+    description: 'A weekly summary of your scores and progress.',
+    read: (preferences) => preferences.performanceReports !== false,
+    patch: (next) => ({
+      performanceReports: next,
+      notificationPreferences: { performanceReports: next },
+    }),
   },
   {
     id: 'nustNotices',
