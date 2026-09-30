@@ -2458,7 +2458,7 @@ html.dark.native-android .net360-page [data-slot='switch-thumb'] {
 }
 
 html.native-android .net360-has-tabbar .net360-main {
-  padding-bottom: calc(7.4rem + env(safe-area-inset-bottom, 0px)) !important;
+  padding-bottom: 0.85rem !important;
 }
 
 html.native-android .net360-tabbar {
@@ -2469,8 +2469,8 @@ html.native-android .net360-tabbar {
   align-items: stretch;
   justify-content: space-around;
   gap: 0.15rem;
-  min-height: 4.25rem;
-  padding: 0.4rem 0.4rem calc(3.4rem + env(safe-area-inset-bottom, 0px));
+  min-height: 0;
+  padding: 0.35rem 0.4rem calc(0.4rem + env(safe-area-inset-bottom, 0px));
   background: #f8f9fd;
   border-top: 1px solid #e6eaf2;
 }
@@ -2578,9 +2578,8 @@ html.dark.native-android .net360-tabbar button.is-selected {
 
 @media (max-height: 520px) {
   html.native-android .net360-tabbar {
-    min-height: 3.2rem;
-    padding-top: 0.15rem;
-    padding-bottom: calc(1.75rem + env(safe-area-inset-bottom, 0px));
+    min-height: 0;
+    padding: 0.15rem 0.3rem calc(0.2rem + env(safe-area-inset-bottom, 0px));
   }
 
   html.native-android .net360-tabbar button {
@@ -2589,14 +2588,17 @@ html.dark.native-android .net360-tabbar button.is-selected {
   }
 
   html.native-android .net360-has-tabbar .net360-main {
-    padding-bottom: calc(5rem + env(safe-area-inset-bottom, 0px)) !important;
+    padding-bottom: 0.5rem !important;
   }
 }
 
 html.native-android .net360-header {
-  min-height: 3.6rem;
-  padding-top: 0.35rem;
-  padding-bottom: 0.35rem;
+  min-height: 4rem;
+  align-items: center;
+  padding-top: 0.45rem;
+  padding-bottom: 0.45rem;
+  padding-left: max(0.7rem, env(safe-area-inset-left, 0px));
+  padding-right: max(0.7rem, env(safe-area-inset-right, 0px));
   background: #ffffff !important;
   border-bottom: 0 !important;
   box-shadow: 0 1px 0 rgba(15, 23, 42, 0.06) !important;
@@ -2608,22 +2610,63 @@ html.dark.native-android .net360-header {
 }
 
 html.native-android .net360-header-mark {
-  width: 2rem;
-  height: 2rem;
+  width: 2.55rem !important;
+  height: 2.55rem !important;
   border: 0 !important;
-  border-radius: 10px;
+  border-radius: 12px;
   box-shadow: none !important;
 }
 
 html.native-android .net360-header-title {
-  font-size: 1.15rem;
+  font-size: 1.35rem !important;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
+  line-height: 1.2 !important;
+  color: #1e1b4b;
+}
+
+html.dark.native-android .net360-header-title,
+html.dark.native-android .net360-shell header p.net360-header-title {
+  color: #f8fafc !important;
+}
+
+html.native-android .net360-header button,
+html.native-android .net360-header [data-slot='button'] {
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+}
+
+@media (max-width: 360px) {
+  html.native-android .net360-header-title {
+    font-size: 1.2rem !important;
+  }
+
+  html.native-android .net360-header-mark {
+    width: 2.2rem !important;
+    height: 2.2rem !important;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  html.native-android .net360-header {
+    min-height: 3.15rem;
+    padding-top: 0.2rem;
+    padding-bottom: 0.2rem;
+  }
+
+  html.native-android .net360-header-title {
+    font-size: 1.15rem !important;
+  }
+
+  html.native-android .net360-header-mark {
+    width: 2rem !important;
+    height: 2rem !important;
+  }
 }
 
 html.native-android .net360-tabbar {
-  min-height: 4.6rem;
-  padding-top: 0.35rem;
+  min-height: 0;
+  padding: 0.3rem 0.35rem calc(0.35rem + env(safe-area-inset-bottom, 0px));
   background: #ffffff;
   border-top: 0;
   box-shadow: 0 -1px 0 rgba(15, 23, 42, 0.06);
@@ -3513,4 +3556,101 @@ html.dark.native-android .net360-page .net360-home-stat p {
 
 html.dark.native-android .net360-page .net360-home-stat p:last-child {
   color: #cbd5e1 !important;
+}
+
+html.native-android .net360-page :is(h1, h2, h3, h4, p, a, button, label, li) {
+  overflow-wrap: break-word;
+}
+
+html.native-android .net360-page :is([data-slot='card'], article, section) {
+  max-width: 100%;
+  min-width: 0;
+}
+
+html.native-android .net360-page img,
+html.native-android .net360-page video {
+  max-width: 100%;
+}
+
+@media (max-width: 380px) {
+  html.native-android .net360-page {
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+  }
+
+  html.native-android .net360-hub-grid,
+  html.native-android .net360-page .grid {
+    gap: 0.5rem;
+  }
+}
+
+@media (orientation: landscape) and (max-height: 520px) {
+  html.native-android .net360-tabbar {
+    padding: 0.15rem 0.3rem calc(0.2rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  html.native-android .net360-tabbar button {
+    min-height: 2.5rem;
+  }
+
+  html.native-android .net360-has-tabbar .net360-main {
+    padding-bottom: 0.45rem !important;
+  }
+}
+
+html.native-android .net360-android-demo-chip,
+html.dark.native-android .net360-header .net360-android-demo-chip {
+  background: #fffbeb !important;
+  color: #78350f !important;
+  border: 1.5px solid #d97706 !important;
+}
+
+html.dark.native-android .net360-android-demo-chip,
+html.dark.native-android .net360-header .net360-android-demo-chip {
+  background: #422006 !important;
+  color: #fef3c7 !important;
+  border-color: #fbbf24 !important;
+}
+
+html.dark.native-android .net360-android-demo-chip svg,
+html.dark.native-android .net360-header .net360-android-demo-chip svg {
+  color: #fde68a !important;
+}
+
+html.dark.native-android .net360-android-demo-sheet {
+  background: #12182b !important;
+  color: #f8fafc !important;
+}
+
+html.dark.native-android .net360-android-demo-sheet :is(h2, p, span, button) {
+  color: #f8fafc !important;
+}
+
+html.dark.native-android .net360-android-demo-sheet .net360-android-plan-card {
+  background: #1a2238 !important;
+  border: 1.5px solid #818cf8 !important;
+}
+
+html.dark.native-android .net360-android-demo-sheet .net360-android-demo-action,
+html.dark.native-android .net360-android-demo-sheet .net360-android-demo-action * {
+  background: #312e81 !important;
+  color: #eef2ff !important;
+  border-color: #a5b4fc !important;
+}
+
+html.dark.native-android .net360-android-demo-sheet .net360-android-demo-action-active,
+html.dark.native-android .net360-android-demo-sheet .net360-android-demo-action-active * {
+  background: #064e3b !important;
+  color: #d1fae5 !important;
+  border-color: #34d399 !important;
+}
+
+html.native-android .net360-android-demo-sheet .net360-android-plan-card {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  border: 1.5px solid #818cf8 !important;
+}
+
+html.native-android .net360-android-demo-sheet .net360-android-plan-card :is(span):not(.net360-android-demo-action):not(.net360-android-demo-action-active) {
+  color: #0f172a !important;
 }
