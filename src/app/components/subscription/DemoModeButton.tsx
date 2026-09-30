@@ -15,9 +15,7 @@ export function DemoModeBanner({ message, used }: { message: string; used?: bool
     return (
       <div
         className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-sm ${
-          used
-            ? 'bg-slate-200 text-slate-900 dark:bg-[#243056] dark:text-slate-100'
-            : 'bg-amber-200 text-amber-950 dark:bg-amber-400 dark:text-amber-950'
+          used ? 'net360-android-demo-banner-used' : 'net360-android-demo-banner'
         }`}
         role="status"
       >
@@ -28,7 +26,7 @@ export function DemoModeBanner({ message, used }: { message: string; used?: bool
         </p>
         <button
           type="button"
-          className="shrink-0 rounded-full bg-indigo-600 px-3 py-1.5 text-[12px] font-semibold text-white active:bg-indigo-700"
+          className="net360-android-demo-banner-btn shrink-0 rounded-full px-3 py-1.5 text-[12px] font-semibold active:opacity-80"
           onClick={() => navigate('/subscription')}
         >
           Plans
@@ -226,7 +224,7 @@ export function AndroidDemoModeButton() {
     <>
       <button
         type="button"
-        className="relative inline-flex min-h-10 shrink-0 touch-manipulation items-center gap-1.5 rounded-full bg-amber-400 px-3.5 text-[13px] font-bold text-amber-950 shadow-sm active:bg-amber-500 dark:bg-amber-400 dark:text-amber-950"
+        className="net360-android-demo-chip relative inline-flex min-h-10 shrink-0 touch-manipulation items-center gap-1.5 rounded-full px-3.5 text-[13px] font-bold active:opacity-80"
         onClick={() => setOpen(true)}
         aria-label="Open Demo Mode"
       >
@@ -246,15 +244,15 @@ export function AndroidDemoModeButton() {
             Experience NET360 before subscribing
           </SheetDescription>
 
-          <ul className="net360-android-plan-card overflow-hidden rounded-3xl">
-            {options.map((option, index) => {
+          <ul className="space-y-2">
+            {options.map((option) => {
               const busy = openingService === option.service;
               return (
-                <li key={option.service} className={index ? 'border-t border-[#e6eaf2] dark:border-white/15' : undefined}>
+                <li key={option.service}>
                   <button
                     type="button"
                     disabled={Boolean(openingService)}
-                    className="flex min-h-[4.5rem] w-full touch-manipulation items-center gap-3 px-4 py-3 text-left active:bg-[#eef2ff] disabled:opacity-70 dark:active:bg-[#243056]"
+                    className="net360-android-plan-card flex min-h-[4.5rem] w-full touch-manipulation items-center gap-3 rounded-[22px] px-4 py-3 text-left active:opacity-90 disabled:opacity-70"
                     onClick={() => void openOption(option)}
                     aria-label={`${actionLabel(option)}: ${option.title}`}
                   >
@@ -266,7 +264,7 @@ export function AndroidDemoModeButton() {
                       <span className="block text-[13px] text-slate-600 dark:text-slate-300">{option.note || option.allowance}</span>
                     </span>
                     <span className={`inline-flex min-h-9 shrink-0 items-center gap-1 rounded-full px-3 text-[13px] font-semibold ${
-                      option.inProgress ? 'bg-emerald-600 text-white' : 'bg-indigo-600 text-white'
+                      option.inProgress ? 'net360-android-demo-action-active' : 'net360-android-demo-action'
                     }`}>
                       {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : (
                         <>

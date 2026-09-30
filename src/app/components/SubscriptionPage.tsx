@@ -44,7 +44,7 @@ function CheckMark({ selected }: { selected: boolean }) {
       className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border-2 ${
         selected
           ? 'border-indigo-600 bg-indigo-600 text-white'
-          : 'border-slate-400 bg-white dark:border-slate-400 dark:bg-[#12182b]'
+          : 'border-indigo-300 bg-white dark:border-indigo-400 dark:bg-[#12182b]'
       }`}
     >
       {selected ? <Check className="h-3.5 w-3.5" strokeWidth={3} /> : null}
@@ -306,7 +306,7 @@ export const SubscriptionPage = memo(function SubscriptionPage() {
           />
         ) : (
           <div className="net360-android-plan-card flex items-center gap-3 rounded-[22px] px-4 py-3.5">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-slate-200 text-slate-500 dark:bg-[#243056] dark:text-slate-300">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl border-[1.5px] border-slate-300 bg-white text-slate-500 dark:border-slate-500 dark:bg-[#243056] dark:text-slate-300">
               <Brain className="h-5 w-5" />
             </span>
             <span className="min-w-0 flex-1">
@@ -341,7 +341,7 @@ export const SubscriptionPage = memo(function SubscriptionPage() {
             {activeSelection.map((key) => (
               <li
                 key={key}
-                className="flex items-center justify-between gap-3 border-t border-[#e6eaf2] px-4 py-3 text-sm dark:border-white/15"
+                className="flex items-center justify-between gap-3 border-t border-indigo-100 px-4 py-3 text-sm dark:border-indigo-400/25"
               >
                 <span className="min-w-0">
                   <span className="block font-medium text-slate-800 dark:text-slate-100">{labelByKey[key]}</span>
@@ -352,7 +352,7 @@ export const SubscriptionPage = memo(function SubscriptionPage() {
             ))}
           </ul>
         ) : (
-          <p className="mx-4 mt-3 rounded-2xl border border-dashed border-slate-300 px-4 py-4 text-center text-[13px] text-slate-600 dark:border-white/20 dark:text-slate-300">
+          <p className="mx-4 mt-3 rounded-2xl border-[1.5px] border-dashed border-indigo-300 px-4 py-4 text-center text-[13px] text-slate-600 dark:border-indigo-400/40 dark:text-slate-300">
             Nothing selected yet. Tap a service to add it here.
           </p>
         )}
@@ -374,14 +374,14 @@ export const SubscriptionPage = memo(function SubscriptionPage() {
             </Button>
           ) : (
             <>
-              <div className="space-y-2 rounded-2xl bg-[#eef2ff] p-3 dark:bg-[#243056]">
+              <div className="space-y-2 rounded-2xl border-[1.5px] border-indigo-200 bg-white p-3 dark:border-indigo-400/40 dark:bg-[#1a2238]">
                 <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">
                   Step 1 · Send {formatPkr(total)} to any of these accounts
                 </p>
                 {(Object.keys(PAYMENT_METHODS) as Array<keyof typeof PAYMENT_METHODS>).map((method) => {
                   const info = PAYMENT_METHODS[method];
                   return (
-                    <div key={method} className="rounded-xl border border-[#e6eaf2] bg-white p-3 text-xs dark:border-white/15 dark:bg-[#12182b]">
+                    <div key={method} className="rounded-xl border-[1.5px] border-indigo-200 bg-white p-3 text-xs dark:border-indigo-400/35 dark:bg-[#12182b]">
                       <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">{info.label}</p>
                       <p className="mt-1 text-slate-700 dark:text-slate-200">
                         {info.accountLabel}: <span className="font-semibold text-slate-900 dark:text-slate-50">{info.accountValue}</span>

@@ -2984,50 +2984,58 @@ html.native-android .community-page .max-h-\[320px\] {
   }
 }
 
-/* Android Subscription + Demo Mode only. Solid surfaces so prices, selection, and CTAs stay readable. */
-html.native-android .net360-android-plan-card {
+/* Android Subscription, Demo Mode, Online Classes: outlined cards like Tests / Profile. */
+html.native-android .net360-android-plan-card,
+html.native-android .net360-android-outline-card {
   background-color: #ffffff;
-  border: 1px solid #e6eaf2;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+  border: 1.5px solid #c7d2fe;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
-html.dark.native-android .net360-android-plan-card {
+html.dark.native-android .net360-android-plan-card,
+html.dark.native-android .net360-android-outline-card {
   background-color: #1a2238 !important;
-  border-color: rgba(165, 180, 252, 0.22);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  border-color: rgba(165, 180, 252, 0.45);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
 
 html.native-android .net360-android-plan-row-selected {
   background-color: #eef2ff !important;
-  border-color: #6366f1 !important;
-  box-shadow: inset 4px 0 0 #4f46e5, 0 8px 18px rgba(79, 70, 229, 0.14);
+  border-color: #4f46e5 !important;
+  border-width: 2px;
+  box-shadow: 0 0 0 1px #4f46e5;
 }
 
 html.dark.native-android .net360-android-plan-row-selected {
   background-color: #243056 !important;
   border-color: #818cf8 !important;
-  box-shadow: inset 4px 0 0 #818cf8, 0 8px 18px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 0 0 1px #818cf8;
 }
 
 html.native-android .net360-page .net360-android-plan-chosen {
-  background-color: #4f46e5 !important;
-  color: #ffffff !important;
+  background-color: #eef2ff !important;
+  color: #3730a3 !important;
+  border: 1.5px solid #4f46e5;
 }
 
 html.dark.native-android .net360-page .net360-android-plan-chosen {
-  background-color: #818cf8 !important;
-  color: #1e1b4b !important;
+  background-color: #312e81 !important;
+  color: #e0e7ff !important;
+  border-color: #818cf8;
 }
 
-html.native-android .net360-page .net360-android-plan-icon {
+html.native-android .net360-page .net360-android-plan-icon,
+html.native-android .net360-android-demo-sheet .net360-android-plan-icon {
   background-color: #eef2ff !important;
   color: #4338ca !important;
+  border: 1.5px solid #c7d2fe;
 }
 
 html.dark.native-android .net360-page .net360-android-plan-icon,
 html.dark.native-android .net360-android-demo-sheet .net360-android-plan-icon {
   background-color: #2a3558 !important;
   color: #c7d2fe !important;
+  border-color: rgba(165, 180, 252, 0.5);
 }
 
 html.native-android .net360-page .net360-android-plan-price {
@@ -3039,63 +3047,83 @@ html.dark.native-android .net360-page .net360-android-plan-price {
 }
 
 html.native-android .net360-page .net360-android-plan-active {
-  background-color: #d1fae5 !important;
+  background-color: #ecfdf5 !important;
   color: #047857 !important;
+  border: 1.5px solid #6ee7b7;
 }
 
 html.dark.native-android .net360-page .net360-android-plan-active {
   background-color: #064e3b !important;
   color: #6ee7b7 !important;
+  border-color: #34d399;
 }
 
 html.native-android .net360-page .net360-android-plan-badge {
-  background-color: #d1fae5 !important;
+  background-color: #ecfdf5 !important;
   color: #047857 !important;
+  border: 1.5px solid #6ee7b7;
 }
 
 html.dark.native-android .net360-page .net360-android-plan-badge {
   background-color: #064e3b !important;
   color: #6ee7b7 !important;
+  border-color: #34d399;
 }
 
 html.native-android .net360-page .net360-android-plan-offer {
-  background-color: #fde68a !important;
+  background-color: #fffbeb !important;
   color: #92400e !important;
+  border: 1.5px solid #f59e0b;
 }
 
 html.dark.native-android .net360-page .net360-android-plan-offer {
-  background-color: #b45309 !important;
+  background-color: #78350f !important;
   color: #fffbeb !important;
+  border-color: #fbbf24;
 }
 
 html.native-android .net360-page .net360-android-plan-status {
-  background-color: #e2e8f0 !important;
+  background-color: #ffffff !important;
   color: #334155 !important;
+  border: 1.5px solid #cbd5e1;
 }
 
 html.dark.native-android .net360-page .net360-android-plan-status {
   background-color: #334155 !important;
   color: #e2e8f0 !important;
+  border-color: rgba(148, 163, 184, 0.45);
 }
 
 html.native-android .net360-page .net360-android-plan-total {
-  background-color: #4f46e5 !important;
-  color: #ffffff !important;
+  background-color: #eef2ff !important;
+  border: 1.5px solid #4f46e5;
 }
 
 html.native-android .net360-page .net360-android-plan-total,
 html.native-android .net360-page .net360-android-plan-total * {
-  color: #ffffff !important;
+  color: #312e81 !important;
+}
+
+html.dark.native-android .net360-page .net360-android-plan-total {
+  background-color: #243056 !important;
+  border-color: #818cf8;
+}
+
+html.dark.native-android .net360-page .net360-android-plan-total,
+html.dark.native-android .net360-page .net360-android-plan-total * {
+  color: #e0e7ff !important;
 }
 
 html.native-android .net360-page .net360-android-plan-whatsapp {
-  background-color: #d1fae5 !important;
+  background-color: #ecfdf5 !important;
   color: #064e3b !important;
+  border: 1.5px solid #34d399;
 }
 
 html.dark.native-android .net360-page .net360-android-plan-whatsapp {
   background-color: #064e3b !important;
   color: #d1fae5 !important;
+  border-color: #6ee7b7;
 }
 
 html.native-android .net360-page .net360-android-plan-whatsapp,
@@ -3134,6 +3162,112 @@ html.native-android .net360-android-demo-sheet .net360-android-plan-card {
 
 html.dark.native-android .net360-android-demo-sheet .net360-android-plan-card {
   background-color: #1a2238 !important;
+}
+
+html.native-android .net360-android-demo-chip {
+  border: 1.5px solid #d97706 !important;
+  background: #fffbeb !important;
+  color: #78350f !important;
+  box-shadow: none;
+}
+
+html.dark.native-android .net360-android-demo-chip {
+  border-color: #fbbf24 !important;
+  background: #3b2a12 !important;
+  color: #fde68a !important;
+}
+
+html.native-android .net360-android-demo-banner {
+  border: 1.5px solid #f59e0b !important;
+  background: #fffbeb !important;
+  color: #78350f !important;
+}
+
+html.native-android .net360-android-demo-banner-used {
+  border: 1.5px solid #c7d2fe !important;
+  background: #ffffff !important;
+  color: #312e81 !important;
+}
+
+html.dark.native-android .net360-android-demo-banner {
+  border-color: #fbbf24 !important;
+  background: #3b2a12 !important;
+  color: #fde68a !important;
+}
+
+html.dark.native-android .net360-android-demo-banner-used {
+  border-color: rgba(165, 180, 252, 0.45) !important;
+  background: #1a2238 !important;
+  color: #e0e7ff !important;
+}
+
+html.native-android .net360-page .net360-android-demo-banner :is(p, span):not(.net360-android-demo-banner-btn),
+html.native-android .net360-page .net360-android-demo-banner-used :is(p, span):not(.net360-android-demo-banner-btn) {
+  color: inherit !important;
+}
+
+html.native-android .net360-page .net360-android-demo-banner-btn {
+  border: 1.5px solid #4f46e5 !important;
+  background: #ffffff !important;
+  color: #3730a3 !important;
+}
+
+html.dark.native-android .net360-page .net360-android-demo-banner-btn {
+  border-color: #818cf8 !important;
+  background: #1e1b4b !important;
+  color: #e0e7ff !important;
+}
+
+html.native-android .net360-android-demo-action {
+  border: 1.5px solid #4f46e5 !important;
+  background: #ffffff !important;
+  color: #3730a3 !important;
+}
+
+html.native-android .net360-android-demo-action * {
+  color: #3730a3 !important;
+}
+
+html.dark.native-android .net360-android-demo-action {
+  border-color: #818cf8 !important;
+  background: #1e1b4b !important;
+  color: #e0e7ff !important;
+}
+
+html.dark.native-android .net360-android-demo-action * {
+  color: #e0e7ff !important;
+}
+
+html.native-android .net360-android-demo-action-active {
+  border: 1.5px solid #059669 !important;
+  background: #ecfdf5 !important;
+  color: #065f46 !important;
+}
+
+html.native-android .net360-android-demo-action-active * {
+  color: #065f46 !important;
+}
+
+html.dark.native-android .net360-android-demo-action-active {
+  border-color: #34d399 !important;
+  background: #064e3b !important;
+  color: #d1fae5 !important;
+}
+
+html.dark.native-android .net360-android-demo-action-active * {
+  color: #d1fae5 !important;
+}
+
+html.native-android .net360-android-classes-icon {
+  border: 1.5px solid #f59e0b !important;
+  background: #fffbeb !important;
+  color: #92400e !important;
+}
+
+html.dark.native-android .net360-android-classes-icon {
+  border-color: #fbbf24 !important;
+  background: #3b2a12 !important;
+  color: #fde68a !important;
 }
 
 /* Dark Android: remapped white cards must use light type. Keep Google's forced-white button readable. */

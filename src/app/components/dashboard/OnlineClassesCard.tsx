@@ -11,9 +11,9 @@ export function OnlineClassesCard() {
 
   if (nativeApp) {
     return (
-      <article className="rounded-3xl bg-white p-4 shadow-sm dark:bg-[#1a2238]">
+      <article className="net360-android-outline-card rounded-3xl p-4">
         <div className="flex items-start gap-3">
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-200">
+          <span className="net360-android-classes-icon flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl">
             <GraduationCap className="h-6 w-6" />
           </span>
           <div className="min-w-0 flex-1">
@@ -28,6 +28,7 @@ export function OnlineClassesCard() {
         </div>
         <Button
           type="button"
+          variant="outline"
           className="mt-4 min-h-11 w-full rounded-xl"
           onClick={register}
         >
