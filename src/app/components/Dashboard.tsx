@@ -18,6 +18,7 @@ import { getSubjectLabel, type SubjectKey } from '../lib/mcq';
 import { getProgramCategoryKey, getRequiredSubjectsForTargetProgram } from '../lib/netPrograms';
 import { useSubscription, formatCountdown } from '../context/SubscriptionContext';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
+import { OnlineClassesCard } from './dashboard/OnlineClassesCard';
 import { isNativeAndroidRuntime } from '../lib/nativeForeground';
 import { useAndroidNestedScreen } from '../lib/androidNestedScreen';
 
@@ -274,6 +275,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <p className="text-xs text-slate-500 dark:text-slate-300">Progress</p>
             </article>
           </div>
+          <OnlineClassesCard onOpen={() => onNavigate('online-classes')} />
         </section>
       ) : null}
       {showHome && !androidApp ? (
@@ -345,6 +347,10 @@ export function Dashboard({ onNavigate }: DashboardProps) {
         />
       </section>
       </>
+      ) : null}
+
+      {showHome && !androidApp ? (
+        <OnlineClassesCard onOpen={() => onNavigate('online-classes')} />
       ) : null}
 
       {androidApp && !androidHomeScreen ? (
