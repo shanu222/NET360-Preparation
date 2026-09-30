@@ -19,6 +19,7 @@ import { getProgramCategoryKey, getRequiredSubjectsForTargetProgram } from '../l
 import { useSubscription, formatCountdown } from '../context/SubscriptionContext';
 import { PremiumCountdownBadge } from './subscription/PremiumCountdownBadge';
 import { OnlineClassesCard } from './dashboard/OnlineClassesCard';
+import { AndroidSocialLinksCards } from './dashboard/SocialLinksCards';
 import { isNativeAndroidRuntime } from '../lib/nativeForeground';
 import { useAndroidNestedScreen } from '../lib/androidNestedScreen';
 
@@ -276,6 +277,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             </article>
           </div>
           <OnlineClassesCard />
+          <AndroidSocialLinksCards />
         </section>
       ) : null}
       {showHome && !androidApp ? (
