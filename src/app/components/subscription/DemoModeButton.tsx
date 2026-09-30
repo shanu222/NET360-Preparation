@@ -16,8 +16,8 @@ export function DemoModeBanner({ message, used }: { message: string; used?: bool
       <div
         className={`flex items-center gap-3 rounded-2xl px-4 py-3 text-sm ${
           used
-            ? 'bg-slate-100 text-slate-700 dark:bg-white/10 dark:text-slate-200'
-            : 'bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-100'
+            ? 'bg-slate-200 text-slate-900 dark:bg-[#243056] dark:text-slate-100'
+            : 'bg-amber-200 text-amber-950 dark:bg-amber-400 dark:text-amber-950'
         }`}
         role="status"
       >
@@ -28,7 +28,7 @@ export function DemoModeBanner({ message, used }: { message: string; used?: bool
         </p>
         <button
           type="button"
-          className="shrink-0 text-xs font-semibold text-indigo-700 dark:text-indigo-300"
+          className="shrink-0 rounded-full bg-indigo-600 px-3 py-1.5 text-[12px] font-semibold text-white active:bg-indigo-700"
           onClick={() => navigate('/subscription')}
         >
           Plans
@@ -226,46 +226,48 @@ export function AndroidDemoModeButton() {
     <>
       <button
         type="button"
-        className="relative inline-flex min-h-10 shrink-0 touch-manipulation items-center gap-1.5 rounded-full bg-amber-100 px-3 text-xs font-semibold text-amber-900 active:bg-amber-200 dark:bg-amber-500/20 dark:text-amber-100 dark:active:bg-amber-500/30"
+        className="relative inline-flex min-h-10 shrink-0 touch-manipulation items-center gap-1.5 rounded-full bg-amber-400 px-3.5 text-[13px] font-bold text-amber-950 shadow-sm active:bg-amber-500 dark:bg-amber-400 dark:text-amber-950"
         onClick={() => setOpen(true)}
         aria-label="Open Demo Mode"
       >
         <FlaskConical className="h-4 w-4" aria-hidden="true" />
         Demo
-        <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-[#f7f8ff] dark:ring-[#12182e]" aria-hidden="true" />
+        <span className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-[#12182e]" aria-hidden="true" />
       </button>
 
       <Sheet open={open} onOpenChange={setOpen}>
         <SheetContent
           side="bottom"
-          className="max-h-[85dvh] gap-0 overflow-y-auto rounded-t-[28px] border-0 bg-[#f7f8fb] px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-3 text-slate-900 dark:bg-[#12182b] dark:text-slate-100"
+          className="net360-android-demo-sheet max-h-[85dvh] gap-0 overflow-y-auto rounded-t-[28px] border-0 bg-[#f7f8fb] px-4 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-3 text-slate-900 dark:bg-[#12182b] dark:text-slate-100"
         >
-          <div className="mx-auto mb-4 h-1 w-9 rounded-full bg-slate-300 dark:bg-slate-600" aria-hidden="true" />
+          <div className="mx-auto mb-4 h-1 w-9 rounded-full bg-slate-300 dark:bg-slate-500" aria-hidden="true" />
           <SheetTitle className="px-1 text-xl font-semibold text-slate-900 dark:text-slate-100">Try Demo</SheetTitle>
-          <SheetDescription className="px-1 pb-4 pt-1 text-sm text-slate-500 dark:text-slate-400">
+          <SheetDescription className="px-1 pb-4 pt-1 text-sm text-slate-600 dark:text-slate-300">
             Experience NET360 before subscribing
           </SheetDescription>
 
-          <ul className="overflow-hidden rounded-3xl bg-white dark:bg-[#1a2238]">
+          <ul className="net360-android-plan-card overflow-hidden rounded-3xl">
             {options.map((option, index) => {
               const busy = openingService === option.service;
               return (
-                <li key={option.service} className={index ? 'border-t border-[#e6eaf2] dark:border-white/10' : undefined}>
+                <li key={option.service} className={index ? 'border-t border-[#e6eaf2] dark:border-white/15' : undefined}>
                   <button
                     type="button"
                     disabled={Boolean(openingService)}
-                    className="flex min-h-[4.25rem] w-full touch-manipulation items-center gap-3 px-4 py-3 text-left active:bg-slate-100 disabled:opacity-70 dark:active:bg-white/10"
+                    className="flex min-h-[4.5rem] w-full touch-manipulation items-center gap-3 px-4 py-3 text-left active:bg-[#eef2ff] disabled:opacity-70 dark:active:bg-[#243056]"
                     onClick={() => void openOption(option)}
                     aria-label={`${actionLabel(option)}: ${option.title}`}
                   >
-                    <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-indigo-50 text-2xl dark:bg-indigo-500/15" aria-hidden="true">
+                    <span className="net360-android-plan-icon flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl text-2xl" aria-hidden="true">
                       {option.emoji}
                     </span>
                     <span className="min-w-0 flex-1">
                       <span className="block text-[15px] font-semibold text-slate-900 dark:text-slate-100">{option.title}</span>
-                      <span className="block text-[13px] text-slate-500 dark:text-slate-400">{option.note || option.allowance}</span>
+                      <span className="block text-[13px] text-slate-600 dark:text-slate-300">{option.note || option.allowance}</span>
                     </span>
-                    <span className="inline-flex shrink-0 items-center gap-0.5 text-sm font-semibold text-indigo-600 dark:text-indigo-300">
+                    <span className={`inline-flex min-h-9 shrink-0 items-center gap-1 rounded-full px-3 text-[13px] font-semibold ${
+                      option.inProgress ? 'bg-emerald-600 text-white' : 'bg-indigo-600 text-white'
+                    }`}>
                       {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : (
                         <>
                           {actionLabel(option)}
@@ -279,7 +281,7 @@ export function AndroidDemoModeButton() {
             })}
           </ul>
 
-          <p className="px-2 pt-4 text-center text-xs text-slate-500 dark:text-slate-400">
+          <p className="px-2 pt-4 text-center text-xs text-slate-600 dark:text-slate-300">
             Each demo is separate and can be used once. Community lasts 1 day from when you start it.
           </p>
         </SheetContent>
