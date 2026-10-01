@@ -41,17 +41,30 @@ function meritToInput(value: number | null): string {
 export function ClosingMeritsPanel({ active }: { active: boolean }) {
   const [programs, setPrograms] = useState<ClosingMeritProgram[]>([]);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState('');
   const [deletingId, setDeletingId] = useState('');
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState(emptyForm);
 
+  const readPrograms = async (path: string) => {
+    const data = await apiRequest<{ programs?: ClosingMeritProgram[] } | ClosingMeritProgram[]>(path, { timeoutMs: 45000 });
+    if (Array.isArray(data)) return data;
+    return Array.isArray(data?.programs) ? data.programs : [];
+  };
+
   const load = async () => {
     setLoading(true);
     try {
-      const data = await apiRequest<{ programs: ClosingMeritProgram[] }>('/api/admin/closing-merits');
-      const next = Array.isArray(data.programs) ? data.programs : [];
+      let next: ClosingMeritProgram[] = [];
+      try {
+        next = await readPrograms('/api/admin/closing-merits');
+      } catch {
+        next = [];
+      }
+      if (!next.length) {
+        next = await readPrograms('/api/public/closing-merits');
+      }
       setPrograms(next);
       setDrafts(Object.fromEntries(next.map((item) => [item.id, meritToInput(item.closingMerit)])));
     } catch (error) {
