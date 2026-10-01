@@ -2738,3 +2738,23 @@ html:not(.native-android).dark .net360-notify-pref [data-slot='switch']:focus-vi
 .dark .net360-rooms .net360-comment p:last-child {
   color: #f8fafc;
 }
+
+/* Choose Subject stays a solid surface so the page cannot show through it. */
+html:not(.native-android) .net360-subject-dialog {
+  background-color: #ffffff !important;
+  background-image: none !important;
+}
+
+html.dark:not(.native-android) .net360-subject-dialog {
+  background-color: #1a1a1a !important;
+  background-image: none !important;
+}
+
+html:not(.native-android) .net360-subject-dialog [data-slot='button'] {
+  background-color: #ffffff !important;
+  background-image: none !important;
+}
+
+html:not(.native-android) .net360-subject-dialog [data-slot='button']:hover {
+  background-color: #eef2ff !important;
+}
