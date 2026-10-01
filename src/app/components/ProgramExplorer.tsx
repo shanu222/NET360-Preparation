@@ -1,4 +1,6 @@
-import { type ComponentType } from 'react';
+import { type ComponentType, useEffect, useMemo, useState } from 'react';
+import { apiRequest } from '../lib/api';
+import { extraSharedPrograms, type ClosingMeritProgram } from '../lib/closingMerits';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs';
 import { Badge } from './ui/badge';
@@ -62,14 +64,40 @@ const PROGRAM_TAB_TRIGGER_CLASS =
   'max-w-[min(100%,200px)] shrink-0 whitespace-normal break-words rounded-xl border border-indigo-200/90 bg-white/88 px-2.5 py-2 text-center text-[12px] font-semibold leading-tight tracking-[0.01em] text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-800 hover:shadow-[0_8px_16px_rgba(79,70,229,0.16)] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!via-violet-500 data-[state=active]:!to-blue-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_12px_24px_rgba(79,70,229,0.35)] sm:min-w-[120px] sm:max-w-none sm:px-3 sm:text-[13px]';
 
 export function ProgramExplorer() {
-  const programs: Record<CategoryKey, ProgramCategory> = {
-    engineering: { ...NET_PROGRAMS_BY_CATEGORY.engineering, icon: CATEGORY_ICON_MAP.engineering },
-    computing: { ...NET_PROGRAMS_BY_CATEGORY.computing, icon: CATEGORY_ICON_MAP.computing },
-    business: { ...NET_PROGRAMS_BY_CATEGORY.business, icon: CATEGORY_ICON_MAP.business },
-    architecture: { ...NET_PROGRAMS_BY_CATEGORY.architecture, icon: CATEGORY_ICON_MAP.architecture },
-    sciences: { ...NET_PROGRAMS_BY_CATEGORY.sciences, icon: CATEGORY_ICON_MAP.sciences },
-    applied: { ...NET_PROGRAMS_BY_CATEGORY.applied, icon: CATEGORY_ICON_MAP.applied },
-  };
+  const [sharedPrograms, setSharedPrograms] = useState<ClosingMeritProgram[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest<{ programs?: ClosingMeritProgram[] }>('/api/public/closing-merits', { timeoutMs: 45000 })
+      .then((data) => {
+        if (!cancelled && Array.isArray(data?.programs)) setSharedPrograms(data.programs);
+      })
+      .catch(() => {
+        // Keep the built-in program cards if the shared list is unavailable.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const programs: Record<CategoryKey, ProgramCategory> = useMemo(() => {
+    const base: Record<CategoryKey, ProgramCategory> = {
+      engineering: { ...NET_PROGRAMS_BY_CATEGORY.engineering, icon: CATEGORY_ICON_MAP.engineering },
+      computing: { ...NET_PROGRAMS_BY_CATEGORY.computing, icon: CATEGORY_ICON_MAP.computing },
+      business: { ...NET_PROGRAMS_BY_CATEGORY.business, icon: CATEGORY_ICON_MAP.business },
+      architecture: { ...NET_PROGRAMS_BY_CATEGORY.architecture, icon: CATEGORY_ICON_MAP.architecture },
+      sciences: { ...NET_PROGRAMS_BY_CATEGORY.sciences, icon: CATEGORY_ICON_MAP.sciences },
+      applied: { ...NET_PROGRAMS_BY_CATEGORY.applied, icon: CATEGORY_ICON_MAP.applied },
+    };
+
+    (Object.keys(base) as CategoryKey[]).forEach((key) => {
+      const additions = extraSharedPrograms(base[key].programs, sharedPrograms, key);
+      if (!additions.length) return;
+      base[key] = { ...base[key], programs: [...base[key].programs, ...additions] };
+    });
+
+    return base;
+  }, [sharedPrograms]);
 
   const totalInstitutions = 18;
   const majorLocations = ['Islamabad (Main Campus)', 'Rawalpindi', 'Risalpur', 'Karachi', 'Quetta'];

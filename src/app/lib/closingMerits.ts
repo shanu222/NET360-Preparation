@@ -101,3 +101,26 @@ export function meritPositionLabel(standing: MeritListStanding | null): string {
   if (standing.met === 0) return `Below ${standing.listed}`;
   return `${standing.position} of ${standing.listed}`;
 }
+
+function programIdentity(program: { name: string; institution: string; location: string }) {
+  return `${program.name}|${program.institution}|${program.location}`.trim().toLowerCase();
+}
+
+/** Programs saved in admin that are not already on the built-in programs page. */
+export function extraSharedPrograms<T extends { name: string; institution: string; location: string }>(
+  existing: T[],
+  shared: ClosingMeritProgram[],
+  categoryKey: string,
+) {
+  const seen = new Set(existing.map((program) => programIdentity(program)));
+  return shared
+    .filter((program) => program.categoryKey === categoryKey)
+    .filter((program) => program.name.trim() && program.institution.trim())
+    .filter((program) => !seen.has(programIdentity(program)))
+    .map((program) => ({
+      name: program.name,
+      institution: program.institution,
+      location: program.location,
+      iconKey: 'sparkles' as const,
+    }));
+}

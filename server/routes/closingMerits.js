@@ -1,6 +1,6 @@
 import mongoose from 'mongoose';
 import { z } from 'zod';
-import { ClosingMeritMetaModel, ClosingMeritModel } from '../models/ClosingMerit.js';
+import { ClosingMeritModel } from '../models/ClosingMerit.js';
 import { CLOSING_MERIT_CATEGORY_ORDER, closingMeritSeedDocuments } from '../lib/closingMeritCatalog.js';
 
 const CATEGORY_LABELS = {
@@ -49,19 +49,18 @@ function toPublic(doc) {
 }
 
 async function ensureSeeded() {
-  const meta = await ClosingMeritMetaModel.findOne({ key: 'default' }).lean();
-  if (meta?.seeded) return;
+  const existing = await ClosingMeritModel.find({}, { name: 1, institution: 1, location: 1 }).lean();
+  const seen = new Set(existing.map((doc) => `${doc.name}|${doc.institution}|${doc.location}`.trim().toLowerCase()));
+  const missing = closingMeritSeedDocuments().filter((doc) => !seen.has(`${doc.name}|${doc.institution}|${doc.location}`.trim().toLowerCase()));
+  if (!missing.length) return;
 
-  const existing = await ClosingMeritModel.countDocuments();
-  if (existing === 0) {
-    await ClosingMeritModel.insertMany(closingMeritSeedDocuments());
+  try {
+    await ClosingMeritModel.insertMany(missing, { ordered: false });
+  } catch (error) {
+    const writeErrors = Array.isArray(error?.writeErrors) ? error.writeErrors : [];
+    const onlyDuplicates = error?.code === 11000 || (writeErrors.length > 0 && writeErrors.every((item) => item?.code === 11000));
+    if (!onlyDuplicates) throw error;
   }
-
-  await ClosingMeritMetaModel.updateOne(
-    { key: 'default' },
-    { $set: { seeded: true } },
-    { upsert: true },
-  );
 }
 
 async function listPrograms() {
