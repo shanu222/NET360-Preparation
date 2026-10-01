@@ -1224,7 +1224,8 @@ const corsOriginResolver = corsAllowedOriginsList
         callback(null, true);
         return;
       }
-      if (corsAllowedOriginsList.includes(origin)) {
+      const normalizedOrigin = origin.toLowerCase().replace(/\/+$/, '');
+      if (corsAllowedOriginsList.some((allowed) => allowed.toLowerCase() === normalizedOrigin)) {
         callback(null, true);
         return;
       }
@@ -1306,6 +1307,11 @@ const hstsHttpsOnly = helmet.hsts({
 });
 app.use(
   helmet({
+    // This API is fetched cross-origin from www. COOP/origin-agent-cluster are
+    // document policies; sending them on API responses makes Chrome drop the
+    // response and report a missing Access-Control-Allow-Origin header.
+    crossOriginOpenerPolicy: false,
+    originAgentCluster: false,
     crossOriginResourcePolicy: { policy: 'cross-origin' },
     referrerPolicy: { policy: 'no-referrer' },
     xContentTypeOptions: true,
@@ -10758,6 +10764,10 @@ app.get('/api/stream', async (req, res) => {
     res.setHeader('X-Accel-Buffering', 'no');
     // Do not set Connection: it is illegal on HTTP/2 and the edge proxy reports
     // ERR_HTTP2_PROTOCOL_ERROR even though the status is 200.
+    if (res.socket) {
+      res.socket.setTimeout(0);
+      res.socket.setNoDelay(true);
+    }
     res.flushHeaders?.();
     // Comment padding encourages proxies to flush the first chunk instead of buffering it.
     res.write(`: ${' '.repeat(2048)}\n\n`);

@@ -1,6 +1,7 @@
 import { io, type Socket } from 'socket.io-client';
 import { API_BASE } from './api';
 import { isCookieSessionApiMarker } from './authSession';
+import { isNativeRuntime } from './nativeDiagnostics';
 
 /**
  * ONE authenticated Socket.IO connection per browser session (per scope: student app or
@@ -92,7 +93,10 @@ function createSocket(scope: RealtimeScope, entry: ScopeEntry): Socket {
       cb(current && !isCookieSessionApiMarker(current) ? { token: current } : {});
     },
     withCredentials: true,
-    transports: ['websocket', 'polling'],
+    // Web stays on websocket. Engine.IO long-polling is what Railway's HTTP/2 edge
+    // resets as ERR_HTTP2_PROTOCOL_ERROR, which then fails later API calls as CORS.
+    // Native keeps polling as a fallback.
+    transports: isNativeRuntime() ? ['websocket', 'polling'] : ['websocket'],
     reconnection: true,
     reconnectionAttempts: Infinity,
     reconnectionDelay: 1_000,
@@ -178,9 +182,14 @@ function createSocket(scope: RealtimeScope, entry: ScopeEntry): Socket {
       window.dispatchEvent(new CustomEvent('net360:session-revoked', {
         detail: { previousSessionId: parsed.previousSessionId, userId: parsed.userId },
       }));
-    } else if (parsed.type === 'subscription.refresh') {
-      window.dispatchEvent(new CustomEvent('net360:subscription-refresh', { detail: parsed }));
+      return;
     }
+    if (parsed.type === 'subscription.refresh') {
+      window.dispatchEvent(new CustomEvent('net360:subscription-refresh', { detail: parsed }));
+      return;
+    }
+    if (parsed.type === 'support.typing' || parsed.type === 'heartbeat' || parsed.type === 'connected') return;
+    window.dispatchEvent(new CustomEvent('net360:data-sync', { detail: parsed }));
   };
   const onSubscriptionRefresh = (data: unknown) => {
     if (scope !== 'student') return;

@@ -9,7 +9,7 @@ import {
 } from '../lib/authSession';
 import { waitUntilAuthHydrated, waitUntilClientAuthToken } from '../lib/authTiming';
 import { cacheLaunchedExamSession } from '../lib/examWindowLaunch';
-import { logNativeEvent } from '../lib/nativeDiagnostics';
+import { isNativeRuntime, logNativeEvent } from '../lib/nativeDiagnostics';
 import { consumeBriefNativeHide, markNativeDocumentHidden } from '../lib/nativeForeground';
 import { useAuth } from './AuthContext';
 
@@ -373,6 +373,25 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const authToken = resolveClientAuthToken();
     if (!authToken) return;
 
+    const onDataSync = () => {
+      if (!document.hidden) scheduleDebouncedForegroundSync(authToken);
+    };
+    window.addEventListener('net360:data-sync', onDataSync);
+
+    // The browser EventSource to Railway is a long-lived HTTP response. On the
+    // production HTTP/2 edge it resets the connection (ERR_HTTP2_PROTOCOL_ERROR)
+    // and the next calls, including profile, are reported as CORS failures.
+    // Web realtime already arrives on the websocket. Keep EventSource for native.
+    if (!isNativeRuntime()) {
+      return () => {
+        window.removeEventListener('net360:data-sync', onDataSync);
+        if (syncDebounceTimerRef.current) {
+          window.clearTimeout(syncDebounceTimerRef.current);
+          syncDebounceTimerRef.current = null;
+        }
+      };
+    }
+
     let closed = false;
     let reconnectTimer: number | null = null;
     let source: EventSource | null = null;
@@ -466,6 +485,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
     return () => {
       closed = true;
+      window.removeEventListener('net360:data-sync', onDataSync);
       document.removeEventListener('visibilitychange', resumeIfPaused);
       window.removeEventListener('online', resumeIfPaused);
       if (reconnectTimer) {
