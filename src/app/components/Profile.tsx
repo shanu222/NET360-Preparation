@@ -205,12 +205,17 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
   const [androidProfileScreen, setAndroidProfileScreen] = useState<null | 'account' | 'preparation' | 'achievements' | 'preferences' | 'danger'>(null);
   useAndroidNestedScreen('profile', Boolean(androidProfileScreen), () => setAndroidProfileScreen(null));
   useEffect(() => {
-    if (sessionStorage.getItem('net360-open-notification-preferences') !== '1') return;
-    sessionStorage.removeItem('net360-open-notification-preferences');
-    if (isNativeAndroidRuntime()) setAndroidProfileScreen('preferences');
-    window.setTimeout(() => {
-      document.getElementById('notification-preferences')?.scrollIntoView({ block: 'start' });
-    }, 50);
+    const openNotificationSettings = () => {
+      if (sessionStorage.getItem('net360-open-notification-preferences') !== '1') return;
+      sessionStorage.removeItem('net360-open-notification-preferences');
+      if (isNativeAndroidRuntime()) setAndroidProfileScreen('preferences');
+      window.setTimeout(() => {
+        document.getElementById('notification-preferences')?.scrollIntoView({ block: 'start' });
+      }, 50);
+    };
+    openNotificationSettings();
+    window.addEventListener('net360:open-notification-preferences', openNotificationSettings);
+    return () => window.removeEventListener('net360:open-notification-preferences', openNotificationSettings);
   }, []);
   const [isPreparationExpanded, setIsPreparationExpanded] = useState(true);
   const [isSavingTargetProgram, setIsSavingTargetProgram] = useState(false);
@@ -590,6 +595,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
     dailyReminders: preferences.dailyReminders !== false,
     performanceReports: preferences.performanceReports !== false,
   });
+  const storedNotes = preferences.notificationPreferences as Record<string, boolean> | undefined;
+  const [videoEmailEnabled, setVideoEmailEnabled] = useState(storedNotes?.newVideos !== false && storedNotes?.videoUploads !== false);
   useEffect(() => {
     setNotificationPreferences(serverNotificationPreferences);
     setDeliveryPreferences({
@@ -597,6 +604,8 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       dailyReminders: preferences.dailyReminders !== false,
       performanceReports: preferences.performanceReports !== false,
     });
+    const notes = preferences.notificationPreferences as Record<string, boolean> | undefined;
+    setVideoEmailEnabled(notes?.newVideos !== false && notes?.videoUploads !== false);
   }, [preferences]);
 
   const toggleNotificationPreference = async (key: NotificationPreferenceKey, enabled: boolean) => {
@@ -611,6 +620,17 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
       await savePreferences({ notificationPreferences });
     } catch (error) {
       setNotificationPreferences((current) => ({ ...current, [key]: previous }));
+      handleApiError(error, 'Could not save notification preference.');
+    }
+  };
+
+  const toggleVideoEmail = async (enabled: boolean) => {
+    const previous = videoEmailEnabled;
+    setVideoEmailEnabled(enabled);
+    try {
+      await savePreferences({ notificationPreferences: { videoUploads: enabled, newVideos: enabled } });
+    } catch (error) {
+      setVideoEmailEnabled(previous);
       handleApiError(error, 'Could not save notification preference.');
     }
   };
@@ -1574,6 +1594,21 @@ export const Profile = memo(function Profile({ onNavigate }: ProfileProps) {
                   </div>
                 );
               })}
+              {androidApp && section.id === 'Tests and preparation' ? (
+                <div className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-3 active:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:active:bg-slate-800">
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-slate-50">New Video Uploads</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-300">Email when an admin publishes a new video.</p>
+                    <p className="mt-1 text-xs font-semibold text-indigo-700 dark:text-indigo-300">{videoEmailEnabled ? 'ON' : 'OFF'}</p>
+                  </div>
+                  <Switch
+                    checked={videoEmailEnabled}
+                    onCheckedChange={(checked) => void toggleVideoEmail(checked)}
+                    aria-label="New Video Uploads notifications"
+                    className="active:scale-95"
+                  />
+                </div>
+              ) : null}
             </div>
           ))}
         </CardContent>

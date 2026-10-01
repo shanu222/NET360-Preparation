@@ -1362,6 +1362,7 @@ export default function App() {
                             className="net360-drawer-item flex min-h-12 w-full items-center rounded-2xl px-3 text-left text-sm font-semibold text-slate-800 active:bg-slate-100 dark:text-slate-100 dark:active:bg-white/10"
                             onClick={() => {
                               sessionStorage.setItem('net360-open-notification-preferences', '1');
+                              window.dispatchEvent(new CustomEvent('net360:open-notification-preferences'));
                               setSidebarMenuOpen(false);
                               navigate(PATH_BY_SECTION.profile);
                             }}
@@ -1414,20 +1415,6 @@ export default function App() {
                 </div>
               </div>
               <div className="net360-header-actions ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
-                {androidApp ? (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="touch-manipulation min-h-10 min-w-10 rounded-xl text-slate-700 hover:bg-indigo-50 dark:text-slate-100"
-                    onClick={() => {
-                      sessionStorage.setItem('net360-open-notification-preferences', '1');
-                      navigate(PATH_BY_SECTION.profile);
-                    }}
-                    aria-label="Notifications"
-                  >
-                    <Bell className="h-5 w-5" />
-                  </Button>
-                ) : null}
                 <div className={`flex items-center gap-1 sm:gap-2${androidApp ? ' net360-android-chrome-hide' : ''}`}>
                 <Button
                   variant="ghost"
