@@ -2202,3 +2202,291 @@ html.dark:not(.native-android) .net360-rtl-close {
   color: #e0e7ff;
   border-color: #818cf8;
 }
+
+/* Web-only contrast and outlines. Android rules above are unchanged. */
+html:not(.native-android) {
+  --foreground: #0f172a;
+  --muted-foreground: #334155;
+  --net360-text-secondary: #334155;
+  --border: #818cf8;
+  --ring: #4338ca;
+}
+
+html:not(.native-android).dark {
+  --foreground: #e8eeff;
+  --muted-foreground: #cbd5e1;
+  --net360-text-secondary: #d4ddff;
+  --border: #818cf8;
+  --destructive-foreground: #ffe4e6;
+  --switch-background: #64748b;
+}
+
+html:not(.native-android):not(.dark) .net360-page .text-slate-400,
+html:not(.native-android):not(.dark) .net360-page .text-slate-500,
+html:not(.native-android):not(.dark) .net360-page .text-muted-foreground,
+html:not(.native-android):not(.dark) .net360-shell main .text-slate-400,
+html:not(.native-android):not(.dark) .net360-shell main .text-slate-500,
+html:not(.native-android):not(.dark) .net360-shell main .text-muted-foreground {
+  color: #334155;
+}
+
+html:not(.native-android):not(.dark) .net360-page .text-slate-600,
+html:not(.native-android):not(.dark) .net360-shell main .text-slate-600 {
+  color: #1e293b;
+}
+
+html:not(.native-android):not(.dark) .net360-page .text-indigo-600,
+html:not(.native-android):not(.dark) .net360-page .text-indigo-700 {
+  color: #3730a3;
+}
+
+html:not(.native-android) .net360-page [data-slot='card'] {
+  border: 1px solid #4f46e5;
+  background-color: #ffffff;
+  background-image: none;
+}
+
+html:not(.native-android) .community-page [data-slot='card'] {
+  border-color: #0f766e;
+}
+
+html:not(.native-android) .net360-page [data-slot='card'][class*='border-emerald'],
+html:not(.native-android) .net360-page [data-slot='card'][class*='border-teal'] {
+  border-color: #0f766e;
+}
+
+html:not(.native-android) .net360-page [data-slot='card'][class*='border-amber'],
+html:not(.native-android) .net360-page [data-slot='card'][class*='border-orange'] {
+  border-color: #c2410c;
+}
+
+html:not(.native-android) .net360-page [data-slot='card'][class*='border-rose'],
+html:not(.native-android) .net360-page [data-slot='card'][class*='border-red'] {
+  border-color: #be123c;
+}
+
+html:not(.native-android) .net360-page [data-slot='card'][class*='border-violet'],
+html:not(.native-android) .net360-page [data-slot='card'][class*='border-purple'] {
+  border-color: #6d28d9;
+}
+
+html:not(.native-android) .net360-page [data-slot='card'][class*='border-cyan'],
+html:not(.native-android) .net360-page [data-slot='card'][class*='border-sky'] {
+  border-color: #0e7490;
+}
+
+html:not(.native-android) .net360-page [data-slot='button']:not(.border) {
+  border: 1px solid #312e81;
+  color: #ffffff;
+}
+
+html:not(.native-android) .net360-page [data-slot='button'].border {
+  background-color: #ffffff;
+  background-image: none;
+  border: 1px solid #4f46e5;
+  color: #312e81;
+}
+
+html:not(.native-android) .net360-page [data-slot='button'].border:hover,
+html:not(.native-android) .net360-page [data-slot='button'].border:focus-visible {
+  background-color: #eef2ff;
+  border-color: #3730a3;
+  color: #1e1b4b;
+}
+
+html:not(.native-android) .net360-page [data-slot='button'].border[class*='emerald'] {
+  border-color: #047857;
+  color: #065f46;
+}
+
+html:not(.native-android) .net360-page [data-slot='button'].border[class*='emerald']:hover,
+html:not(.native-android) .net360-page [data-slot='button'].border[class*='emerald']:focus-visible {
+  background-color: #ecfdf5;
+  border-color: #065f46;
+  color: #064e3b;
+}
+
+html:not(.native-android) .net360-page [data-slot='button']:disabled,
+html:not(.native-android) .net360-page button:disabled {
+  opacity: 0.62;
+}
+
+html:not(.native-android) .net360-page button[class*='from-indigo-700'],
+html:not(.native-android) .net360-page [data-slot='button'][class*='from-indigo-700'] {
+  background-image: linear-gradient(90deg, #4338ca, #6d28d9);
+  background-color: #4338ca;
+  border: 1px solid #312e81;
+  color: #ffffff;
+}
+
+html:not(.native-android) .net360-page button[class*='from-indigo-700'] span,
+html:not(.native-android) .net360-page [data-slot='button'][class*='from-indigo-700'] span {
+  color: #ffffff;
+}
+
+html:not(.native-android):not(.dark) .net360-page button.rounded-xl.border:not([data-slot='button']):not([class*='from-indigo-700']):not([class*='202124']) {
+  background-color: #ffffff;
+  background-image: none;
+  border-color: #4f46e5;
+  color: #1e293b;
+}
+
+html:not(.native-android):not(.dark) .net360-page button.rounded-xl.border:not([data-slot='button']):not([class*='from-indigo-700']):not([class*='202124']) .text-slate-500,
+html:not(.native-android):not(.dark) .net360-page button.rounded-xl.border:not([data-slot='button']):not([class*='from-indigo-700']):not([class*='202124']) .text-indigo-100 {
+  color: #334155;
+}
+
+html:not(.native-android):not(.dark) .net360-page button.rounded-xl.border:not([data-slot='button']):not([class*='from-indigo-700']):not([class*='202124']) .text-indigo-600 {
+  color: #3730a3;
+}
+
+html:not(.native-android):not(.dark) .net360-page input,
+html:not(.native-android):not(.dark) .net360-page textarea,
+html:not(.native-android):not(.dark) .net360-page select {
+  background-color: #ffffff;
+  color: #0f172a;
+  border: 1px solid #6366f1;
+}
+
+html:not(.native-android):not(.dark) .net360-page input::placeholder,
+html:not(.native-android):not(.dark) .net360-page textarea::placeholder {
+  color: #475569;
+  opacity: 1;
+}
+
+html:not(.native-android):not(.dark) .net360-page [data-slot='tabs-trigger'] {
+  background-color: #ffffff;
+  background-image: none;
+  border-color: #6366f1;
+  color: #312e81;
+}
+
+html:not(.native-android):not(.dark) .net360-page [data-slot='tabs-trigger'][data-state='active'] {
+  background-image: linear-gradient(135deg, #4f46e5, #7c3aed);
+  background-color: #4f46e5;
+  border-color: #312e81;
+  color: #ffffff;
+}
+
+html:not(.native-android):not(.dark) .net360-page a.text-indigo-700,
+html:not(.native-android):not(.dark) .net360-page a.text-indigo-600 {
+  color: #3730a3;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='card'] {
+  border: 1px solid #818cf8 !important;
+  background-color: #1b264a;
+  background-image: none;
+}
+
+html:not(.native-android).dark .community-page [data-slot='card'] {
+  border-color: #2dd4bf !important;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='card'][class*='border-emerald'],
+html:not(.native-android).dark .net360-page [data-slot='card'][class*='border-teal'] {
+  border-color: #2dd4bf !important;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='card'][class*='border-amber'],
+html:not(.native-android).dark .net360-page [data-slot='card'][class*='border-orange'] {
+  border-color: #fb923c !important;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='card'][class*='border-rose'],
+html:not(.native-android).dark .net360-page [data-slot='card'][class*='border-red'] {
+  border-color: #fb7185 !important;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='card'][class*='border-violet'],
+html:not(.native-android).dark .net360-page [data-slot='card'][class*='border-purple'] {
+  border-color: #c4b5fd !important;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='card'][class*='border-cyan'],
+html:not(.native-android).dark .net360-page [data-slot='card'][class*='border-sky'] {
+  border-color: #67e8f9 !important;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='button']:not(.border):not([class*='from-indigo-700']) {
+  border: 1px solid #c7d2fe;
+  color: #0f172a;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='button'][class*='from-indigo-700'],
+html:not(.native-android).dark .net360-page button[class*='from-indigo-700'] {
+  border-color: #c7d2fe !important;
+  color: #ffffff;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='button'].border {
+  background-color: #1e293b;
+  background-image: none;
+  border: 1px solid #818cf8;
+  color: #e0e7ff;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='button'].border:hover,
+html:not(.native-android).dark .net360-page [data-slot='button'].border:focus-visible {
+  background-color: #312e81;
+  border-color: #c7d2fe;
+  color: #f8fafc;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='button'].border[class*='emerald'],
+html:not(.native-android).dark .net360-page [data-slot='button'].border[class*='emerald'] a {
+  border-color: #34d399 !important;
+  color: #d1fae5 !important;
+}
+
+html:not(.native-android).dark .net360-page button[class*='from-indigo-700'] span {
+  color: #ffffff;
+}
+
+html:not(.native-android).dark .net360-page button.rounded-xl.border:not([data-slot='button']):not([class*='from-indigo-700']):not([class*='202124']) {
+  background-color: #1b264a;
+  background-image: none;
+  border-color: #818cf8 !important;
+  color: #e2e8f0;
+}
+
+html:not(.native-android).dark .net360-page button.rounded-xl.border:not([data-slot='button']):not([class*='from-indigo-700']):not([class*='202124']) .text-slate-500,
+html:not(.native-android).dark .net360-page button.rounded-xl.border:not([data-slot='button']):not([class*='from-indigo-700']):not([class*='202124']) .text-indigo-600,
+html:not(.native-android).dark .net360-page button.rounded-xl.border:not([data-slot='button']):not([class*='from-indigo-700']):not([class*='202124']) .text-indigo-700 {
+  color: #e0e7ff;
+}
+
+html:not(.native-android).dark .net360-page .text-indigo-500,
+html:not(.native-android).dark .net360-page .text-indigo-600,
+html:not(.native-android).dark .net360-shell main .text-indigo-500,
+html:not(.native-android).dark .net360-shell main .text-indigo-600 {
+  color: #c7d2fe;
+}
+
+html:not(.native-android).dark .net360-page input,
+html:not(.native-android).dark .net360-page textarea,
+html:not(.native-android).dark .net360-page select {
+  background-color: #172044;
+  color: #f8fafc;
+  border: 1px solid #818cf8;
+}
+
+html:not(.native-android).dark .net360-page input::placeholder,
+html:not(.native-android).dark .net360-page textarea::placeholder {
+  color: #cbd5e1;
+  opacity: 1;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='tabs-trigger'] {
+  background-color: #1e293b;
+  background-image: none;
+  border-color: #818cf8 !important;
+  color: #e0e7ff;
+}
+
+html:not(.native-android).dark .net360-page [data-slot='tabs-trigger'][data-state='active'] {
+  background-image: linear-gradient(135deg, #818cf8, #a78bfa);
+  background-color: #818cf8;
+  border-color: #c7d2fe !important;
+  color: #0f172a;
+}
