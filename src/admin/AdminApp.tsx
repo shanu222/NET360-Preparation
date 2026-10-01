@@ -1395,6 +1395,49 @@ function sortAdminSupportMessages(list: AdminSupportMessage[]): AdminSupportMess
   });
 }
 
+function supportMessageId(item: AdminSupportMessage): string {
+  return String(item.id || item.messageId || '');
+}
+
+/** Merge two snapshots by message id, preferring newer fields while keeping a known file payload. */
+function mergeAdminSupportMessages(current: AdminSupportMessage[], incoming: AdminSupportMessage[]): AdminSupportMessage[] {
+  const byId = new Map<string, AdminSupportMessage>();
+  for (const row of current) {
+    const id = supportMessageId(row);
+    if (id) byId.set(id, { ...row, id });
+  }
+  for (const row of incoming) {
+    const id = supportMessageId(row);
+    if (!id) continue;
+    const existing = byId.get(id);
+    const normalized = { ...row, id };
+    if (!existing) {
+      byId.set(id, normalized);
+      continue;
+    }
+    byId.set(id, {
+      ...existing,
+      ...normalized,
+      attachment: normalized.attachment && !normalized.attachment.dataUrl && existing.attachment?.dataUrl
+        ? { ...normalized.attachment, dataUrl: existing.attachment.dataUrl }
+        : normalized.attachment ?? existing.attachment ?? null,
+    });
+  }
+  return sortAdminSupportMessages([...byId.values()]);
+}
+
+function supportUserFromConversation(
+  conversation: AdminSupportConversation | undefined,
+  userId: string,
+): AdminSupportThreadPayload['user'] {
+  return {
+    id: userId,
+    name: conversation?.userName || conversation?.email || 'Student',
+    email: conversation?.email || '',
+    mobileNumber: conversation?.mobileNumber || '',
+  };
+}
+
 /** Insert or replace by stable message id; keeps a known file payload when the event omits it. */
 function upsertAdminSupportMessage(list: AdminSupportMessage[], incoming: AdminSupportMessage): AdminSupportMessage[] {
   const id = String(incoming.id || incoming.messageId || '');
@@ -2774,7 +2817,11 @@ export default function AdminApp() {
   selectedSupportUserIdRef.current = selectedSupportUserId;
   const supportConversationsRef = useRef<AdminSupportConversation[]>([]);
   supportConversationsRef.current = supportConversations;
-  const supportThreadLoadedForRef = useRef('');
+  const supportThreadCacheRef = useRef<Map<string, { user: AdminSupportThreadPayload['user'] | null; messages: AdminSupportMessage[] }>>(new Map());
+  const supportThreadRequestSeqRef = useRef<Map<string, number>>(new Map());
+  const supportThreadScrollRef = useRef<HTMLDivElement | null>(null);
+  const supportThreadStickToBottomRef = useRef(true);
+  const presentedSupportUserIdRef = useRef('');
   const supportResyncTimerRef = useRef<number | null>(null);
   /** userId of the student currently typing in the selected thread (ephemeral). */
   const [supportTypingUserId, setSupportTypingUserId] = useState('');
@@ -4613,41 +4660,95 @@ export default function AdminApp() {
     }
   };
 
+  const rememberSupportThread = (
+    userId: string,
+    messages: AdminSupportMessage[],
+    user?: AdminSupportThreadPayload['user'] | null,
+  ) => {
+    const previous = supportThreadCacheRef.current.get(userId);
+    supportThreadCacheRef.current.set(userId, {
+      user: user || previous?.user || null,
+      messages,
+    });
+  };
+
+  /** Show the selected student immediately from the session cache, then sync in the background. */
+  const presentSupportThread = (userId: string) => {
+    selectedSupportUserIdRef.current = userId;
+    if (presentedSupportUserIdRef.current !== userId) {
+      presentedSupportUserIdRef.current = userId;
+      supportThreadStickToBottomRef.current = true;
+    }
+    const cached = supportThreadCacheRef.current.get(userId);
+    const conversation = supportConversationsRef.current.find((row) => row.userId === userId);
+    const shellUser = cached?.user || supportUserFromConversation(conversation, userId);
+    setActiveSupportUser(shellUser);
+    if (cached) {
+      setSupportMessages(cached.messages);
+      setIsSupportThreadLoading(false);
+      return;
+    }
+    setSupportMessages([]);
+    setIsSupportThreadLoading(true);
+  };
+
   /**
    * Load a thread from the server (source of truth; also marks the student's messages read).
-   * `silent` = realtime reconcile of the thread already on screen: never flashes "Loading thread...".
+   * Already cached threads stay on screen; the response is merged in the background.
    */
   const loadSupportThread = async (userId: string, activeToken = authToken, options: { silent?: boolean } = {}) => {
     if (!activeToken || !userId) return;
-    const silent = Boolean(options.silent) && supportThreadLoadedForRef.current === userId;
+    const generation = (supportThreadRequestSeqRef.current.get(userId) || 0) + 1;
+    supportThreadRequestSeqRef.current.set(userId, generation);
+    const hadCache = supportThreadCacheRef.current.has(userId);
+    void options;
+    const isLatest = () => supportThreadRequestSeqRef.current.get(userId) === generation;
     try {
-      if (!silent) setIsSupportThreadLoading(true);
+      if (!hadCache && selectedSupportUserIdRef.current === userId) setIsSupportThreadLoading(true);
       const payload = await apiRequest<AdminSupportThreadPayload>(`/api/admin/support-chat/messages/${userId}`, {}, activeToken);
-      // The admin may have switched threads while this request was in flight.
-      if (selectedSupportUserIdRef.current !== userId) return;
-      setActiveSupportUser(payload.user || null);
+      // A newer fetch for this same student replaces this snapshot. Another student's fetch does not.
+      if (!isLatest()) return;
+      const incoming = payload.messages || [];
+      const cachedMessages = supportThreadCacheRef.current.get(userId)?.messages || [];
+      const mergedBase = mergeAdminSupportMessages(cachedMessages, incoming);
+      const threadUser = payload.user || supportThreadCacheRef.current.get(userId)?.user || null;
+      const isCurrent = selectedSupportUserIdRef.current === userId;
+      if (!isCurrent) {
+        rememberSupportThread(userId, mergedBase, threadUser);
+        return;
+      }
+      setActiveSupportUser(threadUser);
       setSupportMessages((prev) => {
-        const incoming = payload.messages || [];
-        const ids = new Set(incoming.map((row) => String(row.id || '')));
+        if (selectedSupportUserIdRef.current !== userId) {
+          rememberSupportThread(userId, mergedBase, threadUser);
+          return prev;
+        }
         const now = Date.now();
-        const extras = prev.filter((row) => {
-          const id = String(row.id || '');
-          if (!id || ids.has(id)) return false;
+        const incomingIds = new Set(mergedBase.map((row) => supportMessageId(row)));
+        const recentLocal = prev.filter((row) => {
+          if (row.userId && String(row.userId) !== userId) return false;
+          const id = supportMessageId(row);
+          if (!id || incomingIds.has(id)) return false;
           const ts = new Date(row.createdAt || 0).getTime();
           return ts > 0 && now - ts < 20_000;
         });
-        return sortAdminSupportMessages([...incoming, ...extras]);
+        const next = mergeAdminSupportMessages(mergedBase, recentLocal);
+        rememberSupportThread(userId, next, threadUser);
+        return next;
       });
-      supportThreadLoadedForRef.current = userId;
       setSupportConversations((prev) => prev.map((row) => (
         row.userId === userId
           ? { ...row, unreadForAdmin: 0, userName: payload.user?.name || row.userName, email: payload.user?.email || row.email, mobileNumber: payload.user?.mobileNumber || row.mobileNumber }
           : row
       )));
     } catch (error) {
-      if (!silent) handleApiError(error, 'Could not load support thread.');
+      const stillCurrent = isLatest() && selectedSupportUserIdRef.current === userId;
+      const cachedCount = supportThreadCacheRef.current.get(userId)?.messages.length || 0;
+      if (stillCurrent && cachedCount === 0) handleApiError(error, 'Could not load support thread.');
     } finally {
-      if (!silent) setIsSupportThreadLoading(false);
+      if (isLatest() && selectedSupportUserIdRef.current === userId) {
+        setIsSupportThreadLoading(false);
+      }
     }
   };
 
@@ -4752,8 +4853,17 @@ export default function AdminApp() {
       setSupportReplyText('');
       setSupportReplyAttachment(null);
       const persisted = payload?.message;
-      if (persisted?.id && selectedSupportUserIdRef.current === targetUserId) {
-        setSupportMessages((prev) => upsertAdminSupportMessage(prev, persisted));
+      if (persisted?.id) {
+        if (selectedSupportUserIdRef.current === targetUserId) {
+          setSupportMessages((prev) => {
+            const next = upsertAdminSupportMessage(prev, persisted);
+            rememberSupportThread(targetUserId, next);
+            return next;
+          });
+        } else {
+          const cached = supportThreadCacheRef.current.get(targetUserId);
+          if (cached) rememberSupportThread(targetUserId, upsertAdminSupportMessage(cached.messages, persisted));
+        }
       }
       if (persisted) {
         setSupportConversations((prev) => touchSupportConversation(prev, targetUserId, persisted, 0));
@@ -4800,7 +4910,15 @@ export default function AdminApp() {
         body: JSON.stringify({ emoji }),
       }, authToken);
       if (payload?.message?.id && selectedSupportUserIdRef.current === targetUserId) {
-        setSupportMessages((prev) => upsertAdminSupportMessage(prev, payload.message as AdminSupportMessage));
+        const persisted = payload.message as AdminSupportMessage;
+        setSupportMessages((prev) => {
+          const next = upsertAdminSupportMessage(prev, persisted);
+          rememberSupportThread(targetUserId, next);
+          return next;
+        });
+      } else if (payload?.message?.id) {
+        const cached = supportThreadCacheRef.current.get(targetUserId);
+        if (cached) rememberSupportThread(targetUserId, upsertAdminSupportMessage(cached.messages, payload.message as AdminSupportMessage));
       } else {
         scheduleSupportResync(0);
       }
@@ -4876,10 +4994,15 @@ export default function AdminApp() {
       return;
     }
 
-    // `silent` only applies when this same thread is already on screen (e.g. token rotation):
-    // switching threads still shows the loading hint.
+    presentSupportThread(selectedSupportUserId);
     void loadSupportThread(selectedSupportUserId, authToken, { silent: true });
   }, [selectedSupportUserId, authToken]);
+
+  useLayoutEffect(() => {
+    const el = supportThreadScrollRef.current;
+    if (!el || !selectedSupportUserId || !supportThreadStickToBottomRef.current) return;
+    el.scrollTop = el.scrollHeight;
+  }, [supportMessages, selectedSupportUserId]);
 
   useEffect(() => {
     if (!supportConversations.length) {
@@ -4976,9 +5099,12 @@ export default function AdminApp() {
       if (type === 'support.read') {
         const readUserId = String(event.userId || '');
         if (event.by !== 'user' || !readUserId || selectedSupportUserIdRef.current !== readUserId) return;
-        setSupportMessages((prev) => (prev.some((row) => row.senderRole === 'admin' && !row.readByUser)
-          ? prev.map((row) => (row.senderRole === 'admin' ? { ...row, readByUser: true } : row))
-          : prev));
+        setSupportMessages((prev) => {
+          if (!prev.some((row) => row.senderRole === 'admin' && !row.readByUser)) return prev;
+          const next = prev.map((row) => (row.senderRole === 'admin' ? { ...row, readByUser: true } : row));
+          rememberSupportThread(readUserId, next);
+          return next;
+        });
         return;
       }
       if (type !== 'support.message' && type !== 'support.message.updated') return;
@@ -5011,13 +5137,22 @@ export default function AdminApp() {
       }
 
       if (isSelectedThread) {
-        setSupportMessages((prev) => upsertAdminSupportMessage(prev, { ...message, userId }));
+        setSupportMessages((prev) => {
+          const next = upsertAdminSupportMessage(prev, { ...message, userId });
+          rememberSupportThread(userId, next);
+          return next;
+        });
         // Student message in the open thread: mark it read server-side + reconcile (also fetches
         // file bytes, which realtime events omit).
         if (type === 'support.message' && String(message.senderRole || '') === 'user') {
           scheduleSupportResync(250);
         } else if (message.messageType === 'file' && !message.attachment?.dataUrl) {
           scheduleSupportResync(250);
+        }
+      } else {
+        const cached = supportThreadCacheRef.current.get(userId);
+        if (cached) {
+          rememberSupportThread(userId, upsertAdminSupportMessage(cached.messages, { ...message, userId }));
         }
       }
     };
@@ -8622,6 +8757,7 @@ export default function AdminApp() {
                       key={conversation.userId}
                       type="button"
                       onClick={() => {
+                        if (conversation.userId !== selectedSupportUserId) presentSupportThread(conversation.userId);
                         setSelectedSupportUserId(conversation.userId);
                         setSupportConversations((prev) => prev.map((row) => (
                           row.userId === conversation.userId ? { ...row, unreadForAdmin: 0 } : row
@@ -8679,9 +8815,16 @@ export default function AdminApp() {
                     Secure chat channel active. Messages and files are protected in transit.
                   </div>
 
-                  <div className="admin-support-thread max-h-[420px] space-y-2 overflow-auto rounded-lg border bg-slate-50 p-3">
-                    {isSupportThreadLoading ? <p className="text-xs text-muted-foreground">Loading thread...</p> : null}
-                    {!supportMessages.length ? <p className="text-xs text-muted-foreground">No messages in this thread.</p> : null}
+                  <div
+                    ref={supportThreadScrollRef}
+                    className="admin-support-thread max-h-[420px] space-y-2 overflow-auto rounded-lg border bg-slate-50 p-3"
+                    onScroll={(event) => {
+                      const el = event.currentTarget;
+                      supportThreadStickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+                    }}
+                  >
+                    {isSupportThreadLoading && !supportMessages.length ? <p className="text-[11px] text-muted-foreground">Syncing…</p> : null}
+                    {!isSupportThreadLoading && !supportMessages.length ? <p className="text-xs text-muted-foreground">No messages in this thread.</p> : null}
                     {supportMessages.map((item, index) => (
                       <div
                         key={item.id}
