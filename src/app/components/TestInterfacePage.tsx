@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowLeft, ArrowRight, Bookmark, CircleHelp, FastForward, Loader2, LogOut, Rewind, Save, Send, SkipBack, SkipForward } from 'lucide-react';
 import { App as CapacitorApp } from '@capacitor/app';
 import { showSuccessToast, showErrorToast, showNeutralToast, handleApiError } from '../lib/userToast';
@@ -1528,7 +1529,7 @@ export function TestInterfacePage() {
         }}
       />
 
-      {result ? (
+      {result ? createPortal(
         <div className="fixed inset-0 z-[70] grid place-items-center bg-slate-950/55 p-3">
           <div
             id="resultContainer"
@@ -1645,7 +1646,8 @@ export function TestInterfacePage() {
               </div>
             ) : null}
           </div>
-        </div>
+        </div>,
+        document.body,
       ) : null}
     </div>
   );
