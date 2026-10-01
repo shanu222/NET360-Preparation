@@ -2011,3 +2011,194 @@ html:not(.dark) .net360-demo-option {
   color: #0f172a !important;
   border-color: #c7d2fe !important;
 }
+
+html:not(.native-android) .net360-rtl-slot {
+  justify-content: center;
+}
+
+html:not(.native-android) .net360-rtl-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 0.15rem 0.45rem 0.15rem 0.15rem;
+  border: 1.5px solid #818cf8;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #312e81;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+
+html:not(.native-android) .net360-rtl-chip:hover {
+  background: #eef2ff;
+}
+
+html:not(.native-android) .net360-rtl-chip:active {
+  background: #e0e7ff;
+}
+
+html.dark:not(.native-android) .net360-rtl-chip {
+  background: #1a2238;
+  color: #e0e7ff;
+  border-color: #818cf8;
+}
+
+html.dark:not(.native-android) .net360-rtl-chip:hover,
+html.dark:not(.native-android) .net360-rtl-chip:active {
+  background: #312e81;
+  color: #ffffff;
+}
+
+html:not(.native-android) .net360-rtl-mark,
+html:not(.native-android) .net360-rtl-card-logo {
+  display: block;
+  border-radius: 999px;
+  object-fit: cover;
+  background: #061428;
+}
+
+html:not(.native-android) .net360-rtl-mark {
+  width: 1.15rem;
+  height: 1.15rem;
+}
+
+html:not(.native-android) .net360-rtl-dialog {
+  max-width: min(24rem, calc(100vw - 1.5rem)) !important;
+  padding: 0 !important;
+  border: 1.5px solid #818cf8 !important;
+  background: #ffffff !important;
+  color: #0f172a !important;
+}
+
+html.dark:not(.native-android) .net360-rtl-dialog {
+  background: #1a2238 !important;
+  color: #f8fafc !important;
+  border-color: #818cf8 !important;
+}
+
+html:not(.native-android) .net360-rtl-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1.15rem 1.1rem 0.9rem;
+  text-align: center;
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(56, 189, 248, 0.22), transparent 55%),
+    linear-gradient(#ffffff, #ffffff);
+}
+
+html.dark:not(.native-android) .net360-rtl-card {
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(56, 189, 248, 0.2), transparent 55%),
+    linear-gradient(#1a2238, #1a2238);
+}
+
+html:not(.native-android) .net360-rtl-card-logo {
+  width: 4.5rem;
+  height: 4.5rem;
+  margin-bottom: 0.65rem;
+  box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.35);
+}
+
+html:not(.native-android) .net360-rtl-card-name {
+  margin: 0;
+  color: #1e1b4b;
+  font-size: 0.95rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1.25;
+  text-transform: uppercase;
+}
+
+html.dark:not(.native-android) .net360-rtl-card-name {
+  color: #f8fafc;
+}
+
+html:not(.native-android) .net360-rtl-card-role {
+  margin: 0.35rem 0 0;
+  color: #4338ca;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+html.dark:not(.native-android) .net360-rtl-card-role {
+  color: #a5b4fc;
+}
+
+html:not(.native-android) .net360-rtl-facts {
+  width: 100%;
+  margin: 0.8rem 0 0;
+  padding: 0.7rem 0 0;
+  border-top: 1px solid rgba(129, 140, 248, 0.35);
+  text-align: left;
+}
+
+html:not(.native-android) .net360-rtl-facts div + div {
+  margin-top: 0.55rem;
+}
+
+html:not(.native-android) .net360-rtl-facts dt {
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+html.dark:not(.native-android) .net360-rtl-facts dt {
+  color: #cbd5e1;
+}
+
+html:not(.native-android) .net360-rtl-facts dd {
+  margin: 0.1rem 0 0;
+  color: #0f172a;
+  font-size: 0.9rem;
+  font-weight: 650;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+html.dark:not(.native-android) .net360-rtl-facts dd,
+html.dark:not(.native-android) .net360-rtl-facts a {
+  color: #f8fafc;
+}
+
+html:not(.native-android) .net360-rtl-facts a {
+  color: #312e81;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+html:not(.native-android) .net360-rtl-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  width: 100%;
+  margin-top: 0.85rem;
+}
+
+html:not(.native-android) .net360-rtl-close {
+  min-height: 2.25rem;
+  padding: 0.35rem 0.9rem;
+  border: 1.5px solid #818cf8;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #312e81;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+html:not(.native-android) .net360-rtl-close:hover,
+html:not(.native-android) .net360-rtl-close:active {
+  background: #eef2ff;
+}
+
+html.dark:not(.native-android) .net360-rtl-close {
+  background: #12182b;
+  color: #e0e7ff;
+  border-color: #818cf8;
+}

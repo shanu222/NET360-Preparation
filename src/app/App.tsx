@@ -57,6 +57,7 @@ import { brandLogoUrl } from './lib/publicMedia';
 import { fetchAndApplyPublicMediaConfig } from './lib/publicMediaRuntime';
 import { PremiumCountdownBadge } from './components/subscription/PremiumCountdownBadge';
 import { DemoModeButton } from './components/subscription/DemoModeButton';
+import { RtlAttribution } from './components/RtlAttribution';
 import { logNativeEvent } from './lib/nativeDiagnostics';
 import { isNativeAndroidRuntime } from './lib/nativeForeground';
 
@@ -1052,7 +1053,8 @@ export default function App() {
         <div className="net360-shell mx-auto flex w-full min-w-0 max-w-[min(100%,1600px)] flex-col gap-2 rounded-[20px] border border-indigo-100 bg-white p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] sm:gap-3 sm:rounded-[24px] sm:p-2 xl:rounded-[28px]">
           <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-hidden rounded-2xl border border-indigo-50 bg-gradient-to-br from-white to-[#f2f4ff] sm:rounded-3xl">
             {/* Header */}
-            <header className="net360-header sticky top-0 z-40 flex min-h-14 flex-wrap items-center gap-1 overflow-hidden rounded-t-2xl border-b border-indigo-100 bg-white px-2 py-1.5 sm:min-h-16 sm:gap-2 sm:px-5 sm:py-0 sm:rounded-t-3xl">
+            <header className="net360-header sticky top-0 z-40 flex min-h-14 flex-col rounded-t-2xl border-b border-indigo-100 bg-white px-2 py-1.5 sm:min-h-16 sm:px-5 sm:py-1 sm:rounded-t-3xl">
+              <div className="flex w-full min-w-0 flex-wrap items-center gap-1 sm:gap-2">
               <div className="order-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:gap-3">
                 <Sheet open={sidebarMenuOpen} onOpenChange={setSidebarMenuOpen}>
                   <SheetTrigger asChild>
@@ -1165,6 +1167,10 @@ export default function App() {
                   <MessageSquare className="w-4 h-4" />
                 </Button>
                 <HeaderAuthControl onOpenProfile={() => navigate(PATH_BY_SECTION.profile)} />
+              </div>
+              </div>
+              <div className="net360-rtl-slot flex w-full justify-center pt-1">
+                <RtlAttribution />
               </div>
             </header>
 
