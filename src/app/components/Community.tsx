@@ -761,6 +761,8 @@ function CommunityInner() {
   const [rooms, setRooms] = useState<DiscussionRoom[]>([]);
   const [activeRoomId, setActiveRoomId] = useState('');
   const [roomPosts, setRoomPosts] = useState<DiscussionPost[]>([]);
+  const [feedPosts, setFeedPosts] = useState<DiscussionPost[]>([]);
+  const [openThreadId, setOpenThreadId] = useState('');
   const [newPostType, setNewPostType] = useState<'discussion' | 'doubt'>('discussion');
   const [newPostTitle, setNewPostTitle] = useState('');
   const [newPostText, setNewPostText] = useState('');
@@ -1002,6 +1004,29 @@ function CommunityInner() {
     const payload = await requestCached<{ room: DiscussionRoom; posts: DiscussionPost[] }>(`/api/community/discussion-rooms/${roomId}/posts`, { force });
     setRoomPosts(payload.posts || []);
   }, [token, requestCached]);
+
+  const refreshDiscussionFeed = useCallback(async (force = false) => {
+    if (!token || !rooms.length) return;
+    const lists = await Promise.all(rooms.map(async (room) => {
+      try {
+        const payload = await requestCached<{ posts: DiscussionPost[] }>(`/api/community/discussion-rooms/${room.id}/posts`, { force, ttlMs: 10_000 });
+        return payload.posts || [];
+      } catch {
+        return [] as DiscussionPost[];
+      }
+    }));
+    const merged = lists.flat().sort((a, b) => {
+      const at = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const bt = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return bt - at;
+    });
+    setFeedPosts(merged);
+  }, [token, rooms, requestCached]);
+
+  useEffect(() => {
+    if (activeTab !== 'discussion-rooms') return;
+    void refreshDiscussionFeed(false);
+  }, [activeTab, refreshDiscussionFeed]);
 
   /**
    * Presence roster: the server snapshot is authoritative. Event-driven reconciliations are
@@ -1959,6 +1984,35 @@ function CommunityInner() {
     }
   };
 
+  const publishTopic = async () => {
+    const roomId = rooms[0]?.id || activeRoomId;
+    if (!token || !roomId || isPostingRoom) return;
+    if (!newPostTitle.trim()) {
+      showErrorToast('Add a topic for your post.');
+      return;
+    }
+    if (!newPostText.trim()) {
+      showErrorToast('Write your post.');
+      return;
+    }
+    setIsPostingRoom(true);
+    try {
+      await apiRequest(`/api/community/discussion-rooms/${roomId}/posts`, {
+        method: 'POST',
+        body: JSON.stringify({ type: 'discussion', title: newPostTitle.trim(), text: newPostText.trim() }),
+      }, token);
+      setNewPostTitle('');
+      setNewPostText('');
+      showSuccessToast('Posted.');
+      invalidateCommunityCache('/api/community/discussion-rooms');
+      await refreshDiscussionFeed(true);
+    } catch (error) {
+      handleApiError(error, 'Could not post.');
+    } finally {
+      setIsPostingRoom(false);
+    }
+  };
+
   const addAnswer = async (postId: string) => {
     if (!token || replyingPostId) return;
     const text = String(answerTextByPostId[postId] || '').trim();
@@ -1971,7 +2025,7 @@ function CommunityInner() {
       }, token);
       setAnswerTextByPostId((prev) => ({ ...prev, [postId]: '' }));
       invalidateCommunityCache('/api/community/discussion');
-      await loadDiscussionRoomPosts(activeRoomId, true);
+      await refreshDiscussionFeed(true);
     } catch (error) {
       handleApiError(error, 'Could not post answer.');
     } finally {
@@ -1990,7 +2044,7 @@ function CommunityInner() {
         body: JSON.stringify({ targetType: answerId ? 'answer' : 'post', answerId: answerId || '' }),
       }, token);
       invalidateCommunityCache('/api/community/discussion');
-      await loadDiscussionRoomPosts(activeRoomId, true);
+      await refreshDiscussionFeed(true);
     } catch (error) {
       handleApiError(error, 'Could not update vote.');
     } finally {
@@ -2355,8 +2409,6 @@ function CommunityInner() {
     return Math.min(100, score);
   }, [usernameInput, bio, targetNetType, subjectsNeedHelpInput, scoreRangeMax, profilePictureDataUrl, profile?.profilePictureUrl, interestsInput]);
 
-  const trendingRooms = useMemo(() => [...rooms].sort((a, b) => (Number(b.posts) || 0) - (Number(a.posts) || 0)), [rooms]);
-
   // Roster tile actions navigate within the page. The pressed state is set synchronously on
   // click (so the tap is acknowledged) and cleared by the effect below once the target tab has
   // actually rendered — not by a timer.
@@ -2452,6 +2504,7 @@ function CommunityInner() {
     );
   }
 
+  const threadPost = feedPosts.find((post) => post.id === openThreadId) || null;
   const sectionTabTriggerClassName =
     'shrink-0 whitespace-nowrap rounded-xl border border-slate-200/90 bg-white/90 px-4 py-2.5 text-sm font-semibold text-slate-700 transition-all duration-300 ease-out hover:-translate-y-0.5 hover:scale-[1.02] hover:border-cyan-300 hover:bg-cyan-50 hover:text-cyan-700 hover:shadow-[0_10px_20px_rgba(34,211,238,0.2)] active:scale-[0.98] data-[state=active]:!border-transparent data-[state=active]:!bg-gradient-to-r data-[state=active]:!from-indigo-600 data-[state=active]:!via-violet-500 data-[state=active]:!to-fuchsia-500 data-[state=active]:!text-white data-[state=active]:shadow-[0_14px_26px_rgba(109,40,217,0.34)]';
   const viewProfileButtonClassName =
@@ -3013,107 +3066,66 @@ function CommunityInner() {
           ) : null}
         </TabsContent>
 
-        <TabsContent value="discussion-rooms" className="mt-0 space-y-4">
-          <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
-            <Card className="min-w-0">
-              <CardHeader>
-                <CardTitle>Topic Discussion Rooms</CardTitle>
-                <CardDescription>Subject discussion rooms.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-2 max-h-[560px] overflow-auto">
-                <p className="text-xs font-medium text-muted-foreground">Trending</p>
-                <div className="flex flex-wrap gap-1 pb-2">
-                  {trendingRooms.slice(0, 4).map((room) => (
-                    <button
-                      key={`trend-${room.id}`}
-                      type="button"
-                      className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-800 transition hover:bg-indigo-100 dark:border-indigo-500/40 dark:bg-indigo-950/40 dark:text-indigo-100"
-                      onClick={() => setActiveRoomId(room.id)}
-                    >
-                      {room.title} ({room.posts})
-                    </button>
-                  ))}
-                </div>
-                {rooms.map((room) => (
-                  <button
-                    key={room.id}
-                    type="button"
-                    onClick={() => setActiveRoomId(room.id)}
-                    className={`w-full rounded-lg border p-3 text-left ${activeRoomId === room.id ? 'border-indigo-400 bg-indigo-50' : ''}`}
-                  >
-                    <p className="text-sm">{room.title}</p>
-                    <p className="text-xs text-muted-foreground">{room.subject}  {room.posts} posts</p>
-                  </button>
-                ))}
-              </CardContent>
-            </Card>
-
-            <Card className="min-w-0">
-              <CardHeader>
-                <CardTitle>Room Feed</CardTitle>
-                <CardDescription>Room discussions.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="rounded-lg border p-3 space-y-2">
-                  <div className="grid gap-2 md:grid-cols-3">
-                    <Select value={newPostType} onValueChange={(v) => setNewPostType(v as 'discussion' | 'doubt')}>
-                      <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="discussion">Discussion</SelectItem>
-                        <SelectItem value="doubt">Doubt</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    <Input value={newPostTitle} onChange={(e) => setNewPostTitle(e.target.value)} placeholder="Title (optional)" className="md:col-span-2" />
+        <TabsContent value="discussion-rooms" className="net360-rooms mt-0 space-y-4">
+          {openThreadId && threadPost ? (
+            <article className="net360-thread">
+              <button type="button" className="net360-thread-back" onClick={() => setOpenThreadId('')}>
+                Back to posts
+              </button>
+              <h2>{threadPost.title || 'Discussion'}</h2>
+              <p className="net360-thread-body">{threadPost.text}</p>
+              <p className="net360-thread-meta">
+                {threadPost.author ? displayName(threadPost.author) : 'Unknown'}
+                {threadPost.createdAt ? ` · ${new Date(threadPost.createdAt).toLocaleString()}` : ''}
+                {` · ${threadPost.answers.length} ${threadPost.answers.length === 1 ? 'comment' : 'comments'}`}
+              </p>
+              <div className="net360-comments">
+                {threadPost.answers.map((answer) => (
+                  <div key={answer.id} className="net360-comment">
+                    <p className="net360-comment-author">{answer.author ? displayName(answer.author) : 'Unknown'}</p>
+                    <p>{answer.text}</p>
                   </div>
-                  <Textarea value={newPostText} onChange={(e) => setNewPostText(e.target.value)} className="min-h-[90px]" placeholder="Share concept, MCQ, or doubt..." />
-                  <Button onClick={() => void createRoomPost()} disabled={!activeRoomId || isPostingRoom}>
-                    {isPostingRoom ? 'Posting…' : 'Post in room'}
-                  </Button>
-                </div>
-
-                <div className="space-y-3 max-h-[560px] overflow-auto">
-                  {roomPosts.map((post) => (
-                    <div key={post.id} className="rounded-lg border p-3 space-y-2">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-medium">{post.title || (post.type === 'doubt' ? 'Quick Doubt' : 'Discussion')}</p>
-                        <Badge variant="outline">{post.type}</Badge>
-                      </div>
-                      <p className="text-sm whitespace-pre-wrap">{post.text}</p>
-                      <p className="text-xs text-muted-foreground">By {post.author ? displayName(post.author) : 'Unknown'}  {post.createdAt ? new Date(post.createdAt).toLocaleString() : ''}</p>
-                      <Button size="sm" variant="outline" disabled={Boolean(upvotingKey)} onClick={() => void upvoteDiscussion(post.id)}>
-                        {upvotingKey === post.id ? 'Voting…' : `Upvote (${post.upvotes})`}
-                      </Button>
-
-                      <div className="space-y-2 rounded-md bg-slate-50 p-2">
-                        {post.answers.map((answer) => (
-                          <div key={answer.id} className="rounded border bg-white p-2 text-sm">
-                            <p>{answer.text}</p>
-                            <div className="mt-1 flex items-center justify-between gap-2 text-xs text-muted-foreground">
-                              <span>{answer.author ? displayName(answer.author) : 'Unknown'}</span>
-                              <Button size="sm" variant="ghost" className="h-6 px-2" disabled={Boolean(upvotingKey)} onClick={() => void upvoteDiscussion(post.id, answer.id)}>
-                                {upvotingKey === `${post.id}:${answer.id}` ? 'Voting…' : `Upvote (${answer.upvotes})`}
-                              </Button>
-                            </div>
-                          </div>
-                        ))}
-                        <div className="flex flex-col gap-2 sm:flex-row">
-                          <Input
-                            value={answerTextByPostId[post.id] || ''}
-                            onChange={(e) => setAnswerTextByPostId((prev) => ({ ...prev, [post.id]: e.target.value }))}
-                            placeholder="Add answer"
-                          />
-                          <Button size="sm" className="w-full sm:w-auto" disabled={replyingPostId === post.id} onClick={() => void addAnswer(post.id)}>
-                            {replyingPostId === post.id ? 'Replying…' : 'Reply'}
-                          </Button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {!roomPosts.length ? <p className="text-xs text-muted-foreground">No discussions yet in this room.</p> : null}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+                ))}
+                {!threadPost.answers.length ? <p className="net360-thread-meta">No comments yet.</p> : null}
+              </div>
+              <div className="net360-comment-box">
+                <Input
+                  value={answerTextByPostId[threadPost.id] || ''}
+                  onChange={(event) => setAnswerTextByPostId((prev) => ({ ...prev, [threadPost.id]: event.target.value }))}
+                  placeholder="Write a comment"
+                />
+                <Button type="button" disabled={replyingPostId === threadPost.id} onClick={() => void addAnswer(threadPost.id)}>
+                  {replyingPostId === threadPost.id ? 'Posting…' : 'Comment'}
+                </Button>
+              </div>
+            </article>
+          ) : (
+            <div className="net360-topic-feed">
+              <div className="net360-topic-compose">
+                <Input value={newPostTitle} onChange={(event) => setNewPostTitle(event.target.value)} placeholder="Topic" />
+                <Textarea value={newPostText} onChange={(event) => setNewPostText(event.target.value)} className="min-h-[88px]" placeholder="Write your post" />
+                <Button type="button" onClick={() => void publishTopic()} disabled={isPostingRoom || !rooms.length}>
+                  {isPostingRoom ? 'Posting…' : 'Post'}
+                </Button>
+              </div>
+              {feedPosts.map((post) => (
+                <button
+                  key={post.id}
+                  type="button"
+                  className="net360-topic-card"
+                  onClick={() => setOpenThreadId(post.id)}
+                >
+                  <p className="net360-topic-title">{post.title || 'Discussion'}</p>
+                  <p className="net360-topic-text">{post.text}</p>
+                  <p className="net360-topic-meta">
+                    {post.author ? displayName(post.author) : 'Unknown'}
+                    {` · ${post.answers.length} ${post.answers.length === 1 ? 'comment' : 'comments'}`}
+                  </p>
+                </button>
+              ))}
+              {!feedPosts.length ? <p className="net360-thread-meta">No posts yet. Start a topic above.</p> : null}
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="quiz-battles" className="mt-0 space-y-4">
