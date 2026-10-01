@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
+import { isNativeAndroidRuntime } from '../lib/nativeForeground';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -6,6 +7,16 @@ import { Label } from './ui/label';
 import { Calculator, Info, Lightbulb } from 'lucide-react';
 
 type InputMode = 'marks' | 'percentage';
+
+function MobileFold({ title, children }: { title: string; children: ReactNode }) {
+  if (!isNativeAndroidRuntime()) return <>{children}</>;
+  return (
+    <details className="net360-fold">
+      <summary>{title}</summary>
+      <div className="net360-fold-body">{children}</div>
+    </details>
+  );
+}
 
 function parseNum(s: string): number {
   const n = parseFloat(s);
@@ -191,6 +202,7 @@ export function MeritCalculator() {
             <CardContent className="space-y-4">
               {mode === 'marks' ? (
                 <div className="grid gap-3 sm:grid-cols-2">
+                  <MobileFold title="Academic details">
                   <div className="space-y-1.5 sm:col-span-2">
                     <p className="text-xs font-medium text-slate-600">Matric</p>
                     <div className="grid grid-cols-2 gap-2">
@@ -245,6 +257,8 @@ export function MeritCalculator() {
                       </div>
                     </div>
                   </div>
+                  </MobileFold>
+                  <MobileFold title="NET details">
                   <div className="space-y-1.5 sm:col-span-2">
                     <p className="text-xs font-medium text-slate-600">NET</p>
                     <div className="grid grid-cols-2 gap-2">
@@ -272,9 +286,11 @@ export function MeritCalculator() {
                       </div>
                     </div>
                   </div>
+                  </MobileFold>
                 </div>
               ) : (
                 <div className="grid gap-3 sm:grid-cols-2">
+                  <MobileFold title="Academic details">
                   <div className="space-y-1.5">
                     <Label htmlFor="matric-pct">Matric %</Label>
                     <Input
@@ -303,6 +319,8 @@ export function MeritCalculator() {
                     />
                     <p className="text-xs text-slate-500">Weightage: 15%</p>
                   </div>
+                  </MobileFold>
+                  <MobileFold title="NET details">
                   <div className="space-y-1.5 sm:col-span-2">
                     <Label htmlFor="net-pct">NET %</Label>
                     <Input
@@ -317,6 +335,7 @@ export function MeritCalculator() {
                     />
                     <p className="text-xs text-slate-500">Weightage: 75%</p>
                   </div>
+                  </MobileFold>
                 </div>
               )}
 

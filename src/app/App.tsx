@@ -55,6 +55,7 @@ import { App as CapacitorApp } from '@capacitor/app';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Helmet } from 'react-helmet-async';
 import { brandLogoUrl } from './lib/publicMedia';
+import { RtlAttribution } from './components/RtlAttribution';
 import { fetchAndApplyPublicMediaConfig } from './lib/publicMediaRuntime';
 import { PremiumCountdownBadge } from './components/subscription/PremiumCountdownBadge';
 import { AndroidDemoModeButton } from './components/subscription/DemoModeButton';
@@ -233,6 +234,12 @@ const ANDROID_PRIMARY_NAV: Array<{ id: SectionId; label: string; icon: typeof Ho
 
 const ANDROID_FOOTER_IDS = new Set(ANDROID_PRIMARY_NAV.map((item) => item.id));
 
+const ANDROID_MENU_GROUPS: Array<{ label: string; ids: SectionId[] }> = [
+  { label: 'Study', ids: ['videos', 'practice-board', 'question-contribution', 'smart-mentor'] },
+  { label: 'NUST', ids: ['guide', 'programs', 'schools-campuses', 'net-types'] },
+  { label: 'Tools', ids: ['analytics', 'merit-calculator', 'subscription', 'delete-account'] },
+];
+
 const STUDENT_NAVIGATION_ITEMS: Array<{ id: SectionId; label: string; icon: typeof Home }> = [
   { id: 'home', label: 'Dashboard', icon: Home },
   { id: 'guide', label: 'NUST Guide', icon: BookOpen },
@@ -272,11 +279,9 @@ const SidebarNavigation = memo(function SidebarNavigation({
 }) {
   const { token } = useAuth();
 
-  return (
-    <nav className="space-y-1.5" aria-label="Student portal sections">
-      {navigationItems.map((item) => {
-        const Icon = item.icon;
-        return (
+  const renderItem = (item: { id: SectionId; label: string; icon: typeof Home }) => {
+    const Icon = item.icon;
+    return (
           <button
             key={item.id}
             type="button"
@@ -316,9 +321,31 @@ const SidebarNavigation = memo(function SidebarNavigation({
           >
             <Icon className="w-4 h-4 shrink-0" />
             <span className="min-w-0 text-sm font-medium leading-5 break-words">{item.label}</span>
-          </button>
-        );
-      })}
+        </button>
+    );
+  };
+
+  if (androidApp) {
+    const byId = new Map(navigationItems.map((item) => [item.id, item]));
+    return (
+      <nav className="space-y-2" aria-label="Student portal sections">
+        {ANDROID_MENU_GROUPS.map((group) => {
+          const items = group.ids.map((id) => byId.get(id)).filter((item): item is { id: SectionId; label: string; icon: typeof Home } => Boolean(item));
+          if (!items.length) return null;
+          return (
+            <details key={group.label} className="net360-drawer-group" open={items.some((item) => item.id === activeTab) || undefined}>
+              <summary>{group.label}</summary>
+              <div className="space-y-0.5">{items.map((item) => <div key={item.id}>{renderItem(item)}</div>)}</div>
+            </details>
+          );
+        })}
+      </nav>
+    );
+  }
+
+  return (
+    <nav className="space-y-1.5" aria-label="Student portal sections">
+      {navigationItems.map((item) => <div key={item.id}>{renderItem(item)}</div>)}
     </nav>
   );
 });
@@ -1387,6 +1414,20 @@ export default function App() {
                 </div>
               </div>
               <div className="net360-header-actions ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
+                {androidApp ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="touch-manipulation min-h-10 min-w-10 rounded-xl text-slate-700 hover:bg-indigo-50 dark:text-slate-100"
+                    onClick={() => {
+                      sessionStorage.setItem('net360-open-notification-preferences', '1');
+                      navigate(PATH_BY_SECTION.profile);
+                    }}
+                    aria-label="Notifications"
+                  >
+                    <Bell className="h-5 w-5" />
+                  </Button>
+                ) : null}
                 <div className={`flex items-center gap-1 sm:gap-2${androidApp ? ' net360-android-chrome-hide' : ''}`}>
                 <Button
                   variant="ghost"
@@ -1430,6 +1471,7 @@ export default function App() {
                 <HeaderAuthControl onOpenProfile={() => navigate(PATH_BY_SECTION.profile)} />
               </div>
             </header>
+            {androidApp ? <RtlAttribution /> : null}
 
             {/* Main Content — lazy routes + Suspense avoid blank flash while chunks load.
                 Profile stays mounted after first visit so returning to it is not a remount. */}
