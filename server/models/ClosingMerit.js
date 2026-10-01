@@ -8,6 +8,8 @@ const closingMeritSchema = new mongoose.Schema(
     categoryKey: { type: String, default: 'engineering', trim: true },
     categoryLabel: { type: String, default: 'Engineering Programs', trim: true },
     closingMerit: { type: Number, default: null },
+    meritPosition: { type: Number, default: null },
+    meritStatus: { type: String, enum: ['real', 'estimated'], default: 'estimated' },
     sortOrder: { type: Number, default: 0 },
   },
   { timestamps: true },
@@ -23,6 +25,8 @@ const closingMeritMetaSchema = new mongoose.Schema(
   {
     key: { type: String, required: true, unique: true, default: 'default' },
     seeded: { type: Boolean, default: false },
+    year: { type: Number, default: 2026 },
+    documentApplied: { type: Boolean, default: false },
   },
   { timestamps: true },
 );

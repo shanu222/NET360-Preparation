@@ -2,8 +2,12 @@ import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { apiRequest } from '../lib/api';
 import {
   catalogClosingMerits,
+  DEFAULT_CLOSING_MERIT_YEAR,
   formatClosingMerit,
+  formatMeritPosition,
+  mergeClosingMeritPrograms,
   meritPositionLabel,
+  meritStatusLabel,
   standingOnClosingMeritList,
   type ClosingMeritProgram,
   type MeritListStanding,
@@ -41,7 +45,7 @@ function StandingLine({ label, standing }: { label: string; standing: MeritListS
     const nearest = standing.nextAbove;
     return (
       <p>
-        {label}: below every listed closing merit
+        {label}: merit position {meritPositionLabel(standing)}. Below every listed closing aggregate
         {nearest ? ` (nearest is ${nearest.name}, ${nearest.institution}, ${formatClosingMerit(nearest.closingMerit)})` : ''}.
       </p>
     );
@@ -51,7 +55,7 @@ function StandingLine({ label, standing }: { label: string; standing: MeritListS
   const next = standing.nextAbove;
   return (
     <p>
-      {label}: position {standing.position} of {standing.listed}. Meets {standing.met} {standing.met === 1 ? 'program' : 'programs'}.
+      {label}: merit position {meritPositionLabel(standing)}. Meets {standing.met} {standing.met === 1 ? 'program' : 'programs'}.
       {best ? ` Highest match: ${best.name} (${best.institution}).` : ''}
       {next ? ` Next above you: ${next.name} (${next.institution}) ${formatClosingMerit(next.closingMerit)}.` : ' At or above the highest closing merit.'}
     </p>
@@ -180,14 +184,16 @@ export function MeritCalculator() {
   };
 
   const [programMerits, setProgramMerits] = useState<ClosingMeritProgram[]>(() => catalogClosingMerits());
+  const [meritYear, setMeritYear] = useState(DEFAULT_CLOSING_MERIT_YEAR);
   const [meritGroup, setMeritGroup] = useState('all');
 
   useEffect(() => {
     let cancelled = false;
-    apiRequest<{ programs?: ClosingMeritProgram[] }>('/api/public/closing-merits')
+    apiRequest<{ programs?: ClosingMeritProgram[]; year?: number }>('/api/public/closing-merits')
       .then((data) => {
         if (cancelled || !Array.isArray(data?.programs) || !data.programs.length) return;
-        setProgramMerits(data.programs);
+        setProgramMerits(mergeClosingMeritPrograms(data.programs, catalogClosingMerits()));
+        if (Number.isInteger(Number(data.year))) setMeritYear(Number(data.year));
       })
       .catch(() => {
         // Keep the programs-page list until the admin list is available.
@@ -614,7 +620,7 @@ export function MeritCalculator() {
               {!fscStanding && !aLevelStanding ? (
                 <p>Calculate an aggregate to place it on the closing-merit list. Position 1 means your aggregate is at or above the highest number. You meet a program when your aggregate is at least its closing merit.</p>
               ) : (
-                <p className="mt-2 text-slate-500">Position counts programs with a higher closing merit, then adds 1. Programs without a number are left out.</p>
+                <p className="mt-2 text-slate-500">Merit position is estimated from the admin closing aggregates and closing merit positions. A program is met when your aggregate is at least its closing aggregate.</p>
               )}
             </div>
 
@@ -635,7 +641,7 @@ export function MeritCalculator() {
       <Card className="net360-merit-board rounded-2xl border-indigo-100 bg-white/92">
         <CardHeader>
           <CardTitle>Last Year&apos;s Closing Merits</CardTitle>
-          <CardDescription>Every program from the programs page. Numbers are set in the admin panel.</CardDescription>
+          <CardDescription>{meritYear} closing merits. Each row shows the closing aggregate, merit position, and whether it is Real or Estimated.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="net360-merit-cats" role="tablist" aria-label="Program category">
@@ -666,7 +672,7 @@ export function MeritCalculator() {
                   <div key={program.id} className={meets ? 'is-met bg-emerald-50' : ''}>
                     <div>
                       <p>{program.name}</p>
-                      <p>{program.institution}{program.location ? ` · ${program.location}` : ''}</p>
+                      <p>{program.institution}{program.location ? ` · ${program.location}` : ''}{program.meritPosition != null ? ` · Position ${formatMeritPosition(program.meritPosition)}` : ''} · {meritStatusLabel(program.meritStatus)}</p>
                     </div>
                     <div>{formatClosingMerit(program.closingMerit)}</div>
                   </div>

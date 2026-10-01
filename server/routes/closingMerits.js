@@ -1,7 +1,12 @@
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import mongoose from 'mongoose';
 import { z } from 'zod';
-import { ClosingMeritModel } from '../models/ClosingMerit.js';
+import { ClosingMeritMetaModel, ClosingMeritModel } from '../models/ClosingMerit.js';
 import { CLOSING_MERIT_CATEGORY_ORDER, closingMeritSeedDocuments } from '../lib/closingMeritCatalog.js';
+
+const documentRows = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), '../lib/nust2026ClosingMerits.json'), 'utf8'));
 
 const CATEGORY_LABELS = {
   engineering: 'Engineering Programs',
@@ -13,6 +18,8 @@ const CATEGORY_LABELS = {
 };
 
 const meritField = z.union([z.number().min(0).max(100), z.null()]);
+const positionField = z.union([z.number().min(1).max(200000), z.null()]);
+const statusField = z.enum(['real', 'estimated']);
 
 const categoryKeyField = z.string().trim().refine((value) => CLOSING_MERIT_CATEGORY_ORDER.includes(value), {
   message: 'Choose a program category.',
@@ -24,6 +31,8 @@ const createSchema = z.object({
   location: z.string().trim().max(120).optional().default(''),
   categoryKey: categoryKeyField,
   closingMerit: meritField,
+  meritPosition: positionField.optional().default(null),
+  meritStatus: statusField.optional().default('estimated'),
 });
 
 const updateSchema = z.object({
@@ -32,6 +41,8 @@ const updateSchema = z.object({
   location: z.string().trim().max(120).optional(),
   categoryKey: categoryKeyField.optional(),
   closingMerit: meritField.optional(),
+  meritPosition: positionField.optional(),
+  meritStatus: statusField.optional(),
 });
 
 function toPublic(doc) {
@@ -45,7 +56,52 @@ function toPublic(doc) {
     closingMerit: doc.closingMerit == null || !Number.isFinite(Number(doc.closingMerit))
       ? null
       : Number(doc.closingMerit),
+    meritPosition: doc.meritPosition == null || !Number.isFinite(Number(doc.meritPosition))
+      ? null
+      : Math.round(Number(doc.meritPosition)),
+    meritStatus: doc.meritStatus === 'real' ? 'real' : 'estimated',
   };
+}
+
+function schoolCode(institution) {
+  return String(institution || '').split(/[·/|,]/)[0].trim().toUpperCase();
+}
+
+function rowKey(name, institution) {
+  return `${String(name || '').trim().toLowerCase()}|${schoolCode(institution)}`;
+}
+
+const DOCUMENT_BY_KEY = new Map(documentRows.map((row) => [rowKey(row[0], row[1]), {
+  meritPosition: Number(row[2]),
+  closingMerit: Number(row[3]),
+  meritStatus: row[4] === 'real' ? 'real' : 'estimated',
+}]));
+
+async function readYear() {
+  const meta = await ClosingMeritMetaModel.findOne({ key: 'default' }).lean();
+  const year = Number(meta?.year);
+  return Number.isInteger(year) && year >= 2000 && year <= 2100 ? year : 2026;
+}
+
+async function applyDocumentOnce() {
+  const meta = await ClosingMeritMetaModel.findOne({ key: 'default' }).lean();
+  if (meta?.documentApplied) return;
+
+  const docs = await ClosingMeritModel.find({});
+  for (const doc of docs) {
+    const hit = DOCUMENT_BY_KEY.get(rowKey(doc.name, doc.institution));
+    if (!hit) continue;
+    doc.closingMerit = hit.closingMerit;
+    doc.meritPosition = hit.meritPosition;
+    doc.meritStatus = hit.meritStatus;
+    await doc.save();
+  }
+
+  await ClosingMeritMetaModel.updateOne(
+    { key: 'default' },
+    { $set: { documentApplied: true, year: Number(meta?.year) || 2026 } },
+    { upsert: true },
+  );
 }
 
 async function ensureSeeded() {
@@ -65,6 +121,7 @@ async function ensureSeeded() {
 
 async function listPrograms() {
   await ensureSeeded();
+  await applyDocumentOnce();
   const docs = await ClosingMeritModel.find({}).sort({ sortOrder: 1, name: 1 }).lean();
   const rank = new Map(CLOSING_MERIT_CATEGORY_ORDER.map((key, index) => [key, index]));
   docs.sort((a, b) => {
@@ -72,14 +129,14 @@ async function listPrograms() {
     if (categoryDelta !== 0) return categoryDelta;
     return String(a.name).localeCompare(String(b.name)) || String(a.institution).localeCompare(String(b.institution));
   });
-  return docs.map(toPublic);
+  return { year: await readYear(), programs: docs.map(toPublic) };
 }
 
 export function registerClosingMeritRoutes(app, { authMiddleware, requireAdmin }) {
   app.get('/api/public/closing-merits', async (_req, res) => {
     try {
-      const programs = await listPrograms();
-      res.json({ source: 'admin', programs });
+      const listed = await listPrograms();
+      res.json({ source: 'admin', year: listed.year, programs: listed.programs });
     } catch (error) {
       console.error('[closing-merits] public list failed:', error);
       res.status(500).json({ error: 'Could not load closing merits.' });
@@ -88,8 +145,8 @@ export function registerClosingMeritRoutes(app, { authMiddleware, requireAdmin }
 
   app.get('/api/admin/closing-merits', authMiddleware, requireAdmin, async (_req, res) => {
     try {
-      const programs = await listPrograms();
-      res.json({ programs });
+      const listed = await listPrograms();
+      res.json({ year: listed.year, programs: listed.programs });
     } catch (error) {
       console.error('[closing-merits] admin list failed:', error);
       res.status(500).json({ error: 'Could not load closing merits.' });
@@ -119,6 +176,21 @@ export function registerClosingMeritRoutes(app, { authMiddleware, requireAdmin }
       }
       console.error('[closing-merits] create failed:', error);
       res.status(500).json({ error: 'Could not add that program.' });
+    }
+  });
+
+  app.put('/api/admin/closing-merits/settings', authMiddleware, requireAdmin, async (req, res) => {
+    try {
+      const year = Number(req.body?.year);
+      if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+        res.status(400).json({ error: 'Enter a year from 2000 to 2100.' });
+        return;
+      }
+      await ClosingMeritMetaModel.updateOne({ key: 'default' }, { $set: { year } }, { upsert: true });
+      res.json({ year });
+    } catch (error) {
+      console.error('[closing-merits] year update failed:', error);
+      res.status(500).json({ error: 'Could not save the closing-merit year.' });
     }
   });
 
