@@ -2014,44 +2014,86 @@ html:not(.dark) .net360-demo-option {
 
 html:not(.native-android) .net360-rtl-slot {
   justify-content: center;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+@keyframes net360-rtl-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.16), 0 1px 2px rgba(49, 46, 129, 0.08);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.08), 0 0 14px rgba(79, 70, 229, 0.32);
+  }
+}
+
+@keyframes net360-rtl-glow-dark {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(165, 180, 252, 0.18);
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.14), 0 0 16px rgba(165, 180, 252, 0.42);
+  }
 }
 
 html:not(.native-android) .net360-rtl-chip {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0.35rem;
-  max-width: 100%;
+  gap: clamp(0.4rem, 0.35rem + 0.25vw, 0.55rem);
+  max-width: calc(100% - 1rem);
   margin: 0 auto;
-  padding: 0.15rem 0.45rem 0.15rem 0.15rem;
-  border: 1.5px solid #818cf8;
+  padding: 0.22rem 0.78rem 0.22rem 0.22rem;
+  border: 2px solid #4f46e5;
   border-radius: 999px;
   background: #ffffff;
-  color: #312e81;
-  font-size: 0.72rem;
+  color: #1e1b4b;
+  font-size: clamp(0.78rem, 0.74rem + 0.18vw, 0.88rem);
   font-weight: 700;
   line-height: 1.2;
-  letter-spacing: 0.01em;
+  letter-spacing: 0.015em;
+  white-space: nowrap;
+  box-sizing: border-box;
+  animation: net360-rtl-glow 2.8s ease-in-out infinite;
 }
 
 html:not(.native-android) .net360-rtl-chip:hover {
   background: #eef2ff;
+  border-color: #3730a3;
 }
 
 html:not(.native-android) .net360-rtl-chip:active {
   background: #e0e7ff;
 }
 
+html:not(.native-android) .net360-rtl-chip:focus-visible {
+  outline: 2px solid #4338ca;
+  outline-offset: 2px;
+}
+
 html.dark:not(.native-android) .net360-rtl-chip {
-  background: #1a2238;
-  color: #e0e7ff;
-  border-color: #818cf8;
+  background: #12182b;
+  color: #eef2ff;
+  border-color: #a5b4fc;
+  animation-name: net360-rtl-glow-dark;
 }
 
 html.dark:not(.native-android) .net360-rtl-chip:hover,
 html.dark:not(.native-android) .net360-rtl-chip:active {
   background: #312e81;
   color: #ffffff;
+  border-color: #c7d2fe;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:not(.native-android) .net360-rtl-chip {
+    animation: none;
+    box-shadow: 0 0 0 1px rgba(79, 70, 229, 0.18);
+  }
 }
 
 html:not(.native-android) .net360-rtl-mark,
@@ -2063,8 +2105,10 @@ html:not(.native-android) .net360-rtl-card-logo {
 }
 
 html:not(.native-android) .net360-rtl-mark {
-  width: 1.15rem;
-  height: 1.15rem;
+  width: clamp(1.4rem, 1.28rem + 0.35vw, 1.65rem);
+  height: clamp(1.4rem, 1.28rem + 0.35vw, 1.65rem);
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1.5px rgba(79, 70, 229, 0.45);
 }
 
 html:not(.native-android) .net360-rtl-dialog {
