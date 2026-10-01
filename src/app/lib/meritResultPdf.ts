@@ -7,6 +7,7 @@ import {
   type ClosingMeritProgram,
   type MeritListStanding,
 } from './closingMerits';
+import { brandLogoUrl } from './publicMedia';
 
 export type MeritPdfTrack = {
   label: string;
@@ -19,33 +20,17 @@ function asLines(value: string | string[]): string[] {
 }
 
 async function loadLogoDataUrl(): Promise<string | null> {
-  if (typeof document === 'undefined' || typeof fetch !== 'function') return null;
+  if (typeof fetch !== 'function' || typeof FileReader === 'undefined') return null;
   try {
-    const response = await fetch('/logo.svg');
+    const response = await fetch(brandLogoUrl());
     if (!response.ok) return null;
-    let svg = await response.text();
-    if (!svg.includes('width=')) {
-      svg = svg.replace('<svg ', '<svg width="128" height="128" ');
-    }
-    const blob = new Blob([svg], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    try {
-      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => resolve(img);
-        img.onerror = () => reject(new Error('logo'));
-        img.src = url;
-      });
-      const canvas = document.createElement('canvas');
-      canvas.width = 128;
-      canvas.height = 128;
-      const context = canvas.getContext('2d');
-      if (!context) return null;
-      context.drawImage(image, 0, 0, 128, 128);
-      return canvas.toDataURL('image/png');
-    } finally {
-      URL.revokeObjectURL(url);
-    }
+    const blob = await response.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+      reader.onerror = () => reject(new Error('logo'));
+      reader.readAsDataURL(blob);
+    });
   } catch {
     return null;
   }
