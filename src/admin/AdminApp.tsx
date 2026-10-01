@@ -3561,6 +3561,7 @@ export default function AdminApp() {
   }, []);
 
   const runSubscriptionManagementSearch = () => {
+    skipFilterReloadAfterBootstrap.current = false;
     setSubscriptionManagementDebouncedQuery(subscriptionManagementQuery.trim());
     setSubscriptionManagementPage(1);
   };
@@ -4057,7 +4058,6 @@ export default function AdminApp() {
         }
       } finally {
         console.info(`[admin-bootstrap] session complete ${Math.round(performance.now() - bootstrapStarted)}ms cancelled=${cancelled}`);
-        skipFilterReloadAfterBootstrap.current = true;
         setReady(true);
       }
     }
@@ -4123,6 +4123,7 @@ export default function AdminApp() {
       return;
     }
     if (skipFilterReloadAfterBootstrap.current) {
+      skipFilterReloadAfterBootstrap.current = false;
       return;
     }
 
@@ -11334,7 +11335,7 @@ export default function AdminApp() {
             </CardContent>
           </Card>
 
-          <Card>
+          <Card className="admin-user-search">
             <CardHeader>
               <CardTitle>User Search & Management</CardTitle>
               <CardDescription>
@@ -11343,7 +11344,7 @@ export default function AdminApp() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="grid gap-3 md:grid-cols-[1fr_auto_auto] md:items-end">
-                <div className="space-y-1">
+                <div className="relative z-20 space-y-1">
                   <Label htmlFor="subscription-management-search">Search users</Label>
                   <div className="relative">
                     <Input
@@ -11361,14 +11362,15 @@ export default function AdminApp() {
                       placeholder="Search name (partial) or strict email/username start"
                     />
                     {isSubscriptionSuggestionsOpen && subscriptionManagementQuery.trim().length >= 2 && subscriptionSearchSuggestions.length > 0 ? (
-                      <div className="absolute z-20 mt-1 w-full rounded-md border bg-background shadow-lg max-h-72 overflow-auto">
+                      <div className="admin-user-search-suggestions absolute z-30 mt-1 w-full rounded-md border shadow-lg max-h-72 overflow-auto">
                         {subscriptionSearchSuggestions.map((entry) => (
                           <button
                             key={`suggestion-${entry.id}`}
                             type="button"
-                            className="w-full text-left px-3 py-2 hover:bg-muted/60 border-b last:border-b-0"
+                            className="admin-user-search-suggestion w-full text-left px-3 py-2 border-b last:border-b-0"
                             onMouseDown={(e) => e.preventDefault()}
                             onClick={() => {
+                              skipFilterReloadAfterBootstrap.current = false;
                               setSelectedSubscriptionUserId(entry.id);
                               setSubscriptionManagementQuery(entry.email);
                               setSubscriptionManagementDebouncedQuery(entry.email);
@@ -11402,17 +11404,19 @@ export default function AdminApp() {
                     ) : null}
                   </div>
                 </div>
-                <div className="flex items-center gap-2 rounded-md border px-3 py-2">
+                <div className="admin-user-search-show-all flex items-center gap-2 rounded-md border px-3 py-2">
                   <input
                     id="subscription-show-all"
                     type="checkbox"
                     checked={subscriptionManagementShowAll}
                     onChange={(e) => {
+                      skipFilterReloadAfterBootstrap.current = false;
                       setSubscriptionManagementShowAll(e.target.checked);
                       setSubscriptionManagementPage(1);
+                      setIsSubscriptionSuggestionsOpen(false);
                     }}
                   />
-                  <Label htmlFor="subscription-show-all" className="cursor-pointer">Show All Users</Label>
+                  <Label htmlFor="subscription-show-all" className="admin-user-search-show-all-label cursor-pointer">Show All Users</Label>
                 </div>
                 <Button
                   type="button"
@@ -11423,7 +11427,7 @@ export default function AdminApp() {
                 </Button>
               </div>
 
-              <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
+              <div className="admin-user-search-meta flex flex-wrap items-center justify-between gap-3 text-xs">
                 <p>Matched users: {subscriptionManagementTotal}</p>
                 <div className="flex items-center gap-2">
               <Button
@@ -11438,6 +11442,7 @@ export default function AdminApp() {
                   <Select
                     value={String(subscriptionManagementPageSize)}
                     onValueChange={(value) => {
+                      skipFilterReloadAfterBootstrap.current = false;
                       const parsed = Number(value || 25);
                       setSubscriptionManagementPageSize(Number.isFinite(parsed) ? parsed : 25);
                       setSubscriptionManagementPage(1);
@@ -11455,9 +11460,9 @@ export default function AdminApp() {
                 </div>
               </div>
 
-              <div className="space-y-2 max-h-[460px] overflow-auto">
+              <div className="admin-user-search-results relative z-0 space-y-2 max-h-[460px] overflow-auto">
                 {subscriptionManagementUsers.map((entry) => (
-                  <div key={entry.id} className="rounded-lg border p-3">
+                  <div key={entry.id} className="admin-user-search-row rounded-lg border p-3">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex items-center gap-3">
                         {entry.profileImageUrl ? (
@@ -11472,8 +11477,8 @@ export default function AdminApp() {
                           </div>
                         )}
                         <div>
-                          <p className="text-sm font-medium">{entry.fullName}</p>
-                          <p className="text-xs text-muted-foreground">{entry.email}</p>
+                          <p className="admin-user-search-name text-sm font-medium">{entry.fullName}</p>
+                          <p className="admin-user-search-email text-xs">{entry.email}</p>
                         </div>
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
@@ -11494,27 +11499,33 @@ export default function AdminApp() {
                   </div>
                 ))}
                 {!subscriptionManagementUsers.length ? (
-                  <p className="text-sm text-muted-foreground">
+                  <p className="admin-user-search-empty text-sm">
                     No managed users matched your search. Enable &quot;Show All Users&quot;, search by email/name, or click Sync Firebase Users.
                   </p>
                 ) : null}
               </div>
 
-              <div className="flex items-center justify-end gap-2">
+              <div className="admin-user-search-pager flex items-center justify-end gap-2">
                 <Button
                   size="sm"
                   variant="outline"
                   disabled={subscriptionManagementPage <= 1}
-                  onClick={() => setSubscriptionManagementPage((prev) => Math.max(1, prev - 1))}
+                  onClick={() => {
+                    skipFilterReloadAfterBootstrap.current = false;
+                    setSubscriptionManagementPage((prev) => Math.max(1, prev - 1));
+                  }}
                 >
                   Previous
                 </Button>
-                <span className="text-xs text-muted-foreground">Page {subscriptionManagementPage}</span>
+                <span className="admin-user-search-page text-xs">Page {subscriptionManagementPage}</span>
                 <Button
                   size="sm"
                   variant="outline"
                   disabled={!subscriptionManagementHasMore}
-                  onClick={() => setSubscriptionManagementPage((prev) => prev + 1)}
+                  onClick={() => {
+                    skipFilterReloadAfterBootstrap.current = false;
+                    setSubscriptionManagementPage((prev) => prev + 1);
+                  }}
                 >
                   Next
                 </Button>

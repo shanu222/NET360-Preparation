@@ -1012,3 +1012,256 @@
     width: 100%;
   }
 }
+
+/* User Search & Management only: solid results surface and readable light/dark contrast. */
+.admin-shell .admin-user-search[data-slot='card'] {
+  position: relative;
+  z-index: 1;
+  background: #ffffff;
+  border-color: #cbd5e1;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.admin-shell .admin-user-search[data-slot='card']:hover {
+  transform: none;
+}
+
+.dark .admin-shell .admin-user-search[data-slot='card'] {
+  background: #0b1220;
+  border-color: #475569;
+}
+
+.admin-user-search [data-slot='input'],
+.admin-user-search [data-slot='select-trigger'] {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: #64748b;
+}
+
+.admin-user-search [data-slot='input']::placeholder {
+  color: #475569;
+}
+
+.admin-user-search [data-slot='input']:focus-visible,
+.admin-user-search [data-slot='select-trigger']:focus-visible,
+.admin-user-search-show-all input:focus-visible {
+  outline: 2px solid #4338ca;
+  outline-offset: 2px;
+}
+
+.dark .admin-user-search [data-slot='input'],
+.dark .admin-user-search [data-slot='select-trigger'] {
+  background: #0f172a;
+  color: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.dark .admin-user-search [data-slot='input']::placeholder {
+  color: #cbd5e1;
+}
+
+.admin-user-search-show-all {
+  background: #ffffff;
+  border-color: #64748b;
+  color: #0f172a;
+}
+
+.admin-user-search-show-all input {
+  accent-color: #4338ca;
+  width: 1rem;
+  height: 1rem;
+}
+
+.admin-user-search-show-all-label {
+  color: #0f172a;
+}
+
+.dark .admin-user-search-show-all {
+  background: #0f172a;
+  border-color: #94a3b8;
+  color: #f8fafc;
+}
+
+.dark .admin-user-search-show-all-label {
+  color: #f8fafc;
+}
+
+.admin-user-search-suggestions {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: #94a3b8;
+}
+
+.admin-user-search-suggestion {
+  background: #ffffff;
+  color: #0f172a;
+}
+
+.admin-user-search-suggestion:hover,
+.admin-user-search-suggestion:focus-visible {
+  background: #eef2ff;
+  color: #0f172a;
+}
+
+.dark .admin-user-search-suggestions,
+.dark .admin-user-search-suggestion {
+  background: #0f172a;
+  color: #f8fafc;
+  border-color: #475569;
+}
+
+.dark .admin-user-search-suggestion:hover,
+.dark .admin-user-search-suggestion:focus-visible {
+  background: #1e293b;
+  color: #f8fafc;
+}
+
+.admin-shell .admin-user-search-suggestions p,
+.admin-shell .admin-user-search-suggestion p {
+  color: #0f172a;
+}
+
+.admin-shell .admin-user-search-suggestions .text-muted-foreground,
+.admin-shell .admin-user-search-suggestion .text-muted-foreground {
+  color: #334155;
+}
+
+.dark .admin-shell .admin-user-search-suggestions p,
+.dark .admin-shell .admin-user-search-suggestion p {
+  color: #f8fafc;
+}
+
+.dark .admin-shell .admin-user-search-suggestions .text-muted-foreground,
+.dark .admin-shell .admin-user-search-suggestion .text-muted-foreground {
+  color: #cbd5e1;
+}
+
+.admin-shell .admin-user-search-meta,
+.admin-shell .admin-user-search-meta p,
+.admin-shell .admin-user-search-page {
+  color: #334155;
+}
+
+.dark .admin-shell .admin-user-search-meta,
+.dark .admin-shell .admin-user-search-meta p,
+.dark .admin-shell .admin-user-search-page {
+  color: #e2e8f0;
+}
+
+.admin-user-search-results {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  padding: 8px;
+  isolation: isolate;
+}
+
+.dark .admin-user-search-results {
+  background: #0f172a;
+  border-color: #334155;
+}
+
+.admin-user-search-row {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+}
+
+.admin-user-search-row:hover {
+  background: #eef2ff;
+  border-color: #6366f1;
+}
+
+.dark .admin-user-search-row {
+  background: #111827;
+  border-color: #475569;
+}
+
+.dark .admin-user-search-row:hover {
+  background: #1e293b;
+  border-color: #818cf8;
+}
+
+.admin-shell .admin-user-search-name {
+  color: #0f172a;
+}
+
+.admin-shell .admin-user-search-email,
+.admin-shell .admin-user-search-empty {
+  color: #334155;
+}
+
+.dark .admin-shell .admin-user-search-name {
+  color: #f8fafc;
+}
+
+.dark .admin-shell .admin-user-search-email,
+.dark .admin-shell .admin-user-search-empty {
+  color: #cbd5e1;
+}
+
+.admin-user-search [data-slot='badge'] {
+  background: #e2e8f0;
+  color: #0f172a;
+  border-color: #64748b;
+}
+
+.admin-user-search [data-slot='badge'].bg-primary {
+  background: #1d4ed8;
+  color: #ffffff;
+  border-color: transparent;
+}
+
+.dark .admin-user-search [data-slot='badge'] {
+  background: #1e293b;
+  color: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.dark .admin-user-search [data-slot='badge'].bg-primary {
+  background: #2563eb;
+  color: #ffffff;
+  border-color: transparent;
+}
+
+.admin-shell .admin-user-search [data-slot='button']:not(.bg-primary) {
+  background: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #64748b !important;
+}
+
+.admin-shell .admin-user-search [data-slot='button']:not(.bg-primary):hover {
+  background: #eef2ff !important;
+  color: #0f172a !important;
+  border-color: #4338ca !important;
+}
+
+.admin-shell .admin-user-search [data-slot='button'].bg-primary,
+.admin-shell .admin-user-search [data-slot='button'].bg-primary:hover {
+  color: #ffffff !important;
+}
+
+.admin-shell .admin-user-search [data-slot='button']:disabled {
+  opacity: 1 !important;
+  background: #e2e8f0 !important;
+  color: #475569 !important;
+  border-color: #cbd5e1 !important;
+}
+
+.dark .admin-shell .admin-user-search [data-slot='button']:not(.bg-primary) {
+  background: #111827 !important;
+  color: #f8fafc !important;
+  border-color: #94a3b8 !important;
+}
+
+.dark .admin-shell .admin-user-search [data-slot='button']:not(.bg-primary):hover {
+  background: #1e293b !important;
+  color: #f8fafc !important;
+  border-color: #a5b4fc !important;
+}
+
+.dark .admin-shell .admin-user-search [data-slot='button']:disabled {
+  background: #1e293b !important;
+  color: #cbd5e1 !important;
+  border-color: #475569 !important;
+}
