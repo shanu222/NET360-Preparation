@@ -222,6 +222,16 @@ function isAdminManagedPaidServiceGrant(grantLike) {
   return source.includes('admin') || source === 'admin_paid_services';
 }
 
+/** Trial copies must not unlock modules. Admin and checkout grants are left unchanged. */
+function isAutomaticTrialAccessGrant(grantLike) {
+  const grant = normalizeManualGrant(grantLike);
+  const source = String(grant.source || '').toLowerCase();
+  const notes = String(grant.notes || '').toLowerCase();
+  if (source === 'trial') return true;
+  if (source === 'legacy_migrated' && notes.includes('free-trial')) return true;
+  return false;
+}
+
 /**
  * Build an independent per-module grant payload from the shared subscription record.
  * Used for one-time migration and for packaging trial/payment into separate module fields.
@@ -291,7 +301,8 @@ export async function migrateSharedSubscriptionToIndependentPaidServices(UserMod
   const updates = {};
   const keys = [];
   const sub = mergedSubscription(user);
-  if (hasPremiumSurfaceAccess(sub)) {
+  // Copy only an explicit paid term. Never seed modules from a 7-day trial.
+  if (isPaidPlanActive(sub)) {
     const seed = buildIndependentPaidServiceGrantFromSubscription(sub, {
       source: 'legacy_migrated',
       now: new Date(),
@@ -340,6 +351,21 @@ export function buildPaidServicesUpdateMap(keys, grantPayload) {
 function resolveManualPaidService(serviceType, paidServices, sub, now) {
   const legacyMeta = buildLegacyPaidServiceState(serviceType, sub, now);
   const manual = normalizeManualGrant(paidServices?.[serviceType]);
+  if (isAutomaticTrialAccessGrant(manual)) {
+    return {
+      allowed: false,
+      source: 'none',
+      status: 'inactive',
+      startsAt: null,
+      expiresAt: null,
+      durationDays: 0,
+      durationValue: 0,
+      durationUnit: 'days',
+      legacyAllowed: false,
+      serviceType,
+      notes: '',
+    };
+  }
   if (isGrantActive(manual, now)) {
     return {
       allowed: true,

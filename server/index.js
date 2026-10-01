@@ -14126,6 +14126,13 @@ async function handlePremiumStartTrial(req, res) {
     identity: resolveTrialIdentitySignals(req, req.user),
   });
   if (!r.ok) {
+    if (r.code === 'TRIAL_DISABLED') {
+      res.status(403).json({
+        code: 'TRIAL_DISABLED',
+        error: 'A free trial is not available. Demo access stays as it is, and full access is granted by an admin.',
+      });
+      return;
+    }
     if (r.code === 'TRIAL_ALREADY_USED') {
       res.status(409).json({ code: 'TRIAL_ALREADY_USED', error: 'Your free trial has already been used.' });
       return;
@@ -14482,30 +14489,9 @@ app.get('/api/subscriptions/me', authMiddleware, async (req, res) => {
   const nowMs = Date.now();
 
   const freeServices = {
-    tests: buildTimelineStatus({
-      allowed: trialActive && testsAccessPayload?.source === 'legacy',
-      startsAt: subPlain?.trialStartedAt,
-      expiresAt: subPlain?.trialEndsAt,
-      status: trialActive
-        ? 'active'
-        : (Boolean(subPlain?.hasUsedTrial) ? 'expired' : 'inactive'),
-    }, nowMs),
-    preparation: buildTimelineStatus({
-      allowed: trialActive && preparationAccessPayload?.source === 'legacy',
-      startsAt: subPlain?.trialStartedAt,
-      expiresAt: subPlain?.trialEndsAt,
-      status: trialActive
-        ? 'active'
-        : (Boolean(subPlain?.hasUsedTrial) ? 'expired' : 'inactive'),
-    }, nowMs),
-    community: buildTimelineStatus({
-      allowed: trialActive && communityAccessPayload?.source === 'legacy',
-      startsAt: subPlain?.trialStartedAt,
-      expiresAt: subPlain?.trialEndsAt,
-      status: trialActive
-        ? 'active'
-        : (Boolean(subPlain?.hasUsedTrial) ? 'expired' : 'inactive'),
-    }, nowMs),
+    tests: buildTimelineStatus({ allowed: false, startsAt: null, expiresAt: null, status: 'inactive' }, nowMs),
+    preparation: buildTimelineStatus({ allowed: false, startsAt: null, expiresAt: null, status: 'inactive' }, nowMs),
+    community: buildTimelineStatus({ allowed: false, startsAt: null, expiresAt: null, status: 'inactive' }, nowMs),
   };
 
   const paidServicesTimeline = {
@@ -16229,10 +16215,8 @@ app.get('/api/admin/subscriptions/overview', authMiddleware, requireAdmin, async
         UserModel,
         {
           ...managedUserFilter,
-          $or: [
-            { 'subscription.status': 'trial', 'subscription.trialEndsAt': { $gt: now } },
-            { 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } },
-          ],
+          'subscription.status': 'active',
+          'subscription.expiresAt': { $gt: now },
         },
         `${routeTag}:count-prep-legacy`,
       ),
@@ -16357,23 +16341,23 @@ app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (r
 
 app.get('/api/admin/paid-services/overview', authMiddleware, requireAdmin, async (_req, res) => {
   const now = new Date();
-  const managedUserFilter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
-  const [totalUsers, testsManualActive, prepManualActive, communityManualActive, legacyPaidEligible] = await Promise.all([
+  const managedUserFilter = { role: { $ne: 'admin' } };
+  const activeAdminService = (key) => ({
+    ...managedUserFilter,
+    [`paidServices.${key}.status`]: 'active',
+    [`paidServices.${key}.expiresAt`]: { $gt: now },
+    [`paidServices.${key}.source`]: { $nin: ['trial'] },
+    $nor: [{ [`paidServices.${key}.source`]: 'legacy_migrated', [`paidServices.${key}.notes`]: /free-trial/i }],
+  });
+  const [totalUsers, testsManualActive, prepManualActive, communityManualActive] = await Promise.all([
     UserModel.countDocuments(managedUserFilter),
-    UserModel.countDocuments({ ...managedUserFilter, 'paidServices.tests.status': 'active', 'paidServices.tests.expiresAt': { $gt: now } }),
-    UserModel.countDocuments({ ...managedUserFilter, 'paidServices.preparation.status': 'active', 'paidServices.preparation.expiresAt': { $gt: now } }),
-    UserModel.countDocuments({ ...managedUserFilter, 'paidServices.community.status': 'active', 'paidServices.community.expiresAt': { $gt: now } }),
-    UserModel.countDocuments({
-      ...managedUserFilter,
-      $or: [
-        { 'subscription.status': 'trial', 'subscription.trialEndsAt': { $gt: now } },
-        { 'subscription.status': 'active', 'subscription.expiresAt': { $gt: now } },
-      ],
-    }),
+    UserModel.countDocuments(activeAdminService('tests')),
+    UserModel.countDocuments(activeAdminService('preparation')),
+    UserModel.countDocuments(activeAdminService('community')),
   ]);
-  const testsActiveUsers = Math.min(totalUsers, testsManualActive + legacyPaidEligible);
-  const preparationActiveUsers = Math.min(totalUsers, prepManualActive + legacyPaidEligible);
-  const communityActiveUsers = Math.min(totalUsers, communityManualActive + legacyPaidEligible);
+  const testsActiveUsers = Math.min(totalUsers, testsManualActive);
+  const preparationActiveUsers = Math.min(totalUsers, prepManualActive);
+  const communityActiveUsers = Math.min(totalUsers, communityManualActive);
   res.json({
     totalUsers,
     testsAccess: { activeUsers: testsActiveUsers, inactiveUsers: Math.max(0, totalUsers - testsActiveUsers) },
@@ -16386,7 +16370,7 @@ app.get('/api/admin/paid-services/users', authMiddleware, requireAdmin, async (r
   const q = String(req.query?.q || '').trim().toLowerCase();
   const status = String(req.query?.status || 'all').trim().toLowerCase();
   const serviceType = parsePaidServiceType(req.query?.serviceType) || PAID_SERVICE_TYPES.tests;
-  const filter = { role: 'student', authProvider: 'firebase' };
+  const filter = { role: 'student' };
   const users = await UserModel.find(filter, {
     email: 1,
     firstName: 1,
@@ -16449,7 +16433,7 @@ app.post('/api/admin/paid-services/:userId/grant', authMiddleware, requireAdmin,
     return;
   }
   const user = await UserModel.findById(userId).select('role authProvider paidServices');
-  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+  if (!user || user.role === 'admin') {
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
@@ -16518,7 +16502,7 @@ app.post('/api/admin/paid-services/:userId/deactivate', authMiddleware, requireA
     return;
   }
   const user = await UserModel.findById(userId).select('role authProvider paidServices');
-  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+  if (!user || user.role === 'admin') {
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
@@ -16743,7 +16727,7 @@ app.post('/api/admin/subscriptions/access/:userId/grant', authMiddleware, requir
   }
 
   const user = await UserModel.findById(userId).select('subscription accessControls role authProvider email firstName lastName');
-  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+  if (!user || user.role === 'admin') {
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
@@ -16805,7 +16789,7 @@ app.post('/api/admin/subscriptions/access/:userId/revoke', authMiddleware, requi
     return;
   }
   const user = await UserModel.findById(userId).select('accessControls role authProvider');
-  if (!user || user.role === 'admin' || user.authProvider !== 'firebase') {
+  if (!user || user.role === 'admin') {
     res.status(404).json({ error: 'Managed user not found.' });
     return;
   }
@@ -17264,9 +17248,6 @@ async function fetchAdminManagedUsers({
         const paidServices = resolvePaidServices(item, globalGrants, nowMs);
         const profile = profileByUserId.get(userId);
         const sub = mergedSubscription(item);
-        const accountStatus = isSubscriptionActive(sub)
-          ? 'active'
-          : String(sub?.status || 'inactive').toLowerCase();
 
         const mentorCard = buildManagedServiceDetail({
           key: 'mentor',
@@ -17300,6 +17281,9 @@ async function fetchAdminManagedUsers({
           subscription: sub,
           nowMs,
         });
+        const accountStatus = [mentorCard, testsCard, preparationCard, communityCard].some((card) => card.active)
+          ? 'active'
+          : 'inactive';
 
         return {
           id: userId,

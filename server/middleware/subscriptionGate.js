@@ -1,7 +1,6 @@
 import {
   finalizeStaleSubscription,
   mergedSubscription,
-  premiumSurfaceBypassEnabled,
   trialIsActive,
 } from '../lib/subscriptionAccess.js';
 import { logAuthDebug, normalizeAuthDebugRoute } from '../lib/authDebug.js';
@@ -35,10 +34,6 @@ export function requireTrialOrPremiumContent(UserModel, resolveEntitlements) {
     const route = normalizeAuthDebugRoute(req);
     try {
       if (req.user?.role === 'admin') {
-        next();
-        return;
-      }
-      if (premiumSurfaceBypassEnabled()) {
         next();
         return;
       }

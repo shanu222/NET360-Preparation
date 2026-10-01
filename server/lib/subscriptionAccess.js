@@ -65,10 +65,11 @@ export function isPaidPlanActive(sub) {
   return new Date(sub.expiresAt).getTime() > Date.now();
 }
 
-/** Tests / community / preparation — trial or paid. */
+/**
+ * Premium surfaces unlock only from an explicit paid term (admin assignment or checkout).
+ * A 7-day trial never unlocks them.
+ */
 export function hasPremiumSurfaceAccess(sub) {
-  if (premiumSurfaceBypassEnabled()) return true;
-  if (trialIsActive(sub)) return true;
   return isPaidPlanActive(sub);
 }
 
@@ -103,28 +104,7 @@ export async function finalizeStaleSubscription(UserModel, userId) {
 
 export function buildPremiumBadgeState(sub, serverNow = Date.now()) {
   const now = typeof serverNow === 'number' ? serverNow : new Date(serverNow).getTime();
-  if (premiumSurfaceBypassEnabled()) {
-    return {
-      variant: 'green',
-      label: 'Full access — free period',
-      endsAt: null,
-      source: 'bypass',
-    };
-  }
-  const trialActive = trialIsActive(sub);
   const paidActive = isPaidPlanActive(sub);
-
-  if (trialActive && sub.trialEndsAt) {
-    const end = new Date(sub.trialEndsAt).getTime();
-    const msLeft = end - now;
-    const urgent = msLeft <= ORANGE_THRESHOLD_MS;
-    return {
-      variant: urgent ? 'orange' : 'green',
-      label: urgent ? 'Trial ending soon' : 'Free trial active',
-      endsAt: sub.trialEndsAt,
-      source: 'trial',
-    };
-  }
 
   if (paidActive && sub.expiresAt) {
     const end = new Date(sub.expiresAt).getTime();
@@ -151,28 +131,8 @@ export function buildPremiumBadgeState(sub, serverNow = Date.now()) {
 
 export function surfaceAccessDetail(sub, serverNow = Date.now()) {
   const now = typeof serverNow === 'number' ? serverNow : new Date(serverNow).getTime();
-  if (premiumSurfaceBypassEnabled()) {
-    return {
-      allowed: true,
-      source: 'bypass',
-      endsAt: null,
-      msRemaining: 0,
-      serverNow: new Date(now).toISOString(),
-    };
-  }
-  const trialActive = trialIsActive(sub);
   const paidActive = isPaidPlanActive(sub);
 
-  if (trialActive && sub.trialEndsAt) {
-    const end = new Date(sub.trialEndsAt).getTime();
-    return {
-      allowed: true,
-      source: 'trial',
-      endsAt: new Date(sub.trialEndsAt).toISOString(),
-      msRemaining: Math.max(0, end - now),
-      serverNow: new Date(now).toISOString(),
-    };
-  }
   if (paidActive && sub.expiresAt) {
     const end = new Date(sub.expiresAt).getTime();
     return {
