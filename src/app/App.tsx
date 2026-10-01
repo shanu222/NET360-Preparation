@@ -35,6 +35,7 @@ import {
   User,
   Menu,
   MessageSquare,
+  ChevronRight,
   Users,
   ChevronDown,
   Moon,
@@ -1053,9 +1054,9 @@ export default function App() {
         <div className="net360-shell mx-auto flex w-full min-w-0 max-w-[min(100%,1600px)] flex-col gap-2 rounded-[20px] border border-indigo-100 bg-white p-1.5 shadow-[0_30px_70px_rgba(59,67,146,0.16)] sm:gap-3 sm:rounded-[24px] sm:p-2 xl:rounded-[28px]">
           <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-hidden rounded-2xl border border-indigo-50 bg-gradient-to-br from-white to-[#f2f4ff] sm:rounded-3xl">
             {/* Header */}
-            <header className="net360-header sticky top-0 z-40 flex min-h-14 flex-col rounded-t-2xl border-b border-indigo-100 bg-white px-2 py-1.5 sm:min-h-16 sm:px-5 sm:py-1 sm:rounded-t-3xl">
-              <div className="flex w-full min-w-0 flex-wrap items-center gap-1 sm:gap-2">
-              <div className="order-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:gap-3">
+            <header className="net360-header sticky top-0 z-40 rounded-t-2xl border-b border-indigo-100 bg-white px-2 py-2 sm:rounded-t-3xl sm:px-4 sm:py-2.5">
+              <div className="net360-header-bar flex w-full min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
+              <div className="net360-header-brand order-1 flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden sm:gap-2.5">
                 <Sheet open={sidebarMenuOpen} onOpenChange={setSidebarMenuOpen}>
                   <SheetTrigger asChild>
                     <Button variant="ghost" size="icon" className="touch-manipulation shrink-0 rounded-xl min-h-10 min-w-10 sm:min-h-11 sm:min-w-11" aria-label="Open navigation menu">
@@ -1117,7 +1118,7 @@ export default function App() {
                     />
                   </div>
                   <div className="min-w-0">
-                    <p className="min-w-0 max-w-full text-base leading-snug text-indigo-950 line-clamp-2 sm:line-clamp-1 sm:text-lg md:line-clamp-none md:text-xl">
+                    <p className="min-w-0 max-w-full text-base font-semibold leading-snug text-indigo-950 line-clamp-2 sm:line-clamp-1 sm:text-lg md:line-clamp-none md:text-xl">
                       <span className="sr-only">Current page: </span>
                       {activeTitle}
                     </p>
@@ -1126,19 +1127,27 @@ export default function App() {
                 </div>
               </div>
               {!isNativeRuntime ? (
-                <a
-                  href="https://play.google.com/store/apps/details?id=com.net360prep.app&pcampaignid=web_share"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="net360-play-cta order-3 mt-1 inline-flex w-full min-w-0 items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-center text-[12px] font-semibold leading-tight text-indigo-950 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-100 dark:border-indigo-400/70 dark:bg-indigo-950 dark:text-indigo-50 dark:hover:bg-indigo-900 sm:order-2 sm:mt-0 sm:w-auto sm:justify-start sm:px-3 sm:py-1.5 sm:text-left sm:text-xs"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4 shrink-0 fill-current">
-                    <path d="M3.5 2.8c-.3.3-.5.8-.5 1.4v15.6c0 .6.2 1.1.5 1.4l.1.1 8.7-8.7v-.2L3.6 2.7l-.1.1zm10.2 10.2 2.4 2.4-8.2 4.7c-.5.3-1 .3-1.4.1l7.2-7.2zm2.4-2.4 2.7 1.5c.8.4.8 1.1 0 1.6l-2.7 1.5-2.6-2.6 2.6-2zm-11.6-7.4c.4-.2.9-.2 1.4.1l8.2 4.7-2.4 2.4-7.2-7.2z" />
-                  </svg>
-                  <span>Download the NET360 App on Google Play</span>
-                </a>
-              ) : null}
-              <div className="order-2 ml-auto flex shrink-0 items-center gap-0.5 sm:order-3 sm:gap-2">
+                <div className="net360-header-center order-3 flex w-full min-w-0 flex-col items-center gap-1.5">
+                  <RtlAttribution />
+                  <a
+                    href="https://play.google.com/store/apps/details?id=com.net360prep.app&pcampaignid=web_share"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="net360-play-cta inline-flex w-full max-w-full min-w-0 items-center justify-center gap-2 rounded-full border border-indigo-200/90 bg-[#eef1ff] px-3 py-1.5 text-center text-[12px] font-semibold leading-tight text-indigo-950 shadow-[0_6px_16px_rgba(79,70,229,0.08)] transition hover:border-indigo-300 hover:bg-indigo-100 dark:border-indigo-400/70 dark:bg-indigo-950 dark:text-indigo-50 dark:hover:bg-indigo-900 sm:w-auto sm:px-3.5 sm:text-xs"
+                  >
+                    <svg viewBox="0 0 24 24" aria-hidden="true" className="h-4 w-4 shrink-0 fill-current">
+                      <path d="M3.5 2.8c-.3.3-.5.8-.5 1.4v15.6c0 .6.2 1.1.5 1.4l.1.1 8.7-8.7v-.2L3.6 2.7l-.1.1zm10.2 10.2 2.4 2.4-8.2 4.7c-.5.3-1 .3-1.4.1l7.2-7.2zm2.4-2.4 2.7 1.5c.8.4.8 1.1 0 1.6l-2.7 1.5-2.6-2.6 2.6-2zm-11.6-7.4c.4-.2.9-.2 1.4.1l8.2 4.7-2.4 2.4-7.2-7.2z" />
+                    </svg>
+                    <span className="min-w-0">Download the NET360 App on Google Play</span>
+                    <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-70" aria-hidden="true" />
+                  </a>
+                </div>
+              ) : (
+                <div className="net360-rtl-slot order-3 flex w-full justify-center pt-1">
+                  <RtlAttribution />
+                </div>
+              )}
+              <div className="net360-header-actions order-2 ml-auto flex shrink-0 items-center gap-0.5 sm:gap-1.5">
                 <DemoModeButton />
                 <Button
                   variant="ghost"
@@ -1168,9 +1177,6 @@ export default function App() {
                 </Button>
                 <HeaderAuthControl onOpenProfile={() => navigate(PATH_BY_SECTION.profile)} />
               </div>
-              </div>
-              <div className="net360-rtl-slot flex w-full justify-center pt-1">
-                <RtlAttribution />
               </div>
             </header>
 
