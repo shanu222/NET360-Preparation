@@ -1396,6 +1396,18 @@ app.get('/api/public/media-config', (_req, res) => {
   });
 });
 
+/**
+ * Minimum Android versionCode that may keep using the app.
+ * Set ANDROID_MIN_VERSION_CODE on the server when a Play release must be required.
+ * 0 means no minimum, so a missing setting does not lock anyone out.
+ */
+app.get('/api/public/android-release', (_req, res) => {
+  const parsed = Number(String(process.env.ANDROID_MIN_VERSION_CODE || '').trim());
+  const minVersionCode = Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+  res.set('Cache-Control', 'no-store');
+  res.json({ minVersionCode });
+});
+
 /** Browsers must not get 429 on OPTIONS; without CORS headers that breaks preflight. */
 function skipOptionsPreflightForRateLimit(req) {
   return req.method === 'OPTIONS';

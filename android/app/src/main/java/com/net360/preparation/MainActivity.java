@@ -3,16 +3,32 @@ package com.net360.preparation;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.graphics.Outline;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.View;
+import android.view.ViewGroup;
+import android.view.ViewOutlineProvider;
 import android.webkit.CookieManager;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
+import android.widget.Button;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.core.content.FileProvider;
 import androidx.core.splashscreen.SplashScreen;
+
+import com.google.android.play.core.appupdate.AppUpdateManager;
+import com.google.android.play.core.appupdate.AppUpdateManagerFactory;
+import com.google.android.play.core.appupdate.AppUpdateOptions;
+import com.google.android.play.core.install.model.AppUpdateType;
+import com.google.android.play.core.install.model.UpdateAvailability;
+
+import android.content.IntentSender;
 
 import java.io.File;
 
@@ -32,7 +48,11 @@ import ee.forgr.capacitor.social.login.SocialLoginPlugin;
 public class MainActivity extends BridgeActivity implements ModifiedMainActivityForSocialLoginPlugin {
   private static final String TAG = "NET360MainActivity";
   private static final String WEBVIEW_ASSET_TOKEN = "startup-boot-1";
+  private static final int REQ_IMMEDIATE_UPDATE = 48136;
   private static volatile boolean startupReady = false;
+  private AppUpdateManager appUpdateManager;
+  private View mandatoryUpdateOverlay;
+  private boolean mandatoryUpdateRequired;
 
   @Override
   public void onCreate(Bundle savedInstanceState) {
@@ -69,6 +89,17 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     webView.setSaveEnabled(true);
     webView.addJavascriptInterface(new PdfBridge(), "NET360NativeFiles");
     webView.addJavascriptInterface(new StartupBridge(), "NET360Startup");
+    webView.addJavascriptInterface(new UpdateBridge(), "NET360Update");
+    appUpdateManager = AppUpdateManagerFactory.create(this);
+    getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+      @Override
+      public void handleOnBackPressed() {
+        if (mandatoryUpdateRequired) return;
+        setEnabled(false);
+        getOnBackPressedDispatcher().onBackPressed();
+        setEnabled(true);
+      }
+    });
   }
 
   /**
@@ -144,6 +175,95 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     }
   }
 
+  private final class UpdateBridge {
+    @JavascriptInterface
+    public void requireUpdate() {
+      runOnUiThread(() -> showMandatoryUpdate());
+    }
+  }
+
+  private void showMandatoryUpdate() {
+    mandatoryUpdateRequired = true;
+    if (mandatoryUpdateOverlay != null) {
+      mandatoryUpdateOverlay.bringToFront();
+      return;
+    }
+    ViewGroup content = findViewById(android.R.id.content);
+    if (content == null) return;
+    boolean light = "light".equals(getSharedPreferences("net360_startup", MODE_PRIVATE).getString("theme", "dark"));
+    View overlay = getLayoutInflater().inflate(R.layout.net360_update_required, content, false);
+    overlay.setBackgroundColor(light ? 0xFFF3F5FB : 0xFF0C1222);
+    LinearLayout card = overlay.findViewById(R.id.net360_update_card);
+    TextView title = overlay.findViewById(R.id.net360_update_title);
+    TextView message = overlay.findViewById(R.id.net360_update_message);
+    if (!light && card != null) {
+      card.setBackgroundResource(R.drawable.net360_update_card_dark);
+      if (title != null) title.setTextColor(0xFFF8FAFC);
+      if (message != null) message.setTextColor(0xFFCBD5E1);
+    }
+    ImageView logo = overlay.findViewById(R.id.net360_update_logo);
+    if (logo != null) {
+      logo.setOutlineProvider(new ViewOutlineProvider() {
+        @Override
+        public void getOutline(View view, Outline outline) {
+          outline.setOval(0, 0, view.getWidth(), view.getHeight());
+        }
+      });
+      logo.setClipToOutline(true);
+      logo.post(logo::invalidateOutline);
+    }
+    Button updateNow = overlay.findViewById(R.id.net360_update_now);
+    if (updateNow != null) updateNow.setOnClickListener(view -> startPlayUpdate());
+    content.addView(overlay);
+    overlay.bringToFront();
+    mandatoryUpdateOverlay = overlay;
+  }
+
+  private void startPlayUpdate() {
+    if (appUpdateManager == null) {
+      openPlayListing();
+      return;
+    }
+    appUpdateManager.getAppUpdateInfo()
+        .addOnSuccessListener(info -> {
+          boolean inProgress = info.updateAvailability() == UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS;
+          boolean available = info.updateAvailability() == UpdateAvailability.UPDATE_AVAILABLE || inProgress;
+          if (!available || !info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)) {
+            openPlayListing();
+            return;
+          }
+          try {
+            appUpdateManager.startUpdateFlowForResult(
+                info,
+                this,
+                AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build(),
+                REQ_IMMEDIATE_UPDATE);
+          } catch (IntentSender.SendIntentException error) {
+            Log.e(TAG, "Play update flow failed", error);
+            openPlayListing();
+          }
+        })
+        .addOnFailureListener(error -> {
+          Log.e(TAG, "Play update info failed", error);
+          openPlayListing();
+        });
+  }
+
+  private void openPlayListing() {
+    String packageName = getPackageName();
+    try {
+      Intent market = new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + packageName));
+      market.setPackage("com.android.vending");
+      startActivity(market);
+    } catch (Exception error) {
+      try {
+        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + packageName)));
+      } catch (Exception nested) {
+        Log.e(TAG, "Play listing failed", nested);
+      }
+    }
+  }
+
   @Override
   public void onPause() {
     WebView webView = this.bridge != null ? this.bridge.getWebView() : null;
@@ -160,6 +280,21 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
     if (webView != null) {
       webView.onResume();
     }
+    if (mandatoryUpdateRequired && appUpdateManager != null) {
+      appUpdateManager.getAppUpdateInfo().addOnSuccessListener(info -> {
+        if (info.updateAvailability() != UpdateAvailability.DEVELOPER_TRIGGERED_UPDATE_IN_PROGRESS) return;
+        if (!info.isUpdateTypeAllowed(AppUpdateType.IMMEDIATE)) return;
+        try {
+          appUpdateManager.startUpdateFlowForResult(
+              info,
+              this,
+              AppUpdateOptions.newBuilder(AppUpdateType.IMMEDIATE).build(),
+              REQ_IMMEDIATE_UPDATE);
+        } catch (IntentSender.SendIntentException error) {
+          Log.e(TAG, "Resume Play update failed", error);
+        }
+      });
+    }
   }
 
   @Override
@@ -173,6 +308,10 @@ public class MainActivity extends BridgeActivity implements ModifiedMainActivity
 
   @Override
   public void onActivityResult(int requestCode, int resultCode, Intent data) {
+    if (requestCode == REQ_IMMEDIATE_UPDATE) {
+      if (resultCode != RESULT_OK) showMandatoryUpdate();
+      return;
+    }
     /* Handle Capgo Google authorization before Capacitor Bridge consumes the result. */
     if (requestCode >= GoogleProvider.REQUEST_AUTHORIZE_GOOGLE_MIN
         && requestCode < GoogleProvider.REQUEST_AUTHORIZE_GOOGLE_MAX) {

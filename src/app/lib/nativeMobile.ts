@@ -6,6 +6,7 @@ import { PushNotifications } from '@capacitor/push-notifications';
 import { Camera } from '@capacitor/camera';
 import { Filesystem } from '@capacitor/filesystem';
 import { logNativeEvent } from './nativeDiagnostics';
+import { startAndroidReleaseGate } from './androidReleaseGate';
 
 const isNative = () => Capacitor.isNativePlatform();
 const isPushEnabled = () => String((import.meta as any).env?.VITE_ENABLE_PUSH_NOTIFICATIONS || '').toLowerCase() === 'true';
@@ -46,6 +47,7 @@ export async function initializeNativeExperience() {
     return;
   }
   document.documentElement.classList.add('native-runtime', `native-${platform}`);
+  if (platform === 'android') startAndroidReleaseGate();
   initializeNativeViewportHandling();
   logNativeEvent('runtime', 'native-experience-init', { platform });
 
@@ -72,6 +74,16 @@ let nativeSplashReleased = false;
 /** Dismiss the native splash after the app has painted. No extra delay. */
 export async function hideNativeSplashAfterPaint() {
   if (nativeSplashReleased || !isNative()) return;
+  if (Capacitor.getPlatform() === 'android') {
+    try {
+      await Promise.race([
+        startAndroidReleaseGate(),
+        new Promise<void>((resolve) => window.setTimeout(resolve, 5000)),
+      ]);
+    } catch {
+      // A failed check must not keep the splash up or lock the app.
+    }
+  }
   nativeSplashReleased = true;
   try {
     const bridge = (window as Window & { NET360Startup?: { markReady?: () => void } }).NET360Startup;
