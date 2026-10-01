@@ -1,4 +1,4 @@
-import { memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { memo, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ChangeEvent, type SetStateAction } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -72,10 +72,63 @@ interface OnlineStudentRow extends CommunityUser {
   activity?: string;
 }
 
-function isOwnCommunityRow(row: { id?: string; userId?: string } | null | undefined, selfId: string) {
-  const self = String(selfId || '').trim();
-  if (!self || !row) return false;
-  return String(row.id || '') === self || String(row.userId || '') === self;
+function addPresenceId(keys: Set<string>, value: unknown) {
+  const id = String(value || '').trim();
+  if (!id) return;
+  keys.add(`id:${id}`);
+  keys.add(`id:${id.toLowerCase()}`);
+}
+
+function addPresenceUsername(keys: Set<string>, value: unknown) {
+  const username = String(value || '').trim().toLowerCase();
+  if (!username) return;
+  keys.add(`user:${username}`);
+}
+
+/** Backend user id, community profile id, and unique username — never display name. */
+function buildSelfPresenceKeys(
+  userId: unknown,
+  profileId: unknown,
+  profileUserId: unknown,
+  username: unknown,
+): Set<string> {
+  const keys = new Set<string>();
+  addPresenceId(keys, userId);
+  addPresenceId(keys, profileId);
+  addPresenceId(keys, profileUserId);
+  addPresenceUsername(keys, username);
+  return keys;
+}
+
+function isSelfOnlineStudent(
+  row: { id?: string; userId?: string; username?: string } | null | undefined,
+  selfKeys: Set<string>,
+): boolean {
+  if (!row || selfKeys.size === 0) return false;
+  const id = String(row.id || '').trim();
+  const userId = String(row.userId || '').trim();
+  const username = String(row.username || '').trim().toLowerCase();
+  if (id && (selfKeys.has(`id:${id}`) || selfKeys.has(`id:${id.toLowerCase()}`))) return true;
+  if (userId && (selfKeys.has(`id:${userId}`) || selfKeys.has(`id:${userId.toLowerCase()}`))) return true;
+  if (username && selfKeys.has(`user:${username}`)) return true;
+  return false;
+}
+
+function withoutSelfOnlineStudents<T extends { id?: string; userId?: string; username?: string }>(
+  rows: T[],
+  selfKeys: Set<string>,
+): T[] {
+  if (!selfKeys.size || rows.length === 0) return rows;
+  let removed = false;
+  const next: T[] = [];
+  for (const row of rows) {
+    if (isSelfOnlineStudent(row, selfKeys)) {
+      removed = true;
+      continue;
+    }
+    next.push(row);
+  }
+  return removed ? next : rows;
 }
 
 interface CommunityRequestRow {
@@ -657,7 +710,26 @@ function CommunityInner() {
   const [hideOnlineStatus, setHideOnlineStatus] = useState(false);
   const [doNotDisturb, setDoNotDisturb] = useState(false);
   const [interestsInput, setInterestsInput] = useState('');
-  const [onlineStudents, setOnlineStudents] = useState<OnlineStudentRow[]>([]);
+  const [onlineStudents, setOnlineStudentsState] = useState<OnlineStudentRow[]>([]);
+  const selfPresenceKeys = useMemo(
+    () => buildSelfPresenceKeys(user?.id, profile?.id, profile?.userId, profile?.username),
+    [user?.id, profile?.id, profile?.userId, profile?.username],
+  );
+  const selfPresenceKeysRef = useRef(selfPresenceKeys);
+  selfPresenceKeysRef.current = selfPresenceKeys;
+  const setOnlineStudents = useCallback((action: SetStateAction<OnlineStudentRow[]>) => {
+    setOnlineStudentsState((prev) => {
+      const next = typeof action === 'function' ? action(prev) : action;
+      return withoutSelfOnlineStudents(next, selfPresenceKeysRef.current);
+    });
+  }, []);
+  const otherOnlineStudents = useMemo(
+    () => withoutSelfOnlineStudents(onlineStudents, selfPresenceKeys),
+    [onlineStudents, selfPresenceKeys],
+  );
+  useEffect(() => {
+    setOnlineStudentsState((prev) => withoutSelfOnlineStudents(prev, selfPresenceKeys));
+  }, [selfPresenceKeys]);
   const [presenceLoading, setPresenceLoading] = useState(false);
   const [presenceResolved, setPresenceResolved] = useState(false);
   const [remoteTyping, setRemoteTyping] = useState(false);
@@ -945,8 +1017,7 @@ function CommunityInner() {
       const payload = await apiRequest<{ online: OnlineStudentRow[] }>('/api/community/presence', {}, token);
       // A newer request already started; let it win to avoid applying a stale snapshot.
       if (seq !== presenceRequestSeqRef.current) return;
-      const selfId = String(user?.id || '');
-      const others = (payload.online || []).filter((row) => !isOwnCommunityRow(row, selfId));
+      const others = withoutSelfOnlineStudents(payload.online || [], selfPresenceKeysRef.current);
       setOnlineStudents((prev) => mergePresenceRoster(prev, others));
       setPresenceResolved(true);
     } catch {
@@ -954,7 +1025,7 @@ function CommunityInner() {
     } finally {
       if (!silent && seq === presenceRequestSeqRef.current) setPresenceLoading(false);
     }
-  }, [token, user?.id]);
+  }, [token]);
 
   useEffect(() => {
     loadPresenceRef.current = loadPresence;
@@ -1463,7 +1534,10 @@ function CommunityInner() {
       if (t === 'community.presence') {
         const uid = String(parsed.userId || '').trim();
         // Our own presence changes are not part of our roster.
-        if (uid && uid === authUserId) return;
+        if (isSelfOnlineStudent({ id: uid, userId: uid, username: parsed.username }, selfPresenceKeysRef.current)) {
+          setOnlineStudents((prev) => prev);
+          return;
+        }
         if (parsed.action === 'offline' && uid) {
           setOnlineStudents((prev) => (
             prev.some((row) => String(row.id) === uid || String(row.userId) === uid)
@@ -2416,7 +2490,7 @@ function CommunityInner() {
               <CardDescription>Students currently online.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              {!presenceResolved && onlineStudents.length === 0 ? (
+              {!presenceResolved && otherOnlineStudents.length === 0 ? (
                 <div className="flex justify-center py-8" role="status" aria-live="polite">
                   <span className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-600 dark:border-indigo-900 dark:border-t-indigo-300" />
                   <span className="sr-only">Loading online students</span>
@@ -2424,8 +2498,7 @@ function CommunityInner() {
               ) : null}
 
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {onlineStudents.map((s) => {
-                  if (isOwnCommunityRow(s, String(user.id))) return null;
+                {otherOnlineStudents.map((s) => {
                   const netStatus = s.connectionStatus
                     || [...allCommunityUsers, ...searchResults].find((x) => x.id === s.id)?.connectionStatus;
                   const pendingKind = pendingRosterAction?.userId === s.id ? pendingRosterAction.kind : null;
@@ -2522,7 +2595,7 @@ function CommunityInner() {
                   );
                 })}
               </div>
-              {presenceResolved && !onlineStudents.some((s) => !isOwnCommunityRow(s, String(user.id))) && !presenceLoading ? (
+              {presenceResolved && otherOnlineStudents.length === 0 && !presenceLoading ? (
                 <div className="rounded-xl border border-dashed p-8 text-center">
                   <p className="text-sm font-medium text-slate-800 dark:text-slate-100">No other students are currently online.</p>
                 </div>
