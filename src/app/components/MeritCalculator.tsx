@@ -17,7 +17,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { Calculator, Info, Lightbulb } from 'lucide-react';
+import { openOrSaveBlobOnDevice } from '../lib/nativeFileAccess';
+import { buildMeritResultPdf } from '../lib/meritResultPdf';
+import { Calculator, Download, Info, Lightbulb } from 'lucide-react';
 
 type InputMode = 'marks' | 'percentage';
 
@@ -40,25 +42,60 @@ function MobileFold({ title, children }: { title: string; children: ReactNode })
   );
 }
 
-function StandingLine({ label, standing }: { label: string; standing: MeritListStanding }) {
-  if (standing.met === 0) {
-    const nearest = standing.nextAbove;
-    return (
-      <p>
-        {label}: merit position {meritPositionLabel(standing)}. Below every listed closing aggregate
-        {nearest ? ` (nearest is ${nearest.name}, ${nearest.institution}, ${formatClosingMerit(nearest.closingMerit)})` : ''}.
+function PotentialPrograms({ year, programs }: { year: number; programs: ClosingMeritProgram[] }) {
+  return (
+    <div className="pt-1">
+      <p className="font-semibold text-indigo-950">Potential programs ({programs.length})</p>
+      <p className="text-xs text-slate-500">
+        {year} closing-merit list. These are the NUST programs whose closing aggregate this result meets.
       </p>
-    );
-  }
+      {programs.length === 0 ? (
+        <p className="mt-1">No listed program is within this aggregate.</p>
+      ) : (
+        <ul className="mt-2 max-h-60 space-y-1 overflow-y-auto">
+          {programs.map((program) => (
+            <li key={program.id} className="rounded-lg border border-indigo-100 bg-white px-2.5 py-1.5">
+              <p className="font-medium text-indigo-800">{program.name}</p>
+              <p className="text-xs text-slate-500">
+                {program.institution}
+                {program.location ? ` · ${program.location}` : ''}
+                {' · '}Closing {formatClosingMerit(program.closingMerit)}
+                {program.meritPosition != null ? ` · Position ${formatMeritPosition(program.meritPosition)}` : ''}
+                {' · '}{meritStatusLabel(program.meritStatus)}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
+function TrackOutcome({ label, year, standing }: { label: string; year: number; standing: MeritListStanding }) {
   const best = standing.bestMet;
   const next = standing.nextAbove;
   return (
-    <p>
-      {label}: merit position {meritPositionLabel(standing)}. Meets {standing.met} {standing.met === 1 ? 'program' : 'programs'}.
-      {best ? ` Highest match: ${best.name} (${best.institution}).` : ''}
-      {next ? ` Next above you: ${next.name} (${next.institution}) ${formatClosingMerit(next.closingMerit)}.` : ' At or above the highest closing merit.'}
-    </p>
+    <div className="space-y-1">
+      <p className="font-semibold text-indigo-950">{label}</p>
+      <p>Merit position: {meritPositionLabel(standing)}</p>
+      {standing.met === 0 ? (
+        <p>
+          Below every listed closing aggregate
+          {next ? ` (nearest is ${next.name}, ${next.institution}, ${formatClosingMerit(next.closingMerit)})` : ''}.
+        </p>
+      ) : (
+        <>
+          <p>Meets {standing.met} {standing.met === 1 ? 'program' : 'programs'}.</p>
+          {best ? <p>Highest match: {best.name} ({best.institution}).</p> : null}
+          <p>
+            {next
+              ? `Next above you: ${next.name} (${next.institution}) ${formatClosingMerit(next.closingMerit)}.`
+              : 'At or above the highest closing merit.'}
+          </p>
+        </>
+      )}
+      <PotentialPrograms year={year} programs={standing.metPrograms} />
+    </div>
   );
 }
 
@@ -95,6 +132,8 @@ export function MeritCalculator() {
 
   const [fscAggregate, setFscAggregate] = useState<number | null>(null);
   const [aLevelAggregate, setALevelAggregate] = useState<number | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState('');
 
   const calculateFscAggregate = () => {
     let matricPercent: number;
@@ -181,6 +220,7 @@ export function MeritCalculator() {
     setAlNetPercentage('');
     setFscAggregate(null);
     setALevelAggregate(null);
+    setPdfError('');
   };
 
   const [programMerits, setProgramMerits] = useState<ClosingMeritProgram[]>(() => catalogClosingMerits());
@@ -239,6 +279,24 @@ export function MeritCalculator() {
   const focusStanding = androidApp
     ? (androidTrack === 'alevel' ? aLevelStanding : fscStanding)
     : (fscStanding ?? aLevelStanding);
+
+  const downloadMeritPdf = async () => {
+    const tracks = [
+      fscAggregate != null && fscStanding ? { label: 'FSc', aggregate: fscAggregate, standing: fscStanding } : null,
+      aLevelAggregate != null && aLevelStanding ? { label: 'A-Level', aggregate: aLevelAggregate, standing: aLevelStanding } : null,
+    ].filter((track): track is { label: string; aggregate: number; standing: MeritListStanding } => track != null);
+    if (!tracks.length || pdfBusy) return;
+    setPdfBusy(true);
+    setPdfError('');
+    try {
+      const blob = await buildMeritResultPdf({ year: meritYear, tracks });
+      await openOrSaveBlobOnDevice(blob, `NET360-Merit-Result-${meritYear}.pdf`, 'download');
+    } catch {
+      setPdfError('Could not create the merit result PDF.');
+    } finally {
+      setPdfBusy(false);
+    }
+  };
 
   const selectClass =
     'flex min-h-11 w-full max-w-full rounded-md border border-indigo-100 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 sm:max-w-xs md:max-w-sm';
@@ -614,14 +672,29 @@ export function MeritCalculator() {
               <p className="text-xl font-semibold text-indigo-950 sm:text-2xl">{meritPositionLabel(focusStanding)}</p>
             </div>
 
-            <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-[#f5f7ff] to-[#edf2ff] p-5 text-sm text-slate-600">
-              {fscStanding ? <StandingLine label="FSc" standing={fscStanding} /> : null}
-              {aLevelStanding ? <StandingLine label="A-Level" standing={aLevelStanding} /> : null}
+            <div className="space-y-3 rounded-xl border border-indigo-100 bg-gradient-to-r from-[#f5f7ff] to-[#edf2ff] p-4 text-sm text-slate-600">
+              {fscStanding ? <TrackOutcome label="FSc" year={meritYear} standing={fscStanding} /> : null}
+              {aLevelStanding ? (
+                <div className={fscStanding ? 'border-t border-indigo-100 pt-3' : ''}>
+                  <TrackOutcome label="A-Level" year={meritYear} standing={aLevelStanding} />
+                </div>
+              ) : null}
               {!fscStanding && !aLevelStanding ? (
                 <p>Calculate an aggregate to place it on the closing-merit list. Position 1 means your aggregate is at or above the highest number. You meet a program when your aggregate is at least its closing merit.</p>
               ) : (
-                <p className="mt-2 text-slate-500">Merit position is estimated from the admin closing aggregates and closing merit positions. A program is met when your aggregate is at least its closing aggregate.</p>
+                <p className="text-slate-500">Merit position is estimated from the admin closing aggregates and closing merit positions. A program is met when your aggregate is at least its closing aggregate.</p>
               )}
+              <Button
+                type="button"
+                variant="outline"
+                disabled={(!fscStanding && !aLevelStanding) || pdfBusy}
+                onClick={() => void downloadMeritPdf()}
+                className="border-indigo-200 bg-white text-indigo-800"
+              >
+                <Download className="mr-2 h-4 w-4" />
+                {pdfBusy ? 'Preparing PDF…' : 'Download merit result'}
+              </Button>
+              {pdfError ? <p className="text-sm text-rose-700">{pdfError}</p> : null}
             </div>
 
             {fscAggregate !== null ? (
