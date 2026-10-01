@@ -19,6 +19,7 @@ import {
   Moon,
   PanelLeftClose,
   PanelLeftOpen,
+  GraduationCap,
   Play,
   RefreshCw,
   Settings,
@@ -78,6 +79,7 @@ import { AdminVideos } from './AdminVideos';
 import { AdminSitePromoImages } from './AdminSitePromoImages';
 import { AdminSubscriptionPlans } from './AdminSubscriptionPlans';
 import { AdminOnlineClasses } from './AdminOnlineClasses';
+import { ClosingMeritsPanel } from './ClosingMeritsPanel';
 import type { SubjectKey } from '../app/lib/mcq';
 import {
   dataUrlToBlob,
@@ -751,6 +753,7 @@ type AdminSection =
   | 'submissions'
   | 'community-moderation'
   | 'subscriptions'
+  | 'closing-merits'
   | 'system-config';
 
 const ADMIN_SECTION_ROUTES: Record<AdminSection, string> = {
@@ -767,6 +770,7 @@ const ADMIN_SECTION_ROUTES: Record<AdminSection, string> = {
   submissions: '/admin/submissions',
   'community-moderation': '/admin/community-moderation',
   subscriptions: '/admin/subscriptions',
+  'closing-merits': '/admin/closing-merits',
   'system-config': '/admin/system-config',
 };
 
@@ -779,6 +783,7 @@ const ADMIN_SECTION_META: Array<{ section: AdminSection; label: string; icon: Lu
   { section: 'submissions', label: 'Submissions', icon: FileCheck2 },
   { section: 'community-moderation', label: 'Community', icon: ShieldAlert },
   { section: 'subscriptions', label: 'Subscriptions', icon: CreditCard },
+  { section: 'closing-merits', label: 'Closing Merits', icon: GraduationCap },
   { section: 'support-chat', label: 'Support Chat', icon: MessageSquare },
   { section: 'system-config', label: 'Settings', icon: Settings },
 ];
@@ -829,6 +834,7 @@ function getSectionFromPath(pathname: string): AdminSection {
   if (normalized.startsWith('/admin/submissions')) return 'submissions';
   if (normalized.startsWith('/admin/community-moderation')) return 'community-moderation';
   if (normalized.startsWith('/admin/subscriptions')) return 'subscriptions';
+  if (normalized.startsWith('/admin/closing-merits')) return 'closing-merits';
   if (normalized.startsWith('/admin/system-config')) return 'system-config';
 
   return 'dashboard';
@@ -8794,6 +8800,10 @@ export default function AdminApp() {
               ) : null}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="closing-merits" className="space-y-4">
+          <ClosingMeritsPanel active={activeSection === 'closing-merits'} />
         </TabsContent>
 
         <TabsContent value="support-chat" className="space-y-3">

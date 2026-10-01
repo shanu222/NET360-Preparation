@@ -1,4 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { apiRequest } from '../lib/api';
+import {
+  catalogClosingMerits,
+  formatClosingMerit,
+  meritPositionLabel,
+  standingOnClosingMeritList,
+  type ClosingMeritProgram,
+} from '../lib/closingMerits';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
@@ -6,6 +14,15 @@ import { Label } from './ui/label';
 import { Calculator, Info, Lightbulb } from 'lucide-react';
 
 type InputMode = 'marks' | 'percentage';
+
+const MERIT_GROUP_LABELS: Record<string, string> = {
+  engineering: 'Engineering',
+  computing: 'Computing',
+  business: 'Business',
+  architecture: 'Architecture',
+  sciences: 'Sciences',
+  applied: 'Applied',
+};
 
 function parseNum(s: string): number {
   const n = parseFloat(s);
@@ -38,7 +55,8 @@ export function MeritCalculator() {
 
   const [fscAggregate, setFscAggregate] = useState<number | null>(null);
   const [aLevelAggregate, setALevelAggregate] = useState<number | null>(null);
-  const [meritPosition, setMeritPosition] = useState<string | null>(null);
+  const [programMerits, setProgramMerits] = useState<ClosingMeritProgram[]>(() => catalogClosingMerits());
+  const [meritGroup, setMeritGroup] = useState('all');
 
   const calculateFscAggregate = () => {
     let matricPercent: number;
@@ -74,16 +92,6 @@ export function MeritCalculator() {
 
     const aggregate = matricPercent * 0.1 + fscPercent * 0.15 + netPercent * 0.75;
     setFscAggregate(aggregate);
-
-    if (aggregate >= 85) {
-      setMeritPosition('Excellent - Top 500');
-    } else if (aggregate >= 75) {
-      setMeritPosition('Very Good - Top 1500');
-    } else if (aggregate >= 65) {
-      setMeritPosition('Good - Top 3000');
-    } else {
-      setMeritPosition('Fair - Top 5000');
-    }
   };
 
   const calculateALevelAggregate = () => {
@@ -135,22 +143,48 @@ export function MeritCalculator() {
     setAlNetPercentage('');
     setFscAggregate(null);
     setALevelAggregate(null);
-    setMeritPosition(null);
   };
 
-  const programMerits = [
-    { program: 'Computer Science (SEECS)', lastMerit: 86.5, color: 'text-indigo-700' },
-    { program: 'Electrical Engineering (SEECS)', lastMerit: 84.2, color: 'text-indigo-700' },
-    { program: 'Artificial Intelligence', lastMerit: 87.1, color: 'text-indigo-700' },
-    { program: 'Software Engineering', lastMerit: 85.8, color: 'text-indigo-700' },
-    { program: 'Mechanical Engineering (SMME)', lastMerit: 82.5, color: 'text-indigo-700' },
-    { program: 'Civil Engineering (SCEE)', lastMerit: 78.9, color: 'text-indigo-700' },
-    { program: 'BBA', lastMerit: 76.4, color: 'text-indigo-700' },
-    { program: 'Data Science', lastMerit: 86.2, color: 'text-indigo-700' },
-  ];
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest<{ programs?: ClosingMeritProgram[] }>('/api/public/closing-merits')
+      .then((data) => {
+        if (cancelled || !Array.isArray(data?.programs) || !data.programs.length) return;
+        setProgramMerits(data.programs);
+      })
+      .catch(() => {
+        // Keep the shared program list until the admin list is available.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const leftMerits = programMerits.filter((_, index) => index % 2 === 0);
-  const rightMerits = programMerits.filter((_, index) => index % 2 === 1);
+  const fscStanding = useMemo(
+    () => (fscAggregate == null ? null : standingOnClosingMeritList(fscAggregate, programMerits)),
+    [fscAggregate, programMerits],
+  );
+  const aLevelStanding = useMemo(
+    () => (aLevelAggregate == null ? null : standingOnClosingMeritList(aLevelAggregate, programMerits)),
+    [aLevelAggregate, programMerits],
+  );
+  const meritGroups = useMemo(() => {
+    const groups: Array<{ key: string; label: string; programs: ClosingMeritProgram[] }> = [];
+    programMerits.forEach((program) => {
+      const key = program.categoryKey || program.categoryLabel || 'programs';
+      const existing = groups.find((group) => group.key === key);
+      if (existing) {
+        existing.programs.push(program);
+        return;
+      }
+      groups.push({ key, label: program.categoryLabel || 'Programs', programs: [program] });
+    });
+    return groups;
+  }, [programMerits]);
+  const visibleMeritGroups = meritGroup === 'all'
+    ? meritGroups
+    : meritGroups.filter((group) => group.key === meritGroup);
+  const focusAggregate = fscAggregate ?? aLevelAggregate;
 
   const selectClass =
     'flex min-h-11 w-full max-w-full rounded-md border border-indigo-100 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 sm:max-w-xs md:max-w-sm';
@@ -485,11 +519,11 @@ export function MeritCalculator() {
             </div>
 
             <div>
-              <p className="text-[15px] text-slate-700">Merit Position (FSc): {meritPosition || '—'}</p>
+              <p className="text-[15px] text-slate-700">Merit Position (FSc): {fscStanding ? meritPositionLabel(fscStanding) : '—'}</p>
             </div>
 
             <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-[#f5f7ff] to-[#edf2ff] p-5 text-sm text-slate-500">
-              Enter values and use Calculate on each track (FSc / A-Level). Merit bands apply to the FSc aggregate.
+              Enter values and use Calculate on each track (FSc / A-Level). The FSc merit position uses the closing-merit list.
             </div>
 
             {fscAggregate !== null ? (
@@ -509,38 +543,56 @@ export function MeritCalculator() {
       <Card className="rounded-2xl border-indigo-100 bg-white/92">
         <CardHeader>
           <CardTitle>Last Year&apos;s Closing Merits</CardTitle>
-          <CardDescription>Reference merits for popular programs (2023 data)</CardDescription>
+          <CardDescription>Same programs and closing merits as the admin list.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="rounded-xl border border-indigo-100 bg-white">
-              {leftMerits.map((program, index) => (
-                <div
-                  key={program.program}
-                  className={`flex items-center justify-between px-3 py-2 ${
-                    index !== leftMerits.length - 1 ? 'border-b border-indigo-100' : ''
-                  }`}
-                >
-                  <p className={program.color}>{program.program}</p>
-                  <div className="text-right text-indigo-950">{program.lastMerit}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="rounded-xl border border-indigo-100 bg-white">
-              {rightMerits.map((program, index) => (
-                <div
-                  key={program.program}
-                  className={`flex items-center justify-between px-3 py-2 ${
-                    index !== rightMerits.length - 1 ? 'border-b border-indigo-100' : ''
-                  }`}
-                >
-                  <p className={program.color}>{program.program}</p>
-                  <div className="text-right text-indigo-950">{program.lastMerit}</div>
-                </div>
-              ))}
-            </div>
+          <div className="flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Program category">
+            <button type="button" className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold ${meritGroup === 'all' ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-indigo-200 bg-white text-indigo-800'}`} onClick={() => setMeritGroup('all')}>All</button>
+            {meritGroups.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                className={`shrink-0 rounded-full border px-3 py-1 text-xs font-semibold ${meritGroup === group.key ? 'border-indigo-600 bg-indigo-600 text-white' : 'border-indigo-200 bg-white text-indigo-800'}`}
+                onClick={() => setMeritGroup(group.key)}
+              >
+                {MERIT_GROUP_LABELS[group.key] || group.label}
+              </button>
+            ))}
           </div>
+
+          {fscStanding || aLevelStanding ? (
+            <div className="rounded-xl border border-indigo-100 bg-[#f5f7ff] px-3 py-2 text-sm text-slate-700">
+              {fscStanding ? <p>FSc position {meritPositionLabel(fscStanding)}. Meets {fscStanding.met} of {fscStanding.listed} listed programs.</p> : null}
+              {aLevelStanding ? <p>A-Level position {meritPositionLabel(aLevelStanding)}. Meets {aLevelStanding.met} of {aLevelStanding.listed} listed programs.</p> : null}
+            </div>
+          ) : null}
+
+          {visibleMeritGroups.map((group) => (
+            <section key={group.key}>
+              <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-indigo-700">{group.label}</h3>
+              <div className="overflow-hidden rounded-xl border border-indigo-100 bg-white">
+                {group.programs.map((program, index) => {
+                  const merit = Number(program.closingMerit);
+                  const meets = focusAggregate != null
+                    && program.closingMerit != null
+                    && Number.isFinite(merit)
+                    && focusAggregate >= merit;
+                  return (
+                    <div
+                      key={program.id}
+                      className={`flex items-center justify-between gap-3 px-3 py-2 ${meets ? 'bg-emerald-50' : ''} ${index !== group.programs.length - 1 ? 'border-b border-indigo-100' : ''}`}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-indigo-700">{program.name}</p>
+                        <p className="text-xs text-slate-500">{program.institution}{program.location ? ` · ${program.location}` : ''}</p>
+                      </div>
+                      <div className="shrink-0 text-right font-semibold text-indigo-950">{formatClosingMerit(program.closingMerit)}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
 
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
             <h4 className="mb-1 inline-flex items-center gap-2 text-amber-700">
