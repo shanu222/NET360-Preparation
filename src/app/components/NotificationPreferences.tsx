@@ -149,7 +149,7 @@ export function NotificationPreferencesList({ compact = false }: { compact?: boo
   };
 
   return (
-    <div className={compact ? 'space-y-3' : 'space-y-4'}>
+    <div className={`net360-notify-pref ${compact ? 'space-y-3' : 'space-y-4'}`}>
       {NOTIFICATION_CONTROLS.map((control) => {
         const enabled = control.id in draft ? draft[control.id] : control.read(preferences);
         return (
@@ -159,7 +159,7 @@ export function NotificationPreferencesList({ compact = false }: { compact?: boo
               <p className="text-sm text-muted-foreground">{control.description}</p>
             </div>
             <label className="inline-flex shrink-0 items-center gap-2">
-              <span className={`w-8 text-right text-xs font-semibold ${enabled ? 'text-indigo-700 dark:text-indigo-200' : 'text-slate-500 dark:text-slate-400'}`}>
+              <span className={`net360-notify-state w-8 text-right text-xs font-semibold ${enabled ? 'text-indigo-700 dark:text-indigo-200' : 'text-slate-500 dark:text-slate-400'}`}>
                 {enabled ? 'ON' : 'OFF'}
               </span>
               <Switch
