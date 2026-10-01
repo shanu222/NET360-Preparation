@@ -2,8 +2,12 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiRequest } from '../lib/api';
 import {
   catalogClosingMerits,
+  DEFAULT_CLOSING_MERIT_YEAR,
   formatClosingMerit,
+  formatMeritPosition,
+  mergeClosingMeritPrograms,
   meritPositionLabel,
+  meritStatusLabel,
   standingOnClosingMeritList,
   type ClosingMeritProgram,
 } from '../lib/closingMerits';
@@ -56,6 +60,7 @@ export function MeritCalculator() {
   const [fscAggregate, setFscAggregate] = useState<number | null>(null);
   const [aLevelAggregate, setALevelAggregate] = useState<number | null>(null);
   const [programMerits, setProgramMerits] = useState<ClosingMeritProgram[]>(() => catalogClosingMerits());
+  const [meritYear, setMeritYear] = useState(DEFAULT_CLOSING_MERIT_YEAR);
   const [meritGroup, setMeritGroup] = useState('all');
 
   const calculateFscAggregate = () => {
@@ -147,10 +152,11 @@ export function MeritCalculator() {
 
   useEffect(() => {
     let cancelled = false;
-    apiRequest<{ programs?: ClosingMeritProgram[] }>('/api/public/closing-merits')
+    apiRequest<{ programs?: ClosingMeritProgram[]; year?: number }>('/api/public/closing-merits')
       .then((data) => {
         if (cancelled || !Array.isArray(data?.programs) || !data.programs.length) return;
-        setProgramMerits(data.programs);
+        setProgramMerits(mergeClosingMeritPrograms(data.programs, catalogClosingMerits()));
+        if (Number.isInteger(Number(data.year))) setMeritYear(Number(data.year));
       })
       .catch(() => {
         // Keep the shared program list until the admin list is available.
@@ -543,7 +549,7 @@ export function MeritCalculator() {
       <Card className="rounded-2xl border-indigo-100 bg-white/92">
         <CardHeader>
           <CardTitle>Last Year&apos;s Closing Merits</CardTitle>
-          <CardDescription>Same programs and closing merits as the admin list.</CardDescription>
+          <CardDescription>{meritYear} closing merits from the admin list. Each program shows its closing aggregate, merit position, and whether that figure is Real or Estimated.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="flex gap-2 overflow-x-auto pb-1" role="tablist" aria-label="Program category">
@@ -562,8 +568,8 @@ export function MeritCalculator() {
 
           {fscStanding || aLevelStanding ? (
             <div className="rounded-xl border border-indigo-100 bg-[#f5f7ff] px-3 py-2 text-sm text-slate-700">
-              {fscStanding ? <p>FSc position {meritPositionLabel(fscStanding)}. Meets {fscStanding.met} of {fscStanding.listed} listed programs.</p> : null}
-              {aLevelStanding ? <p>A-Level position {meritPositionLabel(aLevelStanding)}. Meets {aLevelStanding.met} of {aLevelStanding.listed} listed programs.</p> : null}
+              {fscStanding ? <p>FSc merit position {meritPositionLabel(fscStanding)} on the {meritYear} list. Meets {fscStanding.met} of {fscStanding.listed} programs.</p> : null}
+              {aLevelStanding ? <p>A-Level merit position {meritPositionLabel(aLevelStanding)} on the {meritYear} list. Meets {aLevelStanding.met} of {aLevelStanding.listed} programs.</p> : null}
             </div>
           ) : null}
 
@@ -584,7 +590,7 @@ export function MeritCalculator() {
                     >
                       <div className="min-w-0">
                         <p className="text-indigo-700">{program.name}</p>
-                        <p className="text-xs text-slate-500">{program.institution}{program.location ? ` · ${program.location}` : ''}</p>
+                        <p className="text-xs text-slate-500">{program.institution}{program.location ? ` · ${program.location}` : ''}{program.meritPosition != null ? ` · Position ${formatMeritPosition(program.meritPosition)}` : ''} · {meritStatusLabel(program.meritStatus)}</p>
                       </div>
                       <div className="shrink-0 text-right font-semibold text-indigo-950">{formatClosingMerit(program.closingMerit)}</div>
                     </div>
