@@ -80,6 +80,7 @@ import { AdminSubscriptionPlans } from './AdminSubscriptionPlans';
 import { AdminOnlineClasses } from './AdminOnlineClasses';
 import type { SubjectKey } from '../app/lib/mcq';
 import {
+  dataUrlToBlob,
   downloadBlobFile,
   downloadDataUrlFile,
   openBlobPreview,
@@ -782,6 +783,34 @@ const ADMIN_SECTION_META: Array<{ section: AdminSection; label: string; icon: Lu
   { section: 'system-config', label: 'Settings', icon: Settings },
 ];
 
+type AdminDatasetId =
+  | 'overview'
+  | 'system-status'
+  | 'subscriptions-overview'
+  | 'users'
+  | 'mcq-structure'
+  | 'practice-board'
+  | 'question-submissions'
+  | 'contribution-policy'
+  | 'subscriptions-users'
+  | 'paid-services-overview'
+  | 'paid-services-users'
+  | 'community-reports'
+  | 'configurations';
+
+const CRITICAL_ADMIN_DATASETS: AdminDatasetId[] = ['overview', 'system-status', 'subscriptions-overview'];
+
+const ADMIN_SECTION_DATASETS: Partial<Record<AdminSection, AdminDatasetId[]>> = {
+  dashboard: CRITICAL_ADMIN_DATASETS,
+  users: ['users'],
+  mcqs: ['mcq-structure'],
+  'practice-board': ['practice-board'],
+  submissions: ['question-submissions', 'contribution-policy'],
+  'community-moderation': ['community-reports'],
+  subscriptions: ['subscriptions-overview', 'subscriptions-users', 'paid-services-overview', 'paid-services-users'],
+  'system-config': ['system-status', 'configurations'],
+};
+
 function getSectionFromPath(pathname: string): AdminSection {
   const normalized = String(pathname || '').toLowerCase();
 
@@ -830,6 +859,9 @@ interface AdminOverview {
     not_found: number;
   };
   pendingQuestionSubmissions?: number;
+  approvedQuestionSubmissions?: number;
+  rejectedQuestionSubmissions?: number;
+  practiceBoardCount?: number;
 }
 
 interface AdminSystemStatus {
@@ -2517,6 +2549,9 @@ const EMPTY_ADMIN_OVERVIEW: AdminOverview = {
   pendingSignupRequests: 0,
   pendingPremiumRequests: 0,
   pendingQuestionSubmissions: 0,
+  approvedQuestionSubmissions: 0,
+  rejectedQuestionSubmissions: 0,
+  practiceBoardCount: 0,
   recoveryRequestCount: 0,
   recoveryStatusCounts: { sent: 0, partial: 0, failed: 0, not_found: 0 },
 };
@@ -2545,36 +2580,79 @@ const EMPTY_SYSTEM_STATUS: AdminSystemStatus = {
   serverTime: new Date().toISOString(),
 };
 
-async function fetchAdminBootstrapStep<T>(
-  label: string,
-  path: string,
-  token: string,
-  fallback: T,
-  options: { method?: string; timeoutMs?: number; retryCount?: number } = {},
-): Promise<T> {
-  const started = performance.now();
-  try {
-    const payload = await apiRequest<T>(
-      path,
-      {
-        ...options,
-        timeoutMs: options.timeoutMs ?? ADMIN_BOOTSTRAP_REQUEST_TIMEOUT_MS,
-        retryCount: options.retryCount ?? 1,
-      },
-      token,
-    );
-    console.info(`[admin-bootstrap] ${label} ok ${Math.round(performance.now() - started)}ms`);
-    return payload;
-  } catch (error) {
-    console.warn(`[admin-bootstrap] ${label} fail ${Math.round(performance.now() - started)}ms`, error);
-    return fallback;
-  }
-}
-
 function waitForBootstrapTimeout<T>(ms: number, fallback: T): Promise<T> {
   return new Promise((resolve) => {
     window.setTimeout(() => resolve(fallback), ms);
   });
+}
+
+function isAdminRequestAbort(error: unknown) {
+  const name = String((error as { name?: string } | null)?.name || '');
+  const message = String((error as { message?: string } | null)?.message || '').toLowerCase();
+  return name === 'AbortError' || message.includes('cancelled') || message.includes('aborted');
+}
+
+type InflightAdminGet = {
+  promise: Promise<unknown>;
+  controller: AbortController;
+  listeners: number;
+};
+
+const adminGetInflight = new Map<string, InflightAdminGet>();
+
+function fetchAdminGet<T>(path: string, token: string, signal?: AbortSignal): Promise<T> {
+  const key = `${token} ${path}`;
+  let entry = adminGetInflight.get(key);
+  if (entry?.controller.signal.aborted) {
+    adminGetInflight.delete(key);
+    entry = undefined;
+  }
+  if (!entry) {
+    const controller = new AbortController();
+    const promise = apiRequest<T>(path, {
+      timeoutMs: ADMIN_BOOTSTRAP_REQUEST_TIMEOUT_MS,
+      retryCount: 0,
+      signal: controller.signal,
+    }, token).finally(() => {
+      const current = adminGetInflight.get(key);
+      if (current?.controller === controller) adminGetInflight.delete(key);
+    });
+    entry = { promise, controller, listeners: 0 };
+    adminGetInflight.set(key, entry);
+  }
+
+  const current = entry;
+  current.listeners += 1;
+  const detach = () => {
+    current.listeners = Math.max(0, current.listeners - 1);
+    if (current.listeners === 0) current.controller.abort();
+    signal?.removeEventListener('abort', detach);
+  };
+
+  if (signal?.aborted) {
+    detach();
+    return Promise.reject(new DOMException('Request aborted.', 'AbortError'));
+  }
+  signal?.addEventListener('abort', detach, { once: true });
+
+  return current.promise.finally(() => {
+    if (signal?.aborted) return;
+    current.listeners = Math.max(0, current.listeners - 1);
+    signal?.removeEventListener('abort', detach);
+  }) as Promise<T>;
+}
+
+async function mapWithConcurrency<T>(items: T[], limit: number, worker: (item: T) => Promise<void>) {
+  if (!items.length) return;
+  let index = 0;
+  const run = async () => {
+    while (index < items.length) {
+      const current = items[index];
+      index += 1;
+      await worker(current);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => run()));
 }
 
 export default function AdminApp() {
@@ -3665,161 +3743,196 @@ export default function AdminApp() {
     window.open(url.toString(), '_blank', 'noopener,noreferrer');
   };
 
-  const openPracticeFile = (file?: { dataUrl: string } | null) => {
+  const readPracticeFileBlob = async (dataUrl: string) => {
+    if (dataUrl.startsWith('data:')) return dataUrlToBlob(dataUrl);
+    const headers = new Headers();
+    if (authToken && !isCookieSessionApiMarker(authToken)) {
+      headers.set('Authorization', `Bearer ${authToken}`);
+    }
+    const response = await fetch(dataUrl.startsWith('/') ? buildApiUrl(dataUrl) : dataUrl, {
+      credentials: 'include',
+      headers,
+    });
+    if (!response.ok) return null;
+    return response.blob();
+  };
+
+  const openPracticeFile = async (file?: { dataUrl: string } | null) => {
     const dataUrl = String(file?.dataUrl || '').trim();
     if (!dataUrl) return;
-    if (!openDataUrlPreview(dataUrl)) {
+    if (dataUrl.startsWith('data:') && openDataUrlPreview(dataUrl)) return;
+    try {
+      const blob = await readPracticeFileBlob(dataUrl);
+      if (!blob) {
+        showErrorToast('Could not open file preview.');
+        return;
+      }
+      openBlobPreview(blob);
+    } catch {
       showErrorToast('Could not open file preview.');
     }
   };
 
-  const downloadPracticeFile = (file?: { dataUrl: string; name: string } | null) => {
+  const downloadPracticeFile = async (file?: { dataUrl: string; name: string } | null) => {
     const dataUrl = String(file?.dataUrl || '').trim();
     const name = String(file?.name || 'practice-file');
     if (!dataUrl) return;
-
-    if (!downloadDataUrlFile(dataUrl, name)) {
+    if (dataUrl.startsWith('data:') && downloadDataUrlFile(dataUrl, name)) return;
+    try {
+      const blob = await readPracticeFileBlob(dataUrl);
+      if (!blob) {
+        showErrorToast('Could not download file.');
+        return;
+      }
+      downloadBlobFile(blob, name);
+    } catch {
       showErrorToast('Could not download file.');
     }
   };
 
-  const loadAdminData = async (activeToken: string, options: { deferredOnly?: boolean; criticalOnly?: boolean } = {}) => {
-    const bootstrapStarted = performance.now();
-    console.info('[admin-bootstrap] loadAdminData start', options.deferredOnly ? 'deferred' : options.criticalOnly ? 'critical' : 'full');
-
-    const subscriptionManagementPath = buildSubscriptionManagementPath();
-
-    const criticalSteps = [
-      fetchAdminBootstrapStep('overview', '/api/admin/overview', activeToken, EMPTY_ADMIN_OVERVIEW),
-      fetchAdminBootstrapStep('system-status', '/api/admin/system-status', activeToken, EMPTY_SYSTEM_STATUS),
-      fetchAdminBootstrapStep('subscriptions-overview', '/api/admin/subscriptions/overview', activeToken, EMPTY_SUBSCRIPTION_OVERVIEW),
-    ] as const;
-
-    const deferredSteps = Promise.all([
-      fetchAdminBootstrapStep('users', '/api/admin/users', activeToken, { users: [] as AdminUser[] }),
-      fetchAdminBootstrapStep('mcqs', '/api/admin/mcqs', activeToken, { mcqs: [] as AdminMCQ[] }),
-      fetchAdminBootstrapStep('practice-board', '/api/admin/practice-board/questions', activeToken, { questions: [] as AdminPracticeBoardQuestion[] }),
-      fetchAdminBootstrapStep('question-submissions', '/api/admin/question-submissions?status=all', activeToken, { submissions: [] as AdminQuestionSubmission[] }),
-      fetchAdminBootstrapStep('contribution-policy', '/api/admin/question-submissions/policy', activeToken, { policy: EMPTY_CONTRIBUTION_POLICY }),
-      fetchAdminBootstrapStep(
-        'subscriptions-users',
-        `/api/admin/subscriptions/users?status=${subscriptionFilter}&accessType=${accessTypeFilter}`,
-        activeToken,
-        { users: [] as AdminSubscriptionUser[] },
-      ),
-      fetchAdminBootstrapStep('paid-services-overview', '/api/admin/paid-services/overview', activeToken, {
-        totalUsers: 0,
-        testsAccess: { activeUsers: 0, inactiveUsers: 0 },
-        preparationAccess: { activeUsers: 0, inactiveUsers: 0 },
-        communityAccess: { activeUsers: 0, inactiveUsers: 0 },
-      } as AdminPaidServicesOverview),
-      fetchAdminBootstrapStep(
-        'paid-services-users',
-        `/api/admin/paid-services/users?q=${encodeURIComponent(paidServicesQuery.trim())}&status=${paidServicesStatusFilter}&serviceType=${paidServiceTypeFilter}`,
-        activeToken,
-        { users: [] as AdminPaidServicesUser[] },
-      ),
-      fetchAdminBootstrapStep('subscriptions-management-users', subscriptionManagementPath, activeToken, {
-        users: [] as AdminSubscriptionManagementListUser[],
-        totalMatched: 0,
-        page: subscriptionManagementPage,
-        pageSize: subscriptionManagementPageSize,
-        totalPages: 0,
-        hasMore: false,
-      } as AdminSubscriptionManagementUsersPayload, { timeoutMs: ADMIN_SUBSCRIPTION_USERS_TIMEOUT_MS, retryCount: 1 }),
-      fetchAdminBootstrapStep('community-reports', '/api/admin/community/reports', activeToken, { reports: [] as AdminCommunityReport[] }),
-      fetchAdminBootstrapStep('mcq-bank-structure', '/api/admin/mcq-bank/structure', activeToken, { structure: [] as AdminMcqBankStructureItem[] }),
-      fetchAdminBootstrapStep('configurations', '/api/admin/configurations', activeToken, {
-        variables: [],
-        infraSnapshot: { items: [] },
-      } as AdminConfigurationListPayload),
-    ]);
-
-    if (options.deferredOnly) {
-      const [
-        usersPayload,
-        mcqPayload,
-        practicePayload,
-        submissionPayload,
-        policyPayload,
-        subscriptionUsersPayload,
-        paidServicesOverviewPayload,
-        paidServicesUsersPayload,
-        subscriptionManagementUsersPayload,
-        communityReportsPayload,
-        structurePayload,
-        configVariablesPayload,
-      ] = await deferredSteps;
-
-      setUsers(usersPayload.users || []);
-      setMcqs((previous) => (selectedHierarchy ? previous : []));
-      setPracticeQuestions(practicePayload.questions || []);
-      setQuestionSubmissions(submissionPayload.submissions || []);
-      setContributionPolicy(policyPayload.policy || EMPTY_CONTRIBUTION_POLICY);
-      setSubscriptionUsers(subscriptionUsersPayload.users || []);
-      setPaidServicesOverview(paidServicesOverviewPayload);
-      setPaidServicesUsers(paidServicesUsersPayload.users || []);
-      applySubscriptionManagementPayload(subscriptionManagementUsersPayload);
-      setCommunityReports(communityReportsPayload.reports || []);
-      setMcqStructure(structurePayload.structure || []);
-      setConfigVariables(configVariablesPayload.variables || []);
-      setConfigInfraSnapshot(configVariablesPayload.infraSnapshot?.items || []);
-      setConfigVerification(configVariablesPayload.verification ?? null);
-      console.info(`[admin-bootstrap] loadAdminData deferred complete ${Math.round(performance.now() - bootstrapStarted)}ms`);
-      return;
+  const adminDatasetPath = (datasetId: AdminDatasetId) => {
+    switch (datasetId) {
+      case 'overview':
+        return '/api/admin/overview';
+      case 'system-status':
+        return '/api/admin/system-status';
+      case 'subscriptions-overview':
+        return '/api/admin/subscriptions/overview';
+      case 'users':
+        return '/api/admin/users';
+      case 'mcq-structure':
+        return '/api/admin/mcq-bank/structure';
+      case 'practice-board':
+        return '/api/admin/practice-board/questions';
+      case 'question-submissions':
+        return '/api/admin/question-submissions?status=all';
+      case 'contribution-policy':
+        return '/api/admin/question-submissions/policy';
+      case 'subscriptions-users':
+        return `/api/admin/subscriptions/users?status=${subscriptionFilter}&accessType=${accessTypeFilter}`;
+      case 'paid-services-overview':
+        return '/api/admin/paid-services/overview';
+      case 'paid-services-users':
+        return `/api/admin/paid-services/users?q=${encodeURIComponent(paidServicesQuery.trim())}&status=${paidServicesStatusFilter}&serviceType=${paidServiceTypeFilter}`;
+      case 'community-reports':
+        return '/api/admin/community/reports';
+      case 'configurations':
+        return '/api/admin/configurations';
+      default:
+        return '';
     }
-
-    const [
-      overviewPayload,
-      systemStatusPayload,
-      subscriptionOverviewPayload,
-    ] = await Promise.all(criticalSteps);
-
-    setOverview(overviewPayload);
-    setSystemStatus(systemStatusPayload);
-    setSubscriptionOverview(subscriptionOverviewPayload);
-    setSignupRequests([]);
-    setPremiumRequests([]);
-    setPasswordRecoveryRequests([]);
-
-    console.info(`[admin-bootstrap] loadAdminData critical complete ${Math.round(performance.now() - bootstrapStarted)}ms`);
-
-    if (options.criticalOnly) {
-      return;
-    }
-
-    const [
-      usersPayload,
-      mcqPayload,
-      practicePayload,
-      submissionPayload,
-      policyPayload,
-      subscriptionUsersPayload,
-      paidServicesOverviewPayload,
-      paidServicesUsersPayload,
-      subscriptionManagementUsersPayload,
-      communityReportsPayload,
-      structurePayload,
-      configVariablesPayload,
-    ] = await deferredSteps;
-
-    console.info(`[admin-bootstrap] loadAdminData complete ${Math.round(performance.now() - bootstrapStarted)}ms`);
-
-    setUsers(usersPayload.users || []);
-    setMcqs((previous) => (selectedHierarchy ? previous : []));
-    setPracticeQuestions(practicePayload.questions || []);
-    setQuestionSubmissions(submissionPayload.submissions || []);
-    setContributionPolicy(policyPayload.policy || EMPTY_CONTRIBUTION_POLICY);
-    setSubscriptionUsers(subscriptionUsersPayload.users || []);
-    setPaidServicesOverview(paidServicesOverviewPayload);
-    setPaidServicesUsers(paidServicesUsersPayload.users || []);
-    applySubscriptionManagementPayload(subscriptionManagementUsersPayload);
-    setCommunityReports(communityReportsPayload.reports || []);
-    setMcqStructure(structurePayload.structure || []);
-    setConfigVariables(configVariablesPayload.variables || []);
-    setConfigInfraSnapshot(configVariablesPayload.infraSnapshot?.items || []);
-    setConfigVerification(configVariablesPayload.verification ?? null);
   };
+
+  const applyAdminDataset = (datasetId: AdminDatasetId, payload: unknown) => {
+    const record = (payload && typeof payload === 'object') ? payload as Record<string, unknown> : {};
+    switch (datasetId) {
+      case 'overview':
+        setOverview(payload as AdminOverview);
+        setSignupRequests([]);
+        setPremiumRequests([]);
+        setPasswordRecoveryRequests([]);
+        break;
+      case 'system-status':
+        setSystemStatus(payload as AdminSystemStatus);
+        break;
+      case 'subscriptions-overview':
+        setSubscriptionOverview(payload as AdminSubscriptionOverview);
+        break;
+      case 'users':
+        setUsers((record.users as AdminUser[]) || []);
+        break;
+      case 'mcq-structure':
+        setMcqStructure((record.structure as AdminMcqBankStructureItem[]) || []);
+        break;
+      case 'practice-board':
+        setPracticeQuestions((record.questions as AdminPracticeBoardQuestion[]) || []);
+        break;
+      case 'question-submissions':
+        setQuestionSubmissions((record.submissions as AdminQuestionSubmission[]) || []);
+        break;
+      case 'contribution-policy':
+        setContributionPolicy((record.policy as AdminContributionPolicy) || EMPTY_CONTRIBUTION_POLICY);
+        break;
+      case 'subscriptions-users':
+        setSubscriptionUsers((record.users as AdminSubscriptionUser[]) || []);
+        break;
+      case 'paid-services-overview':
+        setPaidServicesOverview(payload as AdminPaidServicesOverview);
+        break;
+      case 'paid-services-users':
+        setPaidServicesUsers((record.users as AdminPaidServicesUser[]) || []);
+        break;
+      case 'community-reports':
+        setCommunityReports((record.reports as AdminCommunityReport[]) || []);
+        break;
+      case 'configurations': {
+        const configPayload = payload as AdminConfigurationListPayload;
+        setConfigVariables(configPayload.variables || []);
+        setConfigInfraSnapshot(configPayload.infraSnapshot?.items || []);
+        setConfigVerification(configPayload.verification ?? null);
+        break;
+      }
+      default:
+        break;
+    }
+  };
+
+  const latestAdminDatasetPathRef = useRef(new Map<AdminDatasetId, string>());
+  const adminDatasetAbortRef = useRef(new Map<AdminDatasetId, AbortController>());
+
+  const loadAdminDatasets = async (
+    activeToken: string,
+    datasetIds: AdminDatasetId[],
+    options: { signal?: AbortSignal; notify?: boolean; concurrency?: number } = {},
+  ) => {
+    const unique = [...new Set(datasetIds)].filter(Boolean);
+    const started = performance.now();
+    console.info('[admin-bootstrap] datasets start', unique.join(','));
+    await mapWithConcurrency(unique, options.concurrency ?? 2, async (datasetId) => {
+      if (options.signal?.aborted) return;
+      const path = adminDatasetPath(datasetId);
+      if (!path) return;
+      latestAdminDatasetPathRef.current.set(datasetId, path);
+      adminDatasetAbortRef.current.get(datasetId)?.abort();
+      const controller = new AbortController();
+      adminDatasetAbortRef.current.set(datasetId, controller);
+      const abortFromParent = () => controller.abort();
+      options.signal?.addEventListener('abort', abortFromParent, { once: true });
+      const stepStarted = performance.now();
+      try {
+        const payload = await fetchAdminGet(path, activeToken, controller.signal);
+        if (controller.signal.aborted || latestAdminDatasetPathRef.current.get(datasetId) !== path) return;
+        if (options.signal?.aborted) return;
+        applyAdminDataset(datasetId, payload);
+        if (datasetId === 'overview') setAdminLoadError('');
+        console.info(`[admin-bootstrap] ${datasetId} ok ${Math.round(performance.now() - stepStarted)}ms`);
+      } catch (error) {
+        if (controller.signal.aborted || options.signal?.aborted || isAdminRequestAbort(error)) return;
+        console.warn(`[admin-bootstrap] ${datasetId} fail ${Math.round(performance.now() - stepStarted)}ms`, error);
+        const friendly = audienceFriendlyError(error, 'Could not load admin data.');
+        if (datasetId === 'overview') setAdminLoadError(friendly);
+        if (options.notify) showErrorToast(friendly);
+      } finally {
+        options.signal?.removeEventListener('abort', abortFromParent);
+      }
+    });
+    console.info(`[admin-bootstrap] datasets complete ${Math.round(performance.now() - started)}ms`);
+  };
+
+  const loadAdminData = async (activeToken: string, options: { criticalOnly?: boolean; datasets?: AdminDatasetId[]; notify?: boolean; signal?: AbortSignal } = {}) => {
+    const datasetIds = options.datasets
+      || (options.criticalOnly
+        ? CRITICAL_ADMIN_DATASETS
+        : [...CRITICAL_ADMIN_DATASETS, ...(ADMIN_SECTION_DATASETS[activeSection] || [])]);
+    await loadAdminDatasets(activeToken, datasetIds, {
+      signal: options.signal,
+      notify: options.notify,
+      concurrency: options.criticalOnly ? 3 : 2,
+    });
+  };
+
+  const loadAdminDataRef = useRef(loadAdminData);
+  loadAdminDataRef.current = loadAdminData;
 
   const syncFirebaseUsersForSubscriptions = async () => {
     if (!authToken) return;
@@ -4024,6 +4137,7 @@ export default function AdminApp() {
     }
 
     let cancelled = false;
+    const controller = new AbortController();
     const bootstrapStarted = performance.now();
     console.info('[admin-bootstrap] session start');
 
@@ -4063,8 +4177,7 @@ export default function AdminApp() {
             void restoreAdminSession(authToken).then((resolved) => {
               if (!resolved || cancelled) return;
               syncAdminTokenState(resolved, readPersistedAdminRefreshToken());
-              void loadAdminData(resolved, { criticalOnly: true });
-              void loadAdminData(resolved, { deferredOnly: true });
+              void loadAdminDataRef.current(resolved, { criticalOnly: true });
             }).catch(() => undefined);
           }
           return;
@@ -4073,20 +4186,10 @@ export default function AdminApp() {
           return;
         }
 
-        skipFilterReloadAfterBootstrap.current = true;
         setReady(true);
         setAdminLoadError('');
 
-        await loadAdminData(activeToken, { criticalOnly: true });
-        if (cancelled) {
-          return;
-        }
-
-        void loadAdminData(activeToken, { deferredOnly: true }).catch((error) => {
-          if (!cancelled) {
-            console.warn('[admin-bootstrap] deferred load failed:', error);
-          }
-        });
+        await loadAdminDataRef.current(activeToken, { criticalOnly: true, signal: controller.signal });
       } catch (error) {
         if (!cancelled) {
           const status = Number((error as { status?: number } | null)?.status || 0);
@@ -4113,20 +4216,29 @@ export default function AdminApp() {
 
     return () => {
       cancelled = true;
+      controller.abort();
     };
-  }, [authToken, refreshToken]);
+  }, [authToken]);
 
-  // Keep admin modules fresh when returning to the tab — no manual refresh required.
   useEffect(() => {
     if (!authToken || !ready) return;
-    let lastRefreshAt = 0;
+    const datasets = ADMIN_SECTION_DATASETS[activeSection] || [];
+    if (!datasets.length) return;
+    const controller = new AbortController();
+    void loadAdminDataRef.current(authToken, { datasets, notify: true, signal: controller.signal });
+    return () => controller.abort();
+  }, [authToken, ready, activeSection]);
+
+  // Keep the open admin section fresh when returning to the tab — no manual refresh required.
+  useEffect(() => {
+    if (!authToken || !ready) return;
+    let lastRefreshAt = Date.now();
     const refreshVisible = () => {
       if (document.hidden) return;
       const now = Date.now();
       if (now - lastRefreshAt < 12_000) return;
       lastRefreshAt = now;
-      void loadAdminData(authToken, { criticalOnly: true }).catch(() => undefined);
-      void loadAdminData(authToken, { deferredOnly: true }).catch(() => undefined);
+      void loadAdminDataRef.current(authToken, { notify: false });
     };
     document.addEventListener('visibilitychange', refreshVisible);
     window.addEventListener('focus', refreshVisible);
@@ -4137,40 +4249,35 @@ export default function AdminApp() {
   }, [authToken, ready]);
 
   useEffect(() => {
-    if (!authToken || !ready) {
-      return;
-    }
-    if (skipFilterReloadAfterBootstrap.current) {
-      skipFilterReloadAfterBootstrap.current = false;
+    if (!authToken || !ready || activeSection !== 'subscriptions') {
       return;
     }
 
-    void loadAdminData(authToken)
-      .then(() => setAdminLoadError(''))
-      .catch((error) => {
-        console.error('[admin-bootstrap] filter reload failed:', error);
-        setAdminLoadError(audienceFriendlyError(error, 'Could not refresh admin data.'));
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void loadAdminDataRef.current(authToken, {
+        datasets: ['subscriptions-users', 'paid-services-users'],
+        notify: true,
+        signal: controller.signal,
       });
+    }, 300);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
   }, [
     authToken,
     ready,
+    activeSection,
     subscriptionFilter,
     accessTypeFilter,
     paidServicesQuery,
     paidServicesStatusFilter,
     paidServiceTypeFilter,
-    premiumRequestStatusFilter,
-    premiumRequestQuery,
-    passwordRecoveryStatusFilter,
-    passwordRecoveryQuery,
   ]);
 
   useEffect(() => {
-    if (!authToken || !ready) {
-      return;
-    }
-    if (skipFilterReloadAfterBootstrap.current) {
-      skipFilterReloadAfterBootstrap.current = false;
+    if (!authToken || !ready || activeSection !== 'subscriptions') {
       return;
     }
 
@@ -4186,6 +4293,7 @@ export default function AdminApp() {
     subscriptionManagementPage,
     subscriptionManagementPageSize,
     loadSubscriptionManagementUsers,
+    activeSection,
   ]);
 
   useEffect(() => {
@@ -4198,13 +4306,9 @@ export default function AdminApp() {
 
     let closed = false;
     let reconnectTimer: number | null = null;
+    let refreshTimer: number | null = null;
     let source: EventSource | null = null;
-    // Bounded: `/api/stream` answers 401 (no `open`) when the browser withholds the cross-site
-    // auth cookie (EventSource cannot send a bearer header; `?token=` is ignored in production).
-    // Stop after 3 consecutive pre-open failures and retry on tab focus / token change instead
-    // of looping every 3s. Support chat realtime runs over Socket.IO regardless.
-    let opened = false;
-    let consecutivePreOpenFailures = 0;
+    let reconnectDelay = 1000;
 
     const closeCurrent = () => {
       if (source) {
@@ -4213,25 +4317,31 @@ export default function AdminApp() {
       }
     };
 
+    const scheduleVisibleRefresh = () => {
+      if (document.hidden || refreshTimer != null) return;
+      refreshTimer = window.setTimeout(() => {
+        refreshTimer = null;
+        void loadAdminDataRef.current(authToken, { notify: false });
+      }, 2000);
+    };
+
     const connect = () => {
       if (closed) return;
       closeCurrent();
-      opened = false;
       source = new EventSource(buildSseStreamUrl(authToken), { withCredentials: true });
 
       source.onopen = () => {
-        opened = true;
-        consecutivePreOpenFailures = 0;
+        reconnectDelay = 1000;
       };
 
-      source.addEventListener('sync', () => {
-        if (document.hidden) return;
-        void loadAdminData(authToken)
-          .then(() => setAdminLoadError(''))
-          .catch((error) => {
-            console.error('Admin data refresh failed:', error);
-            setAdminLoadError(audienceFriendlyError(error, 'Could not refresh admin data.'));
-          });
+      source.addEventListener('sync', (evt: MessageEvent) => {
+        try {
+          const data = JSON.parse(String(evt.data || '{}')) as { type?: string };
+          if (data?.type === 'connected') return;
+        } catch {
+          // Refresh on an unreadable event as well.
+        }
+        scheduleVisibleRefresh();
       });
 
       source.addEventListener('heartbeat', () => {
@@ -4239,49 +4349,26 @@ export default function AdminApp() {
       });
 
       source.onerror = () => {
-        if (!opened) consecutivePreOpenFailures += 1;
         closeCurrent();
         if (closed) return;
-        if (consecutivePreOpenFailures >= 3) {
-          if (consecutivePreOpenFailures === 3) {
-            console.warn('[stream] admin /api/stream rejected 3 times in a row; pausing until the tab regains focus or the token changes.');
-          }
-          return;
-        }
+        const wait = reconnectDelay;
+        reconnectDelay = Math.min(reconnectDelay * 2, 30_000);
         reconnectTimer = window.setTimeout(() => {
           reconnectTimer = null;
           connect();
-        }, 3000);
+        }, wait);
       };
     };
-
-    const resumeIfPaused = () => {
-      if (closed || source || reconnectTimer != null || document.hidden) return;
-      if (consecutivePreOpenFailures < 3) return;
-      consecutivePreOpenFailures = 0;
-      connect();
-    };
-    document.addEventListener('visibilitychange', resumeIfPaused);
 
     connect();
 
     return () => {
       closed = true;
-      document.removeEventListener('visibilitychange', resumeIfPaused);
-      if (reconnectTimer) {
-        window.clearTimeout(reconnectTimer);
-      }
+      if (reconnectTimer) window.clearTimeout(reconnectTimer);
+      if (refreshTimer) window.clearTimeout(refreshTimer);
       closeCurrent();
     };
-  }, [
-    authToken,
-    ready,
-    subscriptionFilter,
-    premiumRequestStatusFilter,
-    premiumRequestQuery,
-    passwordRecoveryStatusFilter,
-    passwordRecoveryQuery,
-  ]);
+  }, [authToken, ready]);
 
   useEffect(() => {
     if (!selectedHierarchy) return;
@@ -4419,16 +4506,6 @@ export default function AdminApp() {
 
       navigateToSection('dashboard');
       showSuccessToast('Admin login successful.');
-
-      void loadAdminData(tokenForAdminRequests).catch((error) => {
-        const status = Number((error as { status?: number } | null)?.status || 0);
-        if (status === 401 || status === 403) {
-          clearAdminSession();
-          showErrorToast('Session expired after login. Please sign in again.');
-          return;
-        }
-        showErrorToast('Login succeeded, but admin data failed to load. Please click Refresh Data.');
-      });
     } catch (error) {
       handleApiError(error, 'Admin login failed.');
     } finally {
@@ -7673,14 +7750,23 @@ export default function AdminApp() {
       return;
     }
 
-    const payload = {
+    const payload: {
+      subject: string;
+      difficulty: string;
+      questionText: string;
+      solutionText: string;
+      questionFile?: AdminPracticeBoardQuestion['questionFile'];
+      solutionFile?: AdminPracticeBoardQuestion['solutionFile'];
+    } = {
       subject: practiceForm.subject.toLowerCase().trim(),
       difficulty: practiceForm.difficulty,
       questionText: practiceForm.questionText.trim(),
-      questionFile: questionFilePayload,
       solutionText: practiceForm.solutionText.trim(),
-      solutionFile: solutionFilePayload,
     };
+    const questionDataUrl = String(questionFilePayload?.dataUrl || '');
+    const solutionDataUrl = String(solutionFilePayload?.dataUrl || '');
+    if (!questionFilePayload || questionDataUrl.startsWith('data:')) payload.questionFile = questionFilePayload;
+    if (!solutionFilePayload || solutionDataUrl.startsWith('data:')) payload.solutionFile = solutionFilePayload;
 
     try {
       if (practiceForm.id) {
@@ -8444,7 +8530,7 @@ export default function AdminApp() {
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
                   <Metric title="Registered Users" value={String(overview?.usersCount || 0)} icon={Users} tone="from-cyan-500/30 to-blue-500/20" />
                   <Metric title="Question Bank" value={String(overview?.mcqCount || 0)} icon={Boxes} tone="from-violet-500/35 to-fuchsia-500/20" onClick={openQuestionBankWindow} />
-                  <Metric title="Practice Board Question Bank" value={String(practiceQuestions.length)} icon={BookCheck} tone="from-indigo-500/35 to-cyan-500/20" onClick={openPracticeBoardBankWindow} />
+                  <Metric title="Practice Board Question Bank" value={String(overview?.practiceBoardCount ?? practiceQuestions.length)} icon={BookCheck} tone="from-indigo-500/35 to-cyan-500/20" onClick={openPracticeBoardBankWindow} />
                   <Metric title="Attempts" value={String(overview?.attemptsCount || 0)} icon={BarChart3} tone="from-pink-500/35 to-rose-500/20" />
                 </div>
               </section>
@@ -8466,8 +8552,8 @@ export default function AdminApp() {
                 <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
                   <Metric title="Pending User Submissions" value={String(overview?.pendingQuestionSubmissions || 0)} icon={ClipboardList} tone="from-amber-500/30 to-yellow-500/20" />
                   <Metric title="Pending Premium Requests" value={String(overview?.pendingPremiumRequests || 0)} icon={Sparkles} tone="from-fuchsia-500/30 to-violet-500/20" />
-                  <Metric title="Approved Submissions" value={String(questionSubmissions.filter((item) => item.status === 'approved').length)} icon={FileCheck2} tone="from-emerald-500/30 to-cyan-500/20" />
-                  <Metric title="Rejected Submissions" value={String(questionSubmissions.filter((item) => item.status === 'rejected').length)} icon={ShieldAlert} tone="from-rose-500/30 to-red-500/20" />
+                  <Metric title="Approved Submissions" value={String(overview?.approvedQuestionSubmissions ?? questionSubmissions.filter((item) => item.status === 'approved').length)} icon={FileCheck2} tone="from-emerald-500/30 to-cyan-500/20" />
+                  <Metric title="Rejected Submissions" value={String(overview?.rejectedQuestionSubmissions ?? questionSubmissions.filter((item) => item.status === 'rejected').length)} icon={ShieldAlert} tone="from-rose-500/30 to-red-500/20" />
                 </div>
               </section>
 

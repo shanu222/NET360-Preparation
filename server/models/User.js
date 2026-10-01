@@ -186,5 +186,7 @@ const userSchema = new mongoose.Schema(
 
 userSchema.index({ role: 1, createdAt: -1 });
 userSchema.index({ role: 1, updatedAt: -1 });
+userSchema.index({ role: 1, firstName: 1, lastName: 1, email: 1 });
+userSchema.index({ role: 1, authProvider: 1, updatedAt: -1 });
 
 export const UserModel = mongoose.models.User || mongoose.model('User', userSchema);

@@ -49,6 +49,8 @@ const questionSubmissionSchema = new mongoose.Schema(
 );
 
 questionSubmissionSchema.index({ subject: 1, status: 1, createdAt: -1 });
+questionSubmissionSchema.index({ createdAt: -1 });
+questionSubmissionSchema.index({ status: 1, createdAt: -1 });
 
 export const QuestionSubmissionModel =
   mongoose.models.QuestionSubmission || mongoose.model('QuestionSubmission', questionSubmissionSchema);

@@ -4396,6 +4396,9 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       not_found: db.passwordRecoveryRequests.filter((item) => item.recoveryStatus === 'not_found').length,
     };
     const pendingQuestionSubmissions = db.questionSubmissions.filter((item) => item.status === 'pending').length;
+    const approvedQuestionSubmissions = db.questionSubmissions.filter((item) => item.status === 'approved').length;
+    const rejectedQuestionSubmissions = db.questionSubmissions.filter((item) => item.status === 'rejected').length;
+    const practiceBoardCount = Array.isArray(db.practiceBoardQuestions) ? db.practiceBoardQuestions.length : 0;
     const recentAttempts = db.attempts.slice(0, 12);
     const averageScore = recentAttempts.length
       ? Math.round(recentAttempts.reduce((sum, item) => sum + item.score, 0) / recentAttempts.length)
@@ -4410,6 +4413,9 @@ export async function localApiRequest<T>(path: string, options: RequestInit = {}
       recoveryRequestCount,
       recoveryStatusCounts,
       pendingQuestionSubmissions,
+      approvedQuestionSubmissions,
+      rejectedQuestionSubmissions,
+      practiceBoardCount,
       averageScore,
       recentAttempts,
     } as T;

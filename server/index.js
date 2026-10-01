@@ -1066,6 +1066,7 @@ function addSseClient(role, userId, res) {
   }
 
   res.write(`event: sync\ndata: ${JSON.stringify({ type: 'connected', role: streamRole, ts: Date.now() })}\n\n`);
+  if (typeof res.flush === 'function') res.flush();
 
   reqCleanup(res, () => {
     bucket.delete(clientId);
@@ -1096,6 +1097,7 @@ function broadcastSyncEvent({ role = 'all', event = 'sync', data = {} }) {
   targets.forEach(([clientId, client]) => {
     try {
       client.res.write(payload);
+      if (typeof client.res.flush === 'function') client.res.flush();
     } catch {
       if (sseClients.student.has(clientId)) {
         sseClients.student.delete(clientId);
@@ -1113,7 +1115,7 @@ function broadcastSyncEvent({ role = 'all', event = 'sync', data = {} }) {
 
 setInterval(() => {
   broadcastSyncEvent({ role: 'all', event: 'heartbeat', data: { type: 'heartbeat' } });
-}, 25000).unref();
+}, 15000).unref();
 
 const PAYMENT_PROOF_ALLOWED_MIME_TYPES = new Set([
   'image/jpeg',
@@ -1285,7 +1287,18 @@ if (!expressCorsDisabled) {
   );
 }
 
-app.use(compression({ level: 6, threshold: 512 }));
+app.use(compression({
+  level: 6,
+  threshold: 512,
+  filter(req, res) {
+    // SSE must stay uncompressed. Gzip buffering on this long-lived response is what
+    // Railway's HTTP/2 proxy surfaces as ERR_HTTP2_PROTOCOL_ERROR after a 200.
+    if (req.path === '/api/stream' || String(req.originalUrl || '').startsWith('/api/stream')) return false;
+    const type = String(res.getHeader('Content-Type') || '');
+    if (type.includes('text/event-stream')) return false;
+    return typeof compression.filter === 'function' ? compression.filter(req, res) : true;
+  },
+}));
 const hstsHttpsOnly = helmet.hsts({
   maxAge: 86400,
   includeSubDomains: false,
@@ -10740,11 +10753,14 @@ app.get('/api/stream', async (req, res) => {
       return;
     }
 
-    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
-    res.setHeader('Connection', 'keep-alive');
     res.setHeader('X-Accel-Buffering', 'no');
+    // Do not set Connection: it is illegal on HTTP/2 and the edge proxy reports
+    // ERR_HTTP2_PROTOCOL_ERROR even though the status is 200.
     res.flushHeaders?.();
+    // Comment padding encourages proxies to flush the first chunk instead of buffering it.
+    res.write(`: ${' '.repeat(2048)}\n\n`);
 
     addSseClient(user.role === 'admin' ? 'admin' : 'student', user._id, res);
   } catch {
@@ -15655,12 +15671,15 @@ app.get('/api/reports/export', authMiddleware, async (req, res) => {
 
 app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) => {
   const managedUserFilter = { role: { $ne: 'admin' } };
-  const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingQuestionSubmissions] = await Promise.all([
+  const [usersCount, mcqCount, attemptsCount, latestAttempts, pendingQuestionSubmissions, approvedQuestionSubmissions, rejectedQuestionSubmissions, practiceBoardCount] = await Promise.all([
     UserModel.countDocuments(managedUserFilter),
     MCQModel.countDocuments(),
     AttemptModel.countDocuments(),
     AttemptModel.find().sort({ attemptedAt: -1 }).limit(12).lean(),
     QuestionSubmissionModel.countDocuments({ status: 'pending' }),
+    QuestionSubmissionModel.countDocuments({ status: 'approved' }),
+    QuestionSubmissionModel.countDocuments({ status: 'rejected' }),
+    PracticeBoardQuestionModel.countDocuments(),
   ]);
 
   const averageScore = latestAttempts.length
@@ -15674,6 +15693,9 @@ app.get('/api/admin/overview', authMiddleware, requireAdmin, async (req, res) =>
     pendingSignupRequests: 0,
     pendingPremiumRequests: 0,
     pendingQuestionSubmissions,
+    approvedQuestionSubmissions,
+    rejectedQuestionSubmissions,
+    practiceBoardCount,
     recoveryRequestCount: 0,
     recoveryStatusCounts: {
       sent: 0,
@@ -16256,7 +16278,7 @@ app.get('/api/admin/subscriptions/users', authMiddleware, requireAdmin, async (r
   try {
     const status = String(req.query?.status || 'all').toLowerCase();
     const accessType = String(req.query?.accessType || '').trim().toLowerCase();
-    const filter = { role: { $ne: 'admin' } };
+    const filter = { role: 'student' };
     if (status !== 'all' && (!accessType || accessType === 'mentor')) {
       filter['subscription.status'] = status;
     }
@@ -16354,7 +16376,7 @@ app.get('/api/admin/paid-services/users', authMiddleware, requireAdmin, async (r
   const q = String(req.query?.q || '').trim().toLowerCase();
   const status = String(req.query?.status || 'all').trim().toLowerCase();
   const serviceType = parsePaidServiceType(req.query?.serviceType) || PAID_SERVICE_TYPES.tests;
-  const filter = { role: { $ne: 'admin' }, authProvider: 'firebase' };
+  const filter = { role: 'student', authProvider: 'firebase' };
   const users = await UserModel.find(filter, {
     email: 1,
     firstName: 1,
@@ -17522,7 +17544,7 @@ app.post('/api/admin/signup-requests/:requestId/reject', authMiddleware, require
 app.get('/api/admin/subscriptions/requests/:requestId/payment-proof', authMiddleware, requireAdmin, respondLegacyAdminWorkflowGone);
 
 app.get('/api/admin/users', authMiddleware, requireAdmin, async (req, res) => {
-  const users = await UserModel.find({ role: { $ne: 'admin' } }, {
+  const users = await UserModel.find({ role: 'student' }, {
     email: 1,
     firstName: 1,
     lastName: 1,
@@ -17729,8 +17751,37 @@ app.delete('/api/admin/users/:userId', authMiddleware, requireAdmin, async (req,
   res.json({ ok: true, removedUserId: userId });
 });
 
+const adminMcqStructureCache = new Map();
+const ADMIN_MCQ_STRUCTURE_TTL_MS = 60_000;
+
+function adminMcqStructureCacheId(subject) {
+  return subject || 'all';
+}
+
+async function invalidateAdminMcqReadCaches() {
+  adminMcqStructureCache.clear();
+  await Promise.all([
+    cacheDel(cacheKey('mcqs:counts:v1')),
+    cacheDel(cacheKey('admin:mcq-structure:all')),
+  ]);
+}
+
 app.get('/api/admin/mcq-bank/structure', authMiddleware, requireAdmin, async (req, res) => {
   const subject = canonicalizeSubject(req.query.subject || '');
+  const cacheId = adminMcqStructureCacheId(subject);
+  const memo = adminMcqStructureCache.get(cacheId);
+  if (memo && Date.now() - memo.at < ADMIN_MCQ_STRUCTURE_TTL_MS) {
+    res.json(memo.payload);
+    return;
+  }
+  if (!subject) {
+    const cached = await cacheGetJson(cacheKey('admin:mcq-structure:all'));
+    if (cached && Array.isArray(cached.structure)) {
+      adminMcqStructureCache.set(cacheId, { at: Date.now(), payload: cached });
+      res.json(cached);
+      return;
+    }
+  }
   const subjectClause = buildAdminMcqSubjectClause(subject);
   const filter = subjectClause || {};
 
@@ -17770,7 +17821,7 @@ app.get('/api/admin/mcq-bank/structure', authMiddleware, requireAdmin, async (re
     { $sort: { '_id.subject': 1, '_id.part': 1, '_id.chapter': 1, '_id.section': 1 } },
   ]);
 
-  res.json({
+  const payload = {
     structure: rows.map((item) => ({
       subject: canonicalizeSubject(item._id?.subject || ''),
       part: String(item._id?.part || ''),
@@ -17778,7 +17829,12 @@ app.get('/api/admin/mcq-bank/structure', authMiddleware, requireAdmin, async (re
       section: String(item._id?.section || ''),
       count: Number(item.count || 0),
     })),
-  });
+  };
+  adminMcqStructureCache.set(cacheId, { at: Date.now(), payload });
+  if (!subject) {
+    void cacheSetJson(cacheKey('admin:mcq-structure:all'), payload, 60);
+  }
+  res.json(payload);
 });
 
 app.get('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
@@ -18981,7 +19037,7 @@ app.post('/api/admin/mcqs', authMiddleware, requireAdmin, async (req, res) => {
     const mcqDocument = buildAdminMcqDocument(req.body || {});
     const mcq = await MCQModel.create(mcqDocument);
 
-    await cacheDel(cacheKey('mcqs:counts:v1'));
+    await invalidateAdminMcqReadCaches();
     broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'create' } });
 
     res.status(201).json({
@@ -19038,7 +19094,7 @@ app.post('/api/admin/upload-mcqs-bulk', authMiddleware, requireAdmin, async (req
   }
 
   if (created.length > 0) {
-    await cacheDel(cacheKey('mcqs:counts:v1'));
+    await invalidateAdminMcqReadCaches();
     broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'bulk-create' } });
   }
 
@@ -19203,7 +19259,7 @@ app.put('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, res)
   Object.assign(mcq, payload);
   await mcq.save();
 
-  await cacheDel(cacheKey('mcqs:counts:v1'));
+  await invalidateAdminMcqReadCaches();
   broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'update' } });
 
   res.json({
@@ -19226,7 +19282,7 @@ app.delete('/api/admin/mcqs/:mcqId', authMiddleware, requireAdmin, async (req, r
 
   await MCQModel.deleteOne({ _id: removed._id });
 
-  await cacheDel(cacheKey('mcqs:counts:v1'));
+  await invalidateAdminMcqReadCaches();
   broadcastSyncEvent({ role: 'all', event: 'sync', data: { type: 'mcq.bank.changed', action: 'delete' } });
 
   res.json({ ok: true, removedMcqId: String(removed._id || mcqId) });
@@ -19250,12 +19306,13 @@ app.get('/api/admin/practice-board/questions', authMiddleware, requireAdmin, asy
   }
 
   const questions = await PracticeBoardQuestionModel.find(filter)
-    .select(PRACTICE_BOARD_SELECT)
+    .select(PRACTICE_BOARD_CLIENT_SELECT)
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit)
     .lean();
-  res.json({ page, limit, questions: questions.map((item) => serializePracticeBoardQuestion(item, { embedFiles: true })) });
+  // File bytes stay on the single-file route. Embedding every data URL made this list exceed the admin request budget.
+  res.json({ page, limit, questions: questions.map((item) => serializePracticeBoardQuestion(item)) });
 });
 
 app.post('/api/admin/practice-board/questions', authMiddleware, requireAdmin, async (req, res) => {

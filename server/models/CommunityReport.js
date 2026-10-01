@@ -35,6 +35,7 @@ const communityReportSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+communityReportSchema.index({ createdAt: -1 });
 communityReportSchema.index({ status: 1, createdAt: -1 });
 communityReportSchema.index({ reportedUserId: 1, createdAt: -1 });
 
