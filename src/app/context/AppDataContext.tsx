@@ -365,6 +365,21 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     const authToken = resolveClientAuthToken();
     if (!authToken) return;
 
+    const onDataSync = (event: Event) => {
+      const detail = (event as CustomEvent<{ type?: string; userId?: string }>).detail;
+      const type = String(detail?.type || '');
+      const sharedUserState = type === 'preferences.updated'
+        || type === 'profile.updated'
+        || type === 'attempt.finished'
+        || type === 'test.session.cancelled'
+        || type === 'community.profile.updated'
+        || type === 'mcq.bank.changed';
+      if (!sharedUserState) return;
+      if (detail?.userId && user?.id && String(detail.userId) !== String(user.id) && type !== 'mcq.bank.changed') return;
+      scheduleDebouncedForegroundSync(authToken);
+    };
+    window.addEventListener('net360:data-sync', onDataSync);
+
     let closed = false;
     let reconnectTimer: number | null = null;
     let source: EventSource | null = null;
@@ -458,6 +473,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
     return () => {
       closed = true;
+      window.removeEventListener('net360:data-sync', onDataSync);
       document.removeEventListener('visibilitychange', resumeIfPaused);
       window.removeEventListener('online', resumeIfPaused);
       if (reconnectTimer) {
@@ -469,7 +485,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       }
       closeCurrent();
     };
-  }, [token, runForegroundSync, resolveClientAuthToken, scheduleDebouncedForegroundSync]);
+  }, [token, user?.id, runForegroundSync, resolveClientAuthToken, scheduleDebouncedForegroundSync]);
 
   useEffect(() => {
     if (!user) return;

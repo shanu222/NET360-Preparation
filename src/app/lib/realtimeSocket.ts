@@ -178,9 +178,14 @@ function createSocket(scope: RealtimeScope, entry: ScopeEntry): Socket {
       window.dispatchEvent(new CustomEvent('net360:session-revoked', {
         detail: { previousSessionId: parsed.previousSessionId, userId: parsed.userId },
       }));
-    } else if (parsed.type === 'subscription.refresh') {
-      window.dispatchEvent(new CustomEvent('net360:subscription-refresh', { detail: parsed }));
+      return;
     }
+    if (parsed.type === 'subscription.refresh') {
+      window.dispatchEvent(new CustomEvent('net360:subscription-refresh', { detail: parsed }));
+      return;
+    }
+    if (parsed.type === 'support.typing' || parsed.type === 'heartbeat' || parsed.type === 'connected') return;
+    window.dispatchEvent(new CustomEvent('net360:data-sync', { detail: parsed }));
   };
   const onSubscriptionRefresh = (data: unknown) => {
     if (scope !== 'student') return;
