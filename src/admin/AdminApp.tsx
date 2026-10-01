@@ -1247,6 +1247,7 @@ interface AdminSubscriptionManagementListUser {
     tests: SubscriptionBadgeStatus;
     preparation: SubscriptionBadgeStatus;
     community: SubscriptionBadgeStatus;
+    videos: SubscriptionBadgeStatus;
     mentor: SubscriptionBadgeStatus;
   };
 }
@@ -11624,6 +11625,7 @@ export default function AdminApp() {
                                 <Badge variant={subscriptionBadgeTone(entry.badges.tests)}>T</Badge>
                                 <Badge variant={subscriptionBadgeTone(entry.badges.preparation)}>P</Badge>
                                 <Badge variant={subscriptionBadgeTone(entry.badges.community)}>C</Badge>
+                                <Badge variant={subscriptionBadgeTone(entry.badges.videos)}>V</Badge>
                                 <Badge variant={subscriptionBadgeTone(entry.badges.mentor)}>M</Badge>
                               </div>
                             </div>
@@ -11716,6 +11718,7 @@ export default function AdminApp() {
                         <Badge variant={subscriptionBadgeTone(entry.badges.tests)}>Tests: {normalizeSubscriptionBadgeLabel(entry.badges.tests)}</Badge>
                         <Badge variant={subscriptionBadgeTone(entry.badges.preparation)}>Preparation: {normalizeSubscriptionBadgeLabel(entry.badges.preparation)}</Badge>
                         <Badge variant={subscriptionBadgeTone(entry.badges.community)}>Community: {normalizeSubscriptionBadgeLabel(entry.badges.community)}</Badge>
+                        <Badge variant={subscriptionBadgeTone(entry.badges.videos)}>Videos: {normalizeSubscriptionBadgeLabel(entry.badges.videos)}</Badge>
                         <Badge variant={subscriptionBadgeTone(entry.badges.mentor)}>Mentor: {normalizeSubscriptionBadgeLabel(entry.badges.mentor)}</Badge>
                         <Button
                           size="sm"

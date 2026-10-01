@@ -17281,6 +17281,14 @@ async function fetchAdminManagedUsers({
           subscription: sub,
           nowMs,
         });
+        const videosCard = buildManagedServiceDetail({
+          key: PAID_SERVICE_TYPES.videos,
+          label: 'Videos',
+          access: accessStatusPayload(paidServices?.videos),
+          manualGrant: normalizeManualGrant(item?.paidServices?.videos),
+          subscription: sub,
+          nowMs,
+        });
         const accountStatus = [mentorCard, testsCard, preparationCard, communityCard].some((card) => card.active)
           ? 'active'
           : 'inactive';
@@ -17303,6 +17311,7 @@ async function fetchAdminManagedUsers({
             tests: testsCard.status,
             preparation: preparationCard.status,
             community: communityCard.status,
+            videos: videosCard.status,
             mentor: mentorCard.status,
           },
         };
