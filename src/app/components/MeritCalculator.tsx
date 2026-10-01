@@ -1,4 +1,13 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { apiRequest } from '../lib/api';
+import {
+  catalogClosingMerits,
+  formatClosingMerit,
+  meritPositionLabel,
+  standingOnClosingMeritList,
+  type ClosingMeritProgram,
+  type MeritListStanding,
+} from '../lib/closingMerits';
 import { isNativeAndroidRuntime } from '../lib/nativeForeground';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
@@ -8,13 +17,44 @@ import { Calculator, Info, Lightbulb } from 'lucide-react';
 
 type InputMode = 'marks' | 'percentage';
 
+const MERIT_GROUP_LABELS: Record<string, string> = {
+  engineering: 'Engineering',
+  computing: 'Computing',
+  business: 'Business',
+  architecture: 'Architecture',
+  sciences: 'Sciences',
+  applied: 'Applied',
+};
+
 function MobileFold({ title, children }: { title: string; children: ReactNode }) {
   if (!isNativeAndroidRuntime()) return <>{children}</>;
   return (
-    <details className="net360-fold">
+    <details className="net360-fold" open>
       <summary>{title}</summary>
       <div className="net360-fold-body">{children}</div>
     </details>
+  );
+}
+
+function StandingLine({ label, standing }: { label: string; standing: MeritListStanding }) {
+  if (standing.met === 0) {
+    const nearest = standing.nextAbove;
+    return (
+      <p>
+        {label}: below every listed closing merit
+        {nearest ? ` (nearest is ${nearest.name}, ${nearest.institution}, ${formatClosingMerit(nearest.closingMerit)})` : ''}.
+      </p>
+    );
+  }
+
+  const best = standing.bestMet;
+  const next = standing.nextAbove;
+  return (
+    <p>
+      {label}: position {standing.position} of {standing.listed}. Meets {standing.met} {standing.met === 1 ? 'program' : 'programs'}.
+      {best ? ` Highest match: ${best.name} (${best.institution}).` : ''}
+      {next ? ` Next above you: ${next.name} (${next.institution}) ${formatClosingMerit(next.closingMerit)}.` : ' At or above the highest closing merit.'}
+    </p>
   );
 }
 
@@ -24,7 +64,9 @@ function parseNum(s: string): number {
 }
 
 export function MeritCalculator() {
+  const androidApp = isNativeAndroidRuntime();
   const [mode, setMode] = useState<InputMode>('marks');
+  const [androidTrack, setAndroidTrack] = useState<'fsc' | 'alevel'>('fsc');
 
   /** FSc — marks */
   const [obtainedMatric, setObtainedMatric] = useState('');
@@ -49,7 +91,6 @@ export function MeritCalculator() {
 
   const [fscAggregate, setFscAggregate] = useState<number | null>(null);
   const [aLevelAggregate, setALevelAggregate] = useState<number | null>(null);
-  const [meritPosition, setMeritPosition] = useState<string | null>(null);
 
   const calculateFscAggregate = () => {
     let matricPercent: number;
@@ -85,16 +126,6 @@ export function MeritCalculator() {
 
     const aggregate = matricPercent * 0.1 + fscPercent * 0.15 + netPercent * 0.75;
     setFscAggregate(aggregate);
-
-    if (aggregate >= 85) {
-      setMeritPosition('Excellent - Top 500');
-    } else if (aggregate >= 75) {
-      setMeritPosition('Very Good - Top 1500');
-    } else if (aggregate >= 65) {
-      setMeritPosition('Good - Top 3000');
-    } else {
-      setMeritPosition('Fair - Top 5000');
-    }
   };
 
   const calculateALevelAggregate = () => {
@@ -146,46 +177,98 @@ export function MeritCalculator() {
     setAlNetPercentage('');
     setFscAggregate(null);
     setALevelAggregate(null);
-    setMeritPosition(null);
   };
 
-  const programMerits = [
-    { program: 'Computer Science (SEECS)', lastMerit: 86.5, color: 'text-indigo-700' },
-    { program: 'Electrical Engineering (SEECS)', lastMerit: 84.2, color: 'text-indigo-700' },
-    { program: 'Artificial Intelligence', lastMerit: 87.1, color: 'text-indigo-700' },
-    { program: 'Software Engineering', lastMerit: 85.8, color: 'text-indigo-700' },
-    { program: 'Mechanical Engineering (SMME)', lastMerit: 82.5, color: 'text-indigo-700' },
-    { program: 'Civil Engineering (SCEE)', lastMerit: 78.9, color: 'text-indigo-700' },
-    { program: 'BBA', lastMerit: 76.4, color: 'text-indigo-700' },
-    { program: 'Data Science', lastMerit: 86.2, color: 'text-indigo-700' },
-  ];
+  const [programMerits, setProgramMerits] = useState<ClosingMeritProgram[]>(() => catalogClosingMerits());
+  const [meritGroup, setMeritGroup] = useState('all');
 
-  const leftMerits = programMerits.filter((_, index) => index % 2 === 0);
-  const rightMerits = programMerits.filter((_, index) => index % 2 === 1);
+  useEffect(() => {
+    let cancelled = false;
+    apiRequest<{ programs?: ClosingMeritProgram[] }>('/api/public/closing-merits')
+      .then((data) => {
+        if (cancelled || !Array.isArray(data?.programs) || !data.programs.length) return;
+        setProgramMerits(data.programs);
+      })
+      .catch(() => {
+        // Keep the programs-page list until the admin list is available.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const meritGroups = useMemo(() => {
+    const groups: Array<{ key: string; label: string; programs: ClosingMeritProgram[] }> = [];
+    programMerits.forEach((program) => {
+      const key = program.categoryKey || program.categoryLabel || 'programs';
+      const existing = groups.find((group) => group.key === key);
+      if (existing) {
+        existing.programs.push(program);
+        return;
+      }
+      groups.push({
+        key,
+        label: program.categoryLabel || 'Programs',
+        programs: [program],
+      });
+    });
+    return groups;
+  }, [programMerits]);
+
+  const visibleMeritGroups = meritGroup === 'all'
+    ? meritGroups
+    : meritGroups.filter((group) => group.key === meritGroup);
+
+  const fscStanding = useMemo(
+    () => (fscAggregate == null ? null : standingOnClosingMeritList(fscAggregate, programMerits)),
+    [fscAggregate, programMerits],
+  );
+  const aLevelStanding = useMemo(
+    () => (aLevelAggregate == null ? null : standingOnClosingMeritList(aLevelAggregate, programMerits)),
+    [aLevelAggregate, programMerits],
+  );
+  const focusAggregate = androidApp
+    ? (androidTrack === 'alevel' ? aLevelAggregate : fscAggregate)
+    : (fscAggregate ?? aLevelAggregate);
+  const focusStanding = androidApp
+    ? (androidTrack === 'alevel' ? aLevelStanding : fscStanding)
+    : (fscStanding ?? aLevelStanding);
 
   const selectClass =
     'flex min-h-11 w-full max-w-full rounded-md border border-indigo-100 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 sm:max-w-xs md:max-w-sm';
 
   return (
-    <div className="space-y-5">
-      <div>
+    <div className={androidApp ? 'net360-merit space-y-5' : 'space-y-5'}>
+      <div className="net360-merit-head">
         <h1 className="flex items-center gap-2">
           <Calculator className="w-7 h-7" />
           Merit Calculator
         </h1>
         <p className="text-muted-foreground">Calculate your expected aggregate and merit position</p>
+        {androidApp ? (
+          <div className="net360-merit-mode" role="group" aria-label="Input mode">
+            <button type="button" className={mode === 'marks' ? 'is-on' : ''} onClick={() => setMode('marks')}>Marks</button>
+            <button type="button" className={mode === 'percentage' ? 'is-on' : ''} onClick={() => setMode('percentage')}>Percentage</button>
+          </div>
+        ) : null}
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.7fr_1fr]">
-        <div className="space-y-4 min-w-0">
-          <Card className="rounded-2xl border-indigo-100 bg-white/92">
+        <div className="net360-merit-calcs space-y-4 min-w-0" data-track={androidApp ? androidTrack : undefined}>
+          {androidApp ? (
+            <div className="net360-merit-switch" role="tablist" aria-label="Calculator">
+              <button type="button" role="tab" aria-selected={androidTrack === 'fsc'} className={androidTrack === 'fsc' ? 'is-on' : ''} onClick={() => setAndroidTrack('fsc')}>FSc</button>
+              <button type="button" role="tab" aria-selected={androidTrack === 'alevel'} className={androidTrack === 'alevel' ? 'is-on' : ''} onClick={() => setAndroidTrack('alevel')}>A-Level</button>
+            </div>
+          ) : null}
+          <Card className="net360-merit-calc is-fsc rounded-2xl border-indigo-100 bg-white/92">
             <CardHeader className="space-y-3">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <CardTitle>FSc Merit Calculator</CardTitle>
                   <CardDescription>Matric, FSc &amp; NET (NUST weighting)</CardDescription>
                 </div>
-                <div className="space-y-1.5 shrink-0">
+                <div className="net360-merit-mode-inline space-y-1.5 shrink-0">
                   <Label htmlFor="input-mode">Input mode</Label>
                   <select
                     id="input-mode"
@@ -342,12 +425,13 @@ export function MeritCalculator() {
               <Button
                 type="button"
                 onClick={calculateFscAggregate}
+                aria-label="Calculate FSc aggregate"
                 className="w-full rounded-lg bg-gradient-to-r from-indigo-600 to-violet-500 text-white sm:w-auto"
               >
-                Calculate FSc aggregate
+                {androidApp ? 'Calculate aggregate' : 'Calculate FSc aggregate'}
               </Button>
 
-              <div className="rounded-lg border border-indigo-100 bg-[#f2f5ff] px-3 py-2">
+              <div className="net360-merit-formula rounded-lg border border-indigo-100 bg-[#f2f5ff] px-3 py-2">
                 <p className="text-sm text-slate-600 flex flex-wrap items-center gap-2">
                   <Info className="h-4 w-4 shrink-0 text-indigo-500" />
                   <span className="font-medium text-indigo-900">Formula (FSc)</span>
@@ -360,7 +444,7 @@ export function MeritCalculator() {
             </CardContent>
           </Card>
 
-          <Card className="rounded-2xl border-indigo-100 bg-white/92">
+          <Card className="net360-merit-calc is-alevel rounded-2xl border-indigo-100 bg-white/92">
             <CardHeader>
               <CardTitle>A-Level Merit Calculator</CardTitle>
               <CardDescription>Uses the same input mode as above (marks or percentage)</CardDescription>
@@ -459,12 +543,13 @@ export function MeritCalculator() {
               <Button
                 type="button"
                 onClick={calculateALevelAggregate}
+                aria-label="Calculate A-Level aggregate"
                 className="w-full rounded-lg bg-gradient-to-r from-indigo-600 to-violet-500 text-white sm:w-auto"
               >
-                Calculate A-Level aggregate
+                {androidApp ? 'Calculate aggregate' : 'Calculate A-Level aggregate'}
               </Button>
 
-              <div className="rounded-lg border border-indigo-100 bg-[#f2f5ff] px-3 py-2">
+              <div className="net360-merit-formula rounded-lg border border-indigo-100 bg-[#f2f5ff] px-3 py-2">
                 <p className="text-sm text-slate-600 flex flex-wrap items-center gap-2">
                   <Info className="h-4 w-4 shrink-0 text-indigo-500" />
                   <span className="font-medium text-indigo-900">Formula (A-Level)</span>
@@ -476,6 +561,21 @@ export function MeritCalculator() {
             </CardContent>
           </Card>
 
+          {androidApp ? (
+            <div className="net360-merit-formulas">
+              <div className="is-fsc">
+                <p>FSc formula</p>
+                <p>Matric, FSc &amp; NET (NUST weighting)</p>
+                <p>Aggregate = (Matric% × 0.10) + (FSc% × 0.15) + (NET% × 0.75)</p>
+                <p>Percentages may come from marks (obtained ÷ total × 100) or direct entry.</p>
+              </div>
+              <div className="is-alevel">
+                <p>A-Level formula</p>
+                <p>Uses the same input mode as above (marks or percentage)</p>
+                <p>Aggregate = (Matric Equivalence% × 0.25) + (NET% × 0.75)</p>
+              </div>
+            </div>
+          ) : null}
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <Button onClick={reset} variant="outline" className="border-indigo-200 bg-white text-slate-700 sm:col-span-2">
               Reset all
@@ -483,10 +583,10 @@ export function MeritCalculator() {
           </div>
         </div>
 
-        <Card className="rounded-2xl border-indigo-100 bg-white/92 h-fit">
+        <Card className={`net360-merit-result rounded-2xl border-indigo-100 bg-white/92 h-fit`}>
           <CardHeader>
             <CardTitle>Your Result</CardTitle>
-            <CardDescription>Calculated aggregates and merit prediction (FSc)</CardDescription>
+            <CardDescription>Your aggregate placed on the closing-merit list</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
@@ -504,11 +604,18 @@ export function MeritCalculator() {
             </div>
 
             <div>
-              <p className="text-[15px] text-slate-700">Merit Position (FSc): {meritPosition || '—'}</p>
+              <p className="text-[15px] text-slate-700">Merit position</p>
+              <p className="text-xl font-semibold text-indigo-950 sm:text-2xl">{meritPositionLabel(focusStanding)}</p>
             </div>
 
-            <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-[#f5f7ff] to-[#edf2ff] p-5 text-sm text-slate-500">
-              Enter values and use Calculate on each track (FSc / A-Level). Merit bands apply to the FSc aggregate.
+            <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-[#f5f7ff] to-[#edf2ff] p-5 text-sm text-slate-600">
+              {fscStanding ? <StandingLine label="FSc" standing={fscStanding} /> : null}
+              {aLevelStanding ? <StandingLine label="A-Level" standing={aLevelStanding} /> : null}
+              {!fscStanding && !aLevelStanding ? (
+                <p>Calculate an aggregate to place it on the closing-merit list. Position 1 means your aggregate is at or above the highest number. You meet a program when your aggregate is at least its closing merit.</p>
+              ) : (
+                <p className="mt-2 text-slate-500">Position counts programs with a higher closing merit, then adds 1. Programs without a number are left out.</p>
+              )}
             </div>
 
             {fscAggregate !== null ? (
@@ -525,41 +632,49 @@ export function MeritCalculator() {
         </Card>
       </div>
 
-      <Card className="rounded-2xl border-indigo-100 bg-white/92">
+      <Card className="net360-merit-board rounded-2xl border-indigo-100 bg-white/92">
         <CardHeader>
           <CardTitle>Last Year&apos;s Closing Merits</CardTitle>
-          <CardDescription>Reference merits for popular programs (2023 data)</CardDescription>
+          <CardDescription>Every program from the programs page. Numbers are set in the admin panel.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <div className="rounded-xl border border-indigo-100 bg-white">
-              {leftMerits.map((program, index) => (
-                <div
-                  key={program.program}
-                  className={`flex items-center justify-between px-3 py-2 ${
-                    index !== leftMerits.length - 1 ? 'border-b border-indigo-100' : ''
-                  }`}
-                >
-                  <p className={program.color}>{program.program}</p>
-                  <div className="text-right text-indigo-950">{program.lastMerit}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="rounded-xl border border-indigo-100 bg-white">
-              {rightMerits.map((program, index) => (
-                <div
-                  key={program.program}
-                  className={`flex items-center justify-between px-3 py-2 ${
-                    index !== rightMerits.length - 1 ? 'border-b border-indigo-100' : ''
-                  }`}
-                >
-                  <p className={program.color}>{program.program}</p>
-                  <div className="text-right text-indigo-950">{program.lastMerit}</div>
-                </div>
-              ))}
-            </div>
+          <div className="net360-merit-cats" role="tablist" aria-label="Program category">
+            <button type="button" className={meritGroup === 'all' ? 'is-on' : ''} onClick={() => setMeritGroup('all')}>All</button>
+            {meritGroups.map((group) => (
+              <button
+                key={group.key}
+                type="button"
+                className={meritGroup === group.key ? 'is-on' : ''}
+                onClick={() => setMeritGroup(group.key)}
+              >
+                {MERIT_GROUP_LABELS[group.key] || group.label}
+              </button>
+            ))}
           </div>
+
+          {visibleMeritGroups.map((group) => (
+            <section key={group.key} className="net360-merit-group">
+              <h3>{group.label}</h3>
+              <div>
+                {group.programs.map((program) => {
+                  const merit = Number(program.closingMerit);
+                  const meets = focusAggregate != null
+                    && program.closingMerit != null
+                    && Number.isFinite(merit)
+                    && focusAggregate >= merit;
+                  return (
+                  <div key={program.id} className={meets ? 'is-met bg-emerald-50' : ''}>
+                    <div>
+                      <p>{program.name}</p>
+                      <p>{program.institution}{program.location ? ` · ${program.location}` : ''}</p>
+                    </div>
+                    <div>{formatClosingMerit(program.closingMerit)}</div>
+                  </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
 
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
             <h4 className="mb-1 inline-flex items-center gap-2 text-amber-700">

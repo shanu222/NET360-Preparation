@@ -1,4 +1,4 @@
-﻿const allowedOrigins = [
+const allowedOrigins = [
   "https://net360preparation.com",
   "https://www.net360preparation.com",
   "capacitor://localhost",
@@ -36,6 +36,7 @@ import * as cheerio from 'cheerio';
 import mongoose from 'mongoose';
 import http from 'node:http';
 import { connectMongo, getMongoHealth } from './lib/mongo.js';
+import { registerClosingMeritRoutes } from './routes/closingMerits.js';
 import {
   classifyStudentDeletionChannelSync,
   normalizeAuthProviderDetail,
@@ -19334,6 +19335,8 @@ app.delete('/api/admin/practice-board/questions/:questionId', authMiddleware, re
   }
   res.json({ ok: true, removedQuestionId: questionId });
 });
+
+registerClosingMeritRoutes(app, { authMiddleware, requireAdmin });
 
 app.use('/api', (req, res) => {
   res.status(404).json({
