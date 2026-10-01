@@ -10,12 +10,15 @@ import {
   meritStatusLabel,
   standingOnClosingMeritList,
   type ClosingMeritProgram,
+  type MeritListStanding,
 } from '../lib/closingMerits';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
-import { Calculator, Info, Lightbulb } from 'lucide-react';
+import { openOrSaveBlobOnDevice } from '../lib/nativeFileAccess';
+import { buildMeritResultPdf } from '../lib/meritResultPdf';
+import { Calculator, Download, Info, Lightbulb } from 'lucide-react';
 
 type InputMode = 'marks' | 'percentage';
 
@@ -31,6 +34,63 @@ const MERIT_GROUP_LABELS: Record<string, string> = {
 function parseNum(s: string): number {
   const n = parseFloat(s);
   return Number.isFinite(n) ? n : NaN;
+}
+
+function PotentialPrograms({ year, programs }: { year: number; programs: ClosingMeritProgram[] }) {
+  return (
+    <div className="pt-1">
+      <p className="font-semibold text-indigo-950">Potential programs ({programs.length})</p>
+      <p className="text-xs text-slate-500">
+        {year} closing-merit list. These are the NUST programs whose closing aggregate this result meets.
+      </p>
+      {programs.length === 0 ? (
+        <p className="mt-1 text-sm text-slate-600">No listed program is within this aggregate.</p>
+      ) : (
+        <ul className="mt-2 max-h-60 space-y-1 overflow-y-auto">
+          {programs.map((program) => (
+            <li key={program.id} className="rounded-lg border border-indigo-100 bg-white px-2.5 py-1.5">
+              <p className="text-sm font-medium text-indigo-800">{program.name}</p>
+              <p className="text-xs text-slate-500">
+                {program.institution}
+                {program.location ? ` · ${program.location}` : ''}
+                {' · '}Closing {formatClosingMerit(program.closingMerit)}
+                {program.meritPosition != null ? ` · Position ${formatMeritPosition(program.meritPosition)}` : ''}
+                {' · '}{meritStatusLabel(program.meritStatus)}
+              </p>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function TrackOutcome({ label, year, standing }: { label: string; year: number; standing: MeritListStanding }) {
+  const best = standing.bestMet;
+  const next = standing.nextAbove;
+  return (
+    <div className="space-y-1 text-sm text-slate-700">
+      <p className="font-semibold text-indigo-950">{label}</p>
+      <p>Merit position: {meritPositionLabel(standing)}</p>
+      {standing.met === 0 ? (
+        <p>
+          Below every listed closing aggregate
+          {next ? ` (nearest is ${next.name}, ${next.institution}, ${formatClosingMerit(next.closingMerit)})` : ''}.
+        </p>
+      ) : (
+        <>
+          <p>Meets {standing.met} {standing.met === 1 ? 'program' : 'programs'}.</p>
+          {best ? <p>Highest match: {best.name} ({best.institution}).</p> : null}
+          <p>
+            {next
+              ? `Next above you: ${next.name} (${next.institution}) ${formatClosingMerit(next.closingMerit)}.`
+              : 'At or above the highest closing merit.'}
+          </p>
+        </>
+      )}
+      <PotentialPrograms year={year} programs={standing.metPrograms} />
+    </div>
+  );
 }
 
 export function MeritCalculator() {
@@ -59,6 +119,8 @@ export function MeritCalculator() {
 
   const [fscAggregate, setFscAggregate] = useState<number | null>(null);
   const [aLevelAggregate, setALevelAggregate] = useState<number | null>(null);
+  const [pdfBusy, setPdfBusy] = useState(false);
+  const [pdfError, setPdfError] = useState('');
   const [programMerits, setProgramMerits] = useState<ClosingMeritProgram[]>(() => catalogClosingMerits());
   const [meritYear, setMeritYear] = useState(DEFAULT_CLOSING_MERIT_YEAR);
   const [meritGroup, setMeritGroup] = useState('all');
@@ -148,6 +210,7 @@ export function MeritCalculator() {
     setAlNetPercentage('');
     setFscAggregate(null);
     setALevelAggregate(null);
+    setPdfError('');
   };
 
   useEffect(() => {
@@ -191,6 +254,24 @@ export function MeritCalculator() {
     ? meritGroups
     : meritGroups.filter((group) => group.key === meritGroup);
   const focusAggregate = fscAggregate ?? aLevelAggregate;
+
+  const downloadMeritPdf = async () => {
+    const tracks = [
+      fscAggregate != null && fscStanding ? { label: 'FSc', aggregate: fscAggregate, standing: fscStanding } : null,
+      aLevelAggregate != null && aLevelStanding ? { label: 'A-Level', aggregate: aLevelAggregate, standing: aLevelStanding } : null,
+    ].filter((track): track is { label: string; aggregate: number; standing: MeritListStanding } => track != null);
+    if (!tracks.length || pdfBusy) return;
+    setPdfBusy(true);
+    setPdfError('');
+    try {
+      const blob = await buildMeritResultPdf({ year: meritYear, tracks });
+      await openOrSaveBlobOnDevice(blob, `NET360-Merit-Result-${meritYear}.pdf`, 'download');
+    } catch {
+      setPdfError('Could not create the merit result PDF.');
+    } finally {
+      setPdfBusy(false);
+    }
+  };
 
   const selectClass =
     'flex min-h-11 w-full max-w-full rounded-md border border-indigo-100 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 sm:max-w-xs md:max-w-sm';
@@ -507,7 +588,7 @@ export function MeritCalculator() {
         <Card className="rounded-2xl border-indigo-100 bg-white/92 h-fit">
           <CardHeader>
             <CardTitle>Your Result</CardTitle>
-            <CardDescription>Calculated aggregates and merit prediction (FSc)</CardDescription>
+            <CardDescription>Calculated aggregates and merit position</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
@@ -527,9 +608,33 @@ export function MeritCalculator() {
             <div>
               <p className="text-[15px] text-slate-700">Merit Position (FSc): {fscStanding ? meritPositionLabel(fscStanding) : '—'}</p>
             </div>
+            <div>
+              <p className="text-[15px] text-slate-700">Merit Position (A-Level): {aLevelStanding ? meritPositionLabel(aLevelStanding) : '—'}</p>
+            </div>
 
-            <div className="rounded-xl border border-indigo-100 bg-gradient-to-r from-[#f5f7ff] to-[#edf2ff] p-5 text-sm text-slate-500">
-              Enter values and use Calculate on each track (FSc / A-Level). The FSc merit position uses the closing-merit list.
+            <div className="space-y-3 rounded-xl border border-indigo-100 bg-gradient-to-r from-[#f5f7ff] to-[#edf2ff] p-4 text-sm text-slate-600">
+              {fscStanding ? <TrackOutcome label="FSc" year={meritYear} standing={fscStanding} /> : null}
+              {aLevelStanding ? (
+                <div className={fscStanding ? 'border-t border-indigo-100 pt-3' : ''}>
+                  <TrackOutcome label="A-Level" year={meritYear} standing={aLevelStanding} />
+                </div>
+              ) : null}
+              {!fscStanding && !aLevelStanding ? (
+                <p>Enter values and use Calculate on each track (FSc / A-Level). The merit position uses the closing-merit list.</p>
+              ) : (
+                <p className="text-slate-500">Merit position is estimated from the admin closing aggregates and closing merit positions. A program is met when your aggregate is at least its closing aggregate.</p>
+              )}
+              <Button
+                type="button"
+                variant="outline"
+                disabled={(!fscStanding && !aLevelStanding) || pdfBusy}
+                onClick={() => void downloadMeritPdf()}
+                className="w-full border-indigo-200 bg-white text-indigo-800 sm:w-auto"
+              >
+                <Download className="mr-2 h-4 w-4" />
+                {pdfBusy ? 'Preparing PDF…' : 'Download merit result'}
+              </Button>
+              {pdfError ? <p className="text-sm text-rose-700">{pdfError}</p> : null}
             </div>
 
             {fscAggregate !== null ? (

@@ -83,6 +83,7 @@ export interface MeritListStanding {
   met: number;
   bestMet: ClosingMeritProgram | null;
   nextAbove: ClosingMeritProgram | null;
+  metPrograms: ClosingMeritProgram[];
   estimatedPosition: number | null;
   positionBound: 'better' | 'lower' | 'within' | null;
 }
@@ -114,6 +115,7 @@ export function standingOnClosingMeritList(
     met: met.length,
     bestMet: met[0] ?? null,
     nextAbove: above[0] ?? null,
+    metPrograms: met,
     estimatedPosition: estimate?.position ?? null,
     positionBound: estimate?.bound ?? null,
   };
