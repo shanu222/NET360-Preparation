@@ -10809,10 +10809,9 @@ app.put('/api/auth/profile', authMiddleware, async (req, res) => {
   }
 
   await req.user.save();
-  broadcastSyncEvent({
-    role: 'student',
-    event: 'sync',
-    data: { type: 'profile.updated', userId: String(req.user._id) },
+  broadcastCommunityEventsToUserIds([String(req.user._id)], {
+    type: 'profile.updated',
+    userId: String(req.user._id),
   });
   if ((req.user.role || 'student') === 'admin') {
     broadcastSyncEvent({ role: 'admin', event: 'sync', data: { type: 'admin.profile.updated' } });
@@ -10826,10 +10825,9 @@ app.put('/api/auth/preferences', authMiddleware, async (req, res) => {
   req.user.markModified('preferences');
 
   await req.user.save();
-  broadcastSyncEvent({
-    role: 'student',
-    event: 'sync',
-    data: { type: 'preferences.updated', userId: String(req.user._id) },
+  broadcastCommunityEventsToUserIds([String(req.user._id)], {
+    type: 'preferences.updated',
+    userId: String(req.user._id),
   });
   res.json({ user: userPublic(req.user) });
 });
@@ -10926,6 +10924,10 @@ app.put('/api/community/profile', ...studentPremiumSurface, async (req, res) => 
   }
 
   await profile.save();
+  broadcastCommunityEventsToUserIds([String(req.user._id)], {
+    type: 'community.profile.updated',
+    userId: String(req.user._id),
+  });
   const rosterUserId = String(req.user._id);
   studentPresenceIdentityByUser.delete(rosterUserId);
   if (Boolean(profile.hideOnlineStatus) !== wasHiddenFromRoster) {
@@ -15490,14 +15492,10 @@ app.post('/api/tests/:sessionId/cancel', ...studentPremiumSurface, async (req, r
   session.finishedAt = session.finishedAt || session.cancelledAt;
   await session.save();
 
-  broadcastSyncEvent({
-    role: 'student',
-    event: 'sync',
-    data: {
-      type: 'test.session.cancelled',
-      userId: String(req.user._id),
-      sessionId: String(session._id),
-    },
+  broadcastCommunityEventsToUserIds([String(req.user._id)], {
+    type: 'test.session.cancelled',
+    userId: String(req.user._id),
+    sessionId: String(session._id),
   });
 
   res.json({ session: serializeSession(session) });
@@ -15595,10 +15593,10 @@ app.post('/api/tests/:sessionId/finish', ...studentPremiumSurface, async (req, r
 
   void invalidateCommunityLeaderboardCache();
   await refreshUserProgress(req.user._id);
-  broadcastSyncEvent({
-    role: 'student',
-    event: 'sync',
-    data: { type: 'attempt.finished', userId: String(req.user._id), sessionId: String(session._id) },
+  broadcastCommunityEventsToUserIds([String(req.user._id)], {
+    type: 'attempt.finished',
+    userId: String(req.user._id),
+    sessionId: String(session._id),
   });
   broadcastSyncEvent({ role: 'admin', event: 'sync', data: { type: 'admin.analytics.updated' } });
 
