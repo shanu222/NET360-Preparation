@@ -1,5 +1,5 @@
-import { type ChangeEvent, type PointerEvent as ReactPointerEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { MessageCircle, Send, X, GripHorizontal } from 'lucide-react';
+import { type ChangeEvent, type CSSProperties, type PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { MessageCircle, Send, X } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Button } from './ui/button';
 import { Textarea } from './ui/textarea';
@@ -189,6 +189,131 @@ function getPanelBounds(viewportWidth: number, viewportHeight: number): DragBoun
   return { minX, minY, maxX, maxY };
 }
 
+/** Matches the web launcher classes: h-12 below the sm breakpoint, h-14 from 640px. */
+function webLauncherSize(viewportWidth: number): number {
+  return viewportWidth < 640 ? 48 : 56;
+}
+
+function webLauncherBounds(viewportWidth: number, viewportHeight: number, size = webLauncherSize(viewportWidth)): DragBounds {
+  const safe = readSafeAreaInsets();
+  const minX = CHAT_EDGE_GAP + safe.left;
+  const minY = CHAT_EDGE_GAP + safe.top;
+  const maxX = Math.max(minX, viewportWidth - size - CHAT_EDGE_GAP - safe.right);
+  const maxY = Math.max(minY, viewportHeight - size - CHAT_EDGE_GAP - safe.bottom);
+  return { minX, minY, maxX, maxY };
+}
+
+const LAUNCHER_DRAG_THRESHOLD_PX = 8;
+
+/**
+ * Place the chat panel against the launcher's current viewport box.
+ * Prefer the side with room; flip vertically or stack above/below so the panel
+ * stays on screen and still meets the icon.
+ */
+function placeSupportPanel(
+  iconX: number,
+  iconY: number,
+  iconSize: number,
+  viewportWidth: number,
+  viewportHeight: number,
+): CSSProperties {
+  const safe = readSafeAreaInsets();
+  const gap = 10;
+  const minX = CHAT_EDGE_GAP + safe.left;
+  const minY = CHAT_EDGE_GAP + safe.top;
+  const maxRight = viewportWidth - CHAT_EDGE_GAP - safe.right;
+  const maxBottom = viewportHeight - CHAT_EDGE_GAP - safe.bottom;
+  const widthCap = Math.max(0, maxRight - minX);
+  const heightCap = Math.max(0, maxBottom - minY);
+  const width = Math.min(360, widthCap);
+  const preferredHeight = Math.min(520, heightCap);
+  const iconRight = iconX + iconSize;
+  const iconBottom = iconY + iconSize;
+  const iconOnRight = iconX + iconSize / 2 >= viewportWidth / 2;
+  const iconOnBottom = iconY + iconSize / 2 >= viewportHeight / 2;
+  const candidates: CSSProperties[] = [];
+
+  const pushBeside = (side: 'left' | 'right', growUp: boolean) => {
+    const room = side === 'right' ? maxRight - (iconRight + gap) : iconX - gap - minX;
+    if (room < 160 || width <= 0) return;
+    const panelWidth = Math.min(width, room);
+    const left = side === 'right' ? iconRight + gap : iconX - gap - panelWidth;
+    if (left < minX - 0.5 || left + panelWidth > maxRight + 0.5) return;
+    if (growUp) {
+      const roomUp = iconBottom - minY;
+      if (roomUp < 140) return;
+      candidates.push({
+        left,
+        bottom: Math.max(0, viewportHeight - iconBottom),
+        width: panelWidth,
+        maxHeight: Math.min(preferredHeight, roomUp),
+      });
+      return;
+    }
+    const roomDown = maxBottom - iconY;
+    if (roomDown < 140) return;
+    candidates.push({
+      left,
+      top: iconY,
+      width: panelWidth,
+      maxHeight: Math.min(preferredHeight, roomDown),
+    });
+  };
+
+  const sides: Array<'left' | 'right'> = iconOnRight ? ['left', 'right'] : ['right', 'left'];
+  for (const side of sides) {
+    if (iconOnBottom) {
+      pushBeside(side, true);
+      pushBeside(side, false);
+    } else {
+      pushBeside(side, false);
+      pushBeside(side, true);
+    }
+  }
+
+  const pushStacked = (above: boolean) => {
+    const room = above ? iconY - gap - minY : maxBottom - (iconBottom + gap);
+    if (room < 120 || width <= 0) return;
+    const panelWidth = Math.min(width, widthCap);
+    const rawLeft = iconOnRight ? iconRight - panelWidth : iconX;
+    const left = clamp(rawLeft, minX, Math.max(minX, maxRight - panelWidth));
+    if (above) {
+      candidates.push({
+        left,
+        bottom: Math.max(0, viewportHeight - (iconY - gap)),
+        width: panelWidth,
+        maxHeight: Math.min(preferredHeight, room),
+      });
+      return;
+    }
+    candidates.push({
+      left,
+      top: iconBottom + gap,
+      width: panelWidth,
+      maxHeight: Math.min(preferredHeight, room),
+    });
+  };
+
+  if (iconOnBottom) {
+    pushStacked(true);
+    pushStacked(false);
+  } else {
+    pushStacked(false);
+    pushStacked(true);
+  }
+
+  if (candidates.length > 0) return candidates[0];
+
+  const panelWidth = Math.min(width, widthCap);
+  const panelHeight = Math.min(preferredHeight, heightCap);
+  return {
+    left: clamp(iconOnRight ? iconX - gap - panelWidth : iconRight + gap, minX, Math.max(minX, maxRight - panelWidth)),
+    top: clamp(iconOnBottom ? iconBottom - panelHeight : iconY, minY, Math.max(minY, maxBottom - panelHeight)),
+    width: panelWidth,
+    maxHeight: panelHeight,
+  };
+}
+
 function readFileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -210,6 +335,7 @@ export function SupportChatWidget() {
   const [messageAttachment, setMessageAttachment] = useState<SupportMessage['attachment']>(null);
   const [unreadCount, setUnreadCount] = useState(0);
   const [viewport, setViewport] = useState(() => getViewportSize());
+  const [launcherSize, setLauncherSize] = useState(() => webLauncherSize(getViewportSize().width));
   const [position, setPosition] = useState(() => {
     const { width, height } = getViewportSize();
     const bounds = getButtonBounds(width, height);
@@ -234,6 +360,22 @@ export function SupportChatWidget() {
   const typingStateRef = useRef({ lastEmitAt: 0, idleTimer: null as number | null, active: false });
 
   const dragStateRef = useRef({ dragging: false, target: 'button' as 'button' | 'panel', offsetX: 0, offsetY: 0 });
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const iconDragRef = useRef({
+    active: false,
+    moved: false,
+    pointerId: -1,
+    startX: 0,
+    startY: 0,
+    originX: 0,
+    originY: 0,
+    x: 0,
+    y: 0,
+  });
+  const viewportRef = useRef(viewport);
+  viewportRef.current = viewport;
+  const positionRef = useRef(position);
+  positionRef.current = position;
   const scrollAnchorRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const didHydrateRef = useRef(false);
@@ -336,6 +478,15 @@ export function SupportChatWidget() {
   const canUseChat = Boolean(token && user && user.role !== 'admin');
 
   const panelStyle = useMemo(() => {
+    if (!isNativeRuntime) {
+      return placeSupportPanel(
+        position.x,
+        position.y,
+        launcherSize,
+        viewport.width,
+        viewport.height,
+      );
+    }
     const panelBounds = getPanelBounds(viewport.width, viewport.height);
     return {
       left: clamp(panelPosition.x, panelBounds.minX, panelBounds.maxX),
@@ -343,7 +494,7 @@ export function SupportChatWidget() {
       width: panelMetrics.width,
       maxHeight: panelMetrics.maxHeight,
     };
-  }, [panelMetrics.maxHeight, panelMetrics.width, panelPosition.x, panelPosition.y, viewport.height, viewport.width]);
+  }, [isNativeRuntime, launcherSize, panelMetrics.maxHeight, panelMetrics.width, panelPosition.x, panelPosition.y, position.x, position.y, viewport.height, viewport.width]);
 
   const announceAdminMessage = (item: SupportMessage | undefined) => {
     const id = String(item?.id || '');
@@ -560,7 +711,14 @@ export function SupportChatWidget() {
   useEffect(() => {
     const onResize = () => {
       const { width, height } = getViewportSize();
-      const buttonBounds = getButtonBounds(width, height);
+      let native = false;
+      try {
+        native = Capacitor.isNativePlatform();
+      } catch {
+        native = false;
+      }
+      const measured = buttonRef.current?.offsetWidth || 0;
+      const buttonBounds = native ? getButtonBounds(width, height) : webLauncherBounds(width, height, measured || undefined);
       const panelBounds = getPanelBounds(width, height);
       setViewport({ width, height });
       setPosition((prev) => ({
@@ -614,9 +772,76 @@ export function SupportChatWidget() {
   }, [viewport.height, viewport.width]);
 
   useEffect(() => {
+    if (isNativeRuntime) return;
+
+    let frame = 0;
+    const writeLauncher = (x: number, y: number) => {
+      const el = buttonRef.current;
+      if (!el) return;
+      el.style.left = `${x}px`;
+      el.style.top = `${y}px`;
+    };
+
+    const onMove = (event: PointerEvent) => {
+      const drag = iconDragRef.current;
+      if (!drag.active || event.pointerId !== drag.pointerId) return;
+      const dx = event.clientX - drag.startX;
+      const dy = event.clientY - drag.startY;
+      if (!drag.moved && Math.hypot(dx, dy) < LAUNCHER_DRAG_THRESHOLD_PX) return;
+      drag.moved = true;
+      event.preventDefault();
+      const { width, height } = viewportRef.current;
+      const measured = buttonRef.current?.offsetWidth || 0;
+      const bounds = webLauncherBounds(width, height, measured || undefined);
+      drag.x = Math.round(clamp(drag.originX + dx, bounds.minX, bounds.maxX));
+      drag.y = Math.round(clamp(drag.originY + dy, bounds.minY, bounds.maxY));
+      if (frame) return;
+      frame = window.requestAnimationFrame(() => {
+        frame = 0;
+        writeLauncher(iconDragRef.current.x, iconDragRef.current.y);
+      });
+    };
+
+    const finish = (event: PointerEvent) => {
+      const drag = iconDragRef.current;
+      if (!drag.active || event.pointerId !== drag.pointerId) return;
+      drag.active = false;
+      if (frame) {
+        window.cancelAnimationFrame(frame);
+        frame = 0;
+      }
+      if (!drag.moved) return;
+      writeLauncher(drag.x, drag.y);
+      setPosition({ x: drag.x, y: drag.y });
+    };
+
+    window.addEventListener('pointermove', onMove, { passive: false });
+    window.addEventListener('pointerup', finish);
+    window.addEventListener('pointercancel', finish);
+    return () => {
+      if (frame) window.cancelAnimationFrame(frame);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', finish);
+      window.removeEventListener('pointercancel', finish);
+    };
+  }, [isNativeRuntime]);
+
+  useLayoutEffect(() => {
+    if (isNativeRuntime) return;
+    const drag = iconDragRef.current;
+    if (drag.active && drag.moved && buttonRef.current) {
+      buttonRef.current.style.left = `${drag.x}px`;
+      buttonRef.current.style.top = `${drag.y}px`;
+    }
+    const next = buttonRef.current?.offsetWidth ?? 0;
+    if (next > 0 && next !== launcherSize) setLauncherSize(next);
+  });
+
+  useEffect(() => {
     const openFromHeader = () => {
-      const panelBounds = getPanelBounds(viewport.width, viewport.height);
       setOpen(true);
+      if (!isNativeRuntime) return;
+      const panelBounds = getPanelBounds(viewport.width, viewport.height);
       setPanelPosition({
         x: clamp(position.x - panelMetrics.width + 56, panelBounds.minX, panelBounds.maxX),
         y: clamp(position.y - panelMetrics.maxHeight + 180, panelBounds.minY, panelBounds.maxY),
@@ -625,13 +850,35 @@ export function SupportChatWidget() {
 
     window.addEventListener('net360:open-support-chat', openFromHeader as EventListener);
     return () => window.removeEventListener('net360:open-support-chat', openFromHeader as EventListener);
-  }, [panelMetrics.maxHeight, panelMetrics.width, position.x, position.y, viewport.height, viewport.width]);
+  }, [isNativeRuntime, panelMetrics.maxHeight, panelMetrics.width, position.x, position.y, viewport.height, viewport.width]);
 
-  const startDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
-    dragStateRef.current.target = 'button';
-    dragStateRef.current.dragging = true;
-    dragStateRef.current.offsetX = event.clientX - position.x;
-    dragStateRef.current.offsetY = event.clientY - position.y;
+  const onLauncherPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0) return;
+    const current = positionRef.current;
+    iconDragRef.current = {
+      active: true,
+      moved: false,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      originX: current.x,
+      originY: current.y,
+      x: current.x,
+      y: current.y,
+    };
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Pointer capture is unavailable for some synthetic events. Window listeners still track the gesture.
+    }
+  };
+
+  const onLauncherClick = () => {
+    if (iconDragRef.current.moved) {
+      iconDragRef.current.moved = false;
+      return;
+    }
+    setOpen((prev) => !prev);
   };
 
   const startPanelDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -801,11 +1048,14 @@ export function SupportChatWidget() {
     <>
       {open ? (
         <Card
-          className="fixed z-[60] w-full max-w-full overflow-hidden border-emerald-200 bg-white text-slate-900 shadow-[0_16px_44px_rgba(15,118,110,0.24)] transition-all duration-200 dark:border-emerald-500/40 dark:bg-slate-900 dark:text-emerald-50 dark:shadow-[0_18px_44px_rgba(3,8,24,0.7)]"
+          className={`fixed z-[60] w-full max-w-full overflow-hidden border-emerald-200 bg-white text-slate-900 shadow-[0_16px_44px_rgba(15,118,110,0.24)] dark:border-emerald-500/40 dark:bg-slate-900 dark:text-emerald-50 dark:shadow-[0_18px_44px_rgba(3,8,24,0.7)] ${isNativeRuntime ? 'transition-all duration-200' : ''}`}
           style={panelStyle}
         >
           <CardHeader className="pb-2">
-            <div className="flex items-center justify-between gap-2 cursor-move" onPointerDown={startPanelDrag}>
+            <div
+              className={`flex items-center justify-between gap-2 ${isNativeRuntime ? 'cursor-move' : ''}`}
+              onPointerDown={isNativeRuntime ? startPanelDrag : undefined}
+            >
               <CardTitle className="text-base text-emerald-900 dark:text-emerald-300">Live Support Chat</CardTitle>
               <Button size="icon" variant="ghost" className="h-8 w-8 dark:hover:bg-emerald-500/15 dark:text-emerald-100" onClick={() => setOpen(false)} aria-label="Close support chat">
                 <X className="h-4 w-4" />
@@ -989,22 +1239,22 @@ export function SupportChatWidget() {
 
       {!isNativeRuntime ? (
         <button
+          ref={buttonRef}
           type="button"
-          className="fixed z-[70] flex h-12 w-12 items-center justify-center rounded-full border border-emerald-300 bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-[0_12px_28px_rgba(13,148,136,0.35)] sm:h-14 sm:w-14"
-          style={{ left: position.x, top: position.y }}
-          onPointerDown={startDrag}
-          onClick={() => setOpen((prev) => !prev)}
-          title="Drag to move. Click to open support chat."
+          className="fixed z-[70] flex h-12 w-12 cursor-grab touch-none select-none items-center justify-center rounded-full border border-emerald-300 bg-gradient-to-br from-emerald-500 to-teal-600 text-white shadow-[0_12px_28px_rgba(13,148,136,0.35)] active:cursor-grabbing sm:h-14 sm:w-14"
+          style={{ left: position.x, top: position.y, touchAction: 'none' }}
+          onPointerDown={onLauncherPointerDown}
+          onClick={onLauncherClick}
+          aria-label={open ? 'Close support chat' : 'Open support chat'}
+          aria-expanded={open}
+          draggable={false}
         >
-          <MessageCircle className="h-5 w-5 sm:h-6 sm:w-6" />
+          <MessageCircle className="h-5 w-5 pointer-events-none sm:h-6 sm:w-6" />
           {unreadCount > 0 ? (
-            <Badge className="absolute -right-2 -top-2 h-5 min-w-[1.25rem] bg-rose-600 px-1 text-[10px] text-white">
+            <Badge className="pointer-events-none absolute -right-2 -top-2 h-5 min-w-[1.25rem] bg-rose-600 px-1 text-[10px] text-white">
               {unreadCount > 9 ? '9+' : unreadCount}
             </Badge>
           ) : null}
-          <span className="pointer-events-none absolute -bottom-5 hidden items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white sm:inline-flex">
-            <GripHorizontal className="h-3 w-3" /> drag
-          </span>
         </button>
       ) : null}
     </>
